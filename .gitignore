@@ -1,0 +1,26 @@
+# Rust / Cargo
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Direnv / env
+.envrc
+.env
+.env.local
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude Code local state
+.claude/
+
+# Parallel-work git worktrees.
+.worktrees/
+
+# Firmware build artefacts
+/target/xtensa-esp32s3-none-elf/
+*.elf
+*.bin

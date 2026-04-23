@@ -1,0 +1,14 @@
+[package]
+name = "axp2101"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Minimal driver for the X-Powers AXP2101 PMIC. Just enough to bring up the M5Stack CoreS3 LCD + 3V3 rails."
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-hal-async = { workspace = true }

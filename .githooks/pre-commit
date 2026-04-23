@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Pre-commit: fmt check, clippy on host crates, host tests, doc tests,
+# workspace check, Cargo.lock drift guard.
+#
+# Firmware-side (esp) checks are expensive and require the espup toolchain
+# to be sourced; they run in CI, not on every commit.
+set -euo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# Only run when Rust files (or Cargo.toml / Cargo.lock) are staged.
+has_rust=false
+if echo "$staged" | grep -qE '(^Cargo\.(toml|lock)$|\.rs$|\.toml$)'; then
+    has_rust=true
+fi
+
+if [ "$has_rust" = true ]; then
+    # Cargo.lock drift guard.
+    if grep -qE '(^|/)Cargo\.toml$' <<<"$staged" \
+        && ! grep -qE '(^|/)Cargo\.lock$' <<<"$staged"; then
+        if ! git diff --quiet Cargo.lock 2>/dev/null; then
+            echo "pre-commit: Cargo.toml is staged but Cargo.lock has unstaged changes." >&2
+            echo "  Stage Cargo.lock too, or revert the Cargo.toml change." >&2
+            exit 1
+        fi
+    fi
+
+    echo "pre-commit: checking formatting..."
+    cargo fmt --check
+
+    echo "pre-commit: running clippy on host crates (incl. tests)..."
+    cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
+
+    echo "pre-commit: running host tests..."
+    cargo test --workspace --exclude stackchan-firmware --all-features --quiet
+
+    echo "pre-commit: running doc tests..."
+    cargo test --workspace --exclude stackchan-firmware --all-features --doc --quiet
+
+    echo "pre-commit: checking workspace (host)..."
+    cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
+fi

@@ -1,0 +1,23 @@
+# Identifiers that look like camelCase but are genuinely product / protocol
+# names. Listing them here avoids rewriting every docstring to add backticks.
+doc-valid-idents = [
+    "StackChan",
+    "CoreS3",
+    "M5Stack",
+    "ESP32",
+    "ESP32-S3",
+    "ESP-IDF",
+    "AXP2101",
+    "ILI9342C",
+    "ILI9342",
+    "PMIC",
+    "GPIO",
+    "SPI",
+    "I2C",
+    "PSRAM",
+    "OTA",
+    "BLE",
+    "WiFi",
+    "MIPI-DSI",
+    "..",
+]

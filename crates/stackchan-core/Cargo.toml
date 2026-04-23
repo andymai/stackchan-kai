@@ -1,0 +1,15 @@
+[package]
+name = "stackchan-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "no_std domain library for the StackChan avatar: geometry, expressions, motion modifiers."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+# no dependencies by design -- this crate is the pure Rust core.

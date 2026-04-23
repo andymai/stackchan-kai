@@ -1,0 +1,15 @@
+[package]
+name = "stackchan-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Headless simulator for stackchan-core: runs modifiers against a fake clock for deterministic integration tests."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+stackchan-core = { path = "../stackchan-core" }

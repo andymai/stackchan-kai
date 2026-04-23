@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Conventional-commit message check.
+# Accepts: feat:, fix:, refactor:, chore:, docs:, test:, build:, ci:, perf:, style:, revert:
+# Optionally with a scope: feat(core): ... and optionally with ! for breaking: feat!:, feat(core)!:
+set -euo pipefail
+
+msg_file="$1"
+first_line=$(head -n1 "$msg_file")
+
+# Skip merge commits and fixups.
+if [[ "$first_line" == Merge* || "$first_line" == fixup!* || "$first_line" == squash!* ]]; then
+    exit 0
+fi
+
+# Pattern: type(scope)?!?: subject
+pattern='^(feat|fix|refactor|chore|docs|test|build|ci|perf|style|revert)(\([a-z0-9-]+\))?!?: .+'
+
+if ! grep -qE "$pattern" <<<"$first_line"; then
+    echo "commit-msg: subject does not match conventional commit format." >&2
+    echo "  Expected: type(scope)?: short description" >&2
+    echo "  Got:      $first_line" >&2
+    echo "" >&2
+    echo "  Valid types: feat, fix, refactor, chore, docs, test, build, ci, perf, style, revert" >&2
+    exit 1
+fi

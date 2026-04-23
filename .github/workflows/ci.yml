@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Host (core + sim + axp2101)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy (host crates)
+        run: cargo clippy --workspace --exclude stackchan-firmware --all-features -- -D warnings
+
+      - name: Test (host crates)
+        run: cargo test --workspace --exclude stackchan-firmware --all-features
+
+      - name: Build (host crates)
+        run: cargo build --workspace --exclude stackchan-firmware
+
+      - name: Doc check (host crates)
+        run: cargo doc --no-deps --workspace --exclude stackchan-firmware --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  supply-chain:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arg: --workspace
+
+  firmware:
+    name: Firmware cross-check (xtensa-esp32s3-none-elf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: false
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (firmware)
+        run: cargo clippy -p stackchan-firmware --target xtensa-esp32s3-none-elf --all-features -- -D warnings
+
+      - name: Check (firmware)
+        run: cargo check -p stackchan-firmware --target xtensa-esp32s3-none-elf --all-features
+
+  msrv:
+    name: MSRV (host crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build on MSRV
+        run: cargo build --workspace --exclude stackchan-firmware --all-features

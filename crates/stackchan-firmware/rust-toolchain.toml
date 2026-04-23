@@ -1,0 +1,8 @@
+[toolchain]
+# Xtensa target for ESP32-S3 requires Espressif's patched LLVM + Rust.
+# Install via `espup install`; entering this directory activates the esp
+# toolchain automatically. The workspace root uses stable so host-side
+# crates (stackchan-core, stackchan-sim, axp2101) test without the esp fork.
+channel = "esp"
+components = ["rust-src", "clippy", "rustfmt"]
+targets = ["xtensa-esp32s3-none-elf"]

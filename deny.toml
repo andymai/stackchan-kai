@@ -1,0 +1,46 @@
+# cargo-deny configuration for stackchan-rs.
+# See https://embarkstudios.github.io/cargo-deny/ for schema documentation.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "warn"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "ISC",
+    "CC0-1.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+# esp-hal + embassy dep trees bring in transitive duplicates; warn rather than fail.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    # esp-hal and its ecosystem occasionally land fixes on git before crates.io;
+    # add specific URLs here only when strictly necessary, and document why.
+]
+
+[sources.allow-org]
+github = []
