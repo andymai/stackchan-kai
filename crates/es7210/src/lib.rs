@@ -197,18 +197,17 @@ impl<B: I2c> Es7210<B> {
     /// params: 12.288 MHz MCLK, 16 kHz sample rate, 16-bit mono,
     /// ES7210 as I²S slave, mic1+2 on at +30 dB, mic3+4 off.
     ///
+    /// Does **not** verify a chip ID — the ES7210 datasheet doesn't
+    /// document a dedicated chip-ID register, and the esp-adf reference
+    /// driver skips the check. Presence is inferred from the init
+    /// sequence completing without I²C NACKs; use an address-level
+    /// probe (e.g. a bus scan) upstream if you need a pre-init
+    /// sanity check.
+    ///
     /// # Errors
     ///
-    /// - [`Error::BadChipId`] if the chip-ID bytes don't read
-    ///   `(0x72, 0x10)`.
     /// - [`Error::I2c`] on any bus failure.
     pub async fn init<D: DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<B::Error>> {
-        // Verify this is an ES7210 before poking it further.
-        let (lo, hi) = self.read_chip_id().await?;
-        if lo != CHIP_ID1 || hi != CHIP_ID2 {
-            return Err(Error::BadChipId(lo, hi));
-        }
-
         // Soft-reset pulse.
         self.write_reg(REG_RESET, RESET_ASSERT).await?;
         delay.delay_ms(RESET_SETTLE_MS).await;
@@ -411,15 +410,6 @@ mod tests {
         assert_eq!(resets[1], &(REG_RESET, RESET_RELEASE));
         assert_eq!(resets[2], &(REG_RESET, RESET_ASSERT));
         assert_eq!(resets[3], &(REG_RESET, RESET_RELEASE));
-    }
-
-    #[test]
-    fn init_rejects_wrong_chip_id() {
-        let mut adc = Es7210::new(MockI2c::with_chip_id(0x00, 0x00));
-        match block_on(adc.init(&mut NoopDelay)) {
-            Err(Error::BadChipId(0, 0)) => {}
-            other => panic!("expected BadChipId(0, 0), got {other:?}"),
-        }
     }
 
     #[test]
