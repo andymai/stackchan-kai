@@ -125,18 +125,22 @@ pub async fn bringup(
     uart_rx: GPIO7<'static>,
     delay: &mut Delay,
 ) -> BoardIo {
-    // Internal I²C0: 400 kHz fast-mode. Every device on this bus
-    // (AXP2101, AW9523, BM8563, BMI270, BMM150, FT6336U, LTR-553,
-    // AW88298, ES7210, PY32) supports 400 kHz, and the lower-latency
-    // transactions matter for BMI270's 64-chunk config-blob upload —
-    // at 100 kHz the blob upload contends hard with the other tasks
-    // on the shared bus and trips timeouts mid-init.
-    let i2c_cfg = I2cConfig::default().with_frequency(Rate::from_khz(400));
+    // Internal I²C0: 100 kHz standard-mode. The 400 kHz bump from
+    // commit 41325ee assumed every device on the bus could hold
+    // fast-mode timing, but empirically the CoreS3's shared bus (12
+    // devices, heavy trace capacitance, single pull-up network) makes
+    // PY32 (0x6F) NACK data bytes, BMI270 time out, BMM150 undetectable,
+    // and FT6336U drop a bit out of its vendor-ID read — all signal-
+    // integrity failures that vanish at 100 kHz. The original 400 kHz
+    // motivation was BMI270's 64-chunk config-blob upload tripping
+    // timeouts mid-init; PR #35's per-chunk settle delay covers that
+    // at the driver edge, so we can go back to the safe bus speed.
+    let i2c_cfg = I2cConfig::default().with_frequency(Rate::from_khz(100));
     let i2c = match I2c::new(i2c_periph, i2c_cfg) {
         Ok(bus) => bus.with_sda(sda).with_scl(scl).into_async(),
         Err(e) => defmt::panic!("I2C0 config rejected: {}", defmt::Debug2Format(&e)),
     };
-    defmt::debug!("I2C0 ready on GPIO12/11 @ 400 kHz");
+    defmt::debug!("I2C0 ready on GPIO12/11 @ 100 kHz");
 
     let mut pmic = axp2101::Axp2101::new(i2c);
     loop {
@@ -266,10 +270,21 @@ async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
     }
 }
 
-/// Boot-time "hello" gesture: pan +15 → pan -15 → pan 0 → tilt +10
-/// → tilt -10 → tilt 0 over ~1 s. Each step waits
+/// Boot-time "hello" gesture: pan +15 → pan -15 → pan 0 → tilt +5
+/// → tilt -5 → tilt 0 over ~1 s. Each step waits
 /// [`BOOT_NOD_STEP_MS`] for the servo's internal interpolation to
 /// complete before commanding the next. Write errors log + continue.
+///
+/// Tilt amplitude is deliberately smaller than pan: the pan servo
+/// sits at the bottom of the mount with the whole head as its load,
+/// and the factory horn position is reliably near mechanical centre.
+/// The tilt linkage is asymmetric — head weight biases the rest
+/// position away from true servo-centre (position 512), and factory
+/// kits vary by a few degrees, so ±10° can push the head into the
+/// hard stop on units that weren't trim-calibrated. ±5° keeps the
+/// gesture visible on every kit without stalling the tilt servo;
+/// users who want the full throw can calibrate via `just bench` and
+/// set `TILT_TRIM_DEG` in `head.rs`.
 async fn boot_nod(driver: &mut HeadDriverImpl) {
     let clock = HalClock;
     defmt::info!("boot-nod: hello gesture start");
@@ -277,8 +292,8 @@ async fn boot_nod(driver: &mut HeadDriverImpl) {
         (15.0, 0.0, "pan+15"),
         (-15.0, 0.0, "pan-15"),
         (0.0, 0.0, "pan 0"),
-        (0.0, 10.0, "tilt+10"),
-        (0.0, -10.0, "tilt-10"),
+        (0.0, 5.0, "tilt+5"),
+        (0.0, -5.0, "tilt-5"),
         (0.0, 0.0, "tilt 0"),
     ] {
         if let Err(e) = driver.set_pose(Pose::new(pan, tilt), clock.now()).await {
