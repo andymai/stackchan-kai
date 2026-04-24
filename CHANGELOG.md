@@ -56,4 +56,4 @@ wrapper that shares its render path with a headless simulator.
   registers, GCR, LED-mode = GPIO, and `LCD_RST` pulsed on `P1_1`. The
   prior `P0_0`-only helper left the backlight-boost gate on P1 floating.
 
-[0.1.0]: https://github.com/andymai/stackchan-rs/releases/tag/v0.1.0
+[0.1.0]: https://github.com/andymai/stackchan-kai/releases/tag/v0.1.0

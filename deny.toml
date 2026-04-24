@@ -1,4 +1,4 @@
-# cargo-deny configuration for stackchan-rs.
+# cargo-deny configuration for stackchan-kai.
 # See https://embarkstudios.github.io/cargo-deny/ for schema documentation.
 
 [graph]

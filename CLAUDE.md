@@ -1,4 +1,4 @@
-# stackchan-rs
+# stackchan-kai
 
 ## Project Structure
 
