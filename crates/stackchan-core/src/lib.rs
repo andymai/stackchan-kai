@@ -34,10 +34,12 @@ pub mod clock;
 pub mod draw;
 pub mod emotion;
 pub mod head;
+pub mod leds;
 pub mod modifiers;
 
 pub use avatar::{Avatar, Eye, EyePhase, Mouth, Point, SCALE_DEFAULT};
 pub use clock::{Clock, Instant};
 pub use emotion::Emotion;
 pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, Pose};
+pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
 pub use modifiers::Modifier;
