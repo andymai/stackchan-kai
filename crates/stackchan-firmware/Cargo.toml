@@ -49,7 +49,7 @@ esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "es
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
 
-embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-executor = { version = "0.10.0", features = ["defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt"] }
 # `Signal<CriticalSectionRawMutex, Pose>` hands the latest pose from the
 # render task (which runs modifiers, incl. `IdleSway`) to the 50 Hz head
