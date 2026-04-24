@@ -1288,6 +1288,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "py32"
+version = "0.2.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1505,6 +1512,7 @@ dependencies = [
  "ir-nec",
  "ltr553",
  "mipidsi",
+ "py32",
  "scservo",
  "stackchan-core",
  "static_cell",

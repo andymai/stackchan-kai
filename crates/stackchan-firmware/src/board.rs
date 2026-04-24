@@ -4,7 +4,7 @@
 //! [`bringup`] owns the full sequence:
 //!
 //! 1. Internal I²C0 on GPIO11/12 → AXP2101 → AW9523 → PY32 (enable
-//!    servo power pin, 200 ms settle).
+//!    servo power pin via the [`py32`] crate, 200 ms settle).
 //! 2. External UART1 on GPIO6/7 at 1 Mbaud for the `SCServo` bus.
 //! 3. `SCServo::ping` each configured servo ID, log presence.
 //! 4. Run the boot-nod gesture so the head visibly exercises both
@@ -81,12 +81,13 @@ pub struct BoardIo {
     pub i2c_bus: &'static SharedI2cBus,
 }
 
-/// 7-bit I²C address of the CoreS3 PY32 IO expander.
-const PY32_ADDRESS: u8 = 0x6F;
-
 /// Milliseconds to wait after raising the servo-power pin on the PY32.
 /// Matches the 200 ms delay in `hal_io_expander.cpp`.
 const SERVO_POWER_SETTLE_MS: u64 = 200;
+
+/// PY32 pin the servo-power rail MOSFET gate is wired to. HIGH enables
+/// the rail — see `device_specs.md`.
+const PY32_SERVO_POWER_PIN: u8 = 0;
 
 /// Retry delay between failed AXP2101 init attempts. Covers transient
 /// I²C glitches during cold boot.
@@ -206,40 +207,35 @@ pub async fn bringup(
     }
 }
 
-/// Drive pin 0 of the PY32 IO expander HIGH to enable the servo power
-/// rail. Three register writes with values that match the PY32's
-/// reset-state of all zeros (no read-modify-write yet — future RGB-LED
-/// work will need that). Logs at `warn` on any I²C failure and keeps
-/// going.
-async fn enable_servo_power(i2c: &mut I2c<'_, esp_hal::Async>) {
-    use embedded_hal_async::i2c::I2c as AsyncI2c;
-    /// Write `[reg, value]` to the PY32; log + return Err on transport failure.
-    async fn write_py32(i2c: &mut I2c<'_, esp_hal::Async>, reg: u8, value: u8) -> Result<(), ()> {
-        // Fully-qualified `AsyncI2c::write` — `esp_hal::i2c::master::I2c`
-        // has an inherent `write` that's blocking; we want the trait
-        // version for its `async fn`.
-        match AsyncI2c::write(i2c, PY32_ADDRESS, &[reg, value]).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                defmt::warn!(
-                    "PY32 0x{=u8:02X} ← 0x{=u8:02X} failed: {}",
-                    reg,
-                    value,
-                    defmt::Debug2Format(&e)
-                );
-                Err(())
-            }
-        }
+/// Drive the PY32's servo-power pin HIGH via the `py32` crate.
+///
+/// Uses [`py32::Py32::configure_output_pin`], which does read-modify-
+/// write on the direction / pull-up / output registers. That's a change
+/// from v0.1.0's inline three-write sequence: it cooperates cleanly
+/// with any future multi-pin PY32 traffic (e.g. LED fan-out on pin 13),
+/// whereas the old path only worked because the chip's GPIO registers
+/// happen to reset to zero.
+///
+/// `Py32::new` takes ownership of its bus, but the blanket impl
+/// `impl<T: I2c> I2c for &mut T` in embedded-hal-async 1.0 lets us
+/// lend the bus via a mutable borrow and drop the `Py32` handle at
+/// end of scope, releasing the borrow for the shared-bus wrapper.
+///
+/// Failures are logged at `warn` and the function returns; the servo
+/// bus will still initialise but `ping_servo` will time out, which is
+/// the already-handled path for "servos missing".
+async fn enable_servo_power(i2c: &mut I2c<'static, esp_hal::Async>) {
+    let mut py = py32::Py32::new(i2c);
+    match py.configure_output_pin(PY32_SERVO_POWER_PIN, true).await {
+        Ok(()) => defmt::info!(
+            "PY32: servo power enabled (pin {=u8} HIGH)",
+            PY32_SERVO_POWER_PIN
+        ),
+        Err(e) => defmt::warn!(
+            "PY32: servo-power enable incomplete ({}) — servos may stay unpowered",
+            defmt::Debug2Format(&e)
+        ),
     }
-    // Pin 0: direction = output, pull-up = enabled, level = HIGH.
-    if write_py32(i2c, 0x03, 0x01).await.is_err()
-        || write_py32(i2c, 0x09, 0x01).await.is_err()
-        || write_py32(i2c, 0x05, 0x01).await.is_err()
-    {
-        defmt::warn!("PY32: servo-power enable incomplete — servos may stay unpowered");
-        return;
-    }
-    defmt::info!("PY32: servo power enabled (pin 0 HIGH)");
 }
 
 /// Probe one `SCServo` ID and log the outcome. 10 ms is well past the

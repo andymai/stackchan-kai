@@ -25,7 +25,7 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, board, button, clock, framebuffer, head, imu, ir, touch, wallclock,
+    ambient, board, button, clock, framebuffer, head, imu, ir, leds, touch, wallclock,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -58,11 +58,12 @@ use mipidsi::{
     options::{ColorInversion, ColorOrder},
 };
 use stackchan_core::{
-    Avatar, Clock, HeadDriver, Modifier,
+    Avatar, Clock, HeadDriver, LedFrame, Modifier,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
         IdleDrift, IdleSway, PickupReaction, RemoteCommand,
     },
+    render_leds,
 };
 use static_cell::StaticCell;
 
@@ -177,6 +178,7 @@ async fn render_task(mut display: LcdDisplay) {
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut last_rendered: Option<Avatar> = None;
+    let mut led_frame = LedFrame::default();
 
     // Pre-compute the blit rect once; it never changes.
     let canvas = Rectangle::new(EgPoint::zero(), Size::new(FB_WIDTH, FB_HEIGHT));
@@ -234,6 +236,14 @@ async fn render_task(mut display: LcdDisplay) {
         // head task never builds up a backlog — it just reads the most
         // recent pose.
         head::POSE_SIGNAL.signal(avatar.head_pose);
+
+        // Render the LED ring from the same avatar state and publish to
+        // the led task. The led task owns the PY32 transport; this
+        // keeps I²C latency off the render path. Always publish —
+        // `Signal::signal` overwrites unread values so the led task
+        // can tick at its own cadence without building up a backlog.
+        render_leds(&avatar, now, &mut led_frame);
+        leds::LED_FRAME_SIGNAL.signal(led_frame);
 
         // Drain the latest observed pose from the head task. Updated at
         // ~1 Hz over there, so most render ticks see nothing new and
@@ -376,6 +386,14 @@ async fn ir_task(
     ir::run_ir_loop(rmt, pin).await
 }
 
+/// LED-ring output-sink task. Drains [`leds::LED_FRAME_SIGNAL`] at
+/// 30 Hz and pushes each frame to the PY32 IO expander over the shared
+/// I²C0 bus. Runs a brief fade-in before joining the signal pipeline.
+#[embassy_executor::task]
+async fn led_task(shared_i2c: SharedI2c) -> ! {
+    leds::run_led_loop(shared_i2c).await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -479,6 +497,9 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(ir_task(peripherals.RMT, peripherals.GPIO21)) {
         defmt::panic!("spawn ir_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(led_task(I2cDevice::new(board_io.i2c_bus))) {
+        defmt::panic!("spawn led_task failed: {}", defmt::Debug2Format(&e));
     }
 
     // One-shot wall-clock read for the boot log. Single I²C round-trip;

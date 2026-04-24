@@ -25,5 +25,6 @@ pub mod framebuffer;
 pub mod head;
 pub mod imu;
 pub mod ir;
+pub mod leds;
 pub mod touch;
 pub mod wallclock;

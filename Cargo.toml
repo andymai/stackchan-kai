@@ -10,6 +10,7 @@ members = [
     "crates/ft6336u",
     "crates/ir-nec",
     "crates/ltr553",
+    "crates/py32",
     "crates/scservo",
     "crates/stackchan-firmware",
 ]
@@ -23,6 +24,7 @@ default-members = [
     "crates/ft6336u",
     "crates/ir-nec",
     "crates/ltr553",
+    "crates/py32",
     "crates/scservo",
 ]
 
