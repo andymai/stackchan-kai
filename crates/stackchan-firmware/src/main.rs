@@ -21,11 +21,6 @@
 // esp-rtos runs a single-core executor on this chip; `Send`-bounded
 // futures aren't meaningful here. The nursery lint fires on every task.
 #![allow(clippy::future_not_send)]
-// Firmware needs unsafe for one narrow reason: a `Sync` promise on a
-// raw-pointer newtype used as an LTO anchor for the ESP-IDF app
-// descriptor. No pointer dereference happens here. The workspace-wide
-// `unsafe_code = deny` rule still applies to the host crates.
-#![allow(unsafe_code)]
 
 extern crate alloc;
 
@@ -79,22 +74,15 @@ defmt::timestamp!("{=u64} ms", embassy_time::Instant::now().as_millis());
 // fixed offset; the macro emits one in a dedicated linker section.
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// `#[used]`-anchor newtype for `ESP_APP_DESC`.
+/// LTO anchor for `ESP_APP_DESC`.
 ///
 /// The macro above emits `pub static ESP_APP_DESC` without `#[used]`, so
-/// `lto = "fat"` strips it and espflash refuses the image. Anchoring its
-/// address in a `#[used]` static keeps it in `.rodata_desc.appdesc`.
-/// Raw pointers aren't `Sync` by default; wrap in a newtype and promise
-/// the invariant ourselves — the address is never read through this.
-#[repr(transparent)]
-struct AppDescAnchor(*const esp_bootloader_esp_idf::EspAppDesc);
-// SAFETY: the anchor is never dereferenced; its only purpose is to hold
-// a symbol reference so LTO cannot discard ESP_APP_DESC.
-unsafe impl Sync for AppDescAnchor {}
-/// LTO anchor for `ESP_APP_DESC`. Never read; presence alone prevents
-/// fat-LTO from stripping the app descriptor.
+/// `lto = "fat"` strips it and espflash refuses the image. Anchoring a
+/// `&'static` reference in a `#[used]` static keeps the symbol live in
+/// `.rodata_desc.appdesc` without any raw pointer or `unsafe impl Sync`
+/// (`EspAppDesc` is plain POD, so the reference is auto-Sync).
 #[used]
-static _APP_DESC_ANCHOR: AppDescAnchor = AppDescAnchor(core::ptr::addr_of!(ESP_APP_DESC));
+static _APP_DESC_ANCHOR: &esp_bootloader_esp_idf::EspAppDesc = &ESP_APP_DESC;
 
 /// Panic handler. Halts the core; esp-rtos emits the trace over RTT
 /// before we arrive here (via `--catch-hardfault` on the probe-rs side).
@@ -169,7 +157,8 @@ async fn render_task(mut display: LcdDisplay) {
     // Fixed seed keeps boot-to-boot drifts identical; a future RNG-backed
     // source (e.g. reading a voltage-derived seed from the AXP2101) can
     // swap in without touching the task shape.
-    let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
+    let mut drift =
+        IdleDrift::with_seed(const { core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap() });
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut last_rendered: Option<Avatar> = None;

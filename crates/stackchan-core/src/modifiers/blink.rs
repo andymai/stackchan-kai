@@ -35,23 +35,36 @@ pub struct Blink {
     state: BlinkState,
 }
 
-/// Internal state tracking when the next transition fires.
+/// Internal state tracking the current blink phase.
+///
+/// Each phase records the instant it started rather than its scheduled
+/// transition time. That way, rate changes mid-phase take effect on the
+/// next tick without stranding a stale absolute deadline — we always
+/// compute `phase_start + scaled_open_ms(current_rate)` from the
+/// current `avatar.blink_rate_scale`.
 #[derive(Debug, Clone, Copy)]
 enum BlinkState {
     /// Waiting to initialize on the first `update` call. Used so the very
-    /// first tick establishes `next_transition` relative to the clock the
-    /// caller is actually using -- modifiers don't know the starting time.
+    /// first tick anchors `phase_start` to the caller's actual clock.
     Uninitialized,
-    /// Eyes currently open; they close at `transition_at`.
+    /// Eyes currently open; they close once the phase has run for
+    /// `scaled_open_ms(rate)` since `phase_start`.
     Open {
-        /// Monotonic time at which the next open->closed transition happens.
-        transition_at: Instant,
+        /// Instant the phase began.
+        phase_start: Instant,
     },
-    /// Eyes currently closed; they open at `transition_at`.
+    /// Eyes currently closed; they open once the phase has run for
+    /// `closed_ms` since `phase_start`.
     Closed {
-        /// Monotonic time at which the next closed->open transition happens.
-        transition_at: Instant,
+        /// Instant the phase began.
+        phase_start: Instant,
     },
+    /// Rate scale is 0 — blinks are suppressed until the rate goes
+    /// non-zero again, at which point we transition back to `Open` with
+    /// a fresh `phase_start`. Explicit state (rather than parking
+    /// `Open` with a far-future deadline) avoids the ~49-day wraparound
+    /// hazard and makes the "Surprised → Neutral" recovery path trivial.
+    Suppressed,
 }
 
 impl Blink {
@@ -103,54 +116,66 @@ impl Modifier for Blink {
     fn update(&mut self, avatar: &mut Avatar, now: Instant) {
         let rate = avatar.blink_rate_scale;
 
-        // Suppression path: scale == 0 forces eyes open and parks the
-        // state machine. The next non-zero scale will resume blinking
-        // naturally (re-entering from Uninitialized if we've never run,
-        // or from Open which is the phase we left behind).
+        // Suppression path: scale == 0 forces eyes open. Stored as an
+        // explicit state so a later non-zero scale cleanly resumes the
+        // cycle from `Open` rather than relying on a far-future deadline
+        // to elapse first.
         if rate == 0 {
-            self.state = BlinkState::Open {
-                // Park "next transition" in the far future; a subsequent
-                // non-zero rate will reschedule before this ever elapses.
-                transition_at: now + u64::from(u32::MAX),
-            };
-            set_both_eyes(avatar, EyePhase::Open, avatar.left_eye.open_weight);
+            self.state = BlinkState::Suppressed;
+            open_both_eyes(avatar);
             return;
         }
 
         let open_ms = self.scaled_open_ms(rate);
 
         match self.state {
-            BlinkState::Uninitialized => {
-                // First tick: eyes are currently open; schedule the first blink.
-                self.state = BlinkState::Open {
-                    transition_at: now + open_ms,
-                };
-                set_both_eyes(avatar, EyePhase::Open, avatar.left_eye.open_weight);
+            // First tick, or resuming from suppression: start a fresh
+            // open phase anchored to `now`.
+            BlinkState::Uninitialized | BlinkState::Suppressed => {
+                self.state = BlinkState::Open { phase_start: now };
+                open_both_eyes(avatar);
             }
-            BlinkState::Open { transition_at } if now >= transition_at => {
-                self.state = BlinkState::Closed {
-                    transition_at: now + self.closed_ms,
-                };
-                set_both_eyes(avatar, EyePhase::Closed, 0);
+            // Open phase: elapsed since phase_start is always compared
+            // against the *current* scaled_open_ms, so a rate change
+            // mid-open takes effect on the next tick without leaving a
+            // stale absolute deadline behind.
+            BlinkState::Open { phase_start } => {
+                let elapsed = now.saturating_duration_since(phase_start);
+                if elapsed >= open_ms {
+                    self.state = BlinkState::Closed { phase_start: now };
+                    close_both_eyes(avatar);
+                }
+                // Else: still open; no writes required.
             }
-            BlinkState::Closed { transition_at } if now >= transition_at => {
-                self.state = BlinkState::Open {
-                    transition_at: now + open_ms,
-                };
-                set_both_eyes(avatar, EyePhase::Open, avatar.left_eye.open_weight);
+            BlinkState::Closed { phase_start } => {
+                let elapsed = now.saturating_duration_since(phase_start);
+                if elapsed >= self.closed_ms {
+                    self.state = BlinkState::Open { phase_start: now };
+                    open_both_eyes(avatar);
+                }
             }
-            // Still in the current phase; nothing to change.
-            BlinkState::Open { .. } | BlinkState::Closed { .. } => {}
         }
     }
 }
 
-/// Apply a (phase, weight) pair to both eyes on `avatar`.
-const fn set_both_eyes(avatar: &mut Avatar, phase: EyePhase, weight: u8) {
-    avatar.left_eye.phase = phase;
-    avatar.left_eye.weight = weight;
-    avatar.right_eye.phase = phase;
-    avatar.right_eye.weight = weight;
+/// Open both eyes, each honoring its own `open_weight`. Split per-eye so
+/// emotion code can animate the two lids independently (e.g. a wink
+/// variant could set one eye's `open_weight` to 0 without Blink
+/// clobbering the asymmetry).
+const fn open_both_eyes(avatar: &mut Avatar) {
+    avatar.left_eye.phase = EyePhase::Open;
+    avatar.left_eye.weight = avatar.left_eye.open_weight;
+    avatar.right_eye.phase = EyePhase::Open;
+    avatar.right_eye.weight = avatar.right_eye.open_weight;
+}
+
+/// Close both eyes. Weight is 0 in both; renderers distinguish closed
+/// from almost-open via the `phase` field rather than a weight threshold.
+const fn close_both_eyes(avatar: &mut Avatar) {
+    avatar.left_eye.phase = EyePhase::Closed;
+    avatar.left_eye.weight = 0;
+    avatar.right_eye.phase = EyePhase::Closed;
+    avatar.right_eye.weight = 0;
 }
 
 #[cfg(test)]
@@ -252,6 +277,86 @@ mod tests {
             blink.update(&mut avatar, Instant::from_millis(ms));
             assert_eq!(avatar.left_eye.phase, EyePhase::Open, "ms={ms}");
         }
+    }
+
+    #[test]
+    fn blink_resumes_after_rate_returns_to_nonzero() {
+        // Regression for the "Surprised emotion parks Blink for 49 days"
+        // bug: previously, rate==0 set an Open state with a far-future
+        // transition deadline, and when rate came back to 128 the
+        // deadline stayed in the future so blinks never resumed. With
+        // the explicit Suppressed state, the first non-zero tick anchors
+        // a fresh Open phase and the normal cycle fires within open_ms.
+        let mut avatar = Avatar::default();
+        let mut blink = Blink::with_timing(100, 20);
+
+        // Enter suppression.
+        avatar.blink_rate_scale = 0;
+        blink.update(&mut avatar, Instant::from_millis(0));
+        blink.update(&mut avatar, Instant::from_millis(500));
+        assert_eq!(avatar.left_eye.phase, EyePhase::Open, "suppressed");
+
+        // Rate returns to default; blinks should resume within the
+        // normal open window relative to the resume instant, not stay
+        // parked in the distant future.
+        avatar.blink_rate_scale = SCALE_DEFAULT;
+        blink.update(&mut avatar, Instant::from_millis(500));
+        blink.update(&mut avatar, Instant::from_millis(600));
+        assert_eq!(avatar.left_eye.phase, EyePhase::Closed);
+    }
+
+    #[test]
+    fn rate_change_mid_open_takes_effect_on_next_tick() {
+        // Regression for "stale transition_at when rate changes mid-open":
+        // previously, Open stored an absolute transition_at computed at
+        // phase entry, so shortening the open window later didn't fire
+        // the blink any sooner. With phase_start + current-tick rate,
+        // a rate change is observed immediately.
+        let mut avatar = Avatar::default();
+        avatar.blink_rate_scale = 64; // slower cadence → longer open
+        let mut blink = Blink::with_timing(200, 20);
+
+        blink.update(&mut avatar, Instant::from_millis(0));
+        // scaled_open_ms(64) = 200 * 128 / 64 = 400 ms. At ms=200 we're
+        // only halfway through the slow open window.
+        blink.update(&mut avatar, Instant::from_millis(200));
+        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
+
+        // Speed up to 4x — scaled_open_ms(255) = 200 * 128 / 255 ≈ 100 ms.
+        // We're already past that window since phase_start=0, ms=200.
+        avatar.blink_rate_scale = 255;
+        blink.update(&mut avatar, Instant::from_millis(200));
+        assert_eq!(
+            avatar.left_eye.phase,
+            EyePhase::Closed,
+            "faster rate should fire the blink on the same tick we crossed the new window"
+        );
+    }
+
+    #[test]
+    fn open_weight_is_per_eye() {
+        // Regression for "Blink uses left_eye.open_weight for both eyes":
+        // asymmetric open_weights (e.g. a wink) must survive Blink's
+        // re-open writes rather than being clobbered by whatever the
+        // left eye happens to hold.
+        let mut avatar = Avatar::default();
+        avatar.left_eye.open_weight = 100;
+        avatar.right_eye.open_weight = 30; // partially closed right eye
+
+        let mut blink = Blink::with_timing(100, 20);
+        blink.update(&mut avatar, Instant::from_millis(0));
+        assert_eq!(avatar.left_eye.weight, 100);
+        assert_eq!(
+            avatar.right_eye.weight, 30,
+            "right eye's open_weight preserved"
+        );
+
+        // Close + reopen preserves the asymmetry.
+        blink.update(&mut avatar, Instant::from_millis(100));
+        blink.update(&mut avatar, Instant::from_millis(120));
+        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
+        assert_eq!(avatar.left_eye.weight, 100);
+        assert_eq!(avatar.right_eye.weight, 30);
     }
 
     #[test]
