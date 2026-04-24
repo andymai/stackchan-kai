@@ -3,8 +3,20 @@ name: CI
 on:
   push:
     branches: [main]
+    # Skip CI for changes that can't affect build output (pure docs,
+    # licenses, hook scripts). Any touch to `.yml` / `.toml` / `.rs`
+    # still triggers, so the "I forgot my change is actually code"
+    # footgun is bounded.
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE-*'
+      - '.githooks/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE-*'
+      - '.githooks/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,8 +44,8 @@ jobs:
       - name: Test (host crates)
         run: cargo test --workspace --exclude stackchan-firmware --all-features
 
-      - name: Build (host crates)
-        run: cargo build --workspace --exclude stackchan-firmware
+      # `cargo build` is redundant with `cargo test` above — the test
+      # pass builds every target. Dropping it saves ~6 s of Host runtime.
 
       - name: Doc check (host crates)
         run: cargo doc --no-deps --workspace --exclude stackchan-firmware --all-features
@@ -72,9 +84,9 @@ jobs:
         working-directory: crates/stackchan-firmware
         run: cargo clippy --all-features -- -D warnings
 
-      - name: Check (firmware)
-        working-directory: crates/stackchan-firmware
-        run: cargo check --all-features
+      # `cargo check` is redundant with `cargo clippy` above — clippy
+      # runs a full type-check as part of its lint pass. Dropping it
+      # cuts ~45 s off the 2 m 22 s firmware job (the longest in CI).
 
   msrv:
     name: MSRV (host crates)
