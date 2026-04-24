@@ -101,7 +101,7 @@ impl DrawTarget for Framebuffer {
 
     /// Fast path for the `target.clear(WHITE)` at the top of every
     /// `Avatar::draw` call — avoids the per-pixel `draw_iter` loop by
-    /// memset-ing the whole buffer. At 76_800 pixels this saves ~200 µs
+    /// memset-ing the whole buffer. At `76_800` pixels this saves ~200 µs
     /// per frame vs. the default impl.
     fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
         self.pixels.fill(color);
@@ -111,7 +111,7 @@ impl DrawTarget for Framebuffer {
     /// Fast path for rectangular fills (used by `Avatar::draw`'s eye/mouth
     /// ellipse bounding operations). Clips to the canvas, then memsets each
     /// row in the overlap — much cheaper than the default `fill_contiguous`
-    /// chain, which would iterate 76_800 pixels regardless of rect size.
+    /// chain, which would iterate `76_800` pixels regardless of rect size.
     fn fill_solid(&mut self, area: &Rectangle, color: Self::Color) -> Result<(), Self::Error> {
         let canvas = Rectangle::new(
             embedded_graphics::geometry::Point::zero(),

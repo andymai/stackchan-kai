@@ -1,12 +1,12 @@
 //! Minimal AW9523B helper: release the CoreS3 LCD's reset line.
 //!
-//! The AW9523B is a 16-pin I²C IO expander on the CoreS3. Pin P0_0 drives
+//! The AW9523B is a 16-pin I²C IO expander on the CoreS3. Pin `P0_0` drives
 //! the ILI9342C's `RESX` line — it's held low at cold boot, so the LCD
 //! stays in reset until we configure the pin as a push-pull output and
 //! drive it high.
 //!
 //! This module is intentionally narrow: one function that touches only
-//! P0_0. Other P0 pins (touch reset, bus enable) stay in their power-on
+//! `P0_0`. Other P0 pins (touch reset, bus enable) stay in their power-on
 //! default (input / high-impedance), so the write here cannot disturb
 //! peripherals we don't own.
 //!
@@ -27,11 +27,11 @@ const REG_CONTROL: u8 = 0x11;
 /// `REG_CONTROL` value that switches port 0 to push-pull, leaves the LED
 /// current-scale bits at their reset default of `00`.
 const CONTROL_P0_PUSH_PULL: u8 = 0x10;
-/// Bitmask for P0_0 with all other pins left as inputs (`0b1111_1110`).
+/// Bitmask for `P0_0` with all other pins left as inputs (`0b1111_1110`).
 const DIR_P0_0_OUTPUT: u8 = 0xFE;
-/// Output register: P0_0 high, other bits don't matter (they're inputs).
+/// Output register: `P0_0` high, other bits don't matter (they're inputs).
 const OUTPUT_P0_0_HIGH: u8 = 0x01;
-/// Output register: P0_0 low, other bits don't matter (they're inputs).
+/// Output register: `P0_0` low, other bits don't matter (they're inputs).
 const OUTPUT_P0_0_LOW: u8 = 0x00;
 
 /// Minimum reset-low time, in milliseconds. ILI9342C datasheet requires ≥10 µs;

@@ -81,16 +81,20 @@ defmt::timestamp!("{=u64} ms", embassy_time::Instant::now().as_millis());
 // fixed offset; the macro emits one in a dedicated linker section.
 esp_bootloader_esp_idf::esp_app_desc!();
 
-// The macro above emits `pub static ESP_APP_DESC` without `#[used]`,
-// so `lto = "fat"` strips it and espflash refuses the image. Anchor
-// its address in a `#[used]` static to keep it in .rodata_desc.appdesc.
-// Raw pointers aren't `Sync` by default; wrap in a newtype and promise
-// the invariant ourselves — the address is never read through this.
+/// `#[used]`-anchor newtype for `ESP_APP_DESC`.
+///
+/// The macro above emits `pub static ESP_APP_DESC` without `#[used]`, so
+/// `lto = "fat"` strips it and espflash refuses the image. Anchoring its
+/// address in a `#[used]` static keeps it in `.rodata_desc.appdesc`.
+/// Raw pointers aren't `Sync` by default; wrap in a newtype and promise
+/// the invariant ourselves — the address is never read through this.
 #[repr(transparent)]
 struct AppDescAnchor(*const esp_bootloader_esp_idf::EspAppDesc);
 // SAFETY: the anchor is never dereferenced; its only purpose is to hold
 // a symbol reference so LTO cannot discard ESP_APP_DESC.
 unsafe impl Sync for AppDescAnchor {}
+/// LTO anchor for `ESP_APP_DESC`. Never read; presence alone prevents
+/// fat-LTO from stripping the app descriptor.
 #[used]
 static _APP_DESC_ANCHOR: AppDescAnchor = AppDescAnchor(core::ptr::addr_of!(ESP_APP_DESC));
 
@@ -293,6 +297,7 @@ async fn main(spawner: Spawner) -> ! {
     // buffer. 4 KiB ≈ 2048 px per SPI transaction — a good speed/RAM balance
     // for 320x240 clears on the internal SRAM heap. Parked in a `StaticCell`
     // so the buffer outlives this frame and never needs reallocation.
+    #[allow(clippy::items_after_statements)]
     static SPI_DI_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
     let spi_di_buf = SPI_DI_BUF.init([0u8; 4096]);
     let di = SpiInterface::new(spi_device, dc, spi_di_buf);
