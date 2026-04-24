@@ -15,8 +15,10 @@ workspace = true
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
 aw9523 = { path = "../aw9523" }
+bm8563 = { path = "../bm8563" }
 bmi270 = { path = "../bmi270" }
 ft6336u = { path = "../ft6336u" }
+ltr553 = { path = "../ltr553" }
 scservo = { path = "../scservo" }
 embedded-graphics = { workspace = true }
 embedded-hal = { workspace = true }
@@ -93,3 +95,7 @@ path = "examples/touch_bench.rs"
 [[example]]
 name = "imu_bench"
 path = "examples/imu_bench.rs"
+
+[[example]]
+name = "ambient_bench"
+path = "examples/ambient_bench.rs"

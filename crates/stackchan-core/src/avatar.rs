@@ -37,6 +37,13 @@
 //! so they are excluded from [`Avatar::frame_eq`] just like
 //! [`Avatar::head_pose`]. Defaults match the resting state of a
 //! face-up CoreS3: gravity (`+1 g`) on the Z axis, zero angular rate.
+//!
+//! ## Ambient light
+//!
+//! `ambient_lux` is `Some(lux)` after the first successful LTR-553
+//! read; `None` beforehand. Consumed by
+//! [`super::modifiers::AmbientSleepy`]. Excluded from
+//! [`Avatar::frame_eq`].
 
 use crate::clock::Instant;
 use crate::emotion::Emotion;
@@ -205,6 +212,14 @@ pub struct Avatar {
     /// the firmware IMU task; consumed by future rotation-reactive
     /// modifiers. Zero at rest. Excluded from [`Avatar::frame_eq`].
     pub gyro_dps: (f32, f32, f32),
+    /// Ambient light level in lux, or `None` before the first
+    /// successful read. Written by the firmware ambient-light task
+    /// (LTR-553); consumed by
+    /// [`super::modifiers::AmbientSleepy`]. Excluded from
+    /// [`Avatar::frame_eq`] — a dimming room doesn't change pixels
+    /// directly; modifiers translate lux into visible state via
+    /// `Avatar::emotion`.
+    pub ambient_lux: Option<f32>,
 }
 
 impl Avatar {
@@ -276,6 +291,8 @@ impl Default for Avatar {
             // Resting face-up: gravity is +1 g along Z, no rotation.
             accel_g: (0.0, 0.0, 1.0),
             gyro_dps: (0.0, 0.0, 0.0),
+            // No ambient reading until the LTR-553 task publishes one.
+            ambient_lux: None,
         }
     }
 }
@@ -366,6 +383,25 @@ mod tests {
         assert!(
             a.frame_eq(&b),
             "IMU readings are non-visual; frame_eq must skip them",
+        );
+    }
+
+    #[test]
+    fn default_has_no_ambient_reading() {
+        assert!(
+            Avatar::default().ambient_lux.is_none(),
+            "ambient starts unknown until the LTR-553 task publishes",
+        );
+    }
+
+    #[test]
+    fn frame_eq_ignores_ambient_lux() {
+        let a = Avatar::default();
+        let mut b = a;
+        b.ambient_lux = Some(15.0);
+        assert!(
+            a.frame_eq(&b),
+            "ambient reading is non-visual; modifiers translate it, not the renderer",
         );
     }
 

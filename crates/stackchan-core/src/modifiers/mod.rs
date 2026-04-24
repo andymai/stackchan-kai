@@ -14,24 +14,30 @@
 //!    `Surprised` with a `manual_until` hold when a pickup / drop is
 //!    detected. Stands down when `manual_until` is already set (so
 //!    explicit touch wins).
-//! 3. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
+//! 3. [`AmbientSleepy`] — reads `Avatar::ambient_lux`, flips emotion
+//!    to `Sleepy` with a short `manual_until` hold in dark rooms
+//!    (hysteresis 20/50 lux). Runs after `PickupReaction` so a
+//!    pickup-in-the-dark still surfaces as Surprised rather than
+//!    Sleepy.
+//! 4. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
 //!    when `manual_until` is unset or expired.
-//! 4. [`EmotionStyle`] — translates emotion into style fields, with a
+//! 5. [`EmotionStyle`] — translates emotion into style fields, with a
 //!    linear ease over the transition window.
-//! 5. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//! 6. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
 //!    `blink_rate_scale` from the avatar.
-//! 6. [`Breath`] — vertical drift on all features, scaled by
+//! 7. [`Breath`] — vertical drift on all features, scaled by
 //!    `breath_depth_scale`.
-//! 7. [`IdleDrift`] — occasional eye-center jitter.
-//! 8. [`IdleSway`] — slow pan/tilt head wander written to
+//! 8. [`IdleDrift`] — occasional eye-center jitter.
+//! 9. [`IdleSway`] — slow pan/tilt head wander written to
 //!    `Avatar::head_pose`. Non-visual; drives the firmware's head-update
 //!    task, not the pixel pipeline.
-//! 9. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
-//!    sway. Runs **after** `IdleSway` so bias composes additively rather
-//!    than fighting for absolute control of the pose.
+//! 10. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//!     sway. Runs **after** `IdleSway` so bias composes additively rather
+//!     than fighting for absolute control of the pose.
 //!
 //! [`Avatar`]: crate::avatar::Avatar
 
+mod ambient_sleepy;
 mod blink;
 mod breath;
 mod emotion_cycle;
@@ -42,6 +48,7 @@ mod idle_drift;
 mod idle_sway;
 mod pickup_reaction;
 
+pub use ambient_sleepy::{AMBIENT_HOLD_MS, AmbientSleepy, SLEEPY_ENTER_LUX, SLEEPY_EXIT_LUX};
 pub use blink::Blink;
 pub use breath::Breath;
 pub use emotion_cycle::EmotionCycle;
