@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "axp2101"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -74,14 +74,14 @@ checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "bm8563"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "bmi270"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -960,7 +960,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "ft6336u"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "ir-nec"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "itoa"
@@ -1159,7 +1159,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "ltr553"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1472,14 +1472,14 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stackchan-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "embedded-graphics",
 ]
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aw9523",
  "axp2101",
@@ -1512,7 +1512,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "embedded-graphics",
  "stackchan-core",
