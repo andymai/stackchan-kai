@@ -1194,6 +1194,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pca9685"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1446,6 +1453,7 @@ dependencies = [
  "critical-section",
  "defmt 1.0.1",
  "embassy-executor",
+ "embassy-sync 0.7.2",
  "embassy-time",
  "embedded-graphics",
  "embedded-hal 1.0.0",
@@ -1457,6 +1465,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "mipidsi",
+ "pca9685",
  "stackchan-core",
  "static_cell",
 ]

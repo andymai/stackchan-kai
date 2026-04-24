@@ -31,6 +31,7 @@ extern crate alloc;
 
 mod clock;
 mod framebuffer;
+mod head;
 
 use axp2101::Axp2101;
 use clock::HalClock;
@@ -61,9 +62,10 @@ use mipidsi::{
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
 };
+use pca9685::Pca9685;
 use stackchan_core::{
-    Avatar, Clock, Modifier,
-    modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift},
+    Avatar, Clock, HeadDriver, Modifier,
+    modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift, IdleSway},
 };
 use static_cell::StaticCell;
 
@@ -122,6 +124,14 @@ const PMIC_RETRY_MS: u64 = 500;
 /// transition where every pixel changes).
 const FRAME_PERIOD_MS: u64 = 33;
 
+/// Head-update cadence. 20 ms = 50 Hz, matching the SG90 PWM frame rate.
+/// Running faster buys nothing (the servo sees one pulse per period); a
+/// dedicated tick keeps servo cadence decoupled from render-task timing.
+const HEAD_PERIOD_MS: u64 = 20;
+
+/// PWM frequency programmed on the PCA9685 for servo frames (Hz).
+const SERVO_PWM_FREQ_HZ: u32 = 50;
+
 /// Concrete type of the assembled LCD display. Spelled out once here so the
 /// render task (which the `#[embassy_executor::task]` macro requires to be
 /// non-generic) can name it cleanly. The `'static` lifetimes flow from
@@ -136,6 +146,11 @@ type LcdDisplay = mipidsi::Display<
     NoResetPin,
 >;
 
+/// Concrete type of the PCA9685-backed head driver, needed so
+/// `#[embassy_executor::task]` (which forbids generic tasks) can accept
+/// it as an argument.
+type HeadDriverImpl = head::PcaHead<I2c<'static, esp_hal::Async>>;
+
 /// 30 FPS render task. Double-buffered via a PSRAM-backed [`Framebuffer`]:
 /// each frame we run the modifier stack, draw the avatar into the off-screen
 /// buffer (no LCD traffic), then blit the whole buffer to the LCD in one
@@ -144,12 +159,13 @@ type LcdDisplay = mipidsi::Display<
 /// complete frame, so the white-clear flicker from direct-draw is gone.
 ///
 /// Modifier order is the canonical stackchan-core stack:
-/// `EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift`.
-/// Cycle writes `avatar.emotion`; Style eases it into the style fields;
-/// Blink and Breath read `blink_rate_scale` / `breath_depth_scale` from
-/// those fields; Drift composes last on eye centers. The `last_rendered`
-/// dirty-check short-circuits blits when no modifier actually changed
-/// anything (common between Breath's triangle-wave zero-offset ticks).
+/// `EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift` →
+/// `IdleSway`. The first five mutate pixel state; `IdleSway` writes
+/// `avatar.head_pose`, which this task then publishes to the 50 Hz head
+/// task via [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when
+/// no pixel-affecting modifier changed anything (common between Breath's
+/// triangle-wave zero-offset ticks) — pose updates alone never trigger a
+/// redundant LCD blit because `head_pose` is excluded from `frame_eq`.
 #[embassy_executor::task]
 async fn render_task(mut display: LcdDisplay) {
     let clock = HalClock;
@@ -168,6 +184,7 @@ async fn render_task(mut display: LcdDisplay) {
     // source (e.g. reading a voltage-derived seed from the AXP2101) can
     // swap in without touching the task shape.
     let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
+    let mut sway = IdleSway::new();
     let mut last_rendered: Option<Avatar> = None;
 
     // Pre-compute the blit rect once; it never changes.
@@ -186,10 +203,16 @@ async fn render_task(mut display: LcdDisplay) {
         blink.update(&mut avatar, now);
         breath.update(&mut avatar, now);
         drift.update(&mut avatar, now);
+        sway.update(&mut avatar, now);
+
+        // Publish the latest pose to the head task. `Signal::signal`
+        // overwrites any un-consumed value, so a slower head task never
+        // builds up a backlog — it just reads the most recent pose.
+        head::POSE_SIGNAL.signal(avatar.head_pose);
 
         // `frame_eq` intentionally skips `head_pose` — the LCD is mounted
         // rigidly to the head, so pan/tilt updates never change pixels.
-        // `IdleSway` will mutate `avatar.head_pose` every tick; using `==`
+        // `IdleSway` mutates `avatar.head_pose` every tick; using `==`
         // here would force a full-frame SPI blit on every sway step.
         if last_rendered
             .as_ref()
@@ -204,6 +227,34 @@ async fn render_task(mut display: LcdDisplay) {
             }
         }
 
+        ticker.next().await;
+    }
+}
+
+/// 50 Hz head-update task. Consumes [`head::POSE_SIGNAL`] and commands the
+/// PCA9685. Holds the last-seen pose between updates — servos hold their
+/// position fine, so a slow render task never leaves the head wobbling.
+///
+/// I²C write failures log at `warn` and continue: a flaky servo bus
+/// shouldn't blank the face or reboot the binary. A future improvement
+/// could rate-limit the warning to avoid log-flooding a fully-unplugged
+/// PCA9685.
+#[embassy_executor::task]
+async fn head_task(mut driver: HeadDriverImpl) {
+    let clock = HalClock;
+    let mut ticker = Ticker::every(Duration::from_millis(HEAD_PERIOD_MS));
+    let mut current = stackchan_core::Pose::NEUTRAL;
+    defmt::info!(
+        "head task: {=u64} ms tick, consumes POSE_SIGNAL for PCA9685 channels 0/1",
+        HEAD_PERIOD_MS
+    );
+    loop {
+        if let Some(next) = head::POSE_SIGNAL.try_take() {
+            current = next;
+        }
+        if let Err(e) = driver.set_pose(current, clock.now()).await {
+            defmt::warn!("head: PCA9685 write failed: {}", defmt::Debug2Format(&e));
+        }
         ticker.next().await;
     }
 }
@@ -276,9 +327,46 @@ async fn main(spawner: Spawner) -> ! {
         Ok(()) => defmt::info!("AW9523: CoreS3 defaults applied, LCD reset pulsed (P1_1)"),
         Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
     }
-    // I²C is no longer needed in this PR; drop it so the compiler catches
-    // any accidental later uses (touch/battery drivers come in future PRs).
+    // Internal I²C (I2C0) is done for this boot — drop it so the compiler
+    // catches any accidental later uses (touch / battery drivers come in
+    // future PRs).
     drop(i2c);
+
+    // CoreS3 external I²C Port A: SDA=GPIO2, SCL=GPIO1. Separate peripheral
+    // (I2C1) from the internal AXP2101/AW9523 bus so the two have no
+    // shared-bus ordering hazard. 400 kHz is the conservative fast-mode
+    // rate the PCA9685 spec sheet accepts; the chip supports up to 1 MHz.
+    let i2c1_cfg = I2cConfig::default().with_frequency(Rate::from_khz(400));
+    let i2c1 = match I2c::new(peripherals.I2C1, i2c1_cfg) {
+        Ok(bus) => bus
+            .with_sda(peripherals.GPIO2)
+            .with_scl(peripherals.GPIO1)
+            .into_async(),
+        Err(e) => defmt::panic!("I2C1 config rejected: {}", defmt::Debug2Format(&e)),
+    };
+    defmt::debug!("I2C1 (Port A) ready on GPIO2/1 @ 400 kHz");
+
+    let mut pca = Pca9685::new(i2c1, pca9685::DEFAULT_ADDRESS);
+    let pca_head: Option<HeadDriverImpl> = match pca.init(SERVO_PWM_FREQ_HZ, &mut delay).await {
+        Ok(()) => {
+            defmt::info!(
+                "PCA9685: init OK, PWM prescaled for {=u32} Hz servo frame",
+                SERVO_PWM_FREQ_HZ
+            );
+            Some(head::PcaHead::new(pca))
+        }
+        Err(e) => {
+            // Don't panic: the PCA9685 may not be physically attached yet
+            // (new unit, bring-up). Log loudly and skip spawning the head
+            // task so the face still renders. Reconnect + reboot to get
+            // servos back.
+            defmt::error!(
+                "PCA9685 init failed — skipping head task, face-only mode: {}",
+                defmt::Debug2Format(&e)
+            );
+            None
+        }
+    };
 
     // CoreS3 LCD (ILI9342C) on SPI2.
     //   SCK  = GPIO36
@@ -330,6 +418,11 @@ async fn main(spawner: Spawner) -> ! {
 
     if let Err(e) = spawner.spawn(render_task(display)) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Some(driver) = pca_head
+        && let Err(e) = spawner.spawn(head_task(driver))
+    {
+        defmt::panic!("spawn head_task failed: {}", defmt::Debug2Format(&e));
     }
 
     defmt::info!("boot complete — idle heartbeat");
