@@ -336,6 +336,12 @@ impl<U: Read + Write> Scservo<U> {
             checksum,
         ];
         self.uart.write_all(&outbound).await?;
+        // Flush before switching to RX: `write_all` only guarantees the
+        // bytes were accepted by the TX FIFO, not that they've left the
+        // wire. On a half-duplex converter we must drain TX before
+        // sampling RX so the first byte we read isn't the tail of our
+        // own packet.
+        self.uart.flush().await?;
 
         // Expected response layout: FF FF ID 02 Error ~checksum (6 bytes).
         let mut response = [0u8; 6];
@@ -423,6 +429,8 @@ impl<U: Read + Write> Scservo<U> {
             !sum,
         ];
         self.uart.write_all(&outbound).await?;
+        // Drain TX before reading — see `ping` for the half-duplex rationale.
+        self.uart.flush().await?;
 
         // Response: 2 header + 1 id + 1 len-field + 1 error + N data + 1 checksum.
         let response_total = 6 + buf.len();
