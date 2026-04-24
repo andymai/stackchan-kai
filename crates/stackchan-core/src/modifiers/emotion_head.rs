@@ -99,7 +99,7 @@ pub struct EmotionHead {
 }
 
 impl EmotionHead {
-    /// Default transition duration, matching [`EmotionStyle::TRANSITION_MS`].
+    /// Default transition duration, matching [`super::EmotionStyle::TRANSITION_MS`].
     pub const TRANSITION_MS: u64 = 300;
 
     /// Construct with the default 300 ms linear transition.
