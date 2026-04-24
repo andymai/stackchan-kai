@@ -134,6 +134,13 @@ const HEAD_PERIOD_MS: u64 = 20;
 /// `SCServo` UART baud rate. Feetech `SCSCL` family default is 1 Mbaud.
 const SERVO_UART_BAUD: u32 = 1_000_000;
 
+/// 7-bit I²C address of the CoreS3 PY32 IO expander.
+const PY32_ADDRESS: u8 = 0x6F;
+
+/// Milliseconds to wait after raising the servo-power pin on the PY32.
+/// Matches the 200 ms delay in `hal_io_expander.cpp`.
+const SERVO_POWER_SETTLE_MS: u64 = 200;
+
 /// Concrete type of the assembled LCD display. Spelled out once here so the
 /// render task (which the `#[embassy_executor::task]` macro requires to be
 /// non-generic) can name it cleanly. The `'static` lifetimes flow from
@@ -269,6 +276,42 @@ async fn head_task(mut driver: HeadDriverImpl) {
     }
 }
 
+/// Drive pin 0 of the PY32 IO expander HIGH to enable the servo power
+/// rail. Three register writes with values that match the PY32's
+/// reset-state of all zeros (no read-modify-write yet — future RGB-LED
+/// work will need that). Logs at `warn` on any I²C failure and keeps
+/// going; the firmware stays healthy even if the expander is missing.
+async fn enable_servo_power(i2c: &mut I2c<'_, esp_hal::Async>) {
+    use embedded_hal_async::i2c::I2c as AsyncI2c;
+    /// Write `[reg, value]` to the PY32; log + return Err on transport failure.
+    async fn write_py32(i2c: &mut I2c<'_, esp_hal::Async>, reg: u8, value: u8) -> Result<(), ()> {
+        // Fully-qualified `AsyncI2c::write` — `esp_hal::i2c::master::I2c`
+        // has an inherent `write` that's blocking; we want the trait
+        // version for its `async fn`.
+        match AsyncI2c::write(i2c, PY32_ADDRESS, &[reg, value]).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                defmt::warn!(
+                    "PY32 0x{=u8:02X} ← 0x{=u8:02X} failed: {}",
+                    reg,
+                    value,
+                    defmt::Debug2Format(&e)
+                );
+                Err(())
+            }
+        }
+    }
+    // Pin 0: direction = output, pull-up = enabled, level = HIGH.
+    if write_py32(i2c, 0x03, 0x01).await.is_err()
+        || write_py32(i2c, 0x09, 0x01).await.is_err()
+        || write_py32(i2c, 0x05, 0x01).await.is_err()
+    {
+        defmt::warn!("PY32: servo-power enable incomplete — servos may stay unpowered");
+        return;
+    }
+    defmt::info!("PY32: servo power enabled (pin 0 HIGH)");
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -337,6 +380,23 @@ async fn main(spawner: Spawner) -> ! {
         Ok(()) => defmt::info!("AW9523: CoreS3 defaults applied, LCD reset pulsed (P1_1)"),
         Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
     }
+
+    // Enable servo power via the PY32 IO expander (I²C addr 0x6F). Without
+    // this the SCServo rail is unpowered — the UART writes will go out
+    // cleanly but nothing moves. The PY32 resets all bits to 0, so writing
+    // `0x01` (pin 0 only) is safe — if we later drive RGB LEDs on pin 13
+    // we'll need read-modify-write via a dedicated driver.
+    //
+    // Register map (from `PY32IOExpander_Class.cpp` in the old C++ firmware):
+    //   0x03  GPIO direction-low  (1 = output)
+    //   0x05  GPIO output-low     (the actual pin level)
+    //   0x09  GPIO pull-up-low    (pull-up enable)
+    //
+    // Sequence matches `hal_io_expander.cpp`: direction → pull-up →
+    // level HIGH → 200 ms for the rail to stabilise.
+    enable_servo_power(&mut i2c).await;
+    Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
+
     // Internal I²C (I2C0) is done for this boot — drop it so the compiler
     // catches any accidental later uses (touch / battery drivers come in
     // future PRs).
