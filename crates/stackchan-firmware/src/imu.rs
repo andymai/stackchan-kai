@@ -35,6 +35,14 @@ pub static IMU_SIGNAL: Signal<CriticalSectionRawMutex, Measurement> = Signal::ne
 /// than the chip's internal sampling just returns duplicate values.
 const POLL_PERIOD_MS: u64 = 10;
 
+/// Max number of init attempts before giving up and parking the task.
+/// See `run_imu_loop` for the rationale on why init can fail mid-blob.
+const INIT_MAX_ATTEMPTS: u32 = 3;
+
+/// Cooldown between init attempts so the BMI270 finishes any partial
+/// internal state-machine transition before the next soft-reset.
+const INIT_RETRY_COOLDOWN_MS: u64 = 200;
+
 /// Run the BMI270 init sequence, then loop forever polling samples
 /// and publishing them via [`IMU_SIGNAL`].
 ///
@@ -58,8 +66,6 @@ pub async fn run_imu_loop<I: AsyncI2c>(bus: I) -> ! {
     // the BMI270-recommended recovery — there's no partial-resume
     // path in Bosch's reference. Each attempt starts with a fresh
     // soft-reset, so prior partial state is safely discarded.
-    const INIT_MAX_ATTEMPTS: u32 = 3;
-    const INIT_RETRY_COOLDOWN_MS: u64 = 200;
     let mut init_err = None;
     for attempt in 1..=INIT_MAX_ATTEMPTS {
         match imu.init(&mut delay).await {

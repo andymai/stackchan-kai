@@ -146,7 +146,10 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     log_health(&mut driver, head::PITCH_SERVO_ID).await;
 
     // --- Up-sweep: 0° → +MAX_PROBE_DEG, stop early if encoder plateaus -----
-    defmt::info!("tilt-extremes: starting UP sweep (0° → +{=f32}°)", MAX_PROBE_DEG);
+    defmt::info!(
+        "tilt-extremes: starting UP sweep (0° → +{=f32}°)",
+        MAX_PROBE_DEG
+    );
     let upper = sweep(&mut driver, "up", STEP_DEG).await;
 
     // Return to centre before reversing direction so we don't whip
@@ -180,17 +183,12 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
 /// plateaus or we reach `MAX_PROBE_DEG`. Returns the last *actual*
 /// angle observed before the plateau (or at the last step, if no
 /// plateau was hit).
-async fn sweep(
-    driver: &mut board::HeadDriverImpl,
-    label: &'static str,
-    step_deg: f32,
-) -> f32 {
+async fn sweep(driver: &mut board::HeadDriverImpl, label: &'static str, step_deg: f32) -> f32 {
     let mut prev_actual_deg: f32 = 0.0;
     let mut last_actual_deg: f32 = 0.0;
     let mut cmd_deg: f32 = 0.0;
     debug_assert!(
-        f32::from(u16::try_from(MAX_STEPS).unwrap_or(u16::MAX))
-            * STEP_DEG
+        f32::from(u16::try_from(MAX_STEPS).unwrap_or(u16::MAX)) * STEP_DEG
             >= MAX_PROBE_DEG - f32::EPSILON,
         "MAX_STEPS out of sync with MAX_PROBE_DEG / STEP_DEG"
     );
@@ -334,11 +332,8 @@ fn decode_fault_byte(b: u8) -> &'static str {
 async fn log_health(driver: &mut board::HeadDriverImpl, id: u8) {
     let bus = driver.bus_mut();
 
-    match embassy_time::with_timeout(
-        Duration::from_millis(READ_TIMEOUT_MS),
-        bus.read_voltage(id),
-    )
-    .await
+    match embassy_time::with_timeout(Duration::from_millis(READ_TIMEOUT_MS), bus.read_voltage(id))
+        .await
     {
         Ok(Ok(v)) => defmt::info!(
             "tilt-extremes HEALTH: SCServo[{=u8}] voltage = {=u8} (= {=f32} V; servos brown-out below ~5.5 V)",

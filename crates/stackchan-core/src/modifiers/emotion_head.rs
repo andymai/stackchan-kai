@@ -175,8 +175,11 @@ impl Modifier for EmotionHead {
             avatar.head_pose.pan_deg - self.last_applied.pan_deg,
             avatar.head_pose.tilt_deg - self.last_applied.tilt_deg,
         );
-        let combined =
-            Pose::new(upstream.pan_deg + bias.pan_deg, upstream.tilt_deg + bias.tilt_deg).clamped();
+        let combined = Pose::new(
+            upstream.pan_deg + bias.pan_deg,
+            upstream.tilt_deg + bias.tilt_deg,
+        )
+        .clamped();
         self.last_applied = HeadBias {
             pan_deg: combined.pan_deg - upstream.pan_deg,
             tilt_deg: combined.tilt_deg - upstream.tilt_deg,
