@@ -24,10 +24,11 @@
 
 extern crate alloc;
 
-use stackchan_firmware::{board, clock, framebuffer, head, touch};
+use stackchan_firmware::{board, clock, framebuffer, head, imu, touch};
 
 use board::{HeadDriverImpl, SharedI2c};
 use clock::HalClock;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_graphics::{
@@ -58,6 +59,7 @@ use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
     modifiers::{
         Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch, IdleDrift, IdleSway,
+        PickupReaction,
     },
 };
 use static_cell::StaticCell;
@@ -155,6 +157,7 @@ async fn render_task(mut display: LcdDisplay) {
     );
     let mut avatar = Avatar::default();
     let mut emotion_touch = EmotionTouch::new();
+    let mut pickup = PickupReaction::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
@@ -173,7 +176,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
+        "render task: {=u64} ms tick, EmotionTouch + PickupReaction + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
         FRAME_PERIOD_MS
     );
 
@@ -187,7 +190,16 @@ async fn render_task(mut display: LcdDisplay) {
         if touch::TAP_SIGNAL.try_take().is_some() {
             emotion_touch.tap();
         }
+        // Drain the latest IMU reading. Published at ~100 Hz by the
+        // imu task; at a 33 ms render tick we'll usually have a fresh
+        // sample available, but if we don't, last-known values stay
+        // on `avatar` so `PickupReaction` keeps a coherent view.
+        if let Some(m) = imu::IMU_SIGNAL.try_take() {
+            avatar.accel_g = m.accel_g;
+            avatar.gyro_dps = m.gyro_dps;
+        }
         emotion_touch.update(&mut avatar, now);
+        pickup.update(&mut avatar, now);
         cycle.update(&mut avatar, now);
         style.update(&mut avatar, now);
         blink.update(&mut avatar, now);
@@ -309,6 +321,15 @@ async fn touch_task(shared_i2c: SharedI2c) -> ! {
     touch::run_touch_loop(touch).await
 }
 
+/// BMI270 IMU polling task. Wraps a second shared-bus handle onto the
+/// same internal I²C0 (the `embassy-embedded-hal` `I2cDevice` mutex
+/// serializes accesses automatically), runs the init sequence, and
+/// publishes samples on [`imu::IMU_SIGNAL`].
+#[embassy_executor::task]
+async fn imu_task(shared_i2c: SharedI2c) -> ! {
+    imu::run_imu_loop(shared_i2c).await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -397,6 +418,12 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(touch_task(board_io.i2c)) {
         defmt::panic!("spawn touch_task failed: {}", defmt::Debug2Format(&e));
+    }
+    // Second shared-bus handle onto the same I²C0 for the IMU task.
+    // The `I2cDevice` wrapper serialises concurrent access so the
+    // touch task and IMU task can each own a handle.
+    if let Err(e) = spawner.spawn(imu_task(I2cDevice::new(board_io.i2c_bus))) {
+        defmt::panic!("spawn imu_task failed: {}", defmt::Debug2Format(&e));
     }
 
     defmt::info!("boot complete — idle heartbeat");

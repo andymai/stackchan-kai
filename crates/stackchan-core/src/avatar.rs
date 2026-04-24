@@ -28,6 +28,15 @@
 //! `t`, autonomous drivers like `EmotionCycle` stand down so the user's
 //! explicit input (e.g. a touch-triggered emotion via `EmotionTouch`)
 //! sticks. `EmotionTouch::update` clears the field when it expires.
+//!
+//! ## IMU fields
+//!
+//! `accel_g` and `gyro_dps` are written by the firmware's IMU task
+//! (from raw BMI270 reads) and consumed by motion-reactive modifiers
+//! (e.g. `PickupReaction`). They are sensor inputs, not visual state,
+//! so they are excluded from [`Avatar::frame_eq`] just like
+//! [`Avatar::head_pose`]. Defaults match the resting state of a
+//! face-up CoreS3: gravity (`+1 g`) on the Z axis, zero angular rate.
 
 use crate::clock::Instant;
 use crate::emotion::Emotion;
@@ -185,6 +194,17 @@ pub struct Avatar {
     /// expires. Excluded from [`Avatar::frame_eq`] — this field only
     /// gates modifier behaviour, not pixels.
     pub manual_until: Option<Instant>,
+    /// Accelerometer reading in gravitational units `(x, y, z)`.
+    /// Written by the firmware IMU task from raw BMI270 reads at ~100 Hz.
+    /// Resting face-up on a flat surface reads `(0, 0, 1)`. Motion-
+    /// reactive modifiers (e.g. [`super::modifiers::PickupReaction`])
+    /// read this to detect lifts / drops / tilts. Excluded from
+    /// [`Avatar::frame_eq`] — IMU updates never affect pixels.
+    pub accel_g: (f32, f32, f32),
+    /// Gyroscope reading in degrees per second `(x, y, z)`. Written by
+    /// the firmware IMU task; consumed by future rotation-reactive
+    /// modifiers. Zero at rest. Excluded from [`Avatar::frame_eq`].
+    pub gyro_dps: (f32, f32, f32),
 }
 
 impl Avatar {
@@ -253,6 +273,9 @@ impl Default for Avatar {
             head_pose: Pose::NEUTRAL,
             head_pose_actual: Pose::NEUTRAL,
             manual_until: None,
+            // Resting face-up: gravity is +1 g along Z, no rotation.
+            accel_g: (0.0, 0.0, 1.0),
+            gyro_dps: (0.0, 0.0, 0.0),
         }
     }
 }
@@ -321,6 +344,29 @@ mod tests {
             "manual_until is non-visual; frame_eq must skip it"
         );
         assert_ne!(a, b, "PartialEq still sees the difference");
+    }
+
+    #[test]
+    fn default_imu_is_resting_face_up() {
+        let a = Avatar::default();
+        assert_eq!(
+            a.accel_g,
+            (0.0, 0.0, 1.0),
+            "default accel must be 1 g on Z so sim tests start at rest",
+        );
+        assert_eq!(a.gyro_dps, (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn frame_eq_ignores_imu_fields() {
+        let a = Avatar::default();
+        let mut b = a;
+        b.accel_g = (2.5, -1.0, 0.1);
+        b.gyro_dps = (90.0, 0.0, 0.0);
+        assert!(
+            a.frame_eq(&b),
+            "IMU readings are non-visual; frame_eq must skip them",
+        );
     }
 
     #[test]
