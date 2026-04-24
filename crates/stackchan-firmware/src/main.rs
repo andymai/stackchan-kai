@@ -24,9 +24,9 @@
 
 extern crate alloc;
 
-use stackchan_firmware::{board, clock, framebuffer, head};
+use stackchan_firmware::{board, clock, framebuffer, head, touch};
 
-use board::HeadDriverImpl;
+use board::{HeadDriverImpl, SharedI2c};
 use clock::HalClock;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Ticker, Timer};
@@ -56,7 +56,9 @@ use mipidsi::{
 };
 use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
-    modifiers::{Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, IdleDrift, IdleSway},
+    modifiers::{
+        Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch, IdleDrift, IdleSway,
+    },
 };
 use static_cell::StaticCell;
 
@@ -131,8 +133,10 @@ type LcdDisplay = mipidsi::Display<
 /// complete frame, so the white-clear flicker from direct-draw is gone.
 ///
 /// Modifier order is the canonical stackchan-core stack:
-/// `EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift` →
-/// `IdleSway` → `EmotionHead`. The first five mutate pixel state;
+/// `EmotionTouch` → `EmotionCycle` → `EmotionStyle` → `Blink` →
+/// `Breath` → `IdleDrift` → `IdleSway` → `EmotionHead`. `EmotionTouch`
+/// runs first so a tap queued from the touch task becomes the active
+/// emotion before `EmotionCycle` checks the `manual_until` gate.
 /// `IdleSway` writes the base `avatar.head_pose` (slow wander);
 /// `EmotionHead` adds an emotion-keyed bias on top (layered compose).
 /// The final pose is published to the 50 Hz head task via
@@ -150,6 +154,7 @@ async fn render_task(mut display: LcdDisplay) {
         FB_HEIGHT
     );
     let mut avatar = Avatar::default();
+    let mut emotion_touch = EmotionTouch::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
@@ -168,12 +173,21 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
+        "render task: {=u64} ms tick, EmotionTouch + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
         FRAME_PERIOD_MS
     );
 
     loop {
         let now = clock.now();
+
+        // Drain any tap edges the touch task published since last
+        // frame. `try_take` is non-blocking; a missing signal is the
+        // common case and means `EmotionTouch::update` only does the
+        // expired-hold cleanup work this tick.
+        if touch::TAP_SIGNAL.try_take().is_some() {
+            emotion_touch.tap();
+        }
+        emotion_touch.update(&mut avatar, now);
         cycle.update(&mut avatar, now);
         style.update(&mut avatar, now);
         blink.update(&mut avatar, now);
@@ -284,6 +298,17 @@ async fn head_task(mut driver: HeadDriverImpl) {
     }
 }
 
+/// FT6336U polling task. Wraps the shared I²C bus in a [`Ft6336u`]
+/// driver and delegates to [`touch::run_touch_loop`], which reads the
+/// vendor ID once at startup and then publishes rising-edge taps on
+/// [`touch::TAP_SIGNAL`]. The render task drains the signal and feeds
+/// it into the [`EmotionTouch`] modifier.
+#[embassy_executor::task]
+async fn touch_task(shared_i2c: SharedI2c) -> ! {
+    let touch = ft6336u::Ft6336u::new(shared_i2c);
+    touch::run_touch_loop(touch).await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -305,7 +330,7 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let mut delay = Delay;
-    let scs_head = board::bringup(
+    let board_io = board::bringup(
         peripherals.I2C0,
         peripherals.UART1,
         peripherals.GPIO12,
@@ -367,8 +392,11 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(e) = spawner.spawn(render_task(display)) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
-    if let Err(e) = spawner.spawn(head_task(scs_head)) {
+    if let Err(e) = spawner.spawn(head_task(board_io.head)) {
         defmt::panic!("spawn head_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(touch_task(board_io.i2c)) {
+        defmt::panic!("spawn touch_task failed: {}", defmt::Debug2Format(&e));
     }
 
     defmt::info!("boot complete — idle heartbeat");

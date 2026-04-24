@@ -291,6 +291,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "554e3e840696f54b4c9afcf28a0f24da431c927f4151040020416e7393d6d0d8"
 dependencies = [
+ "defmt 1.0.1",
  "embassy-futures",
  "embassy-hal-internal",
  "embassy-sync 0.7.2",
@@ -944,6 +945,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "ft6336u"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "fugit"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1452,6 +1460,7 @@ dependencies = [
  "axp2101",
  "critical-section",
  "defmt 1.0.1",
+ "embassy-embedded-hal",
  "embassy-executor",
  "embassy-sync 0.7.2",
  "embassy-time",
@@ -1465,6 +1474,7 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "esp-rtos",
+ "ft6336u",
  "mipidsi",
  "scservo",
  "stackchan-core",

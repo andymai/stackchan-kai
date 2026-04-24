@@ -6,18 +6,23 @@
 //!
 //! The canonical stack, outermost-first, is:
 //!
-//! 1. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`.
-//! 2. [`EmotionStyle`] — translates emotion into style fields, with a
+//! 1. [`EmotionTouch`] — consumes queued taps, advances
+//!    `Avatar::emotion`, and writes `Avatar::manual_until`. Runs first
+//!    so the same tick that produced the tap also clears any expired
+//!    override before `EmotionCycle` checks it.
+//! 2. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
+//!    when `manual_until` is unset or expired.
+//! 3. [`EmotionStyle`] — translates emotion into style fields, with a
 //!    linear ease over the transition window.
-//! 3. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//! 4. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
 //!    `blink_rate_scale` from the avatar.
-//! 4. [`Breath`] — vertical drift on all features, scaled by
+//! 5. [`Breath`] — vertical drift on all features, scaled by
 //!    `breath_depth_scale`.
-//! 5. [`IdleDrift`] — occasional eye-center jitter.
-//! 6. [`IdleSway`] — slow pan/tilt head wander written to
+//! 6. [`IdleDrift`] — occasional eye-center jitter.
+//! 7. [`IdleSway`] — slow pan/tilt head wander written to
 //!    `Avatar::head_pose`. Non-visual; drives the firmware's head-update
 //!    task, not the pixel pipeline.
-//! 7. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//! 8. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
 //!    sway. Runs **after** `IdleSway` so bias composes additively rather
 //!    than fighting for absolute control of the pose.
 //!
@@ -28,6 +33,7 @@ mod breath;
 mod emotion_cycle;
 mod emotion_head;
 mod emotion_style;
+mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
 
@@ -36,6 +42,7 @@ pub use breath::Breath;
 pub use emotion_cycle::EmotionCycle;
 pub use emotion_head::EmotionHead;
 pub use emotion_style::EmotionStyle;
+pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
 

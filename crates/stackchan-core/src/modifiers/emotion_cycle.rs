@@ -87,6 +87,17 @@ impl Modifier for EmotionCycle {
             return;
         }
 
+        // Manual-override active: user input (e.g. `EmotionTouch`) has
+        // pinned the emotion until a deadline. Re-anchor `started_at` so
+        // the cycle resumes cleanly when the hold expires instead of
+        // snap-advancing by however many dwell windows passed.
+        if let Some(until) = avatar.manual_until
+            && now < until
+        {
+            self.started_at = Some(now);
+            return;
+        }
+
         let Some(start) = self.started_at else {
             // First tick: anchor to now and apply index 0 immediately.
             self.started_at = Some(now);
@@ -184,6 +195,61 @@ mod tests {
         // Jump forward 2.5 s -- should land on index 2 (Sad), not index 1.
         cycle.update(&mut avatar, Instant::from_millis(2_500));
         assert_eq!(avatar.emotion, Emotion::Sad);
+    }
+
+    #[test]
+    fn manual_until_suppresses_advancement() {
+        let mut avatar = Avatar::default();
+        let mut cycle =
+            EmotionCycle::with_params(&[Emotion::Neutral, Emotion::Happy, Emotion::Sad], 1_000);
+
+        // Establish the baseline.
+        cycle.update(&mut avatar, Instant::from_millis(0));
+        assert_eq!(avatar.emotion, Emotion::Neutral);
+
+        // User taps at t=500: the touch modifier would set Happy + hold
+        // until t=30_500. Simulate that here.
+        avatar.emotion = Emotion::Happy;
+        avatar.manual_until = Some(Instant::from_millis(30_500));
+
+        // 29 s later (still inside the hold): EmotionCycle must NOT
+        // advance, and must not overwrite the manually-set emotion.
+        cycle.update(&mut avatar, Instant::from_millis(29_500));
+        assert_eq!(avatar.emotion, Emotion::Happy);
+    }
+
+    #[test]
+    fn cycle_resumes_cleanly_after_manual_hold() {
+        let mut avatar = Avatar::default();
+        let mut cycle =
+            EmotionCycle::with_params(&[Emotion::Neutral, Emotion::Happy, Emotion::Sad], 1_000);
+
+        cycle.update(&mut avatar, Instant::from_millis(0));
+
+        // Manual hold from t=500 to t=30_500.
+        avatar.emotion = Emotion::Happy;
+        avatar.manual_until = Some(Instant::from_millis(30_500));
+        cycle.update(&mut avatar, Instant::from_millis(15_000));
+        cycle.update(&mut avatar, Instant::from_millis(29_000));
+
+        // Hold expires; someone (EmotionTouch in real code) clears it.
+        avatar.manual_until = None;
+
+        // One dwell window after the hold ends the cycle advances by
+        // exactly one step — not by the 30 windows that passed while
+        // paused.
+        cycle.update(&mut avatar, Instant::from_millis(29_000 + 1_000));
+        assert_eq!(
+            avatar.emotion,
+            Emotion::Happy,
+            "first post-hold tick carries the user's emotion forward"
+        );
+        cycle.update(&mut avatar, Instant::from_millis(29_000 + 2_000));
+        assert_eq!(
+            avatar.emotion,
+            Emotion::Sad,
+            "second post-hold dwell advances by exactly one step"
+        );
     }
 
     #[test]

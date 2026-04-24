@@ -21,7 +21,15 @@
 //! on hardware, the LCD moves with the head, so the face stays centered
 //! on screen. Use [`Avatar::frame_eq`] (not `==`) for render-loop dirty
 //! checks so pose updates don't force redundant LCD blits.
+//!
+//! ## Input / autonomy fields
+//!
+//! `manual_until` is a deadline: while `Some(t)` and the clock is below
+//! `t`, autonomous drivers like `EmotionCycle` stand down so the user's
+//! explicit input (e.g. a touch-triggered emotion via `EmotionTouch`)
+//! sticks. `EmotionTouch::update` clears the field when it expires.
 
+use crate::clock::Instant;
 use crate::emotion::Emotion;
 use crate::head::Pose;
 
@@ -168,6 +176,15 @@ pub struct Avatar {
     /// this to point the eyes toward the direction the head is
     /// *actually* facing, decoupled from the command pipeline.
     pub head_pose_actual: Pose,
+    /// Deadline until which autonomous emotion drivers should defer to
+    /// explicit user input. `None` = autonomy active (default). `Some(t)`
+    /// = a user interaction has pinned the current emotion until `t`;
+    /// [`super::modifiers::EmotionCycle`] skips advancement while the
+    /// deadline is in the future, and
+    /// [`super::modifiers::EmotionTouch`] clears the field once it
+    /// expires. Excluded from [`Avatar::frame_eq`] — this field only
+    /// gates modifier behaviour, not pixels.
+    pub manual_until: Option<Instant>,
 }
 
 impl Avatar {
@@ -235,6 +252,7 @@ impl Default for Avatar {
             breath_depth_scale: SCALE_DEFAULT,
             head_pose: Pose::NEUTRAL,
             head_pose_actual: Pose::NEUTRAL,
+            manual_until: None,
         }
     }
 }
@@ -282,6 +300,27 @@ mod tests {
 
         eye.weight = 0;
         assert_eq!(eye.height(), 0);
+    }
+
+    #[test]
+    fn default_has_no_manual_override() {
+        let a = Avatar::default();
+        assert!(
+            a.manual_until.is_none(),
+            "boot defaults must leave autonomy active"
+        );
+    }
+
+    #[test]
+    fn frame_eq_ignores_manual_until() {
+        let a = Avatar::default();
+        let mut b = a;
+        b.manual_until = Some(Instant::from_millis(1_000));
+        assert!(
+            a.frame_eq(&b),
+            "manual_until is non-visual; frame_eq must skip it"
+        );
+        assert_ne!(a, b, "PartialEq still sees the difference");
     }
 
     #[test]
