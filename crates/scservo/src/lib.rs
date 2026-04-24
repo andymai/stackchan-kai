@@ -3,9 +3,18 @@
 //! `no_std` driver for the Feetech `SCServo` (`SCSCL` / `SCS0009`) family of
 //! smart serial servos. The servos share a half-duplex TTL bus at 1 Mbaud
 //! (default), each addressed by a 1-byte ID. This crate speaks the
-//! Feetech packet protocol over any [`embedded_io_async::Write`] — for
-//! v1, writes only (position and torque commands); reads and feedback
-//! may arrive in a later release.
+//! Feetech packet protocol over any [`embedded_io_async::Write`] (for
+//! position / torque commands) and optionally [`embedded_io_async::Read`]
+//! (for [`Scservo::ping`], the boot-time health check).
+//!
+//! ## Timeouts
+//!
+//! Neither write nor [`Scservo::ping`] implement timeouts themselves —
+//! UART reads block until the full response arrives, so a disconnected
+//! or unpowered servo hangs forever. Callers are expected to wrap
+//! `ping(id)` with their runtime's timeout primitive (e.g.
+//! `embassy_time::with_timeout(Duration::from_millis(10), bus.ping(1))`).
+//! 10 ms is generous — a round-trip at 1 Mbaud is <200 µs.
 //!
 //! ## Packet format
 //!
@@ -44,7 +53,7 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
-use embedded_io_async::Write;
+use embedded_io_async::{Read, ReadExactError, Write};
 
 /// Broadcast ID — all servos on the bus act on the packet, no response.
 pub const BROADCAST_ID: u8 = 0xFE;
@@ -104,9 +113,29 @@ pub enum Error<E> {
     /// Transport error from the underlying UART.
     Uart(E),
     /// Caller passed more than [`MAX_DATA_BYTES`] bytes of data. The
-    /// v1 surface (`WritePos`, `WriteTorque`) never reaches this; the arm
-    /// exists so arbitrary-length writers added later stay bounded.
+    /// v1 write surface (`WritePos`, `WriteTorque`) never reaches
+    /// this; the arm exists so arbitrary-length writers added later
+    /// stay bounded.
     PayloadTooLarge,
+    /// `read_exact` returned `UnexpectedEof` — the UART closed before
+    /// a full response arrived. On open-ended serial links this rarely
+    /// fires in practice; a hung slave produces a timeout (caller's
+    /// responsibility) rather than EOF.
+    NoResponse,
+    /// Response packet didn't parse: wrong header bytes or the
+    /// responding ID doesn't match what we asked.
+    MalformedResponse,
+    /// Response packet arrived but its checksum didn't verify.
+    ChecksumMismatch,
+}
+
+impl<E> From<ReadExactError<E>> for Error<E> {
+    fn from(e: ReadExactError<E>) -> Self {
+        match e {
+            ReadExactError::UnexpectedEof => Self::NoResponse,
+            ReadExactError::Other(e) => Self::Uart(e),
+        }
+    }
 }
 
 impl<E> From<E> for Error<E> {
@@ -229,6 +258,83 @@ impl<W: Write> Scservo<W> {
     }
 }
 
+impl<U: Read + Write> Scservo<U> {
+    /// Probe servo `id` with a [`Instruction::Ping`] and wait for the
+    /// 6-byte status response. Returns `Ok(())` iff a well-formed
+    /// response with matching ID and valid checksum arrives.
+    ///
+    /// Does **not** enforce a timeout internally — a hung or absent
+    /// slave leaves this future pending forever. Callers wrap with
+    /// their runtime's timeout primitive, e.g.
+    ///
+    /// ```no_run
+    /// # use embedded_io_async::{Read, Write};
+    /// # async fn demo<U: Read + Write>(uart: U) {
+    /// # let mut bus = scservo::Scservo::new(uart);
+    /// # let timeout_fut = core::future::pending::<()>();
+    /// // Pseudocode — use embassy_time::with_timeout or equivalent.
+    /// let _ = bus.ping(1).await;
+    /// # }
+    /// ```
+    ///
+    /// Echo-on-bus note: if the physical half-duplex converter echoes
+    /// outgoing TX back into RX, this read may see the 6-byte outgoing
+    /// PING packet before the 6-byte response. On CoreS3 with the
+    /// standard Stack-chan base this has not been observed; if it
+    /// becomes a problem, switch to `Instruction::Read` (different
+    /// packet size, distinguishable from its own echo).
+    ///
+    /// # Errors
+    /// - [`Error::Uart`] on transport failure.
+    /// - [`Error::NoResponse`] if the UART closes before a full
+    ///   response arrives.
+    /// - [`Error::MalformedResponse`] if the header or responding ID
+    ///   don't match expectations.
+    /// - [`Error::ChecksumMismatch`] if the response checksum is
+    ///   invalid.
+    pub async fn ping(&mut self, id: u8) -> Result<(), Error<U::Error>> {
+        // PING outbound: FF FF ID 02 01 ~(ID+2+1).
+        let checksum = !id.wrapping_add(0x02).wrapping_add(Instruction::Ping as u8);
+        let outbound = [
+            HEADER_BYTE,
+            HEADER_BYTE,
+            id,
+            0x02,
+            Instruction::Ping as u8,
+            checksum,
+        ];
+        self.uart.write_all(&outbound).await?;
+
+        // Expected response layout: FF FF ID 02 Error ~checksum (6 bytes).
+        let mut response = [0u8; 6];
+        self.uart.read_exact(&mut response).await?;
+
+        if response[0] != HEADER_BYTE || response[1] != HEADER_BYTE {
+            return Err(Error::MalformedResponse);
+        }
+        if response[2] != id {
+            return Err(Error::MalformedResponse);
+        }
+        // msgLen for a PING response is 2 (error + checksum).
+        if response[3] != 0x02 {
+            return Err(Error::MalformedResponse);
+        }
+        // Checksum covers ID..=error byte.
+        let sum = response[2]
+            .wrapping_add(response[3])
+            .wrapping_add(response[4]);
+        if response[5] != !sum {
+            return Err(Error::ChecksumMismatch);
+        }
+        // response[4] is the servo's error byte — non-zero signals
+        // voltage / overload / angle-limit faults, but the servo is
+        // still "present". PING cares about presence, not fault-free;
+        // return Ok. Callers that need the error byte can use a
+        // dedicated status read later.
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -240,16 +346,27 @@ mod tests {
     use core::cell::RefCell;
 
     /// Host-side UART mock that records every write into a Vec for
-    /// byte-level packet assertions.
+    /// byte-level packet assertions, and returns pre-loaded bytes on
+    /// reads (for ping-response testing).
     struct MockUart {
-        buf: RefCell<Vec<u8>>,
+        /// Bytes the driver has written to us.
+        written: RefCell<Vec<u8>>,
+        /// Bytes we'll hand back, in order, to driver reads. Tests
+        /// pre-load this with the response packet they expect the
+        /// driver to consume.
+        rx_queue: RefCell<Vec<u8>>,
     }
 
     impl MockUart {
         fn new() -> Self {
             Self {
-                buf: RefCell::new(Vec::new()),
+                written: RefCell::new(Vec::new()),
+                rx_queue: RefCell::new(Vec::new()),
             }
+        }
+
+        fn queue_rx(&self, bytes: &[u8]) {
+            self.rx_queue.borrow_mut().extend_from_slice(bytes);
         }
     }
 
@@ -259,12 +376,24 @@ mod tests {
 
     impl embedded_io_async::Write for MockUart {
         async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-            self.buf.borrow_mut().extend_from_slice(buf);
+            self.written.borrow_mut().extend_from_slice(buf);
             Ok(buf.len())
         }
 
         async fn flush(&mut self) -> Result<(), Self::Error> {
             Ok(())
+        }
+    }
+
+    impl embedded_io_async::Read for MockUart {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+            // Pop up to buf.len() bytes from the head of rx_queue.
+            let mut q = self.rx_queue.borrow_mut();
+            let take = buf.len().min(q.len());
+            for (dst, src) in buf.iter_mut().zip(q.drain(..take)) {
+                *dst = src;
+            }
+            Ok(take)
         }
     }
 
@@ -294,14 +423,14 @@ mod tests {
         let expected: &[u8] = &[
             0xFF, 0xFF, 0x01, 0x09, 0x03, 0x2A, 0x02, 0x00, 0x00, 0x14, 0x00, 0x00, 0xB2,
         ];
-        assert_eq!(bus.uart.buf.borrow().as_slice(), expected);
+        assert_eq!(bus.uart.written.borrow().as_slice(), expected);
     }
 
     #[test]
     fn write_position_broadcast_id_uses_0xfe() {
         let mut bus = Scservo::new(MockUart::new());
         block_on(bus.write_position(BROADCAST_ID, 0, 0, 0)).unwrap();
-        assert_eq!(bus.uart.buf.borrow()[2], 0xFE);
+        assert_eq!(bus.uart.written.borrow()[2], 0xFE);
     }
 
     #[test]
@@ -310,14 +439,14 @@ mod tests {
         block_on(bus.write_torque_enable(1, true)).unwrap();
         // FF FF 01 04 03 28 01 CE
         let expected: &[u8] = &[0xFF, 0xFF, 0x01, 0x04, 0x03, 0x28, 0x01, 0xCE];
-        assert_eq!(bus.uart.buf.borrow().as_slice(), expected);
+        assert_eq!(bus.uart.written.borrow().as_slice(), expected);
     }
 
     #[test]
     fn checksum_is_bitwise_not_of_field_sum() {
         let mut bus = Scservo::new(MockUart::new());
         block_on(bus.write_position(2, 700, 30, 100)).unwrap();
-        let buf = bus.uart.buf.borrow();
+        let buf = bus.uart.written.borrow();
         let expected_sum = buf[2..12].iter().fold(0u8, |a, b| a.wrapping_add(*b));
         assert_eq!(buf[12], !expected_sum);
     }
@@ -328,5 +457,73 @@ mod tests {
         let oversize = [0u8; MAX_DATA_BYTES + 1];
         let err = block_on(bus.write_memory(1, 0, &oversize));
         assert!(matches!(err, Err(Error::PayloadTooLarge)));
+    }
+
+    #[test]
+    fn ping_sends_correct_outbound_packet() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Pre-queue a valid response so the read doesn't hang. We
+        // don't assert on its value here; this test checks the outbound.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC]);
+        block_on(bus.ping(1)).unwrap();
+        // Expected outbound: FF FF 01 02 01 ~(1+2+1) = ~4 = FB.
+        let expected: &[u8] = &[0xFF, 0xFF, 0x01, 0x02, 0x01, 0xFB];
+        assert_eq!(bus.uart.written.borrow().as_slice(), expected);
+    }
+
+    #[test]
+    fn ping_succeeds_on_valid_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Response: FF FF 01 02 Error=0 ~(1+2+0) = ~3 = FC.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC]);
+        assert!(block_on(bus.ping(1)).is_ok());
+    }
+
+    #[test]
+    fn ping_succeeds_when_error_byte_nonzero() {
+        // Non-zero error byte signals fault (overload, voltage, etc.),
+        // but the servo is still present — ping returns Ok.
+        let mut bus = Scservo::new(MockUart::new());
+        let err_byte = 0x20;
+        let checksum = !(1u8.wrapping_add(2).wrapping_add(err_byte));
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x02, err_byte, checksum]);
+        assert!(block_on(bus.ping(1)).is_ok());
+    }
+
+    #[test]
+    fn ping_rejects_bad_header() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Header byte 0 corrupted.
+        bus.uart.queue_rx(&[0x00, 0xFF, 0x01, 0x02, 0x00, 0xFC]);
+        let err = block_on(bus.ping(1));
+        assert!(matches!(err, Err(Error::MalformedResponse)));
+    }
+
+    #[test]
+    fn ping_rejects_wrong_id_in_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Response from ID=2 when we asked for ID=1.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB]);
+        let err = block_on(bus.ping(1));
+        assert!(matches!(err, Err(Error::MalformedResponse)));
+    }
+
+    #[test]
+    fn ping_rejects_bad_checksum() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Valid structure but checksum byte corrupted.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFF]);
+        let err = block_on(bus.ping(1));
+        assert!(matches!(err, Err(Error::ChecksumMismatch)));
+    }
+
+    #[test]
+    fn ping_no_response_maps_to_typed_error() {
+        // Empty rx queue -> read_exact returns UnexpectedEof (the mock
+        // returns 0 bytes on read, which read_exact treats as EOF).
+        let mut bus = Scservo::new(MockUart::new());
+        let err = block_on(bus.ping(1));
+        assert!(matches!(err, Err(Error::NoResponse)));
     }
 }
