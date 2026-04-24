@@ -1524,6 +1524,7 @@ name = "stackchan-core"
 version = "0.3.0"
 dependencies = [
  "embedded-graphics",
+ "micromath",
 ]
 
 [[package]]

@@ -39,6 +39,11 @@
 //! 11. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
 //!     sway. Runs **after** `IdleSway` so bias composes additively rather
 //!     than fighting for absolute control of the pose.
+//! 12. [`MouthOpenAudio`] — reads `Avatar::mouth.weight` preserved by
+//!     earlier modifiers, writes `Avatar::mouth.mouth_open` from
+//!     microphone RMS via a dB-mapped attack/release envelope. Runs
+//!     last in the visual stack so emotion geometry stays the static
+//!     "at rest" shape and audio drives the dynamic open-amount on top.
 //!
 //! [`Avatar`]: crate::avatar::Avatar
 
@@ -51,6 +56,7 @@ mod emotion_style;
 mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
+mod mouth_open_audio;
 mod pickup_reaction;
 mod remote_command;
 
@@ -63,6 +69,9 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
+pub use mouth_open_audio::{
+    DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthOpenAudio,
+};
 pub use pickup_reaction::{PICKUP_DEBOUNCE_MS, PICKUP_DEVIATION_G, PickupReaction};
 pub use remote_command::{RemoteCommand, RemoteMapping};
 
