@@ -158,6 +158,16 @@ pub struct Avatar {
     /// `IdleSway`); consumed by firmware's head-update task, not the
     /// pixel renderer. Excluded from [`Avatar::frame_eq`].
     pub head_pose: Pose,
+    /// Observed head pan/tilt pose in degrees — the servos' reported
+    /// actual position, not the commanded one. Written by the firmware
+    /// head-update task after reading `read_position` from each servo
+    /// (at ~1 Hz). Defaults to [`Pose::NEUTRAL`] and stays there until
+    /// the first successful readback. Excluded from
+    /// [`Avatar::frame_eq`] like [`Avatar::head_pose`] — the LCD
+    /// doesn't render against it. A future `EyeGaze` modifier can read
+    /// this to point the eyes toward the direction the head is
+    /// *actually* facing, decoupled from the command pipeline.
+    pub head_pose_actual: Pose,
 }
 
 impl Avatar {
@@ -224,6 +234,7 @@ impl Default for Avatar {
             blink_rate_scale: SCALE_DEFAULT,
             breath_depth_scale: SCALE_DEFAULT,
             head_pose: Pose::NEUTRAL,
+            head_pose_actual: Pose::NEUTRAL,
         }
     }
 }

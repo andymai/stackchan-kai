@@ -69,3 +69,13 @@ monitor:
 # default inner-loop verb. Build first, then flash, then stream logs.
 fmr: build-firmware
     sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}"
+
+# Path to the release bench example ELF.
+bench_elf := "target/xtensa-esp32s3-none-elf/release/examples/bench"
+
+# Calibration bench: flashes the sweep-and-print example + streams its
+# defmt output. The bench binary halts after one full sweep; re-flash
+# the main firmware with `just flash` or `just fmr` when done.
+bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example bench
+    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{bench_elf}}"
