@@ -14,6 +14,9 @@
 //! 4. [`Breath`] — vertical drift on all features, scaled by
 //!    `breath_depth_scale`.
 //! 5. [`IdleDrift`] — occasional eye-center jitter.
+//! 6. [`IdleSway`] — slow pan/tilt head wander written to
+//!    `Avatar::head_pose`. Non-visual; drives the firmware's head-update
+//!    task, not the pixel pipeline.
 //!
 //! [`Avatar`]: crate::avatar::Avatar
 
@@ -22,12 +25,14 @@ mod breath;
 mod emotion_cycle;
 mod emotion_style;
 mod idle_drift;
+mod idle_sway;
 
 pub use blink::Blink;
 pub use breath::Breath;
 pub use emotion_cycle::EmotionCycle;
 pub use emotion_style::EmotionStyle;
 pub use idle_drift::IdleDrift;
+pub use idle_sway::IdleSway;
 
 use crate::avatar::Avatar;
 use crate::clock::Instant;
