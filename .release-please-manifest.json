@@ -1,13 +1,18 @@
 {
-  "crates/stackchan-core": "0.3.0",
-  "crates/stackchan-sim": "0.2.1",
-  "crates/axp2101": "0.2.0",
+  "crates/stackchan-core": "0.4.0",
+  "crates/stackchan-sim": "0.3.0",
+  "crates/axp2101": "0.3.0",
   "crates/aw9523": "0.2.0",
-  "crates/bm8563": "0.2.0",
-  "crates/bmi270": "0.2.0",
-  "crates/ft6336u": "0.2.0",
-  "crates/ir-nec": "0.2.0",
-  "crates/ltr553": "0.2.0",
+  "crates/bm8563": "0.3.0",
+  "crates/bmi270": "0.3.0",
+  "crates/ft6336u": "0.3.0",
+  "crates/ir-nec": "0.3.0",
+  "crates/ltr553": "0.3.0",
   "crates/scservo": "0.2.0",
-  "crates/stackchan-firmware": "0.3.0"
+  "crates/stackchan-firmware": "0.4.0",
+  "crates/aw88298": "0.1.0",
+  "crates/es7210": "0.1.0",
+  "crates/gc0308": "0.1.0",
+  "crates/si12t": "0.1.0",
+  "crates/st25r3916": "0.1.0"
 }
