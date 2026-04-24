@@ -192,7 +192,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift",
+        "render task: {=u64} ms tick, EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway",
         FRAME_PERIOD_MS
     );
 
