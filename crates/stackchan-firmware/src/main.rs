@@ -312,6 +312,79 @@ async fn enable_servo_power(i2c: &mut I2c<'_, esp_hal::Async>) {
     defmt::info!("PY32: servo power enabled (pin 0 HIGH)");
 }
 
+/// Probe one `SCServo` ID and log the outcome. 10 ms is well past the
+/// ~200 µs round-trip of a 1 Mbaud PING packet, so a miss here is a
+/// real "servo not responding" signal. Errors are informational only —
+/// head task spawns regardless, so a servo reconnected later starts
+/// working without a reboot.
+async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
+    const PING_TIMEOUT_MS: u64 = 10;
+    let bus = driver.bus_mut();
+    match embassy_time::with_timeout(
+        embassy_time::Duration::from_millis(PING_TIMEOUT_MS),
+        bus.ping(id),
+    )
+    .await
+    {
+        Ok(Ok(())) => defmt::info!("SCServo[{=u8}]: present", id),
+        Ok(Err(e)) => defmt::warn!(
+            "SCServo[{=u8}]: malformed response: {}",
+            id,
+            defmt::Debug2Format(&e)
+        ),
+        Err(_) => defmt::warn!(
+            "SCServo[{=u8}]: no response within {=u64} ms (disconnected or unpowered?)",
+            id,
+            PING_TIMEOUT_MS
+        ),
+    }
+}
+
+/// Boot-time "hello" gesture: visible, deliberate, unambiguous.
+///
+/// Sequence (each step holds for `STEP_MS` to let the servo's internal
+/// interpolation complete before the next command):
+///
+/// 1. pan +15° — "I'm alive, here's my range"
+/// 2. pan -15°
+/// 3. pan 0°
+/// 4. tilt +10° — "both axes work"
+/// 5. tilt -10°
+/// 6. tilt 0°
+///
+/// Total ≈ 1 s. Per-step `move_time` inside each `WritePos` is short
+/// (smooth steps), but we pace the SEQUENCE with `STEP_MS` so each
+/// motion visibly completes before the next begins.
+///
+/// Write errors are logged and swallowed — a partial nod is better
+/// than a panic, and subsequent head-task writes will keep retrying
+/// if the bus recovers.
+async fn boot_nod(driver: &mut HeadDriverImpl) {
+    /// Wall-clock pace between nod steps (ms). Matches the servos'
+    /// single-leg move budget.
+    const STEP_MS: u64 = 170;
+
+    let clock = HalClock;
+    defmt::info!("boot-nod: hello gesture start");
+    for (pan, tilt, label) in [
+        (15.0, 0.0, "pan+15"),
+        (-15.0, 0.0, "pan-15"),
+        (0.0, 0.0, "pan 0"),
+        (0.0, 10.0, "tilt+10"),
+        (0.0, -10.0, "tilt-10"),
+        (0.0, 0.0, "tilt 0"),
+    ] {
+        if let Err(e) = driver
+            .set_pose(stackchan_core::Pose::new(pan, tilt), clock.now())
+            .await
+        {
+            defmt::warn!("boot-nod step {}: {}", label, defmt::Debug2Format(&e));
+        }
+        Timer::after(Duration::from_millis(STEP_MS)).await;
+    }
+    defmt::info!("boot-nod: complete");
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -406,10 +479,6 @@ async fn main(spawner: Spawner) -> ! {
     // old C++ firmware's `_scs_bus.begin(UART_NUM_1, 1000000, 6, 7)` call.
     // Two smart servos (yaw=1, pitch=2) share this half-duplex bus; the
     // base board handles direction switching externally.
-    //
-    // UART writes don't NACK like I²C, so we can't detect a missing bus
-    // at init time — the head task will blast packets regardless. If no
-    // servos are wired, nothing moves; firmware stays healthy.
     let uart_cfg = UartConfig::default().with_baudrate(SERVO_UART_BAUD);
     let servo_uart = match Uart::new(peripherals.UART1, uart_cfg) {
         Ok(uart) => uart
@@ -422,7 +491,20 @@ async fn main(spawner: Spawner) -> ! {
         "SCServo bus ready on UART1 (TX=GPIO6, RX=GPIO7) @ {=u32} baud",
         SERVO_UART_BAUD
     );
-    let scs_head = head::ScsHead::new(Scservo::new(servo_uart));
+    let mut scs_head = head::ScsHead::new(Scservo::new(servo_uart));
+
+    // Health check: PING each servo ID with a 10 ms timeout. UART writes
+    // don't NACK on missing slaves, so without this probe we can't tell
+    // the bus is alive until we observe physical motion. Log per-ID
+    // success/failure but keep booting either way — a missing servo is
+    // not fatal.
+    ping_servo(&mut scs_head, head::YAW_SERVO_ID).await;
+    ping_servo(&mut scs_head, head::PITCH_SERVO_ID).await;
+
+    // Visible proof of life: a deliberate pan-then-tilt gesture before
+    // the idle modifier pipeline takes over. Also serves as the
+    // gentle-first-move the old boot ramp used to provide.
+    boot_nod(&mut scs_head).await;
 
     // CoreS3 LCD (ILI9342C) on SPI2.
     //   SCK  = GPIO36
