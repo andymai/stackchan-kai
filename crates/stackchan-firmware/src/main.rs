@@ -29,11 +29,9 @@
 
 extern crate alloc;
 
-mod clock;
-mod framebuffer;
-mod head;
+use stackchan_firmware::{board, clock, framebuffer, head};
 
-use axp2101::Axp2101;
+use board::HeadDriverImpl;
 use clock::HalClock;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Ticker, Timer};
@@ -47,14 +45,12 @@ use esp_hal::{
     Blocking,
     clock::CpuClock,
     gpio::{Level, Output, OutputConfig},
-    i2c::master::{Config as I2cConfig, I2c},
     spi::{
         Mode as SpiMode,
         master::{Config as SpiConfig, Spi},
     },
     time::Rate,
     timer::timg::TimerGroup,
-    uart::{Config as UartConfig, Uart},
 };
 use framebuffer::{Framebuffer, HEIGHT as FB_HEIGHT, WIDTH as FB_WIDTH};
 use mipidsi::{
@@ -63,7 +59,6 @@ use mipidsi::{
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
 };
-use scservo::Scservo;
 use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
     modifiers::{Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, IdleDrift, IdleSway},
@@ -115,11 +110,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 /// the esp-generate default and leaves ample margin for `esp-rtos` state.
 const HEAP_SIZE: usize = 72 * 1024;
 
-/// Retry delay between failed AXP2101 init attempts. Covers transient
-/// I²C glitches during cold boot — no forward progress is possible
-/// without the LDOs, so halting here is the wrong answer.
-const PMIC_RETRY_MS: u64 = 500;
-
 /// Render cadence. 33 ms ≈ 30 FPS; `Ticker` corrects drift automatically
 /// if a single frame's `Avatar::draw` runs long (e.g. during a blink
 /// transition where every pixel changes).
@@ -130,16 +120,6 @@ const FRAME_PERIOD_MS: u64 = 33;
 /// internal interpolation smooths between commands — and keeps the
 /// UART bus utilisation below 2% even with two servos per tick.
 const HEAD_PERIOD_MS: u64 = 20;
-
-/// `SCServo` UART baud rate. Feetech `SCSCL` family default is 1 Mbaud.
-const SERVO_UART_BAUD: u32 = 1_000_000;
-
-/// 7-bit I²C address of the CoreS3 PY32 IO expander.
-const PY32_ADDRESS: u8 = 0x6F;
-
-/// Milliseconds to wait after raising the servo-power pin on the PY32.
-/// Matches the 200 ms delay in `hal_io_expander.cpp`.
-const SERVO_POWER_SETTLE_MS: u64 = 200;
 
 /// Concrete type of the assembled LCD display. Spelled out once here so the
 /// render task (which the `#[embassy_executor::task]` macro requires to be
@@ -154,11 +134,6 @@ type LcdDisplay = mipidsi::Display<
     ILI9342CRgb565,
     NoResetPin,
 >;
-
-/// Concrete type of the `SCServo`-backed head driver, needed so
-/// `#[embassy_executor::task]` (which forbids generic tasks) can accept
-/// it as an argument.
-type HeadDriverImpl = head::ScsHead<Uart<'static, esp_hal::Async>>;
 
 /// 30 FPS render task. Double-buffered via a PSRAM-backed [`Framebuffer`]:
 /// each frame we run the modifier stack, draw the avatar into the off-screen
@@ -224,6 +199,13 @@ async fn render_task(mut display: LcdDisplay) {
         // recent pose.
         head::POSE_SIGNAL.signal(avatar.head_pose);
 
+        // Drain the latest observed pose from the head task. Updated at
+        // ~1 Hz over there, so most render ticks see nothing new and
+        // hold the previous value — which is exactly what we want.
+        if let Some(actual) = head::HEAD_POSE_ACTUAL_SIGNAL.try_take() {
+            avatar.head_pose_actual = actual;
+        }
+
         // `frame_eq` intentionally skips `head_pose` — the LCD is mounted
         // rigidly to the head, so pan/tilt updates never change pixels.
         // `IdleSway` mutates `avatar.head_pose` every tick; using `==`
@@ -250,20 +232,30 @@ async fn render_task(mut display: LcdDisplay) {
 /// hold their position via internal torque, so a slow render task
 /// never leaves the head wobbling.
 ///
-/// UART write failures log at `warn` and continue: a transient bus
-/// glitch shouldn't blank the face or reboot the binary. UART writes
-/// don't NACK on missing slaves, so in a "no servos attached" state
-/// this path is silent — the face still renders.
+/// Every `POSITION_POLL_EVERY` ticks (= 1 Hz at 50 Hz command cadence),
+/// the task also reads back each servo's live position and publishes it
+/// via [`head::HEAD_POSE_ACTUAL_SIGNAL`] for the render task to write
+/// onto `avatar.head_pose_actual` + logs a `cmd vs actual` line.
+///
+/// UART write/read failures log at `warn` and continue: a transient
+/// bus glitch shouldn't blank the face or reboot the binary.
 #[embassy_executor::task]
 async fn head_task(mut driver: HeadDriverImpl) {
+    /// Poll position every N command ticks. `HEAD_PERIOD_MS` × N = 1 s.
+    const POSITION_POLL_EVERY: u32 = 50;
+    /// Per-read timeout for the `read_position` calls.
+    const READ_TIMEOUT_MS: u64 = 10;
+
     let clock = HalClock;
     let mut ticker = Ticker::every(Duration::from_millis(HEAD_PERIOD_MS));
     let mut current = stackchan_core::Pose::NEUTRAL;
+    let mut tick_count: u32 = 0;
     defmt::info!(
-        "head task: {=u64} ms tick, consumes POSE_SIGNAL for SCServo IDs {=u8} (yaw) / {=u8} (pitch)",
+        "head task: {=u64} ms tick, consumes POSE_SIGNAL for SCServo IDs {=u8} (yaw) / {=u8} (pitch), reads actual @ {=u64} ms",
         HEAD_PERIOD_MS,
         head::YAW_SERVO_ID,
         head::PITCH_SERVO_ID,
+        HEAD_PERIOD_MS.saturating_mul(u64::from(POSITION_POLL_EVERY)),
     );
     loop {
         if let Some(next) = head::POSE_SIGNAL.try_take() {
@@ -272,117 +264,35 @@ async fn head_task(mut driver: HeadDriverImpl) {
         if let Err(e) = driver.set_pose(current, clock.now()).await {
             defmt::warn!("head: SCServo write failed: {}", defmt::Debug2Format(&e));
         }
-        ticker.next().await;
-    }
-}
-
-/// Drive pin 0 of the PY32 IO expander HIGH to enable the servo power
-/// rail. Three register writes with values that match the PY32's
-/// reset-state of all zeros (no read-modify-write yet — future RGB-LED
-/// work will need that). Logs at `warn` on any I²C failure and keeps
-/// going; the firmware stays healthy even if the expander is missing.
-async fn enable_servo_power(i2c: &mut I2c<'_, esp_hal::Async>) {
-    use embedded_hal_async::i2c::I2c as AsyncI2c;
-    /// Write `[reg, value]` to the PY32; log + return Err on transport failure.
-    async fn write_py32(i2c: &mut I2c<'_, esp_hal::Async>, reg: u8, value: u8) -> Result<(), ()> {
-        // Fully-qualified `AsyncI2c::write` — `esp_hal::i2c::master::I2c`
-        // has an inherent `write` that's blocking; we want the trait
-        // version for its `async fn`.
-        match AsyncI2c::write(i2c, PY32_ADDRESS, &[reg, value]).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                defmt::warn!(
-                    "PY32 0x{=u8:02X} ← 0x{=u8:02X} failed: {}",
-                    reg,
-                    value,
+        tick_count = tick_count.wrapping_add(1);
+        if tick_count.is_multiple_of(POSITION_POLL_EVERY) {
+            match embassy_time::with_timeout(
+                Duration::from_millis(READ_TIMEOUT_MS),
+                driver.read_pose(),
+            )
+            .await
+            {
+                Ok(Ok(actual)) => {
+                    head::HEAD_POSE_ACTUAL_SIGNAL.signal(actual);
+                    defmt::info!(
+                        "head: cmd=({=f32}, {=f32}) actual=({=f32}, {=f32})",
+                        current.pan_deg,
+                        current.tilt_deg,
+                        actual.pan_deg,
+                        actual.tilt_deg,
+                    );
+                }
+                Ok(Err(e)) => defmt::warn!(
+                    "head: read_pose response error: {}",
                     defmt::Debug2Format(&e)
-                );
-                Err(())
+                ),
+                Err(_) => {
+                    defmt::warn!("head: read_pose timed out after {=u64} ms", READ_TIMEOUT_MS)
+                }
             }
         }
+        ticker.next().await;
     }
-    // Pin 0: direction = output, pull-up = enabled, level = HIGH.
-    if write_py32(i2c, 0x03, 0x01).await.is_err()
-        || write_py32(i2c, 0x09, 0x01).await.is_err()
-        || write_py32(i2c, 0x05, 0x01).await.is_err()
-    {
-        defmt::warn!("PY32: servo-power enable incomplete — servos may stay unpowered");
-        return;
-    }
-    defmt::info!("PY32: servo power enabled (pin 0 HIGH)");
-}
-
-/// Probe one `SCServo` ID and log the outcome. 10 ms is well past the
-/// ~200 µs round-trip of a 1 Mbaud PING packet, so a miss here is a
-/// real "servo not responding" signal. Errors are informational only —
-/// head task spawns regardless, so a servo reconnected later starts
-/// working without a reboot.
-async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
-    const PING_TIMEOUT_MS: u64 = 10;
-    let bus = driver.bus_mut();
-    match embassy_time::with_timeout(
-        embassy_time::Duration::from_millis(PING_TIMEOUT_MS),
-        bus.ping(id),
-    )
-    .await
-    {
-        Ok(Ok(())) => defmt::info!("SCServo[{=u8}]: present", id),
-        Ok(Err(e)) => defmt::warn!(
-            "SCServo[{=u8}]: malformed response: {}",
-            id,
-            defmt::Debug2Format(&e)
-        ),
-        Err(_) => defmt::warn!(
-            "SCServo[{=u8}]: no response within {=u64} ms (disconnected or unpowered?)",
-            id,
-            PING_TIMEOUT_MS
-        ),
-    }
-}
-
-/// Boot-time "hello" gesture: visible, deliberate, unambiguous.
-///
-/// Sequence (each step holds for `STEP_MS` to let the servo's internal
-/// interpolation complete before the next command):
-///
-/// 1. pan +15° — "I'm alive, here's my range"
-/// 2. pan -15°
-/// 3. pan 0°
-/// 4. tilt +10° — "both axes work"
-/// 5. tilt -10°
-/// 6. tilt 0°
-///
-/// Total ≈ 1 s. Per-step `move_time` inside each `WritePos` is short
-/// (smooth steps), but we pace the SEQUENCE with `STEP_MS` so each
-/// motion visibly completes before the next begins.
-///
-/// Write errors are logged and swallowed — a partial nod is better
-/// than a panic, and subsequent head-task writes will keep retrying
-/// if the bus recovers.
-async fn boot_nod(driver: &mut HeadDriverImpl) {
-    /// Wall-clock pace between nod steps (ms). Matches the servos'
-    /// single-leg move budget.
-    const STEP_MS: u64 = 170;
-
-    let clock = HalClock;
-    defmt::info!("boot-nod: hello gesture start");
-    for (pan, tilt, label) in [
-        (15.0, 0.0, "pan+15"),
-        (-15.0, 0.0, "pan-15"),
-        (0.0, 0.0, "pan 0"),
-        (0.0, 10.0, "tilt+10"),
-        (0.0, -10.0, "tilt-10"),
-        (0.0, 0.0, "tilt 0"),
-    ] {
-        if let Err(e) = driver
-            .set_pose(stackchan_core::Pose::new(pan, tilt), clock.now())
-            .await
-        {
-            defmt::warn!("boot-nod step {}: {}", label, defmt::Debug2Format(&e));
-        }
-        Timer::after(Duration::from_millis(STEP_MS)).await;
-    }
-    defmt::info!("boot-nod: complete");
 }
 
 #[esp_rtos::main]
@@ -405,106 +315,17 @@ async fn main(spawner: Spawner) -> ! {
         env!("CARGO_PKG_VERSION")
     );
 
-    // CoreS3 internal I²C bus: GPIO11 = SCL, GPIO12 = SDA.
-    // (Confirmed against M5Unified source: `In SCL, SDA = GPIO_NUM_11, GPIO_NUM_12`.)
-    // AXP2101 (0x34), AW9523 IO expander, and the touch controller all
-    // sit on this bus. 100 kHz is the conservative standard-mode rate
-    // that works from cold boot before PLLs are fully settled.
-    let i2c_cfg = I2cConfig::default().with_frequency(Rate::from_khz(100));
-    let i2c = match I2c::new(peripherals.I2C0, i2c_cfg) {
-        Ok(bus) => bus
-            .with_sda(peripherals.GPIO12)
-            .with_scl(peripherals.GPIO11)
-            .into_async(),
-        Err(e) => defmt::panic!("I2C0 config rejected: {}", defmt::Debug2Format(&e)),
-    };
-    defmt::debug!("I2C0 ready on GPIO12/11 @ 100 kHz");
-
-    let mut pmic = Axp2101::new(i2c);
-
-    loop {
-        match pmic.init_cores3().await {
-            Ok(()) => {
-                defmt::info!(
-                    "AXP2101: CoreS3 power defaults applied — LCD rails + power-key timing set"
-                );
-                break;
-            }
-            Err(e) => {
-                defmt::error!(
-                    "AXP2101 init failed (retrying in {=u64} ms): {}",
-                    PMIC_RETRY_MS,
-                    defmt::Debug2Format(&e)
-                );
-                Timer::after(Duration::from_millis(PMIC_RETRY_MS)).await;
-            }
-        }
-    }
-
-    // Reclaim the I²C bus from the PMIC driver; the AW9523 is the next (and
-    // only other) I²C consumer in this PR, so a sequential hand-off avoids
-    // pulling in embedded-hal-bus shared-bus machinery.
-    let mut i2c = pmic.into_inner();
-    // `embassy_time::Delay` impls `embedded_hal_async::delay::DelayNs`. The
-    // driver takes `&mut D: DelayNs`, so bind an instance rather than taking
-    // a reference to the zero-sized type itself.
     let mut delay = Delay;
-    match aw9523::init_cores3(&mut i2c, &mut delay).await {
-        Ok(()) => defmt::info!("AW9523: CoreS3 defaults applied, LCD reset pulsed (P1_1)"),
-        Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
-    }
-
-    // Enable servo power via the PY32 IO expander (I²C addr 0x6F). Without
-    // this the SCServo rail is unpowered — the UART writes will go out
-    // cleanly but nothing moves. The PY32 resets all bits to 0, so writing
-    // `0x01` (pin 0 only) is safe — if we later drive RGB LEDs on pin 13
-    // we'll need read-modify-write via a dedicated driver.
-    //
-    // Register map (from `PY32IOExpander_Class.cpp` in the old C++ firmware):
-    //   0x03  GPIO direction-low  (1 = output)
-    //   0x05  GPIO output-low     (the actual pin level)
-    //   0x09  GPIO pull-up-low    (pull-up enable)
-    //
-    // Sequence matches `hal_io_expander.cpp`: direction → pull-up →
-    // level HIGH → 200 ms for the rail to stabilise.
-    enable_servo_power(&mut i2c).await;
-    Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
-
-    // Internal I²C (I2C0) is done for this boot — drop it so the compiler
-    // catches any accidental later uses (touch / battery drivers come in
-    // future PRs).
-    drop(i2c);
-
-    // CoreS3 SCServo bus: UART1 TX=GPIO6, RX=GPIO7 @ 1 Mbaud. Matches the
-    // old C++ firmware's `_scs_bus.begin(UART_NUM_1, 1000000, 6, 7)` call.
-    // Two smart servos (yaw=1, pitch=2) share this half-duplex bus; the
-    // base board handles direction switching externally.
-    let uart_cfg = UartConfig::default().with_baudrate(SERVO_UART_BAUD);
-    let servo_uart = match Uart::new(peripherals.UART1, uart_cfg) {
-        Ok(uart) => uart
-            .with_tx(peripherals.GPIO6)
-            .with_rx(peripherals.GPIO7)
-            .into_async(),
-        Err(e) => defmt::panic!("UART1 config rejected: {}", defmt::Debug2Format(&e)),
-    };
-    defmt::info!(
-        "SCServo bus ready on UART1 (TX=GPIO6, RX=GPIO7) @ {=u32} baud",
-        SERVO_UART_BAUD
-    );
-    let mut scs_head = head::ScsHead::new(Scservo::new(servo_uart));
-
-    // Health check: PING each servo ID with a 10 ms timeout. UART writes
-    // don't NACK on missing slaves, so without this probe we can't tell
-    // the bus is alive until we observe physical motion. Log per-ID
-    // success/failure but keep booting either way — a missing servo is
-    // not fatal.
-    ping_servo(&mut scs_head, head::YAW_SERVO_ID).await;
-    ping_servo(&mut scs_head, head::PITCH_SERVO_ID).await;
-
-    // Visible proof of life: a deliberate pan-then-tilt gesture before
-    // the idle modifier pipeline takes over. Also serves as the
-    // gentle-first-move the old boot ramp used to provide.
-    boot_nod(&mut scs_head).await;
+    let scs_head = board::bringup(
+        peripherals.I2C0,
+        peripherals.UART1,
+        peripherals.GPIO12,
+        peripherals.GPIO11,
+        peripherals.GPIO6,
+        peripherals.GPIO7,
+        &mut delay,
+    )
+    .await;
 
     // CoreS3 LCD (ILI9342C) on SPI2.
     //   SCK  = GPIO36

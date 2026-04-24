@@ -71,6 +71,23 @@ pub const ADDR_GOAL_POSITION: u8 = 42;
 /// SCSCL memory-table address of the torque-enable byte.
 pub const ADDR_TORQUE_ENABLE: u8 = 40;
 
+/// SCSCL memory-table address of the present-position low byte. A
+/// 2-byte big-endian read here yields the current servo position in
+/// the same 0..=1023 count space as [`ADDR_GOAL_POSITION`].
+pub const ADDR_PRESENT_POSITION: u8 = 56;
+
+/// SCSCL memory-table address of the present-voltage byte. Units: 0.1 V
+/// per count (e.g. 74 = 7.4 V).
+pub const ADDR_PRESENT_VOLTAGE: u8 = 62;
+
+/// SCSCL memory-table address of the present-temperature byte. Units:
+/// °C (direct, no scaling).
+pub const ADDR_PRESENT_TEMPERATURE: u8 = 63;
+
+/// SCSCL memory-table address of the moving-flag byte. 0 = settled,
+/// non-zero = actively tracking toward goal position.
+pub const ADDR_MOVING: u8 = 66;
+
 /// Protocol instruction codes (from `INST.h` in the Feetech reference
 /// library).
 #[repr(u8)]
@@ -333,6 +350,150 @@ impl<U: Read + Write> Scservo<U> {
         // dedicated status read later.
         Ok(())
     }
+
+    /// Low-level [`Instruction::Read`] that fills `buf` with `buf.len()`
+    /// bytes read starting at `mem_addr` on servo `id`.
+    ///
+    /// Outbound packet layout:
+    ///
+    /// ```text
+    /// | 0xFF | 0xFF | ID | 0x04 | 0x02 | MemAddr | Len | ~Checksum |
+    /// ```
+    ///
+    /// Response layout:
+    ///
+    /// ```text
+    /// | 0xFF | 0xFF | ID | Len+2 | Error | Data[0..Len] | ~Checksum |
+    /// ```
+    ///
+    /// Same timeout responsibility as [`Scservo::ping`] — wrap with
+    /// `embassy_time::with_timeout` for bounded waits.
+    ///
+    /// # Errors
+    /// - [`Error::PayloadTooLarge`] if `buf.len() > MAX_DATA_BYTES`.
+    /// - [`Error::Uart`] on transport failure.
+    /// - [`Error::NoResponse`] / [`Error::MalformedResponse`] /
+    ///   [`Error::ChecksumMismatch`] on bad responses.
+    pub async fn read_memory(
+        &mut self,
+        id: u8,
+        mem_addr: u8,
+        buf: &mut [u8],
+    ) -> Result<(), Error<U::Error>> {
+        if buf.len() > MAX_DATA_BYTES {
+            return Err(Error::PayloadTooLarge);
+        }
+        // data.len() is ≤ MAX_DATA_BYTES (6), so fits u8 trivially.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "len() ≤ MAX_DATA_BYTES (6), fits u8"
+        )]
+        let read_len = buf.len() as u8;
+
+        // Outbound: FF FF ID 04 02 ADDR LEN ~checksum (8 bytes).
+        // Checksum = ~(ID + 4 + Read + mem_addr + len).
+        let sum = id
+            .wrapping_add(0x04)
+            .wrapping_add(Instruction::Read as u8)
+            .wrapping_add(mem_addr)
+            .wrapping_add(read_len);
+        let outbound = [
+            HEADER_BYTE,
+            HEADER_BYTE,
+            id,
+            0x04,
+            Instruction::Read as u8,
+            mem_addr,
+            read_len,
+            !sum,
+        ];
+        self.uart.write_all(&outbound).await?;
+
+        // Response: 2 header + 1 id + 1 len-field + 1 error + N data + 1 checksum.
+        let response_total = 6 + buf.len();
+        let mut response = [0u8; MAX_PACKET_BYTES];
+        self.uart
+            .read_exact(&mut response[..response_total])
+            .await?;
+
+        if response[0] != HEADER_BYTE || response[1] != HEADER_BYTE {
+            return Err(Error::MalformedResponse);
+        }
+        if response[2] != id {
+            return Err(Error::MalformedResponse);
+        }
+        // msgLen for a READ response is `data_len + 2` (error + checksum).
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "buf.len() ≤ MAX_DATA_BYTES; the +2 stays well under u8::MAX"
+        )]
+        let expected_msg_len = (buf.len() + 2) as u8;
+        if response[3] != expected_msg_len {
+            return Err(Error::MalformedResponse);
+        }
+
+        // Checksum covers ID..=last data byte (excludes the checksum byte
+        // itself).
+        let mut check_sum: u8 = 0;
+        for &b in &response[2..response_total - 1] {
+            check_sum = check_sum.wrapping_add(b);
+        }
+        if response[response_total - 1] != !check_sum {
+            return Err(Error::ChecksumMismatch);
+        }
+
+        // Data bytes start at index 5; skip the 2 header + 1 id + 1 msgLen +
+        // 1 error bytes before them.
+        buf.copy_from_slice(&response[5..5 + buf.len()]);
+        Ok(())
+    }
+
+    /// Read the current position of servo `id` — the live encoder
+    /// reading, in the same 0..=1023 count space as the goal position.
+    /// Big-endian 2-byte field at [`ADDR_PRESENT_POSITION`].
+    ///
+    /// # Errors
+    /// Same as [`Scservo::read_memory`].
+    pub async fn read_position(&mut self, id: u8) -> Result<u16, Error<U::Error>> {
+        let mut buf = [0u8; 2];
+        self.read_memory(id, ADDR_PRESENT_POSITION, &mut buf)
+            .await?;
+        Ok(u16::from_be_bytes(buf))
+    }
+
+    /// Read the current supply voltage of servo `id`. Units: 0.1 V per
+    /// count (e.g. 74 → 7.4 V).
+    ///
+    /// # Errors
+    /// Same as [`Scservo::read_memory`].
+    pub async fn read_voltage(&mut self, id: u8) -> Result<u8, Error<U::Error>> {
+        let mut buf = [0u8; 1];
+        self.read_memory(id, ADDR_PRESENT_VOLTAGE, &mut buf).await?;
+        Ok(buf[0])
+    }
+
+    /// Read the current internal temperature of servo `id`, in °C.
+    ///
+    /// # Errors
+    /// Same as [`Scservo::read_memory`].
+    pub async fn read_temperature(&mut self, id: u8) -> Result<u8, Error<U::Error>> {
+        let mut buf = [0u8; 1];
+        self.read_memory(id, ADDR_PRESENT_TEMPERATURE, &mut buf)
+            .await?;
+        Ok(buf[0])
+    }
+
+    /// Read the moving flag of servo `id` — true while the servo is
+    /// actively tracking toward its goal position, false once settled.
+    /// Useful for "wait until move completes" loops during calibration.
+    ///
+    /// # Errors
+    /// Same as [`Scservo::read_memory`].
+    pub async fn read_moving(&mut self, id: u8) -> Result<bool, Error<U::Error>> {
+        let mut buf = [0u8; 1];
+        self.read_memory(id, ADDR_MOVING, &mut buf).await?;
+        Ok(buf[0] != 0)
+    }
 }
 
 #[cfg(test)]
@@ -525,5 +686,98 @@ mod tests {
         let mut bus = Scservo::new(MockUart::new());
         let err = block_on(bus.ping(1));
         assert!(matches!(err, Err(Error::NoResponse)));
+    }
+
+    // ----- READ instruction ------------------------------------------
+
+    #[test]
+    fn read_position_sends_correct_outbound_packet() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Pre-queue a valid 2-byte position response so read_exact doesn't hang.
+        // Response: FF FF 01 04 00 02 00 checksum. sum = 1+4+0+2+0 = 7, !7 = 0xF8.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x02, 0x00, 0xF8]);
+        let _ = block_on(bus.read_position(1));
+        // Expected outbound: FF FF 01 04 02 38 02 ~(1+4+2+56+2) = ~65 = 0xBE.
+        let expected: &[u8] = &[0xFF, 0xFF, 0x01, 0x04, 0x02, 0x38, 0x02, 0xBE];
+        assert_eq!(bus.uart.written.borrow().as_slice(), expected);
+    }
+
+    #[test]
+    fn read_position_decodes_big_endian_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Position = 0x0200 = 512 (center). Data bytes: [0x02, 0x00].
+        // Full response: FF FF 01 04 00 02 00 checksum.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x02, 0x00, 0xF8]);
+        let pos = block_on(bus.read_position(1)).unwrap();
+        assert_eq!(pos, 512);
+    }
+
+    #[test]
+    fn read_voltage_decodes_single_byte() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Voltage = 74 (= 7.4 V). msgLen = 3. sum = 1+3+0+74 = 78, !78 = 0xB1.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x03, 0x00, 74, 0xB1]);
+        let v = block_on(bus.read_voltage(1)).unwrap();
+        assert_eq!(v, 74);
+    }
+
+    #[test]
+    fn read_temperature_decodes_single_byte() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Temp = 32°C. sum = 1+3+0+32 = 36, !36 = 0xDB.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x03, 0x00, 32, 0xDB]);
+        let t = block_on(bus.read_temperature(1)).unwrap();
+        assert_eq!(t, 32);
+    }
+
+    #[test]
+    fn read_moving_decodes_bool() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Moving = 1 (true). sum = 1+3+0+1 = 5, !5 = 0xFA.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x03, 0x00, 0x01, 0xFA]);
+        let moving = block_on(bus.read_moving(1)).unwrap();
+        assert!(moving);
+    }
+
+    #[test]
+    fn read_moving_false_on_zero_byte() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Moving = 0 (false). sum = 1+3+0+0 = 4, !4 = 0xFB.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x03, 0x00, 0x00, 0xFB]);
+        let moving = block_on(bus.read_moving(1)).unwrap();
+        assert!(!moving);
+    }
+
+    #[test]
+    fn read_memory_rejects_oversized_buf() {
+        let mut bus = Scservo::new(MockUart::new());
+        let mut buf = [0u8; MAX_DATA_BYTES + 1];
+        let err = block_on(bus.read_memory(1, 0, &mut buf));
+        assert!(matches!(err, Err(Error::PayloadTooLarge)));
+    }
+
+    #[test]
+    fn read_memory_rejects_wrong_length_field() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Response claims msgLen = 5 but we asked for 2 data bytes → expect 4.
+        // Even with a matching checksum the header check fails first.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x05, 0x00, 0x02, 0x00, 0xF7]);
+        let err = block_on(bus.read_position(1));
+        assert!(matches!(err, Err(Error::MalformedResponse)));
+    }
+
+    #[test]
+    fn read_memory_rejects_bad_checksum() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Valid structure but checksum byte corrupted.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x02, 0x00, 0x00]);
+        let err = block_on(bus.read_position(1));
+        assert!(matches!(err, Err(Error::ChecksumMismatch)));
     }
 }

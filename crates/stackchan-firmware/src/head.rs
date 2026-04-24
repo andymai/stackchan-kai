@@ -31,7 +31,7 @@
 //! physical trim.
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embedded_io_async::Write;
+use embedded_io_async::{Read, Write};
 use scservo::{POSITION_CENTER, POSITION_PER_DEGREE, Scservo};
 use stackchan_core::{HeadDriver, Instant, Pose};
 
@@ -63,13 +63,22 @@ const MOVE_TIME_MS: u16 = 20;
 /// control" (see [`MOVE_TIME_MS`]).
 const MOVE_SPEED: u16 = 0;
 
-/// Single-producer / single-consumer latest-pose signal.
+/// Commanded-pose signal: render task → head task.
 ///
 /// The render task calls [`Signal::signal`] with the latest
 /// `avatar.head_pose` after each modifier pass; the head task drains
 /// it via [`Signal::try_take`] on every tick (and holds the prior pose
 /// if nothing new is pending).
 pub static POSE_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Signal::new();
+
+/// Observed-pose signal: head task → render task.
+///
+/// The head task reads the servos' live position at ~1 Hz and signals
+/// the result back here; the render task consumes via `try_take` and
+/// writes to `avatar.head_pose_actual`. Used for feedback logging +
+/// future gaze-compensation work. Signal semantics: latest wins, no
+/// backlog.
+pub static HEAD_POSE_ACTUAL_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Signal::new();
 
 /// Feetech SCServo-backed head driver.
 pub struct ScsHead<W> {
@@ -106,6 +115,34 @@ impl<W: Write> ScsHead<W> {
         )]
         let pos = clamped as u16;
         pos
+    }
+
+    /// Inverse of [`Self::position_for`]: convert a live servo step
+    /// count back into degrees in the same reference frame the caller
+    /// commanded. Used by the 1 Hz position poll.
+    fn deg_for(position: u16, trim_deg: f32, direction: f32) -> f32 {
+        let offset = f32::from(position) - f32::from(POSITION_CENTER);
+        let effective = offset / POSITION_PER_DEGREE;
+        // Inverse direction + trim from `position_for`.
+        (effective / direction) - trim_deg
+    }
+}
+
+impl<U: Read + Write> ScsHead<U> {
+    /// Read the live position of both servos, return a `Pose` in the
+    /// same commanded-reference-frame as `set_pose` inputs. Useful for
+    /// feedback logging + the future `EyeGaze` modifier.
+    ///
+    /// # Errors
+    /// Returns the transport error on the first failing read; the
+    /// caller typically logs + continues rather than treating this as
+    /// fatal.
+    pub async fn read_pose(&mut self) -> Result<Pose, scservo::Error<U::Error>> {
+        let pan_pos = self.bus.read_position(YAW_SERVO_ID).await?;
+        let tilt_pos = self.bus.read_position(PITCH_SERVO_ID).await?;
+        let pan_deg = Self::deg_for(pan_pos, PAN_TRIM_DEG, PAN_DIRECTION);
+        let tilt_deg = Self::deg_for(tilt_pos, TILT_TRIM_DEG, TILT_DIRECTION);
+        Ok(Pose::new(pan_deg, tilt_deg))
     }
 }
 

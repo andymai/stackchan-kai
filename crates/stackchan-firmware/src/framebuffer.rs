@@ -27,6 +27,7 @@ pub const WIDTH: u32 = 320;
 pub const HEIGHT: u32 = 240;
 
 /// `Rgb565` framebuffer with the same row-major layout the ILI9342C expects.
+///
 /// Implements [`DrawTarget`] with `Infallible` errors; out-of-bounds pixel
 /// writes are silently dropped, matching embedded-graphics' `OriginDimensions`
 /// clipping contract.
