@@ -1,65 +1,78 @@
+<div align="center">
+
 # stackchan-kai
 
-A clean-slate Rust firmware for the M5Stack CoreS3 StackChan character. No AI.
-No upstream cloud. No C blobs. Just a desk toy that animates a face.
+**Clean-slate Rust firmware for the M5Stack CoreS3 Stack-chan — `no_std`, embassy, no cloud.**
 
-> **Status:** v0.1.0 shipped 2026-04-23. All public items are currently
+No AI. No upstream cloud. No C blobs. Just a desk toy that animates a face.
+
+[![CI](https://github.com/andymai/stackchan-kai/actions/workflows/ci.yml/badge.svg)](https://github.com/andymai/stackchan-kai/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/andymai/stackchan-kai)](https://github.com/andymai/stackchan-kai/releases)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
+[![unsafe denied](https://img.shields.io/badge/unsafe-workspace--denied-success.svg)]()
+
+[Stability](./STABILITY.md) · [Changelog](./CHANGELOG.md) · [Justfile](./justfile)
+
+</div>
+
+> **Status:** v0.1.0 shipped 2026-04-23. Public items are currently
 > [Experimental](STABILITY.md#experimental); the v0.x series will iterate the
 > avatar domain model before anything graduates to Stable.
 
-## Why
-
-The upstream M5Stack / xiaozhi firmware integrates a Chinese LLM-agent stack
-with cloud dependencies, questionable security posture, and a C++ codebase
-that's hard to reason about. This repo rebuilds just the local desk-toy piece
-— animated face, motion, local interaction — in `no_std` Rust on top of
-[`esp-hal`](https://github.com/esp-rs/esp-hal) and [embassy](https://embassy.dev/).
-
-## Workspace layout
-
-| Crate | What | Test target |
-| --- | --- | --- |
-| `crates/stackchan-core` | `no_std` domain library: `Avatar`, `Eye`, `Mouth`, `Modifier` trait, `Clock` trait, `Emotion`, `Pose`. Pure Rust, no hardware deps. | Host unit tests |
-| `crates/stackchan-sim` | Headless integration tests that drive `stackchan-core` with a fake clock. Golden-test modifier sequences without hardware. | Host integration tests |
-| `crates/axp2101` | Minimal AXP2101 PMU driver (I²C). Just enough to bring up the CoreS3 LCD rail + 3V3. embedded-hal-async. | Host mock-I²C tests |
-| `crates/aw9523` | Minimal AW9523 I/O-expander init routine for the CoreS3 (LCD reset pulse, backlight-boost gate). embedded-hal-async. | Host mock-I²C tests |
-| `crates/scservo` | Feetech SCServo half-duplex serial driver (UART1). embedded-io-async. | Host unit tests with a mock UART |
-| `crates/stackchan-firmware` | Binary crate. `no_std` + `alloc`. embassy executor. Wires PMU init + mipidsi LCD driver + SCServo head driver + `stackchan-core` render loop on the CoreS3. | HIL via probe-rs + defmt-test |
-
-## Build
+## Flash it
 
 ```bash
-# Host side (core + sim + drivers).
-cargo test
-cargo clippy --workspace --exclude stackchan-firmware --all-targets -- -D warnings
-
-# Firmware side (requires espup-installed esp toolchain).
+cargo install espup && espup install
 source ~/export-esp.sh
-just build-firmware         # or: cd crates/stackchan-firmware && cargo +esp build --release
-just fmr                    # flash + monitor in one go
+just fmr    # flash + monitor over USB-Serial-JTAG
 ```
 
-See the `justfile` for the full set of host + firmware recipes.
+Needs a [CoreS3 Stack-chan kit](https://shop.m5stack.com/products/stackchan-kawaii-co-created-open-source-ai-desktop-robot),
+a USB-C cable, Rust 1.88+, and `dialout` group membership for serial access.
+See the [justfile](./justfile) for the full recipe set (host tests, CI gates,
+sensor bench examples).
 
-## Conventions
+## Why
 
-- Rust 2024 edition, strict clippy (pedantic + nursery + no-panic), MIT/Apache
-  dual license.
-- Conventional commits via `.githooks/commit-msg`. After cloning:
-  `git config core.hooksPath .githooks`
-- Every change lands via PR; greptile bot review required.
-- Parallel work: `git worktree add .worktrees/<branch> <branch>` — the
-  `.worktrees/` directory is gitignored.
+M5Stack ships Stack-chan with an xiaozhi firmware stack: a Chinese
+LLM-agent pipeline with cloud dependencies, questionable security posture, and
+a C++ codebase that's hard to audit. stackchan-kai rebuilds just the local
+desk-toy surface — animated face, head motion, local sensors — in `no_std`
+Rust on top of [`esp-hal`](https://github.com/esp-rs/esp-hal) and
+[embassy](https://embassy.dev/). The avatar is modeled as data and the render
+path is shared with a host-side simulator, so most of the firmware is testable
+without touching the hardware.
+
+## Features
+
+- **Animated face** — five emotions, 300 ms eased transitions, blink / breath / idle-drift modifiers at double-buffered 30 FPS
+- **Head motion** — Feetech SCServo pan/tilt driver with a calibration bench (`just bench`)
+- **9-axis sensing** — BMI270 accel + gyro, BMM150 magnetometer (compensated µT, live bench via `just mag-bench`)
+- **Local inputs** — FT6336U touch, LTR-553 ambient + proximity, NEC IR decoder
+- **Timekeeping + peripherals** — BM8563 RTC, PY32 co-processor, WS2812 neck LED ring (`just leds-bench`)
+- **Host-side sim** — full render path runs on the host with pixel-golden tests; most of the firmware ships without HIL
+- **Safe by default** — no `unwrap` in library code, typed errors throughout, `unsafe` denied workspace-wide
+
+## Non-goals
+
+- **No voice agent or LLM.** This is not a xiaozhi replacement.
+- **No cloud or telemetry.** Zero outbound network calls today.
+- **No C/C++ in the firmware binary.** Drivers are written directly against datasheets.
+- **No Wi-Fi / BLE yet.** The networking stack is out of scope for v0.x.
+- **Not an M5Unified port.** Only the desk-toy surface area is covered.
+
+## Roadmap
+
+- **RON-configurable appearance** — eye / mouth geometry, palette, per-emotion style
+- **Input-bound behavior** — tap the face to change emotion, point an IR remote to trigger reactions
+- **Other Stack-chan variants** — expand beyond the CoreS3 SKU once v0.1.x stabilizes
 
 ## License
 
-Licensed under either of:
+Licensed under either of
 
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+- [Apache License, Version 2.0](./LICENSE-APACHE)
+- [MIT License](./LICENSE-MIT)
 
 at your option.
-
-## AI disclosure
-
-See [AI-DISCLOSURE.md](AI-DISCLOSURE.md).
