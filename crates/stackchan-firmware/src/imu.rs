@@ -51,7 +51,12 @@ pub async fn run_imu_loop<I: AsyncI2c>(bus: I) -> ! {
     };
 
     if let Err(e) = imu.init(&mut delay).await {
-        defmt::error!(
+        // I²C `Timeout` part-way through the blob upload has been seen
+        // on several CoreS3 units at 100 kHz; the rest of the firmware
+        // (render, head, touch, audio) runs fine without the IMU, so
+        // this is a WARN rather than an ERROR — the hardware is
+        // present, but not usable on this unit's bus.
+        defmt::warn!(
             "BMI270: init failed ({}); IMU-driven behaviors disabled",
             defmt::Debug2Format(&e),
         );
