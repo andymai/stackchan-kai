@@ -1,0 +1,32 @@
+name: Release Please
+
+# release-please opens (and keeps updating) a release PR that aggregates
+# the conventional-commit history since the last tag. Merging that PR
+# triggers the tag + GitHub release. The cargo-workspace plugin in
+# release-please-config.json bumps workspace-package versions in lockstep
+# with the root bump so every crate stays on the same number.
+#
+# v0.1.0 was tagged manually to bootstrap the baseline recorded in
+# .release-please-manifest.json; this workflow takes over for v0.1.1+.
+#
+# Only hardcoded string inputs are referenced — no untrusted event
+# payloads (PR titles, commit messages, etc.) reach any run: step, so
+# the workflow-injection class of attacks is not applicable here.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
