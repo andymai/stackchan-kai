@@ -169,7 +169,8 @@ async fn render_task(mut display: LcdDisplay) {
     // Fixed seed keeps boot-to-boot drifts identical; a future RNG-backed
     // source (e.g. reading a voltage-derived seed from the AXP2101) can
     // swap in without touching the task shape.
-    let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
+    let mut drift =
+        IdleDrift::with_seed(const { core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap() });
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut last_rendered: Option<Avatar> = None;

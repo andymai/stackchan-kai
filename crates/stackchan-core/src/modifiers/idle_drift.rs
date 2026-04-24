@@ -8,6 +8,16 @@
 use super::Modifier;
 use crate::avatar::Avatar;
 use crate::clock::Instant;
+use core::num::NonZeroU32;
+
+/// Default xorshift32 seed used by [`IdleDrift::new`]. The `.unwrap()`
+/// is const-evaluated against a compile-time non-zero literal, so
+/// there's no runtime branch.
+#[allow(
+    clippy::unwrap_used,
+    reason = "const-evaluated against a non-zero literal: unwrap can't fire at runtime"
+)]
+const DEFAULT_SEED: NonZeroU32 = NonZeroU32::new(0x1234_5678).unwrap();
 
 /// Default interval between drifts, in milliseconds.
 const DEFAULT_INTERVAL_MS: u64 = 4_000;
@@ -41,22 +51,22 @@ impl IdleDrift {
     /// reproducible. Firmware overrides the seed at boot.
     #[must_use]
     pub const fn new() -> Self {
-        Self::with_seed(0x1234_5678)
+        Self::with_seed(DEFAULT_SEED)
     }
 
     /// Construct with a custom xorshift32 seed.
     ///
-    /// # Panics
-    ///
-    /// Never panics today, but the `const fn` constraint means we accept any
-    /// non-zero seed; callers passing zero will get a stuck RNG.
+    /// Accepts [`NonZeroU32`] at the type level rather than silently
+    /// substituting a default when the caller passes zero — a zero
+    /// seed would leave xorshift32 stuck at zero and drift would never
+    /// fire.
     #[must_use]
-    pub const fn with_seed(seed: u32) -> Self {
+    pub const fn with_seed(seed: NonZeroU32) -> Self {
         Self {
             interval_ms: DEFAULT_INTERVAL_MS,
             max_x: DEFAULT_MAX_X,
             max_y: DEFAULT_MAX_Y,
-            rng_state: if seed == 0 { 0x1234_5678 } else { seed },
+            rng_state: seed.get(),
             next_drift_at: None,
             last_offset: (0, 0),
         }
@@ -129,6 +139,10 @@ impl Modifier for IdleDrift {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test literals are compile-time non-zero; the unwrap can't fire"
+)]
 mod tests {
     use super::*;
     use crate::avatar::Avatar;
@@ -147,7 +161,7 @@ mod tests {
     fn drift_applies_at_interval() {
         let mut avatar = Avatar::default();
         let baseline = (avatar.left_eye.center.x, avatar.left_eye.center.y);
-        let mut drift = IdleDrift::with_seed(42);
+        let mut drift = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
 
         drift.update(&mut avatar, Instant::from_millis(0));
         drift.update(&mut avatar, Instant::from_millis(DEFAULT_INTERVAL_MS));
@@ -163,7 +177,7 @@ mod tests {
     fn drifts_do_not_accumulate() {
         let mut avatar = Avatar::default();
         let baseline = (avatar.left_eye.center.x, avatar.left_eye.center.y);
-        let mut drift = IdleDrift::with_seed(42);
+        let mut drift = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
 
         for i in 0..10 {
             drift.update(&mut avatar, Instant::from_millis(i * DEFAULT_INTERVAL_MS));
@@ -178,8 +192,8 @@ mod tests {
 
     #[test]
     fn seeded_rng_is_deterministic() {
-        let mut a = IdleDrift::with_seed(42);
-        let mut b = IdleDrift::with_seed(42);
+        let mut a = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
+        let mut b = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
         for _ in 0..100 {
             assert_eq!(a.next_u32(), b.next_u32());
         }
