@@ -408,12 +408,14 @@ async fn mag_task(shared_i2c: SharedI2c) -> ! {
     mag::run_mag_loop(shared_i2c).await
 }
 
-/// Audio task. Today a park loop; in PR 2B this becomes the I²S DMA
-/// read loop that computes mic RMS per render window and publishes to
-/// [`audio::AUDIO_RMS_SIGNAL`].
+/// Audio task. Owns the I²S0 peripheral + DMA, runs the full bring-up
+/// sequence (I²S MCLK first so ES7210 can answer I²C, then both
+/// codecs), and (in PR 2C) will compute mic RMS per render window
+/// publishing to [`audio::AUDIO_RMS_SIGNAL`]. Today parks after
+/// bring-up.
 #[embassy_executor::task]
-async fn audio_task() -> ! {
-    audio::run_audio_loop().await
+async fn audio_task(peripherals: audio::AudioPeripherals) -> ! {
+    audio::run_audio_task(peripherals).await
 }
 
 #[esp_rtos::main]
@@ -527,17 +529,23 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn mag_task failed: {}", defmt::Debug2Format(&e));
     }
 
-    // Audio bring-up: configure AW88298 + ES7210 over shared I²C. Does
-    // not start I²S streaming (that's PR 2B). Failures are warn-only —
+    // Audio subsystem. The task owns I²S0 + DMA + audio pins and
+    // runs the full bring-up sequence itself (I²S MCLK first, then
+    // AW88298, then ES7210). Failures inside the task log-and-park —
     // audio degrades to "silent mic, muted speaker" rather than
-    // halting the boot, since the rest of the avatar still works.
-    let amp_bus = I2cDevice::new(board_io.i2c_bus);
-    let adc_bus = I2cDevice::new(board_io.i2c_bus);
-    match audio::bringup(amp_bus, adc_bus).await {
-        Ok(()) => defmt::info!("audio: codecs up (I²S streaming pending PR 2B)"),
-        Err(e) => defmt::warn!("audio: bring-up failed ({:?}) — audio disabled", e),
-    }
-    if let Err(e) = spawner.spawn(audio_task()) {
+    // halting the avatar.
+    let audio_periph = audio::AudioPeripherals {
+        i2s: peripherals.I2S0,
+        dma: peripherals.DMA_CH0,
+        mclk: peripherals.GPIO0,
+        bclk: peripherals.GPIO34,
+        ws: peripherals.GPIO33,
+        din: peripherals.GPIO14,
+        dout: peripherals.GPIO13,
+        amp_bus: I2cDevice::new(board_io.i2c_bus),
+        adc_bus: I2cDevice::new(board_io.i2c_bus),
+    };
+    if let Err(e) = spawner.spawn(audio_task(audio_periph)) {
         defmt::panic!("spawn audio_task failed: {}", defmt::Debug2Format(&e));
     }
 
