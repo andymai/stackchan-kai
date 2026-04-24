@@ -1,10 +1,11 @@
 //! StackChan firmware for the M5Stack CoreS3.
 //!
 //! Boot sequence: esp-hal init → esp-rtos embassy → AXP2101 LDOs →
-//! AW9523 releases LCD reset → SPI2 + ILI9342C via mipidsi → one-shot
-//! render of the default `Avatar`. The animated render loop (BlinkModifier
-//! et al. @ 30 FPS) lands in a follow-up PR; isolating the draw pipeline
-//! from the animation state machine keeps the regression surface small.
+//! AW9523 releases LCD reset → SPI2 + ILI9342C via mipidsi. Main then
+//! spawns a ~30 FPS embassy task that drives `BlinkModifier` against an
+//! `Avatar` and pushes updated frames to the LCD; main drops into a
+//! heartbeat loop so "render task alive" and "main alive" show up as
+//! separate signals in the defmt log.
 
 #![no_std]
 #![no_main]
@@ -25,12 +26,15 @@
 extern crate alloc;
 
 mod aw9523;
+mod clock;
 
 use axp2101::Axp2101;
+use clock::HalClock;
 use embassy_executor::Spawner;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::{
+    Blocking,
     clock::CpuClock,
     gpio::{Level, Output, OutputConfig},
     i2c::master::{Config as I2cConfig, I2c},
@@ -42,12 +46,12 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use mipidsi::{
-    Builder,
+    Builder, NoResetPin,
     interface::SpiInterface,
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
 };
-use stackchan_core::Avatar;
+use stackchan_core::{Avatar, Clock, Modifier, modifiers::Blink};
 use static_cell::StaticCell;
 
 // esp-println registers a `#[defmt::global_logger]` that writes
@@ -96,13 +100,58 @@ const HEAP_SIZE: usize = 72 * 1024;
 /// without the LDOs, so halting here is the wrong answer.
 const PMIC_RETRY_MS: u64 = 500;
 
+/// Render cadence. 33 ms ≈ 30 FPS; `Ticker` corrects drift automatically
+/// if a single frame's `Avatar::draw` runs long (e.g. during a blink
+/// transition where every pixel changes).
+const FRAME_PERIOD_MS: u64 = 33;
+
+/// Concrete type of the assembled LCD display. Spelled out once here so the
+/// render task (which the `#[embassy_executor::task]` macro requires to be
+/// non-generic) can name it cleanly. The `'static` lifetimes flow from
+/// esp-hal peripheral ownership and the `StaticCell`-parked SPI buffer.
+type LcdDisplay = mipidsi::Display<
+    SpiInterface<
+        'static,
+        ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, Delay>,
+        Output<'static>,
+    >,
+    ILI9342CRgb565,
+    NoResetPin,
+>;
+
+/// 30 FPS render task. Owns the display + the animation state, so main is
+/// free to run the heartbeat loop (and, in future PRs, other top-level
+/// concerns like battery monitoring) on its own.
+///
+/// The `last_rendered` dirty-check skips the draw on frames where no
+/// modifier mutated the avatar — with Blink-only that's ~99% of frames,
+/// so the LCD is effectively idle between the ~11 blinks per minute.
+#[embassy_executor::task]
+async fn render_task(mut display: LcdDisplay) {
+    let clock = HalClock;
+    let mut avatar = Avatar::default();
+    let mut blink = Blink::new();
+    let mut last_rendered: Option<Avatar> = None;
+
+    let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
+    defmt::info!("render task: {=u64} ms tick, Blink only", FRAME_PERIOD_MS);
+
+    loop {
+        blink.update(&mut avatar, clock.now());
+
+        if last_rendered != Some(avatar) {
+            match avatar.draw(&mut display) {
+                Ok(()) => last_rendered = Some(avatar),
+                Err(e) => defmt::error!("render: Avatar::draw failed: {}", defmt::Debug2Format(&e)),
+            }
+        }
+
+        ticker.next().await;
+    }
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    // Spawner is unused in the static-face PR; the 30 FPS render task in the
-    // next PR will consume it. Drop explicitly so the unused-var warning
-    // can't mask a real regression.
-    let _ = spawner;
-
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: HEAP_SIZE);
@@ -197,7 +246,7 @@ async fn main(spawner: Spawner) -> ! {
     // reset is already done via AW9523 above. BGR color order matches the
     // CoreS3 panel wiring; without `invert_colors` the image appears as a
     // color-inverted negative on this specific module.
-    let mut display = match Builder::new(ILI9342CRgb565, di)
+    let display: LcdDisplay = match Builder::new(ILI9342CRgb565, di)
         .display_size(320, 240)
         .color_order(ColorOrder::Bgr)
         .invert_colors(ColorInversion::Inverted)
@@ -206,11 +255,10 @@ async fn main(spawner: Spawner) -> ! {
         Ok(d) => d,
         Err(e) => defmt::panic!("mipidsi init failed: {}", defmt::Debug2Format(&e)),
     };
-    defmt::info!("ILI9342C ready — rendering default Avatar");
+    defmt::info!("ILI9342C ready — spawning render task");
 
-    match Avatar::default().draw(&mut display) {
-        Ok(()) => defmt::info!("Avatar drawn to LCD"),
-        Err(e) => defmt::error!("Avatar::draw failed: {}", defmt::Debug2Format(&e)),
+    if let Err(e) = spawner.spawn(render_task(display)) {
+        defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
 
     defmt::info!("boot complete — idle heartbeat");
