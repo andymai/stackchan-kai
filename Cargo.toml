@@ -5,7 +5,7 @@ members = [
     "crates/stackchan-sim",
     "crates/axp2101",
     "crates/aw9523",
-    "crates/pca9685",
+    "crates/scservo",
     "crates/stackchan-firmware",
 ]
 default-members = [
@@ -13,7 +13,7 @@ default-members = [
     "crates/stackchan-sim",
     "crates/axp2101",
     "crates/aw9523",
-    "crates/pca9685",
+    "crates/scservo",
 ]
 
 [workspace.package]
@@ -55,6 +55,7 @@ embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 embedded-hal = "1"
 embedded-hal-async = "1"
+embedded-io-async = "0.7"
 fugit = "0.3"
 
 [profile.release]
