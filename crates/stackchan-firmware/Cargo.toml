@@ -64,7 +64,7 @@ embassy-sync = { version = "0.7", features = ["defmt"] }
 # (on embassy-sync 0.7); 0.6 would drag in a second embassy-sync 0.8,
 # and our `NoopRawMutex` would then resolve to the 0.7 type the 0.6
 # crate can't consume.
-embassy-embedded-hal = { version = "0.5", features = ["defmt"] }
+embassy-embedded-hal = { version = "0.6", features = ["defmt"] }
 
 defmt = "1.0.1"
 # Log transport: defmt-encoded bytes over the ESP32-S3 USB-Serial-JTAG
