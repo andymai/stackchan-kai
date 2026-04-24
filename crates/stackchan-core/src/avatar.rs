@@ -220,6 +220,12 @@ pub struct Avatar {
     /// directly; modifiers translate lux into visible state via
     /// `Avatar::emotion`.
     pub ambient_lux: Option<f32>,
+    /// Trim-compensated magnetometer reading in microtesla
+    /// `(x, y, z)`, or `None` before the first successful BMM150 read.
+    /// Written by the firmware magnetometer task; no modifier consumes
+    /// it yet (data-only landing). Excluded from [`Avatar::frame_eq`]
+    /// — the raw field never affects pixels directly.
+    pub mag_ut: Option<(f32, f32, f32)>,
 }
 
 impl Avatar {
@@ -293,6 +299,8 @@ impl Default for Avatar {
             gyro_dps: (0.0, 0.0, 0.0),
             // No ambient reading until the LTR-553 task publishes one.
             ambient_lux: None,
+            // No magnetometer reading until the BMM150 task publishes one.
+            mag_ut: None,
         }
     }
 }

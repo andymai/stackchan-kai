@@ -17,6 +17,7 @@ axp2101 = { path = "../axp2101" }
 aw9523 = { path = "../aw9523" }
 bm8563 = { path = "../bm8563" }
 bmi270 = { path = "../bmi270" }
+bmm150 = { path = "../bmm150" }
 ft6336u = { path = "../ft6336u" }
 ir-nec = { path = "../ir-nec" }
 ltr553 = { path = "../ltr553" }
@@ -109,3 +110,7 @@ path = "examples/ir_bench.rs"
 [[example]]
 name = "leds_bench"
 path = "examples/leds_bench.rs"
+
+[[example]]
+name = "mag_bench"
+path = "examples/mag_bench.rs"
