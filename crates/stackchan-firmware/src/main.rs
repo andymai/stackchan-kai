@@ -1,8 +1,9 @@
 //! StackChan firmware for the M5Stack CoreS3.
 //!
 //! Boot sequence: esp-hal init → internal SRAM + PSRAM heaps registered
-//! with `esp_alloc` → esp-rtos embassy → AXP2101 LDOs → AW9523 releases
-//! LCD reset → SPI2 + ILI9342C via mipidsi. Main then spawns a ~30 FPS
+//! with `esp_alloc` → esp-rtos embassy → AXP2101 LDOs → AW9523 drives the
+//! board-level enables and pulses LCD reset → SPI2 + ILI9342C via mipidsi.
+//! Main then spawns a ~30 FPS
 //! embassy task that runs the full modifier stack
 //! (`EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift`)
 //! against an `Avatar`, draws into a PSRAM-backed framebuffer, and
@@ -261,9 +262,9 @@ async fn main(spawner: Spawner) -> ! {
     // only other) I²C consumer in this PR, so a sequential hand-off avoids
     // pulling in embedded-hal-bus shared-bus machinery.
     let mut i2c = pmic.into_inner();
-    match aw9523::release_lcd_reset(&mut i2c).await {
-        Ok(()) => defmt::info!("AW9523: LCD reset released (P0_0 high)"),
-        Err(e) => defmt::panic!("AW9523 reset-release failed: {}", defmt::Debug2Format(&e)),
+    match aw9523::init_and_reset_lcd(&mut i2c).await {
+        Ok(()) => defmt::info!("AW9523: CoreS3 defaults applied, LCD reset pulsed (P1_1)"),
+        Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
     }
     // I²C is no longer needed in this PR; drop it so the compiler catches
     // any accidental later uses (touch/battery drivers come in future PRs).
@@ -274,7 +275,7 @@ async fn main(spawner: Spawner) -> ! {
     //   MOSI = GPIO37
     //   CS   = GPIO3  (active low)
     //   DC   = GPIO35 (0 = command, 1 = data)
-    //   RST  = AW9523 P0_0 (handled above — mipidsi sees `NoResetPin`)
+    //   RST  = AW9523 P1_1 (handled above — mipidsi sees `NoResetPin`)
     //   BL   = AXP2101 BLDO1 (handled by `enable_lcd_rails`)
     let spi_cfg = SpiConfig::default()
         .with_frequency(Rate::from_mhz(40))

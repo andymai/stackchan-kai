@@ -70,9 +70,13 @@ const CORES3_INIT_SEQUENCE: &[RegWrite] = &[
     (0x93, 28), // ALDO2 = 3.3V  — ES7210 audio ADC
     (0x94, 28), // ALDO3 = 3.3V  — camera
     (0x95, 28), // ALDO4 = 3.3V  — TF card slot
+    (0x96, 28), // BLDO1 = 3.3V  — LCD backlight (PoR default is 0.5V; must
+    //                             write explicitly or the panel enables
+    //                             with no light)
+    (0x97, 28), // BLDO2 = 3.3V  — LCD logic rail
     // LDO enable bitmap. 0xBF enables ALDO1..4 (bits 0..3) and BLDO1..2
-    // (bits 4..5); BLDO1/BLDO2 default to 3.3V for the LCD backlight +
-    // logic rails on CoreS3 so no explicit voltage write is needed.
+    // (bits 4..5). Voltages for every rail in the mask are set above so
+    // each comes up at 3.3V (ALDO1 at 1.8V) on its first on-edge.
     (0x90, 0xBF),
     // Power-key timing. 0x00 = hold 1 s to wake, 4 s to power off. Without
     // this write the chip boots with an aggressive default that treats
@@ -90,8 +94,11 @@ const CORES3_INIT_SEQUENCE: &[RegWrite] = &[
     (0x68, 0x01),
     // CHGLED behavior: controlled by the charger, flashing on charge.
     (0x69, 0x13),
-    // DLDO1 = 0.5V — gates the vibration motor. Safe default off-ish.
-    (0x99, 0x00),
+    // DLDO1 = 3.3V — LCD backlight. `M5Unified`'s `SetBrightness` writes
+    // this register with `(brightness + 641) >> 5`, mapping 0..255 input
+    // to 20..28 register values (~1.5V..3.3V). 28 = full brightness; a
+    // future `set_brightness` API can drop it.
+    (0x99, 28),
     // Enable the PMU's ADC block so later reads of battery / VBUS voltage
     // return something meaningful.
     (0x30, 0x0F),
