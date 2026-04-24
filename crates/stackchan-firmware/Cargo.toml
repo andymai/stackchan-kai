@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
+embedded-graphics = { workspace = true }
 embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }
 # `ExclusiveDevice` wraps the blocking esp-hal `Spi` + a CS pin into the
@@ -31,7 +32,7 @@ mipidsi = "0.10"
 # errors (the crates ship coordinated internal features that move in
 # lockstep). `esp-rtos` is the current embassy integration; it replaced
 # `esp-hal-embassy` for the 1.0 line.
-esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "unstable"] }
+esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "psram", "unstable"] }
 esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp32s3"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }

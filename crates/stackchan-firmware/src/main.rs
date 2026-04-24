@@ -1,11 +1,13 @@
 //! StackChan firmware for the M5Stack CoreS3.
 //!
-//! Boot sequence: esp-hal init → esp-rtos embassy → AXP2101 LDOs →
-//! AW9523 releases LCD reset → SPI2 + ILI9342C via mipidsi. Main then
-//! spawns a ~30 FPS embassy task that drives `BlinkModifier` against an
-//! `Avatar` and pushes updated frames to the LCD; main drops into a
-//! heartbeat loop so "render task alive" and "main alive" show up as
-//! separate signals in the defmt log.
+//! Boot sequence: esp-hal init → internal SRAM + PSRAM heaps registered
+//! with `esp_alloc` → esp-rtos embassy → AXP2101 LDOs → AW9523 releases
+//! LCD reset → SPI2 + ILI9342C via mipidsi. Main then spawns a ~30 FPS
+//! embassy task that runs the full Blink/Breath/IdleDrift stack against
+//! an `Avatar`, draws into a PSRAM-backed framebuffer, and blits the
+//! whole frame to the LCD in one `fill_contiguous` call. Main drops
+//! into a heartbeat loop so "render task alive" and "main alive" show
+//! up as separate signals in the defmt log.
 
 #![no_std]
 #![no_main]
@@ -27,11 +29,17 @@ extern crate alloc;
 
 mod aw9523;
 mod clock;
+mod framebuffer;
 
 use axp2101::Axp2101;
 use clock::HalClock;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Ticker, Timer};
+use embedded_graphics::{
+    draw_target::DrawTarget,
+    geometry::{Point as EgPoint, Size},
+    primitives::Rectangle,
+};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::{
     Blocking,
@@ -45,6 +53,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
+use framebuffer::{Framebuffer, HEIGHT as FB_HEIGHT, WIDTH as FB_WIDTH};
 use mipidsi::{
     Builder, NoResetPin,
     interface::SpiInterface,
@@ -92,10 +101,10 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-/// Internal SRAM heap for embassy task arena + defmt buffers. Kept small:
-/// PSRAM comes online in the next PR when the 320×240 RGB565 framebuffer
-/// (~150 KiB) needs a home. 72 KiB matches the esp-generate default and
-/// leaves ample margin for `esp-rtos` internal state.
+/// Internal SRAM heap, registered first so short-lived allocations (embassy
+/// task arena, defmt buffers) stay in fast on-chip RAM. The 150 KiB
+/// framebuffer spills to the PSRAM region registered below. 72 KiB matches
+/// the esp-generate default and leaves ample margin for `esp-rtos` state.
 const HEAP_SIZE: usize = 72 * 1024;
 
 /// Retry delay between failed AXP2101 init attempts. Covers transient
@@ -122,20 +131,27 @@ type LcdDisplay = mipidsi::Display<
     NoResetPin,
 >;
 
-/// 30 FPS render task. Owns the display + the full modifier stack, so main
-/// is free to run the heartbeat loop (and, in future PRs, other top-level
-/// concerns like battery monitoring) on its own.
+/// 30 FPS render task. Double-buffered via a PSRAM-backed [`Framebuffer`]:
+/// each frame we run the modifier stack, draw the avatar into the off-screen
+/// buffer (no LCD traffic), then blit the whole buffer to the LCD in one
+/// `fill_contiguous` call — which mipidsi lowers to a single
+/// `CASET`/`RASET`/`RAMWR` + bulk SPI write. The LCD only ever sees a
+/// complete frame, so the white-clear flicker from direct-draw is gone.
 ///
-/// Modifiers run in the same order as `stackchan_sim::sixty_second_composition_is_stable`:
-/// `Blink` → `Breath` → `IdleDrift`. Breath's vertical offset and IdleDrift's
-/// periodic eye nudges mean the avatar differs nearly every frame, so the
-/// `last_rendered` dirty-check degrades to "always redraw" once Breath is
-/// active. We keep the check anyway because it still skips frames between
-/// Breath's triangle-wave edges where `last_offset_px` happens to be zero,
-/// and the comparison is essentially free.
+/// Modifier order matches `stackchan_sim::sixty_second_composition_is_stable`:
+/// `Blink` → `Breath` → `IdleDrift`. The `last_rendered` dirty-check still
+/// helps between Breath's triangle-wave zero-offset ticks and rare windows
+/// where no modifier moves the avatar; when every frame differs we simply
+/// always blit.
 #[embassy_executor::task]
 async fn render_task(mut display: LcdDisplay) {
     let clock = HalClock;
+    let mut fb = Framebuffer::new();
+    defmt::info!(
+        "framebuffer allocated in PSRAM: {=u32}x{=u32} Rgb565",
+        FB_WIDTH,
+        FB_HEIGHT
+    );
     let mut avatar = Avatar::default();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
@@ -144,6 +160,9 @@ async fn render_task(mut display: LcdDisplay) {
     // swap in without touching the task shape.
     let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
     let mut last_rendered: Option<Avatar> = None;
+
+    // Pre-compute the blit rect once; it never changes.
+    let canvas = Rectangle::new(EgPoint::zero(), Size::new(FB_WIDTH, FB_HEIGHT));
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
@@ -158,9 +177,12 @@ async fn render_task(mut display: LcdDisplay) {
         drift.update(&mut avatar, now);
 
         if last_rendered != Some(avatar) {
-            match avatar.draw(&mut display) {
+            // Draw is Infallible on `Framebuffer`; the `let _ =` discards
+            // the `Result<(), Infallible>` without triggering unwrap lints.
+            let _ = avatar.draw(&mut fb);
+            match display.fill_contiguous(&canvas, fb.as_slice().iter().copied()) {
                 Ok(()) => last_rendered = Some(avatar),
-                Err(e) => defmt::error!("render: Avatar::draw failed: {}", defmt::Debug2Format(&e)),
+                Err(e) => defmt::error!("render: blit failed: {}", defmt::Debug2Format(&e)),
             }
         }
 
@@ -172,7 +194,13 @@ async fn render_task(mut display: LcdDisplay) {
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 
+    // Two heap regions registered with the single `esp_alloc::HEAP`:
+    //   1. Internal SRAM (reclaimed post-init) — fast, small, first-preference
+    //      for the embassy task arena, defmt buffers, and short-lived allocs.
+    //   2. External PSRAM — 8 MiB of slower memory the 150 KiB framebuffer
+    //      lives in. Registered second so small allocs don't waste PSRAM.
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: HEAP_SIZE);
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
