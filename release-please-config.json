@@ -26,6 +26,9 @@
     "crates/ft6336u": {
       "package-name": "ft6336u"
     },
+    "crates/ir-nec": {
+      "package-name": "ir-nec"
+    },
     "crates/ltr553": {
       "package-name": "ltr553"
     },
