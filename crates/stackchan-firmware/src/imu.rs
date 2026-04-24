@@ -50,14 +50,40 @@ pub async fn run_imu_loop<I: AsyncI2c>(bus: I) -> ! {
         park().await;
     };
 
-    if let Err(e) = imu.init(&mut delay).await {
-        // I²C `Timeout` part-way through the blob upload has been seen
-        // on several CoreS3 units at 100 kHz; the rest of the firmware
-        // (render, head, touch, audio) runs fine without the IMU, so
-        // this is a WARN rather than an ERROR — the hardware is
-        // present, but not usable on this unit's bus.
+    // Retry init on I²C errors. The 8 KiB config blob upload runs
+    // concurrently with the touch / button / LED polls on the shared
+    // I²C0 bus, and a single `NACK` or `Timeout` from another slave
+    // during bus arbitration can wedge BMI270's upload mid-sequence.
+    // Re-running the whole sequence (soft-reset + blob + config) is
+    // the BMI270-recommended recovery — there's no partial-resume
+    // path in Bosch's reference. Each attempt starts with a fresh
+    // soft-reset, so prior partial state is safely discarded.
+    const INIT_MAX_ATTEMPTS: u32 = 3;
+    const INIT_RETRY_COOLDOWN_MS: u64 = 200;
+    let mut init_err = None;
+    for attempt in 1..=INIT_MAX_ATTEMPTS {
+        match imu.init(&mut delay).await {
+            Ok(()) => {
+                init_err = None;
+                break;
+            }
+            Err(e) => {
+                defmt::warn!(
+                    "BMI270: init attempt {=u32}/{=u32} failed ({}); retrying in {=u64} ms",
+                    attempt,
+                    INIT_MAX_ATTEMPTS,
+                    defmt::Debug2Format(&e),
+                    INIT_RETRY_COOLDOWN_MS,
+                );
+                init_err = Some(e);
+                embassy_time::Timer::after(Duration::from_millis(INIT_RETRY_COOLDOWN_MS)).await;
+            }
+        }
+    }
+    if let Some(e) = init_err {
         defmt::warn!(
-            "BMI270: init failed ({}); IMU-driven behaviors disabled",
+            "BMI270: init failed after {=u32} attempts ({}); IMU-driven behaviors disabled",
+            INIT_MAX_ATTEMPTS,
             defmt::Debug2Format(&e),
         );
         park().await;
