@@ -203,6 +203,15 @@ pub async fn bringup(
     ping_servo(&mut scs_head, head::YAW_SERVO_ID).await;
     ping_servo(&mut scs_head, head::PITCH_SERVO_ID).await;
 
+    // Explicitly enable torque on both servos. Factory default is
+    // usually enabled, but some kits ship with torque off on one axis
+    // (e.g. the tilt servo left loose so the head can be manually
+    // positioned during assembly). Without torque, `write_position`
+    // is silently ignored and the axis sags under gravity — commands
+    // succeed on the wire but produce no motion.
+    enable_torque(&mut scs_head, head::YAW_SERVO_ID).await;
+    enable_torque(&mut scs_head, head::PITCH_SERVO_ID).await;
+
     // Visible proof of life: deliberate pan-then-tilt gesture before
     // the main control pipeline takes over.
     boot_nod(&mut scs_head).await;
@@ -270,30 +279,43 @@ async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
     }
 }
 
-/// Boot-time "hello" gesture: pan +15 → pan -15 → pan 0 → tilt +5
-/// → tilt -5 → tilt 0 over ~1 s. Each step waits
-/// [`BOOT_NOD_STEP_MS`] for the servo's internal interpolation to
-/// complete before commanding the next. Write errors log + continue.
+/// Enable torque on one `SCServo` ID so it actually holds the
+/// commanded position. Without this, the servo accepts
+/// `write_position` frames but applies no force — the axis sags
+/// under gravity and visible motion never happens. Failures log
+/// at `warn` and return; the downstream pipeline will still try
+/// to drive the axis (and its writes will keep being ignored,
+/// which is an observable failure mode at least).
+async fn enable_torque(driver: &mut HeadDriverImpl, id: u8) {
+    match driver.bus_mut().write_torque_enable(id, true).await {
+        Ok(()) => defmt::info!("SCServo[{=u8}]: torque enabled", id),
+        Err(e) => defmt::warn!(
+            "SCServo[{=u8}]: torque-enable failed: {}",
+            id,
+            defmt::Debug2Format(&e)
+        ),
+    }
+}
+
+/// Boot-time "yes" nod: tilt up → tilt down → center over ~0.5 s.
+/// Each step waits [`BOOT_NOD_STEP_MS`] for the servo's internal
+/// interpolation to complete before commanding the next. Write
+/// errors log + continue.
 ///
-/// Tilt amplitude is deliberately smaller than pan: the pan servo
-/// sits at the bottom of the mount with the whole head as its load,
-/// and the factory horn position is reliably near mechanical centre.
-/// The tilt linkage is asymmetric — head weight biases the rest
-/// position away from true servo-centre (position 512), and factory
-/// kits vary by a few degrees, so ±10° can push the head into the
-/// hard stop on units that weren't trim-calibrated. ±5° keeps the
-/// gesture visible on every kit without stalling the tilt servo;
-/// users who want the full throw can calibrate via `just bench` and
-/// set `TILT_TRIM_DEG` in `head.rs`.
+/// Pure tilt motion — a nod is the up/down "yes" gesture by
+/// definition. The asymmetric amplitudes (+8° up, -3° down) account
+/// for the factory horn offset: many kits ship with position 512
+/// biased a few degrees below horizontal (head weight on the pitch
+/// linkage), so aggressive downward travel risks hitting the hard
+/// stop while upward travel has room. Users who want a symmetric
+/// nod can calibrate `TILT_TRIM_DEG` in `head.rs` via `just bench`
+/// and restore a ±X°/±X° pattern.
 async fn boot_nod(driver: &mut HeadDriverImpl) {
     let clock = HalClock;
-    defmt::info!("boot-nod: hello gesture start");
+    defmt::info!("boot-nod: yes nod start");
     for (pan, tilt, label) in [
-        (15.0, 0.0, "pan+15"),
-        (-15.0, 0.0, "pan-15"),
-        (0.0, 0.0, "pan 0"),
-        (0.0, 5.0, "tilt+5"),
-        (0.0, -5.0, "tilt-5"),
+        (0.0, 8.0, "tilt+8"),
+        (0.0, -3.0, "tilt-3"),
         (0.0, 0.0, "tilt 0"),
     ] {
         if let Err(e) = driver.set_pose(Pose::new(pan, tilt), clock.now()).await {
