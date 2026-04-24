@@ -31,9 +31,17 @@
 //! physical trim.
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_time::{Duration, with_timeout};
 use embedded_io_async::{Read, Write};
 use scservo::{POSITION_CENTER, POSITION_PER_DEGREE, Scservo};
 use stackchan_core::{HeadDriver, Instant, Pose};
+
+/// Time-bounded drain of the 6-byte Feetech status response.
+/// Servos with Status Return Level = 2 send one after every write;
+/// servos with Level = 0 stay silent, so an unbounded drain would
+/// hang. 2 ms is comfortably longer than the ~60 µs transmission of
+/// 6 bytes at 1 Mbaud plus the servo's own response latency.
+const STATUS_DRAIN_TIMEOUT_MS: u64 = 2;
 
 /// `SCServo` ID wired to the pan (yaw) servo, matching the old C++
 /// firmware's convention.
@@ -154,8 +162,8 @@ impl<U: Read + Write> ScsHead<U> {
     }
 }
 
-impl<W: Write> HeadDriver for ScsHead<W> {
-    type Error = scservo::Error<W::Error>;
+impl<U: Read + Write> HeadDriver for ScsHead<U> {
+    type Error = scservo::Error<U::Error>;
 
     async fn set_pose(&mut self, pose: Pose, _now: Instant) -> Result<(), Self::Error> {
         let pan_pos = Self::position_for(pose.pan_deg, PAN_TRIM_DEG, PAN_DIRECTION);
@@ -163,9 +171,23 @@ impl<W: Write> HeadDriver for ScsHead<W> {
         self.bus
             .write_position(YAW_SERVO_ID, pan_pos, MOVE_TIME_MS, MOVE_SPEED)
             .await?;
+        // Drain the 6-byte status response before the next write so
+        // it doesn't pile up in the UART RX FIFO and corrupt the
+        // periodic `read_pose` readback. Silent servos (Status Return
+        // Level = 0) make the drain hang, so it's time-bounded.
+        let _ = with_timeout(
+            Duration::from_millis(STATUS_DRAIN_TIMEOUT_MS),
+            self.bus.drain_write_status(),
+        )
+        .await;
         self.bus
             .write_position(PITCH_SERVO_ID, tilt_pos, MOVE_TIME_MS, MOVE_SPEED)
             .await?;
+        let _ = with_timeout(
+            Duration::from_millis(STATUS_DRAIN_TIMEOUT_MS),
+            self.bus.drain_write_status(),
+        )
+        .await;
         Ok(())
     }
 }

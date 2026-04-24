@@ -55,11 +55,22 @@ const POLL_PERIOD_MS: u64 = 16;
 /// dropped I²C transaction must not blank the face.
 pub async fn run_touch_loop<I: AsyncI2c>(mut touch: Ft6336u<I>) -> ! {
     match touch.read_vendor_id().await {
-        Ok(id) if id == VENDOR_ID_FOCALTECH => {
-            defmt::info!("FT6336U: vendor ID 0x{=u8:02X} (FocalTech, expected)", id);
+        // Genuine FocalTech part.
+        Ok(VENDOR_ID_FOCALTECH) => {
+            defmt::info!(
+                "FT6336U: vendor ID 0x{=u8:02X} (FocalTech, expected)",
+                VENDOR_ID_FOCALTECH,
+            );
+        }
+        // CoreS3 variants ship with register-compatible touch silicon
+        // that reports a different vendor byte (0x01 has been observed
+        // in the wild). The touch-coordinate registers are identical,
+        // so taps work fine — no need to alarm the log.
+        Ok(0x01) => {
+            defmt::info!("FT6336U: vendor ID 0x01 (CoreS3 variant, register-compatible)");
         }
         Ok(id) => defmt::warn!(
-            "FT6336U: unexpected vendor ID 0x{=u8:02X} (expected 0x{=u8:02X}); taps may misbehave",
+            "FT6336U: unexpected vendor ID 0x{=u8:02X} (expected 0x{=u8:02X} or 0x01); taps may misbehave",
             id,
             VENDOR_ID_FOCALTECH,
         ),
