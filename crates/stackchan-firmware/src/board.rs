@@ -1,5 +1,5 @@
 //! CoreS3 board bring-up — power + servo bus init shared between the
-//! main firmware binary and `examples/bench.rs`.
+//! main firmware binary and the `examples/` binaries.
 //!
 //! [`bringup`] owns the full sequence:
 //!
@@ -9,11 +9,13 @@
 //! 3. `SCServo::ping` each configured servo ID, log presence.
 //! 4. Run the boot-nod gesture so the head visibly exercises both
 //!    axes before the main control pipeline takes over.
+//! 5. Park the I²C0 bus in a shared-bus wrapper so post-boot consumers
+//!    (touch, future RTC / IMU) can hold handles to it concurrently.
 //!
-//! The function returns the fully-initialised [`HeadDriverImpl`] ready
-//! to be handed to the firmware's head task (or driven directly in the
-//! bench example). It does **not** touch the LCD peripherals — that
-//! stays in the caller so the bench binary can skip it.
+//! The function returns a [`BoardIo`] with both the fully-initialised
+//! [`HeadDriverImpl`] **and** a [`SharedI2c`] handle on the internal
+//! bus. It does **not** touch the LCD peripherals — that stays in the
+//! caller so the bench examples can skip the SPI init.
 //!
 //! ## Philosophy
 //!
@@ -23,6 +25,8 @@
 //! that panics on failure is AXP2101 init, and only because no
 //! forward progress is possible without the LDOs.
 
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{
     i2c::master::{Config as I2cConfig, I2c},
@@ -32,6 +36,7 @@ use esp_hal::{
 };
 use scservo::Scservo;
 use stackchan_core::{Clock, HeadDriver, Pose};
+use static_cell::StaticCell;
 
 use crate::clock::HalClock;
 use crate::head;
@@ -40,6 +45,41 @@ use crate::head;
 /// `#[embassy_executor::task]` (which forbids generic tasks) can accept
 /// it as an argument.
 pub type HeadDriverImpl = head::ScsHead<Uart<'static, esp_hal::Async>>;
+
+/// Internal I²C0 bus wrapped in an async [`Mutex`].
+///
+/// Consumers never name this directly; they hold [`SharedI2c`] handles
+/// instead. The `NoopRawMutex` is correct here because the esp-rtos
+/// executor on this chip is single-threaded — cross-core / cross-
+/// executor safety is not meaningful.
+pub type SharedI2cBus = Mutex<NoopRawMutex, I2c<'static, esp_hal::Async>>;
+
+/// Cloneable handle onto [`SharedI2cBus`].
+///
+/// Every I²C consumer (touch task, future RTC / IMU tasks) receives
+/// its own `SharedI2c` and uses it exactly like a directly-owned bus:
+/// the [`I2cDevice`] wrapper transparently locks the mutex around
+/// each transaction.
+pub type SharedI2c = I2cDevice<'static, NoopRawMutex, I2c<'static, esp_hal::Async>>;
+
+/// Values [`bringup`] hands back to the caller.
+///
+/// Contains the servo bus driver + a shared-handle onto the internal
+/// I²C0 bus. Further handles onto the same bus can be cloned by
+/// calling [`I2cDevice::new`] on the [`SharedI2cBus`] reference
+/// returned via [`BoardIo::i2c_bus`].
+pub struct BoardIo {
+    /// The initialised servo-bus driver, already `PINGed` and
+    /// post-boot-nod.
+    pub head: HeadDriverImpl,
+    /// One shared-bus handle onto internal I²C0, ready to be consumed
+    /// by the first I²C task (typically the touch poll task).
+    pub i2c: SharedI2c,
+    /// Reference to the underlying shared-bus mutex so callers can
+    /// spawn additional [`I2cDevice`] handles for further peripherals
+    /// (future RTC / IMU / sensors).
+    pub i2c_bus: &'static SharedI2cBus,
+}
 
 /// 7-bit I²C address of the CoreS3 PY32 IO expander.
 const PY32_ADDRESS: u8 = 0x6F;
@@ -83,7 +123,7 @@ pub async fn bringup(
     uart_tx: GPIO6<'static>,
     uart_rx: GPIO7<'static>,
     delay: &mut Delay,
-) -> HeadDriverImpl {
+) -> BoardIo {
     // Internal I²C0: 100 kHz standard-mode rate — works from cold boot
     // before PLLs are fully settled. AXP2101 / AW9523 / PY32 all share
     // this bus.
@@ -123,8 +163,20 @@ pub async fn bringup(
     enable_servo_power(&mut i2c).await;
     Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
 
-    // I²C0 is done — drop it so later code can't accidentally share the bus.
-    drop(i2c);
+    // Park the I²C0 bus in a shared-bus mutex. Any post-boot consumer
+    // (touch, future RTC / IMU) gets its own cheap-to-create
+    // `I2cDevice` handle by calling `I2cDevice::new(i2c_bus)`.
+    //
+    // The `StaticCell` lives for the entire binary, so its
+    // `Mutex<...>` reference is `'static` — which every `I2cDevice<'_,
+    // ...>` handle also needs to be to cross a task boundary. Each
+    // firmware binary calls `bringup` exactly once; double-init
+    // `StaticCell::init` is defensively caught by the runtime.
+    #[allow(clippy::items_after_statements)]
+    static I2C_BUS: StaticCell<SharedI2cBus> = StaticCell::new();
+    let i2c_bus: &'static SharedI2cBus = I2C_BUS.init(Mutex::new(i2c));
+    let shared_i2c = I2cDevice::new(i2c_bus);
+    defmt::debug!("I2C0 shared-bus wrapper ready (post-boot consumers may now attach)");
 
     // External UART1 for the SCServo bus.
     let uart_cfg = UartConfig::default().with_baudrate(SERVO_UART_BAUD);
@@ -147,7 +199,11 @@ pub async fn bringup(
     // the main control pipeline takes over.
     boot_nod(&mut scs_head).await;
 
-    scs_head
+    BoardIo {
+        head: scs_head,
+        i2c: shared_i2c,
+        i2c_bus,
+    }
 }
 
 /// Drive pin 0 of the PY32 IO expander HIGH to enable the servo power

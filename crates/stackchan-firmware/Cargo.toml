@@ -15,6 +15,7 @@ workspace = true
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
 aw9523 = { path = "../aw9523" }
+ft6336u = { path = "../ft6336u" }
 scservo = { path = "../scservo" }
 embedded-graphics = { workspace = true }
 embedded-hal = { workspace = true }
@@ -47,6 +48,15 @@ embassy-time = { version = "0.5.0", features = ["defmt"] }
 # task. 0.7 matches the embassy-executor 0.9 / embassy-time 0.5 triple
 # per the embassy-sync release matrix.
 embassy-sync = { version = "0.7", features = ["defmt"] }
+# `embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice` wraps an
+# `embassy-sync` `Mutex<NoopRawMutex, I2c>` so multiple tasks (touch,
+# future RTC / IMU) can all hold `embedded-hal-async` I²C handles onto
+# the single internal I²C0 bus without stepping on each other. Pinned
+# to 0.5 to share the version esp-hal 1.0 already pulls transitively
+# (on embassy-sync 0.7); 0.6 would drag in a second embassy-sync 0.8,
+# and our `NoopRawMutex` would then resolve to the 0.7 type the 0.6
+# crate can't consume.
+embassy-embedded-hal = { version = "0.5", features = ["defmt"] }
 
 defmt = "1.0.1"
 # Log transport: defmt-encoded bytes over the ESP32-S3 USB-Serial-JTAG
@@ -74,3 +84,7 @@ path = "src/main.rs"
 [[example]]
 name = "bench"
 path = "examples/bench.rs"
+
+[[example]]
+name = "touch_bench"
+path = "examples/touch_bench.rs"

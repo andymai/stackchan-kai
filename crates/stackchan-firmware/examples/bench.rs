@@ -106,7 +106,8 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         peripherals.GPIO7,
         &mut delay,
     )
-    .await;
+    .await
+    .head;
 
     // Pan sweep: -30 .. +30 in 10° steps.
     for cmd in [-30.0_f32, -20.0, -10.0, 0.0, 10.0, 20.0, 30.0] {

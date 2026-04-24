@@ -17,6 +17,9 @@
     "crates/aw9523": {
       "package-name": "aw9523"
     },
+    "crates/ft6336u": {
+      "package-name": "ft6336u"
+    },
     "crates/scservo": {
       "package-name": "scservo"
     },
