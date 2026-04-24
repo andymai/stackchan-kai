@@ -153,6 +153,12 @@ pub enum Error<E> {
     /// bits as a different address in its memory table, so we reject at
     /// the driver boundary.
     PositionOutOfRange(u16),
+    /// Caller used [`BROADCAST_ID`] on an operation that requires a
+    /// response ([`Scservo::ping`] / [`Scservo::read_memory`]): every
+    /// servo on the bus would try to reply at once, garbling the frame.
+    /// Broadcasting writes (`write_position`, `write_torque_enable`,
+    /// `write_memory`) remains supported — those don't need a response.
+    BroadcastNotAllowed,
 }
 
 impl<E> From<ReadExactError<E>> for Error<E> {
@@ -317,6 +323,8 @@ impl<U: Read + Write> Scservo<U> {
     /// packet size, distinguishable from its own echo).
     ///
     /// # Errors
+    /// - [`Error::BroadcastNotAllowed`] if `id == BROADCAST_ID` — every
+    ///   servo would respond and the bus would collide.
     /// - [`Error::Uart`] on transport failure.
     /// - [`Error::NoResponse`] if the UART closes before a full
     ///   response arrives.
@@ -325,6 +333,9 @@ impl<U: Read + Write> Scservo<U> {
     /// - [`Error::ChecksumMismatch`] if the response checksum is
     ///   invalid.
     pub async fn ping(&mut self, id: u8) -> Result<(), Error<U::Error>> {
+        if id == BROADCAST_ID {
+            return Err(Error::BroadcastNotAllowed);
+        }
         // PING outbound: FF FF ID 02 01 ~(ID+2+1).
         let checksum = !id.wrapping_add(0x02).wrapping_add(Instruction::Ping as u8);
         let outbound = [
@@ -391,6 +402,8 @@ impl<U: Read + Write> Scservo<U> {
     /// `embassy_time::with_timeout` for bounded waits.
     ///
     /// # Errors
+    /// - [`Error::BroadcastNotAllowed`] if `id == BROADCAST_ID` — reads
+    ///   require exactly one responder.
     /// - [`Error::PayloadTooLarge`] if `buf.len() > MAX_DATA_BYTES`.
     /// - [`Error::Uart`] on transport failure.
     /// - [`Error::NoResponse`] / [`Error::MalformedResponse`] /
@@ -401,6 +414,9 @@ impl<U: Read + Write> Scservo<U> {
         mem_addr: u8,
         buf: &mut [u8],
     ) -> Result<(), Error<U::Error>> {
+        if id == BROADCAST_ID {
+            return Err(Error::BroadcastNotAllowed);
+        }
         if buf.len() > MAX_DATA_BYTES {
             return Err(Error::PayloadTooLarge);
         }
@@ -790,6 +806,26 @@ mod tests {
             .queue_rx(&[0xFF, 0xFF, 0x01, 0x03, 0x00, 0x00, 0xFB]);
         let moving = block_on(bus.read_moving(1)).unwrap();
         assert!(!moving);
+    }
+
+    #[test]
+    fn ping_rejects_broadcast_id() {
+        let mut bus = Scservo::new(MockUart::new());
+        let err = block_on(bus.ping(BROADCAST_ID));
+        assert!(matches!(err, Err(Error::BroadcastNotAllowed)));
+        assert!(
+            bus.uart.written.borrow().is_empty(),
+            "guard must run before any TX"
+        );
+    }
+
+    #[test]
+    fn read_memory_rejects_broadcast_id() {
+        let mut bus = Scservo::new(MockUart::new());
+        let mut buf = [0u8; 2];
+        let err = block_on(bus.read_memory(BROADCAST_ID, ADDR_PRESENT_POSITION, &mut buf));
+        assert!(matches!(err, Err(Error::BroadcastNotAllowed)));
+        assert!(bus.uart.written.borrow().is_empty());
     }
 
     #[test]
