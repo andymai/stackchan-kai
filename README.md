@@ -1,4 +1,4 @@
-# stackchan-rs
+# stackchan-kai
 
 A clean-slate Rust firmware for the M5Stack CoreS3 StackChan character. No AI.
 No upstream cloud. No C blobs. Just a desk toy that animates a face.

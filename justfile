@@ -1,4 +1,4 @@
-# stackchan-rs development tasks.
+# stackchan-kai development tasks.
 #
 # Install just: https://github.com/casey/just
 # Install espup + esp toolchain:
