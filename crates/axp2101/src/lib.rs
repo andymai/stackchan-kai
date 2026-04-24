@@ -32,6 +32,24 @@ use embedded_hal_async::i2c::I2c;
 /// 7-bit I²C address of the AXP2101 on CoreS3.
 pub const ADDRESS: u8 = 0x34;
 
+/// `IRQ_EN_1` register address (`0x41`). Controls which power-key
+/// events generate interrupts.
+const REG_IRQ_EN_1: u8 = 0x41;
+/// `IRQ_STATUS_1` register address (`0x49`). Flags for power-key
+/// events; write-1-to-clear.
+const REG_IRQ_STATUS_1: u8 = 0x49;
+
+/// Bit for "short-press" in AXP2101's `IRQ_EN_1` / `IRQ_STATUS_1`
+/// registers (release after a brief hold, < 1 s).
+///
+/// Bit layout of `IRQ_STATUS_1`:
+///   - bit 1: power-key positive edge (press)
+///   - bit 0: power-key negative edge (release)
+///   - bit 4: short-press
+///   - bit 5: long-press
+///   - bit 6: over-press (held > 2 s)
+pub const IRQ_SHORT_PRESS_BIT: u8 = 1 << 4;
+
 /// Error type for the driver.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -171,6 +189,48 @@ where
             .await
             .map_err(Error::I2c)?;
         Ok(())
+    }
+
+    /// Enable the "short-press" power-key IRQ. After calling,
+    /// [`Axp2101::check_short_press_edge`] will observe one edge per
+    /// brief button press (< 1 s hold + release).
+    ///
+    /// Leaves other `IRQ_EN_1` bits untouched via read-modify-write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::I2c`] on bus errors.
+    pub async fn enable_power_key_short_press_irq(&mut self) -> Result<(), Error<B::Error>> {
+        let current = self.read_reg(REG_IRQ_EN_1).await?;
+        self.write_reg(REG_IRQ_EN_1, current | IRQ_SHORT_PRESS_BIT)
+            .await?;
+        Ok(())
+    }
+
+    /// Check for a pending short-press edge and clear it atomically.
+    ///
+    /// Returns `true` iff the short-press bit was set in `IRQ_STATUS_1`
+    /// (`0x49`). The bit is cleared (write-1-to-clear) as part of the
+    /// check so a subsequent call returns `false` until another press
+    /// arrives.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::I2c`] on bus errors. A bus failure at *read*
+    /// leaves no edge flag visible to the caller; a failure at *clear*
+    /// means the next call may see a stale-true result (acceptable —
+    /// a double-fire of the tap signal is benign given the downstream
+    /// modifier is edge-triggered).
+    pub async fn check_short_press_edge(&mut self) -> Result<bool, Error<B::Error>> {
+        let status = self.read_reg(REG_IRQ_STATUS_1).await?;
+        if status & IRQ_SHORT_PRESS_BIT == 0 {
+            return Ok(false);
+        }
+        // Write 1 to clear; preserve any other flags the chip set
+        // during this read's narrow window so we don't lose them.
+        self.write_reg(REG_IRQ_STATUS_1, IRQ_SHORT_PRESS_BIT)
+            .await?;
+        Ok(true)
     }
 }
 

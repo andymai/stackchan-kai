@@ -18,6 +18,7 @@ aw9523 = { path = "../aw9523" }
 bm8563 = { path = "../bm8563" }
 bmi270 = { path = "../bmi270" }
 ft6336u = { path = "../ft6336u" }
+ir-nec = { path = "../ir-nec" }
 ltr553 = { path = "../ltr553" }
 scservo = { path = "../scservo" }
 embedded-graphics = { workspace = true }
@@ -99,3 +100,7 @@ path = "examples/imu_bench.rs"
 [[example]]
 name = "ambient_bench"
 path = "examples/ambient_bench.rs"
+
+[[example]]
+name = "ir_bench"
+path = "examples/ir_bench.rs"

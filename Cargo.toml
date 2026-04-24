@@ -8,6 +8,7 @@ members = [
     "crates/bm8563",
     "crates/bmi270",
     "crates/ft6336u",
+    "crates/ir-nec",
     "crates/ltr553",
     "crates/scservo",
     "crates/stackchan-firmware",
@@ -20,6 +21,7 @@ default-members = [
     "crates/bm8563",
     "crates/bmi270",
     "crates/ft6336u",
+    "crates/ir-nec",
     "crates/ltr553",
     "crates/scservo",
 ]

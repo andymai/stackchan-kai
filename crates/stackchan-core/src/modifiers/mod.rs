@@ -10,28 +10,33 @@
 //!    `Avatar::emotion`, and writes `Avatar::manual_until`. Runs first
 //!    so the same tick that produced the tap also clears any expired
 //!    override before `EmotionCycle` checks it.
-//! 2. [`PickupReaction`] — reads `Avatar::accel_g`, flips emotion to
+//! 2. [`RemoteCommand`] — consumes IR-remote `(address, command)`
+//!    pairs from the firmware RMT task, looks them up in a user-
+//!    supplied mapping table, and writes emotion + `manual_until`.
+//!    Runs after `EmotionTouch` so a just-cleared hold is visible;
+//!    stands down if any other modifier already set one.
+//! 3. [`PickupReaction`] — reads `Avatar::accel_g`, flips emotion to
 //!    `Surprised` with a `manual_until` hold when a pickup / drop is
 //!    detected. Stands down when `manual_until` is already set (so
-//!    explicit touch wins).
-//! 3. [`AmbientSleepy`] — reads `Avatar::ambient_lux`, flips emotion
+//!    explicit touch / remote wins).
+//! 4. [`AmbientSleepy`] — reads `Avatar::ambient_lux`, flips emotion
 //!    to `Sleepy` with a short `manual_until` hold in dark rooms
 //!    (hysteresis 20/50 lux). Runs after `PickupReaction` so a
 //!    pickup-in-the-dark still surfaces as Surprised rather than
 //!    Sleepy.
-//! 4. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
+//! 5. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
 //!    when `manual_until` is unset or expired.
-//! 5. [`EmotionStyle`] — translates emotion into style fields, with a
+//! 6. [`EmotionStyle`] — translates emotion into style fields, with a
 //!    linear ease over the transition window.
-//! 6. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//! 7. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
 //!    `blink_rate_scale` from the avatar.
-//! 7. [`Breath`] — vertical drift on all features, scaled by
+//! 8. [`Breath`] — vertical drift on all features, scaled by
 //!    `breath_depth_scale`.
-//! 8. [`IdleDrift`] — occasional eye-center jitter.
-//! 9. [`IdleSway`] — slow pan/tilt head wander written to
-//!    `Avatar::head_pose`. Non-visual; drives the firmware's head-update
-//!    task, not the pixel pipeline.
-//! 10. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//! 9. [`IdleDrift`] — occasional eye-center jitter.
+//! 10. [`IdleSway`] — slow pan/tilt head wander written to
+//!     `Avatar::head_pose`. Non-visual; drives the firmware's head-update
+//!     task, not the pixel pipeline.
+//! 11. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
 //!     sway. Runs **after** `IdleSway` so bias composes additively rather
 //!     than fighting for absolute control of the pose.
 //!
@@ -47,6 +52,7 @@ mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
 mod pickup_reaction;
+mod remote_command;
 
 pub use ambient_sleepy::{AMBIENT_HOLD_MS, AmbientSleepy, SLEEPY_ENTER_LUX, SLEEPY_EXIT_LUX};
 pub use blink::Blink;
@@ -58,6 +64,7 @@ pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
 pub use pickup_reaction::{PICKUP_DEBOUNCE_MS, PICKUP_DEVIATION_G, PickupReaction};
+pub use remote_command::{RemoteCommand, RemoteMapping};
 
 use crate::avatar::Avatar;
 use crate::clock::Instant;

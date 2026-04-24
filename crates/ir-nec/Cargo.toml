@@ -1,0 +1,13 @@
+[package]
+name = "ir-nec"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Pure-logic no_std NEC IR-remote protocol decoder. Takes pulse-timing slices, emits address + command words. No hardware dependency."
+
+[lints]
+workspace = true
+
+[dependencies]
