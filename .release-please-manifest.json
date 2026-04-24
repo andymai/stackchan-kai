@@ -6,6 +6,7 @@
   "crates/bm8563": "0.1.0",
   "crates/bmi270": "0.1.0",
   "crates/ft6336u": "0.1.0",
+  "crates/ir-nec": "0.1.0",
   "crates/ltr553": "0.1.0",
   "crates/scservo": "0.2.0",
   "crates/stackchan-firmware": "0.2.0"

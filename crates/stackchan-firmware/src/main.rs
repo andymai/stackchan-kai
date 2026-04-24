@@ -24,7 +24,9 @@
 
 extern crate alloc;
 
-use stackchan_firmware::{ambient, board, clock, framebuffer, head, imu, touch, wallclock};
+use stackchan_firmware::{
+    ambient, board, button, clock, framebuffer, head, imu, ir, touch, wallclock,
+};
 
 use board::{HeadDriverImpl, SharedI2c};
 use clock::HalClock;
@@ -59,7 +61,7 @@ use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, PickupReaction,
+        IdleDrift, IdleSway, PickupReaction, RemoteCommand,
     },
 };
 use static_cell::StaticCell;
@@ -157,6 +159,10 @@ async fn render_task(mut display: LcdDisplay) {
     );
     let mut avatar = Avatar::default();
     let mut emotion_touch = EmotionTouch::new();
+    // Empty remote mapping by default. Populate with your specific
+    // NEC `(address, command, emotion)` tuples after running
+    // `examples/ir_bench.rs` to discover your remote's codes.
+    let mut remote = RemoteCommand::new();
     let mut pickup = PickupReaction::new();
     let mut ambient_sleepy = AmbientSleepy::new();
     let mut cycle = EmotionCycle::new();
@@ -177,19 +183,25 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + PickupReaction + AmbientSleepy + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
+        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + AmbientSleepy + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
         FRAME_PERIOD_MS
     );
 
     loop {
         let now = clock.now();
 
-        // Drain any tap edges the touch task published since last
-        // frame. `try_take` is non-blocking; a missing signal is the
-        // common case and means `EmotionTouch::update` only does the
-        // expired-hold cleanup work this tick.
+        // Drain any tap edges the touch task or power-button task
+        // published since last frame. Both sources publish to the
+        // same signal so a button press is UX-indistinguishable from
+        // a screen tap. `try_take` is non-blocking; a missing signal
+        // is the common case and means `EmotionTouch::update` only
+        // does the expired-hold cleanup work this tick.
         if touch::TAP_SIGNAL.try_take().is_some() {
             emotion_touch.tap();
+        }
+        // Drain IR-remote decoded commands, if any.
+        if let Some(cmd) = ir::REMOTE_SIGNAL.try_take() {
+            remote.queue(cmd.address, cmd.command);
         }
         // Drain the latest IMU reading. Published at ~100 Hz by the
         // imu task; at a 33 ms render tick we'll usually have a fresh
@@ -206,6 +218,7 @@ async fn render_task(mut display: LcdDisplay) {
             avatar.ambient_lux = Some(lux);
         }
         emotion_touch.update(&mut avatar, now);
+        remote.update(&mut avatar, now);
         pickup.update(&mut avatar, now);
         ambient_sleepy.update(&mut avatar, now);
         cycle.update(&mut avatar, now);
@@ -345,6 +358,24 @@ async fn ambient_task(shared_i2c: SharedI2c) -> ! {
     ambient::run_ambient_loop(shared_i2c).await
 }
 
+/// AXP2101 power-button polling task. Fourth shared-I²C consumer.
+/// Forwards short-press edges to [`touch::TAP_SIGNAL`] so the power
+/// button behaves as a second tap source (cycle emotion + 30 s pin).
+#[embassy_executor::task]
+async fn button_task(shared_i2c: SharedI2c) -> ! {
+    button::run_button_loop(shared_i2c).await
+}
+
+/// IR RX task on the RMT peripheral. Decodes NEC-protocol frames
+/// from the IR receiver and publishes them on [`ir::REMOTE_SIGNAL`].
+#[embassy_executor::task]
+async fn ir_task(
+    rmt: esp_hal::peripherals::RMT<'static>,
+    pin: esp_hal::peripherals::GPIO21<'static>,
+) -> ! {
+    ir::run_ir_loop(rmt, pin).await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -442,6 +473,12 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(ambient_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn ambient_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(button_task(I2cDevice::new(board_io.i2c_bus))) {
+        defmt::panic!("spawn button_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(ir_task(peripherals.RMT, peripherals.GPIO21)) {
+        defmt::panic!("spawn ir_task failed: {}", defmt::Debug2Format(&e));
     }
 
     // One-shot wall-clock read for the boot log. Single I²C round-trip;
