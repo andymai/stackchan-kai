@@ -60,17 +60,40 @@ build-firmware:
 # recipes go through espflash over the serial-JTAG port. The `sg dialout`
 # wrapper is required until dialout group membership is active in the
 # interactive shell's supplementary groups.
+#
+# ## USB-Serial-JTAG reliability
+#
+# Prefer `fmr` (combined flash + monitor) over separate `flash; monitor`
+# calls — each espflash invocation toggles DTR/RTS to reset the chip,
+# and back-to-back resets against ESP32-S3's USB-Serial-JTAG peripheral
+# can wedge the USB enumeration until a physical power cycle. The
+# combined form issues one reset and transitions straight to monitor,
+# keeping the port open. See `just reattach` for a no-reset way to
+# pick up a running device's log without reflashing.
 
 # Flash the latest release build. Rebuilds first.
+# Prefer `fmr` for normal flash-and-monitor cycles — this recipe is
+# split out only for CI or scripted workflows that don't want a monitor
+# attached.
 flash: build-firmware
     sg dialout -c "espflash flash --port {{PORT}} {{firmware_elf}}"
 
 # Monitor defmt logs from a running device (no reflash). Exits on Ctrl+C.
+# Default form triggers a chip reset on attach — use `just reattach`
+# instead to preserve the current boot state.
 monitor:
     sg dialout -c "espflash monitor --port {{PORT}} --log-format defmt --elf {{firmware_elf}}"
 
+# Re-attach to a running device *without* resetting it. Useful when a
+# monitor session dropped (`Ctrl+C`, terminal closed, ssh dropped) and
+# you want to pick up the log stream without restarting the firmware.
+# Also the safer choice when debugging the USB-JTAG disconnect pattern.
+reattach:
+    sg dialout -c "espflash monitor --no-reset --port {{PORT}} --log-format defmt --elf {{firmware_elf}}"
+
 # Flash + monitor in one recipe. `fmr` = flash-monitor-reload, the
 # default inner-loop verb. Build first, then flash, then stream logs.
+# One port-open, one reset — preferred over split `flash; monitor`.
 fmr: build-firmware
     sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}"
 
