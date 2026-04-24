@@ -15,6 +15,7 @@ workspace = true
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
 aw9523 = { path = "../aw9523" }
+bmi270 = { path = "../bmi270" }
 ft6336u = { path = "../ft6336u" }
 scservo = { path = "../scservo" }
 embedded-graphics = { workspace = true }
@@ -88,3 +89,7 @@ path = "examples/bench.rs"
 [[example]]
 name = "touch_bench"
 path = "examples/touch_bench.rs"
+
+[[example]]
+name = "imu_bench"
+path = "examples/imu_bench.rs"
