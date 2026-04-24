@@ -157,15 +157,15 @@ const BLOB_CHUNK_WORDS: usize = BLOB_CHUNK_BYTES / 2;
 /// is negligible.
 const SOFTRESET_SETTLE_US: u32 = 5_000;
 /// Inter-chunk settling delay for the config-blob upload, in
-/// microseconds. The BMI270 internal state machine needs a brief gap
-/// between successive 128-byte `INIT_DATA` bursts; at 100 kHz I²C the
-/// transaction itself provided that gap naturally, but at 400 kHz the
-/// chunks arrive fast enough that the chip starts `NACK`ing mid-stream
-/// (`AcknowledgeCheckFailed(Data)`). ESP-IDF reference drivers use
-/// 1 ms between chunks — tried 100 µs first, which wasn't enough on
-/// this CoreS3 (chip still `NACK`ed), so 1 ms it is. 64 × 1 ms = 64 ms
-/// of extra init time, negligible.
-const BLOB_CHUNK_SETTLE_US: u32 = 1_000;
+/// microseconds. The BMI270's internal state machine needs a gap
+/// between successive chunks. 1 ms was enough in isolation but
+/// produces `I2c(Timeout)` failures on shared-bus CoreS3 rigs where
+/// touch / button / LED tasks poll concurrently — a long BMI270
+/// chunk followed by a quick poll on another slave leaves the
+/// BMI270 too little time before the next chunk arrives. 5 ms
+/// gives enough headroom under contention. 64 chunks × 5 ms =
+/// 320 ms extra at boot, invisible to the user.
+const BLOB_CHUNK_SETTLE_US: u32 = 5_000;
 /// Post-blob-upload init-complete poll delay, in milliseconds.
 const INIT_POLL_DELAY_MS: u32 = 20;
 /// Maximum attempts at polling [`REG_INTERNAL_STATUS`] before giving

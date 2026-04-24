@@ -208,9 +208,18 @@ pub async fn bringup(
     // (e.g. the tilt servo left loose so the head can be manually
     // positioned during assembly). Without torque, `write_position`
     // is silently ignored and the axis sags under gravity — commands
-    // succeed on the wire but produce no motion.
+    // succeeded on the wire but produced no motion.
     enable_torque(&mut scs_head, head::YAW_SERVO_ID).await;
     enable_torque(&mut scs_head, head::PITCH_SERVO_ID).await;
+
+    // Log the servos' EEPROM angle-limit registers. If either servo
+    // has limits narrower than the mechanical range (a common
+    // consequence of past calibration experiments writing to
+    // MIN/MAX_ANGLE_LIMIT), commanded positions are silently clipped
+    // at those boundaries and the axis appears stuck. Visible in
+    // the log so we know whether to rewrite the EEPROM.
+    log_angle_limits(&mut scs_head, head::YAW_SERVO_ID).await;
+    log_angle_limits(&mut scs_head, head::PITCH_SERVO_ID).await;
 
     // Visible proof of life: deliberate pan-then-tilt gesture before
     // the main control pipeline takes over.
@@ -286,6 +295,41 @@ async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
 /// at `warn` and return; the downstream pipeline will still try
 /// to drive the axis (and its writes will keep being ignored,
 /// which is an observable failure mode at least).
+/// Read and log the servo's EEPROM angle-limit window so we can
+/// tell the difference between a mechanically jammed axis and one
+/// that's being silently clipped by factory / leftover-calibration
+/// register values.
+///
+/// Feetech SCSCL memory table (big-endian u16 each):
+/// - `MIN_ANGLE_LIMIT` = address `0x09`
+/// - `MAX_ANGLE_LIMIT` = address `0x0B`
+///
+/// Read via a single 4-byte `read_memory` starting at the MIN addr;
+/// returns [min, max] in raw position counts (0..=1023 space).
+/// Failure logs at `warn` — the diagnostic isn't load-bearing.
+async fn log_angle_limits(driver: &mut HeadDriverImpl, id: u8) {
+    const ADDR_MIN_ANGLE_LIMIT: u8 = 0x09;
+    let mut buf = [0u8; 4];
+    let bus = driver.bus_mut();
+    match bus.read_memory(id, ADDR_MIN_ANGLE_LIMIT, &mut buf).await {
+        Ok(_err_byte) => {
+            let min = (u16::from(buf[0]) << 8) | u16::from(buf[1]);
+            let max = (u16::from(buf[2]) << 8) | u16::from(buf[3]);
+            defmt::info!(
+                "SCServo[{=u8}]: angle limits MIN={=u16} MAX={=u16} (pos counts; full range is 0..=1023)",
+                id,
+                min,
+                max,
+            );
+        }
+        Err(e) => defmt::warn!(
+            "SCServo[{=u8}]: read angle-limits failed: {}",
+            id,
+            defmt::Debug2Format(&e)
+        ),
+    }
+}
+
 async fn enable_torque(driver: &mut HeadDriverImpl, id: u8) {
     let bus = driver.bus_mut();
     match bus.write_torque_enable(id, true).await {
