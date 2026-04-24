@@ -198,10 +198,14 @@ impl HeadDriver for RecordingHead {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::field_reassign_with_default,
+    reason = "test setup reads better as `let mut a = Avatar::default(); a.emotion = …;` than the struct-update equivalent"
+)]
 mod integration_tests {
     use super::*;
     use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
-    use stackchan_core::{Avatar, Emotion, EyePhase, Modifier};
+    use stackchan_core::{Avatar, Emotion, EyePhase, Modifier, SCALE_DEFAULT};
 
     /// End-to-end: drive a Blink + Breath + `IdleDrift` stack for 60 simulated
     /// seconds at 30 FPS and verify the avatar never enters a nonsensical
@@ -332,5 +336,43 @@ mod integration_tests {
             seen_surprised_wide,
             "Surprised emotion never raised eye_scale above baseline"
         );
+    }
+
+    /// Regression test for the `EmotionStyle → Blink` ordering contract in
+    /// `modifiers::mod`. The canonical pipeline must preserve the invariant
+    /// that Blink's effect on `Eye::weight` reflects the *current* tick's
+    /// `blink_rate_scale`, not a stale value from a previous tick — which
+    /// is only guaranteed if [`EmotionStyle`] runs first on the same tick.
+    #[test]
+    fn canonical_order_propagates_blink_rate_within_one_tick() {
+        let mut avatar = Avatar::default();
+        avatar.emotion = Emotion::Surprised;
+        let mut style = EmotionStyle::new();
+        let mut blink = Blink::new();
+
+        // First tick establishes Surprised as both from + to in EmotionStyle,
+        // and rate = 0 takes effect immediately.
+        style.update(&mut avatar, Instant::from_millis(0));
+        assert_eq!(
+            avatar.blink_rate_scale, 0,
+            "EmotionStyle must snap to target on first observation of a new emotion"
+        );
+
+        // Blink sees rate == 0 on the same tick and suppresses.
+        blink.update(&mut avatar, Instant::from_millis(0));
+        assert_eq!(
+            avatar.left_eye.phase,
+            EyePhase::Open,
+            "rate == 0 must force eyes open on the same tick EmotionStyle wrote it"
+        );
+
+        // Baseline sanity: with Neutral, the default rate propagates.
+        avatar.emotion = Emotion::Neutral;
+        style.update(&mut avatar, Instant::from_millis(10_000));
+        blink.update(&mut avatar, Instant::from_millis(10_000));
+        // After the transition elapses (at next tick past 10_000 + 300 ms),
+        // rate is SCALE_DEFAULT.
+        style.update(&mut avatar, Instant::from_millis(10_400));
+        assert_eq!(avatar.blink_rate_scale, SCALE_DEFAULT);
     }
 }
