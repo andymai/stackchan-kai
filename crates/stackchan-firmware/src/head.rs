@@ -6,10 +6,11 @@
 //! physical assembly is pre-wired by M5Stack's base, so this is a
 //! solderless plug-in for standard Stack-chan units.
 //!
-//! This module owns the servo driver + per-axis servo math + a boot-time
-//! slow-ramp + the inter-task [`Signal`] used to hand poses from the
-//! render task (which runs the Modifier pipeline) to the 50 Hz head
-//! task.
+//! This module owns the servo driver + per-axis servo math + the
+//! inter-task [`Signal`] used to hand poses from the render task (which
+//! runs the Modifier pipeline) to the 50 Hz head task. Smooth start-up
+//! is handled by the firmware's boot-nod gesture in `main` rather than
+//! an implicit ramp here — the gesture is the gentle-first-move.
 //!
 //! ## Wiring
 //!
@@ -53,11 +54,6 @@ const PAN_TRIM_DEG: f32 = 0.0;
 /// Per-unit tilt trim, in degrees. Positive = head aims up at NEUTRAL.
 const TILT_TRIM_DEG: f32 = 0.0;
 
-/// Boot-time slow-ramp window: how long to linearly lerp the commanded
-/// pose from NEUTRAL to the first requested pose. Keeps the servos
-/// from snapping on power-up.
-pub const BOOT_RAMP_MS: u64 = 500;
-
 /// Move-time sent with every `WritePos`. `SCServo` servos interpolate
 /// internally over this many milliseconds, smoothing out the 50 Hz
 /// step commands we send.
@@ -76,12 +72,9 @@ const MOVE_SPEED: u16 = 0;
 pub static POSE_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Signal::new();
 
 /// Feetech SCServo-backed head driver.
-pub struct ScsHead<W: Write> {
+pub struct ScsHead<W> {
     /// Underlying `SCServo` protocol driver on the UART bus.
     bus: Scservo<W>,
-    /// Timestamp of the very first `set_pose` call. Used by the boot
-    /// ramp. `None` until the first call anchors it.
-    first_call_at: Option<Instant>,
 }
 
 impl<W: Write> ScsHead<W> {
@@ -89,10 +82,14 @@ impl<W: Write> ScsHead<W> {
     /// configuring the UART baud rate (1 Mbaud for SCS defaults).
     #[must_use]
     pub const fn new(bus: Scservo<W>) -> Self {
-        Self {
-            bus,
-            first_call_at: None,
-        }
+        Self { bus }
+    }
+
+    /// Borrow the wrapped bus mutably. Needed by firmware `main` to
+    /// issue `ping` + boot-nod commands before handing the driver to
+    /// the head task.
+    pub const fn bus_mut(&mut self) -> &mut Scservo<W> {
+        &mut self.bus
     }
 
     /// Convert one axis angle (deg) into a servo step count, applying
@@ -110,35 +107,14 @@ impl<W: Write> ScsHead<W> {
         let pos = clamped as u16;
         pos
     }
-
-    /// Produce the effective pose to command, applying the boot ramp.
-    ///
-    /// The first call captures `now` as the ramp start; subsequent
-    /// calls linearly interpolate from `NEUTRAL` toward `target` over
-    /// [`BOOT_RAMP_MS`]. After the window elapses, `target` passes
-    /// through unchanged.
-    fn ramped_pose(&mut self, target: Pose, now: Instant) -> Pose {
-        let start = *self.first_call_at.get_or_insert(now);
-        let elapsed = now.saturating_duration_since(start);
-        if elapsed >= BOOT_RAMP_MS {
-            return target;
-        }
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "elapsed + BOOT_RAMP_MS are < 2^32, well under the mantissa limit"
-        )]
-        let t = elapsed as f32 / BOOT_RAMP_MS as f32;
-        Pose::new(target.pan_deg * t, target.tilt_deg * t)
-    }
 }
 
 impl<W: Write> HeadDriver for ScsHead<W> {
     type Error = scservo::Error<W::Error>;
 
-    async fn set_pose(&mut self, pose: Pose, now: Instant) -> Result<(), Self::Error> {
-        let effective = self.ramped_pose(pose, now);
-        let pan_pos = Self::position_for(effective.pan_deg, PAN_TRIM_DEG, PAN_DIRECTION);
-        let tilt_pos = Self::position_for(effective.tilt_deg, TILT_TRIM_DEG, TILT_DIRECTION);
+    async fn set_pose(&mut self, pose: Pose, _now: Instant) -> Result<(), Self::Error> {
+        let pan_pos = Self::position_for(pose.pan_deg, PAN_TRIM_DEG, PAN_DIRECTION);
+        let tilt_pos = Self::position_for(pose.tilt_deg, TILT_TRIM_DEG, TILT_DIRECTION);
         self.bus
             .write_position(YAW_SERVO_ID, pan_pos, MOVE_TIME_MS, MOVE_SPEED)
             .await?;
