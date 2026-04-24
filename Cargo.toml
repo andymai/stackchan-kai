@@ -17,7 +17,12 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# Per-crate `version` is declared literally in each member crate's
+# Cargo.toml — not via `version.workspace = true` — because
+# release-please's `cargo-workspace` plugin at v4 can't parse
+# workspace-inherited version fields and errors with
+# `has an invalid [package.version]`. All six crates stay in
+# lockstep; release-please bumps them together.
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/andymai/stackchan-rs"
