@@ -100,12 +100,24 @@ pub enum BringupError {
 /// (pending PR 2B). The amp stays muted until a future un-mute call
 /// after the I²S master clocks are stable.
 ///
+/// ## Known issue pre-PR 2B: ES7210 needs MCLK to answer I²C
+///
+/// The ES7210 gates its I²C state machine on the `MCLK` clock
+/// domain, so until the ESP32-S3 I²S peripheral is configured and
+/// outputting MCLK on GPIO0, this call NACKs at the chip-ID probe
+/// (`BadChipId(0xFF, 0xFF)`). This matches esp-bsp's ordering in
+/// `bsp_audio_codec_microphone_init`, which calls `bsp_audio_init`
+/// (spins up I²S + MCLK) *before* `es7210_codec_new`. PR 2B fixes
+/// the order; until then, expect a warn-level "ES7210 bring-up
+/// failed" at boot on real hardware. AW88298 has no such
+/// dependency — it comes up fine today.
+///
 /// # Errors
 ///
 /// - [`BringupError::AmpInit`] if the AW88298 fails its sequence
 ///   (usually a NACK from an un-released `RST` pin).
 /// - [`BringupError::AdcInit`] if the ES7210 fails its sequence
-///   (usually a chip-ID mismatch — wrong address / wrong part).
+///   (expected until PR 2B — see note above).
 pub async fn bringup<B: I2c>(bus_amp: B, bus_adc: B) -> Result<(), BringupError> {
     let mut delay = Delay;
     let mut amp = Aw88298::new(bus_amp);
