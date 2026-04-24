@@ -39,7 +39,7 @@ default-members = [
 # lockstep; release-please bumps them together.
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/andymai/stackchan-rs"
+repository = "https://github.com/andymai/stackchan-kai"
 rust-version = "1.88"
 
 [workspace.lints.clippy]
