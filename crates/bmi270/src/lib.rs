@@ -149,9 +149,23 @@ const BLOB_CHUNK_BYTES: usize = 128;
 /// increments by per chunk.
 const BLOB_CHUNK_WORDS: usize = BLOB_CHUNK_BYTES / 2;
 
-/// Post-soft-reset settling delay, in microseconds. Bosch reference
-/// uses 450 µs; we use 1 ms for robustness.
-const SOFTRESET_SETTLE_US: u32 = 1_000;
+/// Post-soft-reset settling delay, in microseconds. Bosch's reference
+/// uses 450 µs, but on CoreS3 at 400 kHz I²C the chip NACKs at the
+/// address level on the next transaction if we only wait that long
+/// (the soft-reset takes the I²C state machine offline for longer
+/// than the spec implies). 5 ms is conservative and init-time cost
+/// is negligible.
+const SOFTRESET_SETTLE_US: u32 = 5_000;
+/// Inter-chunk settling delay for the config-blob upload, in
+/// microseconds. The BMI270 internal state machine needs a brief gap
+/// between successive 128-byte `INIT_DATA` bursts; at 100 kHz I²C the
+/// transaction itself provided that gap naturally, but at 400 kHz the
+/// chunks arrive fast enough that the chip starts `NACK`ing mid-stream
+/// (`AcknowledgeCheckFailed(Data)`). ESP-IDF reference drivers use
+/// 1 ms between chunks — tried 100 µs first, which wasn't enough on
+/// this CoreS3 (chip still `NACK`ed), so 1 ms it is. 64 × 1 ms = 64 ms
+/// of extra init time, negligible.
+const BLOB_CHUNK_SETTLE_US: u32 = 1_000;
 /// Post-blob-upload init-complete poll delay, in milliseconds.
 const INIT_POLL_DELAY_MS: u32 = 20;
 /// Maximum attempts at polling [`REG_INTERNAL_STATUS`] before giving
@@ -326,6 +340,7 @@ impl<B: I2c> Bmi270<B> {
             self.write_register(REG_INIT_ADDR_0, addr_lo).await?;
             self.write_register(REG_INIT_ADDR_1, addr_hi).await?;
             self.burst_write(REG_INIT_DATA, chunk).await?;
+            delay.delay_us(BLOB_CHUNK_SETTLE_US).await;
             // u16 cannot overflow: 8192 / 2 = 4096 words max.
             word_offset = word_offset.saturating_add(chunk_words);
         }
