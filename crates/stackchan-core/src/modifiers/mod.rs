@@ -10,19 +10,23 @@
 //!    `Avatar::emotion`, and writes `Avatar::manual_until`. Runs first
 //!    so the same tick that produced the tap also clears any expired
 //!    override before `EmotionCycle` checks it.
-//! 2. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
+//! 2. [`PickupReaction`] — reads `Avatar::accel_g`, flips emotion to
+//!    `Surprised` with a `manual_until` hold when a pickup / drop is
+//!    detected. Stands down when `manual_until` is already set (so
+//!    explicit touch wins).
+//! 3. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
 //!    when `manual_until` is unset or expired.
-//! 3. [`EmotionStyle`] — translates emotion into style fields, with a
+//! 4. [`EmotionStyle`] — translates emotion into style fields, with a
 //!    linear ease over the transition window.
-//! 4. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//! 5. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
 //!    `blink_rate_scale` from the avatar.
-//! 5. [`Breath`] — vertical drift on all features, scaled by
+//! 6. [`Breath`] — vertical drift on all features, scaled by
 //!    `breath_depth_scale`.
-//! 6. [`IdleDrift`] — occasional eye-center jitter.
-//! 7. [`IdleSway`] — slow pan/tilt head wander written to
+//! 7. [`IdleDrift`] — occasional eye-center jitter.
+//! 8. [`IdleSway`] — slow pan/tilt head wander written to
 //!    `Avatar::head_pose`. Non-visual; drives the firmware's head-update
 //!    task, not the pixel pipeline.
-//! 8. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//! 9. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
 //!    sway. Runs **after** `IdleSway` so bias composes additively rather
 //!    than fighting for absolute control of the pose.
 //!
@@ -36,6 +40,7 @@ mod emotion_style;
 mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
+mod pickup_reaction;
 
 pub use blink::Blink;
 pub use breath::Breath;
@@ -45,6 +50,7 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
+pub use pickup_reaction::{PICKUP_DEBOUNCE_MS, PICKUP_DEVIATION_G, PickupReaction};
 
 use crate::avatar::Avatar;
 use crate::clock::Instant;
