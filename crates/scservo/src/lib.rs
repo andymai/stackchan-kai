@@ -297,6 +297,30 @@ impl<W: Write> Scservo<W> {
 }
 
 impl<U: Read + Write> Scservo<U> {
+    /// Drain a 6-byte status response packet that a servo emits after
+    /// a successful write. Feetech servos send one of these after every
+    /// [`Scservo::write_position`] / [`Scservo::write_memory`] by
+    /// default (Status Return Level = 2). If the caller never reads
+    /// them, they pile up in the UART RX FIFO until it overflows and
+    /// later [`Scservo::ping`] / [`Scservo::read_memory`] reads get
+    /// stale garbage back.
+    ///
+    /// **No internal timeout** — if a servo has Status Return Level =
+    /// 0 (no response on writes), this future pends forever. Callers
+    /// must wrap with their runtime's timeout primitive, e.g.
+    /// `embassy_time::with_timeout(Duration::from_millis(2),
+    /// bus.drain_write_status()).await`. On successful drain, the 6
+    /// bytes are read and discarded — no parsing, no checksum check;
+    /// this is plumbing only.
+    ///
+    /// # Errors
+    /// - [`Error::Uart`] / [`Error::NoResponse`] on transport failure.
+    pub async fn drain_write_status(&mut self) -> Result<(), Error<U::Error>> {
+        let mut scratch = [0u8; 6];
+        self.uart.read_exact(&mut scratch).await?;
+        Ok(())
+    }
+
     /// Probe servo `id` with a [`Instruction::Ping`] and wait for the
     /// 6-byte status response. Returns `Ok(())` iff a well-formed
     /// response with matching ID and valid checksum arrives.

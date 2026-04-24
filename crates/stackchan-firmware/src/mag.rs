@@ -41,6 +41,19 @@ where
     let mut delay = Delay;
     let mut mag = match Bmm150::detect(bus, &mut delay).await {
         Ok(m) => m,
+        // On CoreS3 revisions with the 9-DoF IMU, the BMM150 is wired
+        // to BMI270's auxiliary I²C bus rather than the main ESP32-S3
+        // bus — so `detect` at 0x10/0x11 NACKs even though the chip is
+        // physically present. Proper access needs a BMI270-AUX
+        // passthrough layer (not yet implemented). Log at info and
+        // park; the magnetometer is data-only today.
+        Err(bmm150::Error::NotDetected) => {
+            defmt::info!(
+                "BMM150: not reachable on main I²C — likely wired to BMI270 AUX; \
+                 direct-access magnetometer disabled"
+            );
+            park().await;
+        }
         Err(e) => {
             defmt::error!(
                 "BMM150: detect failed ({}); magnetometer disabled",
