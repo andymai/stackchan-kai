@@ -16,7 +16,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aw9523"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1368,7 +1368,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "scservo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-io-async 0.7.0",
 ]
@@ -1439,14 +1439,14 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stackchan-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-graphics",
 ]
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aw9523",
  "axp2101",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-graphics",
  "stackchan-core",
