@@ -2,23 +2,25 @@
 
 ## Project Structure
 
-Cargo workspace with four crates:
-- `crates/stackchan-core` — `no_std` domain library: `Avatar`, `Eye`, `Mouth`, `Modifier` trait, `Clock` trait, `Emotion`. Pure Rust, no hardware deps.
+Cargo workspace with six crates:
+- `crates/stackchan-core` — `no_std` domain library: `Avatar`, `Eye`, `Mouth`, `Modifier` trait, `Clock` trait, `Emotion`, `Pose`. Pure Rust, no hardware deps.
 - `crates/stackchan-sim` — Headless integration tests that drive `stackchan-core` with a fake clock.
 - `crates/axp2101` — Minimal AXP2101 PMU driver (I²C, embedded-hal-async).
+- `crates/aw9523` — Minimal AW9523 I/O-expander init (I²C, embedded-hal-async). Pulls the LCD reset pin and gates the backlight-boost rail on the CoreS3.
+- `crates/scservo` — Feetech SCServo half-duplex serial driver (UART1, embedded-io-async). Drives the pan/tilt head servos.
 - `crates/stackchan-firmware` — Binary crate. `no_std` + `alloc`. embassy executor on CoreS3.
 
 ## Build
 
 ```bash
-cargo test                    # host-side: core, sim, axp2101
-cargo clippy --workspace      # host crates only (firmware excluded from default-members)
+cargo test                                  # host-side: core, sim, axp2101, aw9523, scservo
+cargo clippy --workspace --all-targets      # host crates only (firmware excluded from default-members)
 
 # Firmware: requires `source ~/export-esp.sh` first so the `esp` toolchain is on PATH.
-# `cargo run` uses the probe-rs runner declared in crates/stackchan-firmware/.cargo/config.toml,
-# which flashes over the CoreS3's built-in USB-JTAG and opens an RTT session for defmt logs.
+# `just fmr` wraps `cargo +esp build --release` + espflash flash-and-monitor through
+# `sg dialout`; see the justfile for the full recipe set.
 source ~/export-esp.sh
-cargo run -p stackchan-firmware --release
+just fmr
 ```
 
 ## Pre-commit Hook
@@ -35,14 +37,16 @@ Conventional-commit check at `.githooks/commit-msg`.
 
 - `stackchan-core` models the avatar as data: `Avatar { left_eye, right_eye, mouth, emotion }` plus a `Modifier` trait with `update(&mut Avatar, now: Instant)`. Time comes from the `Clock` trait so core is deterministic and host-testable.
 - `stackchan-sim` constructs a `stackchan_core::Avatar` + a `FakeClock` and runs a list of `Modifier`s through hand-crafted time sequences. Golden assertions on `Eye::weight`, `Mouth::rotation`, etc.
-- `stackchan-firmware` initializes AXP2101 → SPI LCD via `mipidsi` → spawns an embassy task that composes `Avatar::draw(&mut framebuffer)` into `embedded-graphics` primitives, pushes frames at ~30 FPS. `HalClock` wraps embassy-time.
-- `crates/axp2101` is the minimum set of registers (ALDO1/2, BLDO1/2, power-on sequencing) needed for CoreS3 LCD + 3V3 rails.
+- `stackchan-firmware` initializes AXP2101 → AW9523 (releases LCD reset + enables the backlight-boost gate) → SPI LCD via `mipidsi` → SCServo head driver on UART1 → spawns an embassy render task that composes `Avatar::draw(&mut framebuffer)` into `embedded-graphics` primitives, pushes frames at ~30 FPS. `HalClock` wraps embassy-time.
+- `crates/axp2101` is the minimum set of registers (ALDO1/2, BLDO1/2, DLDO1, power-on sequencing) needed for CoreS3 LCD + 3V3 rails.
+- `crates/aw9523` handles the rest of the CoreS3 boot dance: pulses `P1_1` (LCD_RST) and leaves `P1_7` (backlight-boost enable) high so the LCD backlight rail actually comes up.
+- `crates/scservo` is a protocol-correct Feetech driver (checksum + status frame parsing) with golden-packet tests; position readback supports the calibration bench at `crates/stackchan-firmware/examples/bench.rs`.
 
 ## Conventions
 
 Commits: conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`, etc.).
 
-PR workflow (post-v0.1.0): every change lands via PR; greptile bot review required. Pre-v0.1.0 commits may land directly on main for solo scaffold work.
+PR workflow: every change lands via PR; greptile bot review required. v0.1.0 shipped 2026-04-23 — direct-to-main commits are no longer part of the workflow.
 
 Parallel work: `git worktree add .worktrees/<branch> <branch>` — `.worktrees/` is gitignored.
 

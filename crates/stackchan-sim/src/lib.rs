@@ -151,12 +151,12 @@ impl DrawTarget for Framebuffer {
 
 /// [`HeadDriver`] that records every `set_pose` call into a `Vec`.
 ///
-/// Pair with [`FakeClock`] to test motion modifiers without a real PCA9685:
-/// drive the modifier pipeline, push `avatar.head_pose` into a
+/// Pair with [`FakeClock`] to test motion modifiers without a real `SCServo`
+/// bus: drive the modifier pipeline, push `avatar.head_pose` into a
 /// `RecordingHead` each tick, then assert amplitude / period / trajectory
 /// bounds on [`RecordingHead::records`].
 ///
-/// The [`HeadDriver`] impl is `async` to match the firmware's PCA9685
+/// The [`HeadDriver`] impl is `async` to match the firmware's `SCServo`
 /// driver shape, but the recorded future is always immediately `Ready` —
 /// tests can drive it with the small `block_on` helper in the
 /// `head_sway.rs` integration test, or skip the trait entirely and inspect
