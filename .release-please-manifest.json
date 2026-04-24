@@ -1,8 +1,8 @@
 {
-  "crates/stackchan-core": "0.1.0",
-  "crates/stackchan-sim": "0.1.0",
+  "crates/stackchan-core": "0.2.0",
+  "crates/stackchan-sim": "0.2.0",
   "crates/axp2101": "0.1.0",
-  "crates/aw9523": "0.1.0",
-  "crates/scservo": "0.1.0",
-  "crates/stackchan-firmware": "0.1.0"
+  "crates/aw9523": "0.2.0",
+  "crates/scservo": "0.2.0",
+  "crates/stackchan-firmware": "0.2.0"
 }
