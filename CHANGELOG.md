@@ -48,5 +48,12 @@ wrapper that shares its render path with a headless simulator.
   the app descriptor.
 - CoreS3 internal I²C is `SCL=GPIO11`, `SDA=GPIO12` (not reversed).
 - `defmt::timestamp!` needed under defmt 1.0.
+- Explicit `BLDO1`/`BLDO2` voltage writes (`0x96`/`0x97 = 28`) in the
+  AXP2101 init sequence; the PoR default is 0.5 V, not 3.3 V.
+- `DLDO1` is the LCD backlight on CoreS3 (not a vibration motor); the
+  init writes `0x99 = 28` for full brightness.
+- Full M5Stack AW9523 init on LCD bring-up: both port-output + direction
+  registers, GCR, LED-mode = GPIO, and `LCD_RST` pulsed on `P1_1`. The
+  prior `P0_0`-only helper left the backlight-boost gate on P1 floating.
 
 [0.1.0]: https://github.com/andymai/stackchan-rs/releases/tag/v0.1.0
