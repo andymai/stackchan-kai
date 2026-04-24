@@ -5,8 +5,10 @@ members = [
     "crates/stackchan-sim",
     "crates/axp2101",
     "crates/aw9523",
+    "crates/bm8563",
     "crates/bmi270",
     "crates/ft6336u",
+    "crates/ltr553",
     "crates/scservo",
     "crates/stackchan-firmware",
 ]
@@ -15,8 +17,10 @@ default-members = [
     "crates/stackchan-sim",
     "crates/axp2101",
     "crates/aw9523",
+    "crates/bm8563",
     "crates/bmi270",
     "crates/ft6336u",
+    "crates/ltr553",
     "crates/scservo",
 ]
 

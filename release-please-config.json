@@ -17,11 +17,17 @@
     "crates/aw9523": {
       "package-name": "aw9523"
     },
+    "crates/bm8563": {
+      "package-name": "bm8563"
+    },
     "crates/bmi270": {
       "package-name": "bmi270"
     },
     "crates/ft6336u": {
       "package-name": "ft6336u"
+    },
+    "crates/ltr553": {
+      "package-name": "ltr553"
     },
     "crates/scservo": {
       "package-name": "scservo"
