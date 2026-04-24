@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Pure-logic no_std NEC IR-remote protocol decoder. Takes pulse-timing slices, emits address + command words. No hardware dependency."
+description = "Pure-logic no_std NEC IR-remote protocol codec. Decodes pulse-timing slices into address + command words; encodes commands into 67-pulse frames. No hardware dependency."
 
 [lints]
 workspace = true

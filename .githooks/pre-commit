@@ -40,3 +40,8 @@ if [ "$has_rust" = true ]; then
     echo "pre-commit: checking workspace (host)..."
     cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
 fi
+
+# Non-blocking: if source changes but the nearest README.md isn't
+# staged, surface it so the committer (human or LLM) re-reads it.
+# Always exits 0 — reminder, not a gate.
+"$(dirname "$0")/check-readme-reminders.sh" || true

@@ -1,9 +1,12 @@
 //! # ir-nec
 //!
-//! `no_std` NEC-protocol IR-remote decoder with no hardware
-//! dependency. Consumers pass in a slice of [`Pulse`] timings
-//! (captured however they like: esp-hal's RMT peripheral, a GPIO ISR,
-//! a simulator) and get back an [`Option<NecCommand>`].
+//! `no_std` NEC-protocol IR-remote decoder and encoder with no hardware
+//! dependency. On the receive side, consumers pass in a slice of
+//! [`Pulse`] timings (captured however they like: esp-hal's RMT
+//! peripheral, a GPIO ISR, a simulator) and get back an
+//! [`Option<NecCommand>`]. On the transmit side, [`NecCommand::encode`]
+//! produces a fixed-size [`Pulse`] array the caller can feed straight
+//! into the RMT TX buffer.
 //!
 //! ## NEC frame shape
 //!
@@ -86,7 +89,7 @@ const DATA_BITS: usize = 32;
 
 /// Number of pulses a complete NEC frame produces:
 /// 2 (preamble) + 2 × 32 (data mark/space pairs) + 1 (stop mark) = 67.
-const FRAME_PULSES: usize = 2 + DATA_BITS * 2 + 1;
+pub const FRAME_PULSES: usize = 2 + DATA_BITS * 2 + 1;
 
 /// Check whether `actual` is within [`TOLERANCE_US`] of `expected`.
 const fn is_close(actual: u32, expected: u32) -> bool {
@@ -166,17 +169,30 @@ pub fn decode(pulses: &[Pulse]) -> Option<NecCommand> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Build a well-formed NEC frame as a `Vec<Pulse>` for testing.
-    fn build_frame(address: u16, command: u8) -> [Pulse; FRAME_PULSES] {
-        let command_inv = !command;
+impl NecCommand {
+    /// Encode the command as a full 67-pulse NEC frame ready to hand to
+    /// an RMT TX peripheral.
+    ///
+    /// Preamble (9 ms mark + 4.5 ms space), 32 data bits
+    /// (`addr_low, addr_high, command, ~command`, each LSB-first), and
+    /// a final 560 µs stop mark. `level = true` means "IR carrier on"
+    /// (mark); callers driving active-low TX hardware should invert
+    /// before emission.
+    ///
+    /// The `~command` byte is computed from [`Self::command`] so senders
+    /// and receivers agree on the checksum byte without the caller
+    /// having to supply it.
+    #[must_use]
+    pub fn encode(&self) -> [Pulse; FRAME_PULSES] {
+        let command_inv = !self.command;
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "masked by 0xFF / shifted right before cast"
+        )]
         let bytes: [u8; 4] = [
-            (address & 0xFF) as u8,
-            ((address >> 8) & 0xFF) as u8,
-            command,
+            (self.address & 0xFF) as u8,
+            ((self.address >> 8) & 0xFF) as u8,
+            self.command,
             command_inv,
         ];
         let mut pulses = [Pulse {
@@ -216,6 +232,17 @@ mod tests {
             duration_us: BIT_MARK_US,
         };
         pulses
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a well-formed NEC frame via [`NecCommand::encode`] for
+    /// tests that verify the decoder.
+    fn build_frame(address: u16, command: u8) -> [Pulse; FRAME_PULSES] {
+        NecCommand { address, command }.encode()
     }
 
     #[test]
@@ -270,6 +297,35 @@ mod tests {
         };
         assert_eq!(cmd.address, 0x00FF);
         assert_eq!(cmd.command, 0xA5);
+    }
+
+    #[test]
+    fn encode_then_decode_round_trips() {
+        let original = NecCommand {
+            address: 0xBEEF,
+            command: 0x5A,
+        };
+        let frame = original.encode();
+        let Some(decoded) = decode(&frame) else {
+            unreachable!("encoded frame must decode")
+        };
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn encoded_frame_has_correct_preamble() {
+        let frame = NecCommand {
+            address: 0,
+            command: 0,
+        }
+        .encode();
+        assert!(frame[0].level);
+        assert_eq!(frame[0].duration_us, PREAMBLE_MARK_US);
+        assert!(!frame[1].level);
+        assert_eq!(frame[1].duration_us, PREAMBLE_SPACE_US);
+        // Stop mark at the end.
+        assert!(frame[FRAME_PULSES - 1].level);
+        assert_eq!(frame[FRAME_PULSES - 1].duration_us, BIT_MARK_US);
     }
 
     #[test]

@@ -17,14 +17,23 @@
     "crates/aw9523": {
       "package-name": "aw9523"
     },
+    "crates/aw88298": {
+      "package-name": "aw88298"
+    },
     "crates/bm8563": {
       "package-name": "bm8563"
     },
     "crates/bmi270": {
       "package-name": "bmi270"
     },
+    "crates/es7210": {
+      "package-name": "es7210"
+    },
     "crates/ft6336u": {
       "package-name": "ft6336u"
+    },
+    "crates/gc0308": {
+      "package-name": "gc0308"
     },
     "crates/ir-nec": {
       "package-name": "ir-nec"
@@ -34,6 +43,12 @@
     },
     "crates/scservo": {
       "package-name": "scservo"
+    },
+    "crates/si12t": {
+      "package-name": "si12t"
+    },
+    "crates/st25r3916": {
+      "package-name": "st25r3916"
     },
     "crates/stackchan-firmware": {
       "package-name": "stackchan-firmware"
