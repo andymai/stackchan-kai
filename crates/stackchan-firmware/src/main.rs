@@ -51,7 +51,10 @@ use mipidsi::{
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
 };
-use stackchan_core::{Avatar, Clock, Modifier, modifiers::Blink};
+use stackchan_core::{
+    Avatar, Clock, Modifier,
+    modifiers::{Blink, Breath, IdleDrift},
+};
 use static_cell::StaticCell;
 
 // esp-println registers a `#[defmt::global_logger]` that writes
@@ -119,25 +122,40 @@ type LcdDisplay = mipidsi::Display<
     NoResetPin,
 >;
 
-/// 30 FPS render task. Owns the display + the animation state, so main is
-/// free to run the heartbeat loop (and, in future PRs, other top-level
+/// 30 FPS render task. Owns the display + the full modifier stack, so main
+/// is free to run the heartbeat loop (and, in future PRs, other top-level
 /// concerns like battery monitoring) on its own.
 ///
-/// The `last_rendered` dirty-check skips the draw on frames where no
-/// modifier mutated the avatar — with Blink-only that's ~99% of frames,
-/// so the LCD is effectively idle between the ~11 blinks per minute.
+/// Modifiers run in the same order as `stackchan_sim::sixty_second_composition_is_stable`:
+/// `Blink` → `Breath` → `IdleDrift`. Breath's vertical offset and IdleDrift's
+/// periodic eye nudges mean the avatar differs nearly every frame, so the
+/// `last_rendered` dirty-check degrades to "always redraw" once Breath is
+/// active. We keep the check anyway because it still skips frames between
+/// Breath's triangle-wave edges where `last_offset_px` happens to be zero,
+/// and the comparison is essentially free.
 #[embassy_executor::task]
 async fn render_task(mut display: LcdDisplay) {
     let clock = HalClock;
     let mut avatar = Avatar::default();
     let mut blink = Blink::new();
+    let mut breath = Breath::new();
+    // Fixed seed keeps boot-to-boot drifts identical; a future RNG-backed
+    // source (e.g. reading a voltage-derived seed from the AXP2101) can
+    // swap in without touching the task shape.
+    let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
     let mut last_rendered: Option<Avatar> = None;
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
-    defmt::info!("render task: {=u64} ms tick, Blink only", FRAME_PERIOD_MS);
+    defmt::info!(
+        "render task: {=u64} ms tick, Blink + Breath + IdleDrift",
+        FRAME_PERIOD_MS
+    );
 
     loop {
-        blink.update(&mut avatar, clock.now());
+        let now = clock.now();
+        blink.update(&mut avatar, now);
+        breath.update(&mut avatar, now);
+        drift.update(&mut avatar, now);
 
         if last_rendered != Some(avatar) {
             match avatar.draw(&mut display) {
