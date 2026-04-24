@@ -61,11 +61,16 @@ pub struct IdleSway {
     pan_amplitude_deg: f32,
     /// Peak tilt amplitude in degrees.
     tilt_amplitude_deg: f32,
-    /// Pan contribution applied on the previous tick; subtracted before
-    /// writing the new contribution. Starts at 0 so the first tick's
-    /// output equals the first triangle sample.
+    /// Pan contribution **as actually applied** on the previous tick
+    /// (post-clamp), subtracted before writing the new contribution.
+    /// Storing the *effective* contribution rather than the *intended*
+    /// one keeps diff-and-undo accurate when `Pose::clamped` truncates
+    /// our request — without this, a clamped negative half-cycle would
+    /// leak into the next positive half as a permanent bias, doubling
+    /// the apparent amplitude.
     last_pan_deg: f32,
-    /// Tilt contribution applied on the previous tick.
+    /// Tilt contribution as actually applied on the previous tick. See
+    /// [`Self::last_pan_deg`] — same diff-and-undo correctness reason.
     last_tilt_deg: f32,
 }
 
@@ -147,18 +152,17 @@ impl Modifier for IdleSway {
     fn update(&mut self, avatar: &mut Avatar, now: Instant) {
         let pan = Self::unit_triangle(self.pan_period_ms, now) * self.pan_amplitude_deg;
         let tilt = Self::unit_triangle(self.tilt_period_ms, now) * self.tilt_amplitude_deg;
-        // Diff-and-undo: our contribution to the pose is (pan, tilt); to
-        // compose additively, remove the previous contribution first,
-        // then install the new one. `clamped` defers to the final
-        // compose step (typically EmotionHead) so we don't double-clamp
-        // during the intermediate state.
-        avatar.head_pose = Pose::new(
-            avatar.head_pose.pan_deg - self.last_pan_deg + pan,
-            avatar.head_pose.tilt_deg - self.last_tilt_deg + tilt,
-        )
-        .clamped();
-        self.last_pan_deg = pan;
-        self.last_tilt_deg = tilt;
+        // Diff-and-undo: recover upstream pose by removing our last
+        // *applied* contribution, then add the new request and clamp.
+        // Storing the effective (post-clamp) contribution into
+        // `last_*_deg` keeps the next tick's "undo" honest under
+        // asymmetric clamping — see field docs.
+        let upstream_pan = avatar.head_pose.pan_deg - self.last_pan_deg;
+        let upstream_tilt = avatar.head_pose.tilt_deg - self.last_tilt_deg;
+        let new_pose = Pose::new(upstream_pan + pan, upstream_tilt + tilt).clamped();
+        self.last_pan_deg = new_pose.pan_deg - upstream_pan;
+        self.last_tilt_deg = new_pose.tilt_deg - upstream_tilt;
+        avatar.head_pose = new_pose;
     }
 }
 

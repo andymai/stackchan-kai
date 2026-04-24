@@ -166,16 +166,22 @@ impl Modifier for EmotionHead {
         let bias = self.current_bias(now);
 
         // Layered compose via diff-and-undo (matches `IdleSway` /
-        // `Breath`): subtract the previous tick's bias, then add the
-        // new one. Keeps the bias a delta on `avatar.head_pose` rather
-        // than accumulating across ticks when upstream modifiers (e.g.
-        // a future additive head-pose source) write the pose each tick.
-        let combined = Pose::new(
-            avatar.head_pose.pan_deg - self.last_applied.pan_deg + bias.pan_deg,
-            avatar.head_pose.tilt_deg - self.last_applied.tilt_deg + bias.tilt_deg,
+        // `Breath`): subtract our previous *applied* (post-clamp) bias
+        // from the current pose to recover upstream, add the new bias
+        // request, then clamp. Storing the effective contribution into
+        // `last_applied` (rather than the intended `bias`) keeps the
+        // next tick's "undo" honest under asymmetric tilt clamping.
+        let upstream = Pose::new(
+            avatar.head_pose.pan_deg - self.last_applied.pan_deg,
+            avatar.head_pose.tilt_deg - self.last_applied.tilt_deg,
         );
-        avatar.head_pose = combined.clamped();
-        self.last_applied = bias;
+        let combined =
+            Pose::new(upstream.pan_deg + bias.pan_deg, upstream.tilt_deg + bias.tilt_deg).clamped();
+        self.last_applied = HeadBias {
+            pan_deg: combined.pan_deg - upstream.pan_deg,
+            tilt_deg: combined.tilt_deg - upstream.tilt_deg,
+        };
+        avatar.head_pose = combined;
     }
 }
 
@@ -279,20 +285,39 @@ mod tests {
 
     #[test]
     fn bias_is_additive_on_top_of_existing_pose() {
-        // Simulate IdleSway writing first, then EmotionHead biasing.
+        // Use a positive-tilt emotion so the test exercises additive
+        // composition without colliding with the asymmetric tilt clamp
+        // (downward tilts get pinned to MIN_TILT_DEG = 0 — see below).
         let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Sleepy;
+        avatar.emotion = Emotion::Happy;
         let mut eh = EmotionHead::new();
 
         // Advance past transition so the full bias applies.
-        avatar.head_pose = Pose::new(2.0, -1.5); // sway output
+        avatar.head_pose = Pose::new(2.0, 1.5); // sway output
         eh.update(
             &mut avatar,
             Instant::from_millis(EmotionHead::TRANSITION_MS + 1),
         );
-        // Sleepy tilt bias is -6 → final tilt = -1.5 + -6 = -7.5.
+        // Happy tilt bias is +3 → final tilt = 1.5 + 3 = 4.5.
         assert_eq!(avatar.head_pose.pan_deg, 2.0);
-        assert_eq!(avatar.head_pose.tilt_deg, -7.5);
+        assert_eq!(avatar.head_pose.tilt_deg, 4.5);
+    }
+
+    #[test]
+    fn negative_tilt_bias_clamps_to_min_when_combined() {
+        // Sleepy's bias is -6°; with `MIN_TILT_DEG = 0` (chassis can't
+        // tilt below horizontal) the combined pose pins to 0.
+        use crate::head::MIN_TILT_DEG;
+        let mut avatar = Avatar::default();
+        avatar.emotion = Emotion::Sleepy;
+        let mut eh = EmotionHead::new();
+
+        avatar.head_pose = Pose::new(0.0, -1.5);
+        eh.update(
+            &mut avatar,
+            Instant::from_millis(EmotionHead::TRANSITION_MS + 1),
+        );
+        assert_eq!(avatar.head_pose.tilt_deg, MIN_TILT_DEG);
     }
 
     #[test]
@@ -301,29 +326,29 @@ mod tests {
         // track the tilt trajectory across the mid-transition flip. With
         // diff-and-undo composition, the interesting invariant is that
         // the eventual steady-state matches the destination emotion; at
-        // no point does the bias double-count. This replaces the older
-        // pattern of resetting head_pose=0 every tick, which measured
-        // the absolute bias value only meaningful under absolute-set
-        // semantics.
+        // no point does the bias double-count.
+        //
+        // Uses Surprised (+2°) and Happy (+3°) — both in-range positive
+        // biases — so the asymmetric tilt clamp doesn't mask the
+        // re-anchoring behaviour we're testing.
         let mut avatar = Avatar::default();
         avatar.emotion = Emotion::Neutral;
         let mut eh = EmotionHead::new();
         eh.update(&mut avatar, Instant::from_millis(0));
         assert_eq!(avatar.head_pose.tilt_deg, 0.0, "Neutral snaps to zero bias");
 
-        // Flip to Sleepy; midway through the transition the bias is ~-3.
-        avatar.emotion = Emotion::Sleepy;
+        // Flip to Surprised; midway through the transition the bias is ~+1.
+        avatar.emotion = Emotion::Surprised;
         eh.update(&mut avatar, Instant::from_millis(0));
         eh.update(&mut avatar, Instant::from_millis(150));
-        let mid_sleepy = avatar.head_pose.tilt_deg;
+        let mid_surprised = avatar.head_pose.tilt_deg;
         assert!(
-            (mid_sleepy - (-3.0)).abs() < 0.1,
-            "mid-transition Sleepy tilt should be ~-3, got {mid_sleepy}"
+            (mid_surprised - 1.0).abs() < 0.1,
+            "mid-transition Surprised tilt should be ~+1, got {mid_surprised}"
         );
 
-        // Flip to Happy mid-transition. `from` should re-anchor to
-        // whatever `to` was before (Sleepy's final bias of -6). After
-        // the new 300 ms window elapses, we land on Happy's +3.
+        // Flip to Happy mid-transition. After the new window elapses,
+        // we land on Happy's +3.
         avatar.emotion = Emotion::Happy;
         eh.update(&mut avatar, Instant::from_millis(150));
         eh.update(
@@ -344,37 +369,51 @@ mod tests {
         // additively, EmotionHead must subtract the previous tick's bias
         // before adding the new one — otherwise a steady-state emotion
         // would see its bias compound each tick.
+        //
+        // Uses Happy (+3°) — a positive in-range bias — so the
+        // asymmetric tilt clamp can't disguise an accumulation bug
+        // by saturating both the buggy and correct cases at MIN_TILT_DEG.
         let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Sleepy; // -6° tilt bias at steady state
+        avatar.emotion = Emotion::Happy; // +3° tilt bias at steady state
         let mut eh = EmotionHead::new();
 
         // Drive past the transition, then many more ticks. The tilt must
-        // stay at -6, not drift to -12, -18, ...
+        // stay at +3, not drift to +6, +9, ...
         for i in 0..=50 {
             eh.update(
                 &mut avatar,
                 Instant::from_millis(EmotionHead::TRANSITION_MS + i * 33),
             );
         }
-        assert_eq!(avatar.head_pose.tilt_deg, -6.0);
+        assert_eq!(avatar.head_pose.tilt_deg, 3.0);
     }
 
     #[test]
     fn clamp_engages_when_combined_exceeds_safe_range() {
-        use crate::head::MAX_TILT_DEG;
+        use crate::head::{MAX_TILT_DEG, MIN_TILT_DEG};
 
+        // Upper clamp: hostile upstream + Happy (+3) push past MAX.
+        let mut avatar = Avatar::default();
+        avatar.emotion = Emotion::Happy;
+        avatar.head_pose = Pose::new(0.0, 29.0);
+        let mut eh = EmotionHead::new();
+        eh.update(
+            &mut avatar,
+            Instant::from_millis(EmotionHead::TRANSITION_MS + 1),
+        );
+        assert_eq!(avatar.head_pose.tilt_deg, MAX_TILT_DEG);
+
+        // Lower clamp: hostile upstream + Sleepy (-6) push below MIN.
+        // Asymmetric tilt range — MIN_TILT_DEG is 0, not -MAX_TILT_DEG.
         let mut avatar = Avatar::default();
         avatar.emotion = Emotion::Sleepy;
-        // A hostile IdleSway output that would push the combined tilt
-        // past MAX_TILT_DEG (30°).
         avatar.head_pose = Pose::new(0.0, -29.0);
         let mut eh = EmotionHead::new();
         eh.update(
             &mut avatar,
             Instant::from_millis(EmotionHead::TRANSITION_MS + 1),
         );
-        // -29 + Sleepy(-6) = -35, clamped to -MAX_TILT_DEG.
-        assert_eq!(avatar.head_pose.tilt_deg, -MAX_TILT_DEG);
+        assert_eq!(avatar.head_pose.tilt_deg, MIN_TILT_DEG);
     }
 
     #[test]

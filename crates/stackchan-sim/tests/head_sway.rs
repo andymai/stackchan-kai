@@ -96,21 +96,28 @@ fn idle_sway_crosses_zero_on_both_axes() {
         block_on(head.set_pose(avatar.head_pose, now)).expect("RecordingHead is infallible");
     }
 
-    // Both axes must visit both sides of zero over this window.
+    // Pan is symmetric — must visit both sides of zero. Tilt is
+    // asymmetric (`Pose::clamped` pins below-zero tilts to
+    // `MIN_TILT_DEG = 0` because the chassis cutout blocks downward
+    // head travel) so we instead check that tilt visits both the floor
+    // (~0°) and at least one positive angle.
     let (pan_pos, pan_neg) = head
         .records()
         .iter()
         .fold((false, false), |(pos, neg), (_, p)| {
             (pos || p.pan_deg > 0.0, neg || p.pan_deg < 0.0)
         });
-    let (tilt_pos, tilt_neg) = head
+    let (tilt_at_floor, tilt_above_floor) = head
         .records()
         .iter()
-        .fold((false, false), |(pos, neg), (_, p)| {
-            (pos || p.tilt_deg > 0.0, neg || p.tilt_deg < 0.0)
+        .fold((false, false), |(at_floor, above), (_, p)| {
+            (at_floor || p.tilt_deg <= 0.001, above || p.tilt_deg > 0.0)
         });
     assert!(pan_pos && pan_neg, "pan did not cross zero in 33 s");
-    assert!(tilt_pos && tilt_neg, "tilt did not cross zero in 33 s");
+    assert!(
+        tilt_at_floor && tilt_above_floor,
+        "tilt did not visit both the MIN_TILT_DEG floor and a positive value in 33 s"
+    );
 }
 
 #[test]
