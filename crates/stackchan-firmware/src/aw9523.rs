@@ -41,12 +41,12 @@ const REG_LEDMODE_P0: u8 = 0x12;
 /// Port-1 LED-mode register.
 const REG_LEDMODE_P1: u8 = 0x13;
 
-/// P0 output value after init: P0_0..P0_2 HIGH (LCD_RST, AW88298_RST,
-/// TP_RST all released), rest LOW.
+/// P0 output value after init: `P0_0`..`P0_2` HIGH (`LCD_RST`, `AW88298_RST`,
+/// `TP_RST` all released), rest LOW.
 const P0_OUTPUT_INIT: u8 = 0b0000_0111;
-/// P1 output value after init: bits 0, 1, 3, 7 HIGH. Bit 1 = LCD_RST (HIGH
+/// P1 output value after init: bits 0, 1, 3, 7 HIGH. Bit 1 = `LCD_RST` (HIGH
 /// = released). Bit 7 is the backlight-boost enable — must be HIGH or the
-/// panel stays dark even with BLDO1 up.
+/// panel stays dark even with `BLDO1` up.
 const P1_OUTPUT_INIT: u8 = 0b1000_1111;
 /// P1 output with `LCD_RST` asserted (bit 1 LOW), boost-enable (bit 7)
 /// kept HIGH so the backlight rail doesn't drop during the reset pulse.
