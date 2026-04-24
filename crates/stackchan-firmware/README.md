@@ -27,6 +27,7 @@ modifier pipeline at ~30 FPS.
 - `src/head.rs` — embassy task: `stackchan_core::Pose` → SCServo commands
 - `src/imu.rs` / `src/mag.rs` — BMI270 / BMM150 tasks publishing to signal channels for the 9-axis data path
 - `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` — per-peripheral tasks
+- `src/audio.rs` — codec bring-up (AW88298 + ES7210) + `AUDIO_RMS_SIGNAL` channel. Task parks until the I²S peripheral wiring lands in a follow-up
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
 - `examples/{aw88298,es7210,imu,mag,leds,ambient,touch,ir}_bench.rs` — per-driver control-path benches (chip-ID probe + init + heartbeat; no I²S / streaming data on the audio pair until PR 2 of the audio stack lands)
 

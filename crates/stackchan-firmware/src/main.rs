@@ -25,7 +25,7 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, board, button, clock, framebuffer, head, imu, ir, leds, mag, touch, wallclock,
+    ambient, audio, board, button, clock, framebuffer, head, imu, ir, leds, mag, touch, wallclock,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -408,6 +408,14 @@ async fn mag_task(shared_i2c: SharedI2c) -> ! {
     mag::run_mag_loop(shared_i2c).await
 }
 
+/// Audio task. Today a park loop; in PR 2B this becomes the I²S DMA
+/// read loop that computes mic RMS per render window and publishes to
+/// [`audio::AUDIO_RMS_SIGNAL`].
+#[embassy_executor::task]
+async fn audio_task() -> ! {
+    audio::run_audio_loop().await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -517,6 +525,20 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(mag_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn mag_task failed: {}", defmt::Debug2Format(&e));
+    }
+
+    // Audio bring-up: configure AW88298 + ES7210 over shared I²C. Does
+    // not start I²S streaming (that's PR 2B). Failures are warn-only —
+    // audio degrades to "silent mic, muted speaker" rather than
+    // halting the boot, since the rest of the avatar still works.
+    let amp_bus = I2cDevice::new(board_io.i2c_bus);
+    let adc_bus = I2cDevice::new(board_io.i2c_bus);
+    match audio::bringup(amp_bus, adc_bus).await {
+        Ok(()) => defmt::info!("audio: codecs up (I²S streaming pending PR 2B)"),
+        Err(e) => defmt::warn!("audio: bring-up failed ({:?}) — audio disabled", e),
+    }
+    if let Err(e) = spawner.spawn(audio_task()) {
+        defmt::panic!("spawn audio_task failed: {}", defmt::Debug2Format(&e));
     }
 
     // One-shot wall-clock read for the boot log. Single I²C round-trip;

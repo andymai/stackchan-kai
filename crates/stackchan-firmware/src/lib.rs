@@ -18,6 +18,7 @@
 extern crate alloc;
 
 pub mod ambient;
+pub mod audio;
 pub mod board;
 pub mod button;
 pub mod clock;
