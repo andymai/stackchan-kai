@@ -24,7 +24,7 @@
 
 extern crate alloc;
 
-use stackchan_firmware::{board, clock, framebuffer, head, imu, touch};
+use stackchan_firmware::{ambient, board, clock, framebuffer, head, imu, touch, wallclock};
 
 use board::{HeadDriverImpl, SharedI2c};
 use clock::HalClock;
@@ -58,8 +58,8 @@ use mipidsi::{
 use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
     modifiers::{
-        Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch, IdleDrift, IdleSway,
-        PickupReaction,
+        AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
+        IdleDrift, IdleSway, PickupReaction,
     },
 };
 use static_cell::StaticCell;
@@ -158,6 +158,7 @@ async fn render_task(mut display: LcdDisplay) {
     let mut avatar = Avatar::default();
     let mut emotion_touch = EmotionTouch::new();
     let mut pickup = PickupReaction::new();
+    let mut ambient_sleepy = AmbientSleepy::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
@@ -176,7 +177,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + PickupReaction + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
+        "render task: {=u64} ms tick, EmotionTouch + PickupReaction + AmbientSleepy + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
         FRAME_PERIOD_MS
     );
 
@@ -198,8 +199,15 @@ async fn render_task(mut display: LcdDisplay) {
             avatar.accel_g = m.accel_g;
             avatar.gyro_dps = m.gyro_dps;
         }
+        // Drain the latest ambient reading. 2 Hz publish rate, so most
+        // render ticks see nothing new — last-known lux stays on the
+        // avatar so `AmbientSleepy` has coherent input.
+        if let Some(lux) = ambient::AMBIENT_LUX_SIGNAL.try_take() {
+            avatar.ambient_lux = Some(lux);
+        }
         emotion_touch.update(&mut avatar, now);
         pickup.update(&mut avatar, now);
+        ambient_sleepy.update(&mut avatar, now);
         cycle.update(&mut avatar, now);
         style.update(&mut avatar, now);
         blink.update(&mut avatar, now);
@@ -330,6 +338,13 @@ async fn imu_task(shared_i2c: SharedI2c) -> ! {
     imu::run_imu_loop(shared_i2c).await
 }
 
+/// LTR-553 ambient-light polling task. Third consumer of the shared
+/// I²C0 bus. Publishes lux estimates on [`ambient::AMBIENT_LUX_SIGNAL`].
+#[embassy_executor::task]
+async fn ambient_task(shared_i2c: SharedI2c) -> ! {
+    ambient::run_ambient_loop(shared_i2c).await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -419,11 +434,22 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(e) = spawner.spawn(touch_task(board_io.i2c)) {
         defmt::panic!("spawn touch_task failed: {}", defmt::Debug2Format(&e));
     }
-    // Second shared-bus handle onto the same I²C0 for the IMU task.
-    // The `I2cDevice` wrapper serialises concurrent access so the
-    // touch task and IMU task can each own a handle.
+    // Three more shared-bus handles onto the same I²C0. The
+    // `I2cDevice` wrapper serialises concurrent access so each task
+    // can own a handle without contention bookkeeping.
     if let Err(e) = spawner.spawn(imu_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn imu_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(ambient_task(I2cDevice::new(board_io.i2c_bus))) {
+        defmt::panic!("spawn ambient_task failed: {}", defmt::Debug2Format(&e));
+    }
+
+    // One-shot wall-clock read for the boot log. Single I²C round-trip;
+    // failures are warn-only (logged inside `wallclock::read_and_format`).
+    let mut rtc_buf = [0u8; 19];
+    let rtc_bus = I2cDevice::new(board_io.i2c_bus);
+    if let Some(stamp) = wallclock::read_and_format(rtc_bus, &mut rtc_buf).await {
+        defmt::info!("boot @ {=str} (RTC)", stamp);
     }
 
     defmt::info!("boot complete — idle heartbeat");
