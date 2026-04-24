@@ -131,13 +131,27 @@ where
     )
 }
 
+/// Maximum pixel height the audio-driven `mouth_open` can add to the
+/// drawn mouth. At `mouth_open = 1.0` the mouth ellipse gains this
+/// many pixels of total height (i.e. this many pixels of `radius_y`
+/// growth mirrored across the center line).
+///
+/// Chosen to land roughly in line with the Surprised weight-100
+/// ellipse (40 px tall) so a loud-speech mouth reads as "open" without
+/// towering over the eyes.
+const MOUTH_OPEN_MAX_HEIGHT_PX: f32 = 40.0;
+
 /// Draw the mouth. Decision tree:
 ///
 /// 1. `curve != 0`: stroked parabolic arc. `curve > 0` (Happy) smiles,
-///    `curve < 0` (Sad) frowns. `Mouth::weight` is ignored.
-/// 2. Else `weight == 0`: horizontal resting line (v0.1.0 neutral mouth).
-/// 3. Else: filled ellipse whose height scales with `weight` (v0.1.0
-///    open-mouth behavior — Surprised uses this path).
+///    `curve < 0` (Sad) frowns. `Mouth::weight` and `mouth_open` are
+///    ignored — arcs stay as the v0.1.0 smile/frown look. (Follow-up
+///    can composite an audio-driven open ellipse behind the arc.)
+/// 2. Else: filled ellipse whose height is the maximum of the
+///    weight-derived height (emotion's static open-mouth — Surprised
+///    uses this) and the `mouth_open`-derived audio height. When both
+///    are zero, falls back to a horizontal resting line (v0.1.0
+///    neutral mouth).
 fn draw_mouth<D>(mouth: &Mouth, curve: i8, target: &mut D) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
@@ -156,7 +170,9 @@ where
         );
     }
 
-    let height = scaled_height(mouth.radius_y, mouth.weight);
+    let weight_height = scaled_height(mouth.radius_y, mouth.weight);
+    let audio_height = audio_open_height(mouth.mouth_open);
+    let height = weight_height.max(audio_height);
     if height == 0 {
         return draw_horizontal_line(
             mouth.center.x,
@@ -176,6 +192,30 @@ where
     Ellipse::new(top_left, size)
         .into_styled(fill(MOUTH_COLOR))
         .draw(target)
+}
+
+/// Map `Mouth::mouth_open` (`0.0..=1.0`) to an ellipse height in pixels.
+///
+/// Non-finite values, values below 0, and values above 1 clamp to
+/// `[0.0, 1.0]` before scaling. Returns 0 when `mouth_open` is at or
+/// below zero, so a fresh avatar (audio silent) renders the same
+/// horizontal line as before this feature landed.
+fn audio_open_height(mouth_open: f32) -> u16 {
+    let clamped = if mouth_open.is_nan() || mouth_open <= 0.0 {
+        0.0
+    } else if mouth_open >= 1.0 {
+        1.0
+    } else {
+        mouth_open
+    };
+    let pixels = clamped * MOUTH_OPEN_MAX_HEIGHT_PX;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "pixels is clamped to [0, MOUTH_OPEN_MAX_HEIGHT_PX]; fits in u16"
+    )]
+    let rounded = pixels as u16;
+    rounded
 }
 
 /// Draw a cheek circle below `eye` with color blended between white and
