@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   host:
-    name: Host (core + sim + axp2101)
+    name: Host (core + sim + drivers)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,8 +38,10 @@ jobs:
       - name: Format check
         run: cargo fmt --check
 
+      # `--all-targets` also lints examples + integration tests, matching
+      # the pre-commit hook so local and CI lint passes can't diverge.
       - name: Clippy (host crates)
-        run: cargo clippy --workspace --exclude stackchan-firmware --all-features -- -D warnings
+        run: cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
 
       - name: Test (host crates)
         run: cargo test --workspace --exclude stackchan-firmware --all-features

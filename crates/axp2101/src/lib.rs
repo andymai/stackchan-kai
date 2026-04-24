@@ -24,7 +24,7 @@
 //! # }
 //! ```
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
 use embedded_hal_async::i2c::I2c;
@@ -171,5 +171,113 @@ where
             .await
             .map_err(Error::I2c)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test scaffolding: Infallible bus error makes unwrap() sound"
+)]
+mod tests {
+    use super::*;
+    use core::cell::RefCell;
+    use embedded_hal_async::i2c::{Operation, SevenBitAddress};
+
+    /// Host-side I²C mock that records every transaction payload in order.
+    struct MockI2c {
+        transactions: RefCell<Vec<(u8, Vec<u8>)>>,
+    }
+
+    impl MockI2c {
+        fn new() -> Self {
+            Self {
+                transactions: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl embedded_hal_async::i2c::ErrorType for MockI2c {
+        type Error = core::convert::Infallible;
+    }
+
+    impl embedded_hal_async::i2c::I2c for MockI2c {
+        async fn transaction(
+            &mut self,
+            address: SevenBitAddress,
+            operations: &mut [Operation<'_>],
+        ) -> Result<(), Self::Error> {
+            for op in operations {
+                if let Operation::Write(buf) = op {
+                    self.transactions.borrow_mut().push((address, buf.to_vec()));
+                }
+                // Reads and write-reads never issued by the driver under test.
+            }
+            Ok(())
+        }
+    }
+
+    /// Tiny future poller used instead of pulling in an async executor.
+    fn block_on<F: core::future::Future>(future: F) -> F::Output {
+        use core::pin::pin;
+        use core::task::{Context, Poll, Waker};
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut fut = pin!(future);
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    #[test]
+    fn init_cores3_issues_exact_m5unified_register_sequence() {
+        let mut pmic = Axp2101::new(MockI2c::new());
+        block_on(pmic.init_cores3()).unwrap();
+
+        // Every write hits the PMIC address.
+        let txs = pmic.bus.transactions.borrow().clone();
+        assert_eq!(txs.len(), CORES3_INIT_SEQUENCE.len());
+        for (addr, _) in &txs {
+            assert_eq!(*addr, ADDRESS, "all init writes must target AXP2101");
+        }
+
+        // Each write is a (reg, value) pair in the exact order of
+        // CORES3_INIT_SEQUENCE. This is a golden test: if anyone edits
+        // the sequence without meaning to, this fails.
+        let actual: Vec<(u8, u8)> = txs.iter().map(|(_, buf)| (buf[0], buf[1])).collect();
+        let expected: Vec<(u8, u8)> = CORES3_INIT_SEQUENCE.to_vec();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn init_cores3_writes_backlight_voltage_before_enable_bitmap() {
+        // BLDO1 (0x96) / BLDO2 (0x97) voltage setpoints must come before
+        // the enable bitmap (0x90) so the rails come up at 3.3V, not the
+        // 0.5V PoR default.
+        let bldo1 = CORES3_INIT_SEQUENCE
+            .iter()
+            .position(|&(r, _)| r == 0x96)
+            .unwrap();
+        let enable = CORES3_INIT_SEQUENCE
+            .iter()
+            .position(|&(r, _)| r == 0x90)
+            .unwrap();
+        assert!(bldo1 < enable, "BLDO1 voltage must precede enable bitmap");
+    }
+
+    #[test]
+    fn init_cores3_keeps_battery_detect_and_adc_enabled() {
+        // Battery detect + ADC enable are both part of the sequence —
+        // without them, later battery-voltage reads return zero.
+        assert!(CORES3_INIT_SEQUENCE.contains(&(0x68, 0x01)));
+        assert!(CORES3_INIT_SEQUENCE.contains(&(0x30, 0x0F)));
+    }
+
+    #[test]
+    fn into_inner_releases_bus() {
+        let pmic = Axp2101::new(MockI2c::new());
+        let _bus: MockI2c = pmic.into_inner();
     }
 }
