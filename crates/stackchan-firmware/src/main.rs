@@ -65,7 +65,7 @@ use mipidsi::{
 use pca9685::Pca9685;
 use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
-    modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift, IdleSway},
+    modifiers::{Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, IdleDrift, IdleSway},
 };
 use static_cell::StaticCell;
 
@@ -160,12 +160,14 @@ type HeadDriverImpl = head::PcaHead<I2c<'static, esp_hal::Async>>;
 ///
 /// Modifier order is the canonical stackchan-core stack:
 /// `EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift` →
-/// `IdleSway`. The first five mutate pixel state; `IdleSway` writes
-/// `avatar.head_pose`, which this task then publishes to the 50 Hz head
-/// task via [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when
-/// no pixel-affecting modifier changed anything (common between Breath's
-/// triangle-wave zero-offset ticks) — pose updates alone never trigger a
-/// redundant LCD blit because `head_pose` is excluded from `frame_eq`.
+/// `IdleSway` → `EmotionHead`. The first five mutate pixel state;
+/// `IdleSway` writes the base `avatar.head_pose` (slow wander);
+/// `EmotionHead` adds an emotion-keyed bias on top (layered compose).
+/// The final pose is published to the 50 Hz head task via
+/// [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when no
+/// pixel-affecting modifier changed anything — pose updates alone never
+/// trigger a redundant LCD blit because `head_pose` is excluded from
+/// `frame_eq`.
 #[embassy_executor::task]
 async fn render_task(mut display: LcdDisplay) {
     let clock = HalClock;
@@ -185,6 +187,7 @@ async fn render_task(mut display: LcdDisplay) {
     // swap in without touching the task shape.
     let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
     let mut sway = IdleSway::new();
+    let mut emotion_head = EmotionHead::new();
     let mut last_rendered: Option<Avatar> = None;
 
     // Pre-compute the blit rect once; it never changes.
@@ -192,7 +195,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway",
+        "render task: {=u64} ms tick, EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
         FRAME_PERIOD_MS
     );
 
@@ -204,10 +207,12 @@ async fn render_task(mut display: LcdDisplay) {
         breath.update(&mut avatar, now);
         drift.update(&mut avatar, now);
         sway.update(&mut avatar, now);
+        emotion_head.update(&mut avatar, now);
 
-        // Publish the latest pose to the head task. `Signal::signal`
-        // overwrites any un-consumed value, so a slower head task never
-        // builds up a backlog — it just reads the most recent pose.
+        // Publish the final pose (sway + emotion bias) to the head task.
+        // `Signal::signal` overwrites any un-consumed value, so a slower
+        // head task never builds up a backlog — it just reads the most
+        // recent pose.
         head::POSE_SIGNAL.signal(avatar.head_pose);
 
         // `frame_eq` intentionally skips `head_pose` — the LCD is mounted
