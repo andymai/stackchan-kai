@@ -33,9 +33,11 @@ pub mod avatar;
 pub mod clock;
 pub mod draw;
 pub mod emotion;
+pub mod head;
 pub mod modifiers;
 
 pub use avatar::{Avatar, Eye, EyePhase, Mouth, Point, SCALE_DEFAULT};
 pub use clock::{Clock, Instant};
 pub use emotion::Emotion;
+pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, Pose};
 pub use modifiers::Modifier;

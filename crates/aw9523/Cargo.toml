@@ -1,0 +1,14 @@
+[package]
+name = "aw9523"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Minimal driver for the AW9523B I²C IO expander. Board-specific bring-up helpers for the M5Stack CoreS3 LCD reset + boost-enable layout."
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-hal-async = { workspace = true }

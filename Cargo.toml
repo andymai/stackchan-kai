@@ -4,9 +4,17 @@ members = [
     "crates/stackchan-core",
     "crates/stackchan-sim",
     "crates/axp2101",
+    "crates/aw9523",
+    "crates/pca9685",
     "crates/stackchan-firmware",
 ]
-default-members = ["crates/stackchan-core", "crates/stackchan-sim", "crates/axp2101"]
+default-members = [
+    "crates/stackchan-core",
+    "crates/stackchan-sim",
+    "crates/axp2101",
+    "crates/aw9523",
+    "crates/pca9685",
+]
 
 [workspace.package]
 version = "0.1.0"

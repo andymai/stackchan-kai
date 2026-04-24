@@ -1,11 +1,13 @@
 //! Headless simulator for `stackchan-core`.
 //!
-//! Two test-oriented utilities:
+//! Test-oriented utilities:
 //!
 //! - [`FakeClock`]: a deterministic [`Clock`] whose time is set by tests.
 //! - [`Framebuffer`]: a `Vec<Rgb565>`-backed [`DrawTarget`] that lets render
 //!   regression tests assert on the output of `Avatar::draw` without running
 //!   on hardware.
+//! - [`RecordingHead`]: a [`HeadDriver`] impl that captures the
+//!   `(Instant, Pose)` trajectory, for golden tests of motion modifiers.
 //!
 //! [`Modifier`]: stackchan_core::Modifier
 //! [`DrawTarget`]: embedded_graphics::draw_target::DrawTarget
@@ -19,7 +21,7 @@ use embedded_graphics::{
     geometry::{OriginDimensions, Size},
     pixelcolor::{Rgb565, RgbColor},
 };
-use stackchan_core::{Clock, Instant};
+use stackchan_core::{Clock, HeadDriver, Instant, Pose};
 
 /// A [`Clock`] whose current time is set explicitly by tests.
 ///
@@ -143,6 +145,54 @@ impl DrawTarget for Framebuffer {
                 *cell = color;
             }
         }
+        Ok(())
+    }
+}
+
+/// [`HeadDriver`] that records every `set_pose` call into a `Vec`.
+///
+/// Pair with [`FakeClock`] to test motion modifiers without a real PCA9685:
+/// drive the modifier pipeline, push `avatar.head_pose` into a
+/// `RecordingHead` each tick, then assert amplitude / period / trajectory
+/// bounds on [`RecordingHead::records`].
+///
+/// The [`HeadDriver`] impl is `async` to match the firmware's PCA9685
+/// driver shape, but the recorded future is always immediately `Ready` —
+/// tests can drive it with the small `block_on` helper in the
+/// `head_sway.rs` integration test, or skip the trait entirely and inspect
+/// `avatar.head_pose` directly for simple cases.
+#[derive(Debug, Default)]
+pub struct RecordingHead {
+    /// Every `(now, pose)` pair passed to `set_pose`, in call order.
+    records: Vec<(Instant, Pose)>,
+}
+
+impl RecordingHead {
+    /// Construct an empty recorder.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            records: Vec::new(),
+        }
+    }
+
+    /// All recorded `(Instant, Pose)` pairs.
+    #[must_use]
+    pub fn records(&self) -> &[(Instant, Pose)] {
+        &self.records
+    }
+
+    /// Discard all recorded calls.
+    pub fn clear(&mut self) {
+        self.records.clear();
+    }
+}
+
+impl HeadDriver for RecordingHead {
+    type Error = core::convert::Infallible;
+
+    async fn set_pose(&mut self, pose: Pose, now: Instant) -> Result<(), Self::Error> {
+        self.records.push((now, pose));
         Ok(())
     }
 }
