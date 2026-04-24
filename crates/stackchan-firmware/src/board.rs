@@ -27,7 +27,7 @@
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Delay, Duration, Timer, with_timeout};
 use esp_hal::{
     i2c::master::{Config as I2cConfig, I2c},
     peripherals::{GPIO6, GPIO7, GPIO11, GPIO12, I2C0, UART1},
@@ -287,7 +287,8 @@ async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
 /// to drive the axis (and its writes will keep being ignored,
 /// which is an observable failure mode at least).
 async fn enable_torque(driver: &mut HeadDriverImpl, id: u8) {
-    match driver.bus_mut().write_torque_enable(id, true).await {
+    let bus = driver.bus_mut();
+    match bus.write_torque_enable(id, true).await {
         Ok(()) => defmt::info!("SCServo[{=u8}]: torque enabled", id),
         Err(e) => defmt::warn!(
             "SCServo[{=u8}]: torque-enable failed: {}",
@@ -295,6 +296,10 @@ async fn enable_torque(driver: &mut HeadDriverImpl, id: u8) {
             defmt::Debug2Format(&e)
         ),
     }
+    // Consume the servo's post-write status response (same RX
+    // housekeeping as `set_pose` — see `head.rs` for the rationale).
+    // A silent servo makes the drain hang, so it's time-bounded.
+    let _ = with_timeout(Duration::from_millis(2), bus.drain_write_status()).await;
 }
 
 /// Boot-time "yes" nod: tilt up → tilt down → center over ~0.5 s.
