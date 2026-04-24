@@ -34,6 +34,10 @@ ci: check
     cargo deny check
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --exclude stackchan-firmware --all-features
 
+# MSRV check — matches the `msrv` CI job. Requires `rustup toolchain install 1.88`.
+msrv:
+    cargo +1.88 build --workspace --exclude stackchan-firmware --all-features
+
 # ----- Firmware (requires `source ~/export-esp.sh` first) ------------------
 
 # Firmware-side compile check. Runs from inside the firmware crate so the
