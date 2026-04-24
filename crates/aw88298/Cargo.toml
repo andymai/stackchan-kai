@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Scaffold: minimal async I²C control-path driver for the Awinic AW88298 smart-K audio amplifier. I2S audio transport is out of scope."
+description = "Minimal async I²C control-path driver for the Awinic AW88298 smart-K audio amplifier. 16-bit registers, big-endian wire format. I2S audio transport is out of scope."
 
 [lints]
 workspace = true

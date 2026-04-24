@@ -28,6 +28,7 @@ modifier pipeline at ~30 FPS.
 - `src/imu.rs` / `src/mag.rs` — BMI270 / BMM150 tasks publishing to signal channels for the 9-axis data path
 - `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` — per-peripheral tasks
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
+- `examples/{aw88298,es7210,imu,mag,leds,ambient,touch,ir}_bench.rs` — per-driver control-path benches (chip-ID probe + init + heartbeat; no I²S / streaming data on the audio pair until PR 2 of the audio stack lands)
 
 ## Boot Sequence
 
@@ -80,9 +81,9 @@ and talk to it through `I2cDevice` handles. Addresses on the bus:
 | `0x10/11` | BMM150 magnetometer |
 | `0x23`  | LTR-553 ambient / prox |
 | `0x34`  | AXP2101 PMIC         |
-| `0x36`  | AW88298 amp (future) |
+| `0x36`  | AW88298 amp (control-path only; I²S pending) |
 | `0x38`  | FT6336U touch        |
-| `0x40`  | ES7210 ADC (future)  |
+| `0x40`  | ES7210 ADC (control-path only; I²S pending)  |
 | `0x51`  | BM8563 RTC           |
 | `0x58`  | AW9523 I/O expander  |
 | `0x68/69` | BMI270 IMU         |
@@ -107,6 +108,8 @@ just fmr                     # flash + monitor in one go
 just bench                   # flash the calibration-bench example
 just mag-bench               # magnetometer bench
 just leds-bench              # WS2812 LED ring bench
+just aw88298-bench           # speaker-amp control-path bench
+just es7210-bench            # mic-ADC control-path bench
 ```
 
 See the [justfile](../../justfile) for the full recipe set. Default
@@ -115,5 +118,5 @@ port is `/dev/ttyACM1`; override with `just PORT=/dev/ttyACM0 flash`.
 ## Integration
 
 - **Consumes `stackchan-core`** for every domain type (`Avatar`, `Modifier`, `Pose`, `Clock`, `HeadDriver`, `LedFrame`)
-- **Consumes every driver crate in the workspace** — axp2101, aw9523, bm8563, bmi270, bmm150, ft6336u, ir-nec, ltr553, py32, scservo. Scaffolded drivers (aw88298, es7210, gc0308, si12t, st25r3916) will land as additional tasks once implemented
+- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, bmm150, es7210, ft6336u, ir-nec, ltr553, py32, scservo. AW88298 + ES7210 are control-path only for now (chip brought up at benches; no I²S streaming — that lands in the audio-task PR). Scaffolded-only: gc0308, si12t, st25r3916
 - **HIL via probe-rs + defmt-test** (planned) — CI runs host tests today; on-device integration tests run on a flash-and-capture rig

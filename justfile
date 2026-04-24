@@ -98,3 +98,21 @@ mag-bench:
 leds-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example leds_bench
     sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/leds_bench"
+
+# AW88298 control-path bench: runs the amp's full I²C init sequence
+# (reset → enable → configure I2S 16 kHz mono → mute → disable boost)
+# and logs a heartbeat. Does NOT stream audio — I2S wiring lands in the
+# follow-up audio-task PR. Verifies chip presence and register-sequence
+# acceptance only.
+aw88298-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example aw88298_bench
+    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/aw88298_bench"
+
+# ES7210 control-path bench: runs the ADC's full I²C init sequence
+# (reset → clock tree for 12.288 MHz / 16 kHz → mic1+2 power-on → latch
+# reset) and logs a heartbeat. Does NOT capture audio — I2S wiring
+# lands in the follow-up audio-task PR. Verifies chip presence and
+# register-sequence acceptance only.
+es7210-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example es7210_bench
+    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/es7210_bench"

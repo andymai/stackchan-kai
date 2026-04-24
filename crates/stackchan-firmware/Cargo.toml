@@ -13,11 +13,13 @@ workspace = true
 
 [dependencies]
 stackchan-core = { path = "../stackchan-core" }
+aw88298 = { path = "../aw88298" }
 axp2101 = { path = "../axp2101" }
 aw9523 = { path = "../aw9523" }
 bm8563 = { path = "../bm8563" }
 bmi270 = { path = "../bmi270" }
 bmm150 = { path = "../bmm150" }
+es7210 = { path = "../es7210" }
 ft6336u = { path = "../ft6336u" }
 ir-nec = { path = "../ir-nec" }
 ltr553 = { path = "../ltr553" }
@@ -114,3 +116,11 @@ path = "examples/leds_bench.rs"
 [[example]]
 name = "mag_bench"
 path = "examples/mag_bench.rs"
+
+[[example]]
+name = "aw88298_bench"
+path = "examples/aw88298_bench.rs"
+
+[[example]]
+name = "es7210_bench"
+path = "examples/es7210_bench.rs"

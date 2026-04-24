@@ -1,14 +1,15 @@
 ---
 crate: es7210
-role: 4-channel audio ADC control driver (scaffold)
+role: 4-channel audio ADC control driver
 bus: I²C
 address: "0x40 (strap: 0x40–0x43)"
 transport: embedded-hal-async
-audio: I2S / TDM (out of scope)
+audio: "I2S slave, 12.288 MHz MCLK, 16 kHz / 16-bit mono (fixed)"
+active_channels: mic1 + mic2 (mic3/4 powered off)
 no_std: true
 unsafe: forbidden
 chip_id: "(0x72, 0x10) @ 0xFD/0xFE"
-status: scaffold
+status: experimental
 ---
 
 # es7210
@@ -29,11 +30,13 @@ data leaves the chip over I2S/TDM; this crate only handles I²C config.
 - **CHIP_ID:** `(0x72, 0x10)` at `(0xFD, 0xFE)`. Both bytes must match
 - **Audio transport:** I2S or TDM, chip-as-master or chip-as-slave. Configured via registers the scaffold doesn't write yet
 
-## Register Map (planned)
+## Register Map
 
-Registers the scaffold will reach once fully implemented. Addresses are
-datasheet-confirmed but the exact values the CoreS3 Stack-chan needs
-have to be extracted from M5Unified's reference init.
+Registers the driver touches at init. Values are a direct port of
+[espressif/esp-adf][esp-adf]'s canonical sequence, simplified for our
+fixed audio shape (12.288 MHz MCLK → 16 kHz, mic1+2 only).
+
+[esp-adf]: https://github.com/espressif/esp-adf
 
 | Reg               | Addr        | Access | Purpose                                              |
 |-------------------|-------------|--------|------------------------------------------------------|
@@ -47,21 +50,31 @@ have to be extracted from M5Unified's reference init.
 | `TDM_FORMAT`      | `0x11–0x12` | W      | TDM slot width, frame format, I2S vs PCM             |
 | `CHIP_ID1/2`      | `0xFD/0xFE` | R      | `0x72 / 0x10`                                        |
 
-## Init Sequence (planned)
+## Init Sequence
 
-1. `RESET = 0x3F`; wait ≥5 ms
-2. `RESET = 0x00`; wait ≥5 ms
-3. Read `CHIP_ID1/2`; verify `(0x72, 0x10)`
-4. `CLK_ON = 0x3F` (enable analog / digital / MCLK clock gates)
-5. `MAINCLK` + MCLK divisor — choose the divisor that maps the I2S `MCLK` pin (ESP32-S3 I2S peripheral provides 12.288 MHz on the CoreS3) to a 48 kHz-or-equivalent sample rate
-6. `SAMPLE_RATE = 0x02` (48 kHz via default OSR)
-7. `MIC_BIAS_CTRL = 0x44` (mic bias on for the two active channels)
-8. `ADCx_CTRL` — PGA gain on channels 1 and 2 (0–30 dB in 0.5 dB steps)
-9. `TDM_FORMAT` / `I2S_FORMAT` — match the ESP32-S3 I2S peripheral configuration
-10. `ADC_ENABLE = 0x03` (enable channels 1–2 only — the only ones wired to mics)
+Matches `Es7210::init`:
 
-Mute / unmute and MCLK ratio need to stay in lockstep with the matching
-AW88298 playback side so both paths share a single `MCLK` domain.
+1. Read `CHIP_ID1/2`; verify `(0x72, 0x10)`
+2. `RESET = 0x71` (assert soft-reset); wait ≥5 ms
+3. `RESET = 0x41` (release); wait ≥5 ms
+4. Clock tree for 12.288 MHz → 16 kHz:
+   - `MAINCLK = 0xC3` (adc_div=3, doubler on, DLL on)
+   - `OSR = 0x20` (256× oversample)
+   - `LRCK_DIVH = 0x03`, `LRCK_DIVL = 0x00`
+5. `CLOCK_OFF = 0x30` (mic1+2 clocks on, mic3+4 gated)
+6. `POWER_DOWN = 0x00` (all blocks powered on)
+7. `ANALOG = 0x43` (datasheet active-mode preset)
+8. `MIC1/2/3/4_POWER = 0x08` (individual powers on)
+9. `MIC12_POWER = 0x00` (group powered), `MIC34_POWER = 0xFF` (gated)
+10. `MIC1/2_GAIN = 0x1A` (gain-enable bit + step `0x0A` ≈ +30 dB)
+11. `ANALOG = 0x43` (re-asserted, per the reference)
+12. `RESET = 0x71` / `0x41` (latch reset pulse)
+
+Gain is re-programmable at runtime via [`Es7210::set_gain`].
+
+MCLK / sample-rate must match the MCU's I²S master configuration. The
+matching AW88298 playback side (`crates/aw88298`) should share the
+same `MCLK` domain.
 
 ## Gotchas
 
