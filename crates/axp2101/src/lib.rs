@@ -1,15 +1,15 @@
 //! # axp2101
 //!
-//! Minimal `no_std` driver for the X-Powers AXP2101 PMIC used on the M5Stack
-//! CoreS3. v0.1.0 implements the **smallest** register set needed to bring up
-//! the LCD and 3V3 rails:
+//! `no_std` driver for the X-Powers AXP2101 PMIC used on the M5Stack CoreS3.
 //!
-//! - ALDO1 -- 3V3 system rail
-//! - BLDO1 -- LCD backlight enable
-//! - BLDO2 -- LCD logic rail
-//! - Power-on sequencing helpers
+//! The driver is generic over any `embedded_hal_async::i2c::I2c`, and the
+//! high-level [`Axp2101::init_cores3`] method applies the exact register
+//! sequence the `M5Unified` library uses for the CoreS3 board — enough to
+//! bring up the LCD rails **and** configure the power-management behavior
+//! (button timing, BATFET, PMU common config) so the chip doesn't
+//! auto-shutdown after a few seconds of idle.
 //!
-//! Battery monitoring, charging configuration, and button handling are left
+//! Battery-state readout, charging configuration, and IRQ handling are left
 //! for future releases; adding them is a matter of wiring more register
 //! accesses through the existing I²C surface.
 //!
@@ -19,7 +19,7 @@
 //! # use embedded_hal_async::i2c::I2c;
 //! # async fn demo<B: I2c>(bus: B) -> Result<(), axp2101::Error<B::Error>> {
 //! let mut pmic = axp2101::Axp2101::new(bus);
-//! pmic.enable_lcd_rails().await?;
+//! pmic.init_cores3().await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -31,20 +31,6 @@ use embedded_hal_async::i2c::I2c;
 
 /// 7-bit I²C address of the AXP2101 on CoreS3.
 pub const ADDRESS: u8 = 0x34;
-
-/// AXP2101 register offsets (partial; extend as features are added).
-mod reg {
-    /// ALDO enable bitmap.
-    pub const LDO_ONOFF_CTL0: u8 = 0x90;
-    /// BLDO enable bitmap.
-    pub const LDO_ONOFF_CTL1: u8 = 0x91;
-    /// ALDO1 voltage register (0.5V base + 100mV steps).
-    pub const ALDO1_VOLT: u8 = 0x92;
-    /// BLDO1 voltage register.
-    pub const BLDO1_VOLT: u8 = 0x96;
-    /// BLDO2 voltage register.
-    pub const BLDO2_VOLT: u8 = 0x97;
-}
 
 /// Error type for the driver.
 #[derive(Debug)]
@@ -59,6 +45,57 @@ impl<E> From<E> for Error<E> {
         Self::I2c(e)
     }
 }
+
+/// Register + value pair. Used by [`Axp2101::init_cores3`] to apply a
+/// fixed initialization sequence in one method.
+type RegWrite = (u8, u8);
+
+/// `M5Unified`'s CoreS3 AXP2101 register sequence, in order.
+///
+/// The values are copied verbatim from `M5Unified`'s
+/// `Power_Class.cpp` (both the CoreS3-specific block at
+/// `board_M5StackCoreS3` and the shared AXP2101 block that runs after
+/// it). Writing the full sequence is what
+/// prevents the "idle → auto shutdown" behavior seen with the minimal
+/// LDO-only init: register `0x27` sets the button press timing to sane
+/// values (1 s hold to wake, 4 s hold to power off) and `0x10` + `0x12`
+/// put the chip into the operating mode `M5Unified` boards expect.
+///
+/// Note that LDO voltage registers (`0x92`..`0x95`) must be written **before**
+/// the enable bitmap at `0x90` so the rails come up at the correct voltage
+/// on their first on-edge.
+const CORES3_INIT_SEQUENCE: &[RegWrite] = &[
+    // LDO voltage setpoints. Encoding: (mV - 500) / 100 for ALDOs.
+    (0x92, 13), // ALDO1 = 1.8V  — AW88298 audio codec
+    (0x93, 28), // ALDO2 = 3.3V  — ES7210 audio ADC
+    (0x94, 28), // ALDO3 = 3.3V  — camera
+    (0x95, 28), // ALDO4 = 3.3V  — TF card slot
+    // LDO enable bitmap. 0xBF enables ALDO1..4 (bits 0..3) and BLDO1..2
+    // (bits 4..5); BLDO1/BLDO2 default to 3.3V for the LCD backlight +
+    // logic rails on CoreS3 so no explicit voltage write is needed.
+    (0x90, 0xBF),
+    // Power-key timing. 0x00 = hold 1 s to wake, 4 s to power off. Without
+    // this write the chip boots with an aggressive default that treats
+    // mild button glitches as shutdown requests.
+    (0x27, 0x00),
+    // PMU common config: bits 4/5 set "internal off-discharge enable",
+    // which `M5Unified` applies to every AXP2101 board. Required for stable
+    // power-on behavior on CoreS3.
+    (0x10, 0x30),
+    // BATFET disable. Keeps the chip from trying to run through the
+    // battery FET when no battery is attached — that path otherwise
+    // triggers an undervoltage shutdown.
+    (0x12, 0x00),
+    // Battery detection enable (no-op if battery not present).
+    (0x68, 0x01),
+    // CHGLED behavior: controlled by the charger, flashing on charge.
+    (0x69, 0x13),
+    // DLDO1 = 0.5V — gates the vibration motor. Safe default off-ish.
+    (0x99, 0x00),
+    // Enable the PMU's ADC block so later reads of battery / VBUS voltage
+    // return something meaningful.
+    (0x30, 0x0F),
+];
 
 /// AXP2101 driver. Holds the I²C bus and issues register reads/writes.
 pub struct Axp2101<B> {
@@ -84,31 +121,21 @@ where
         self.bus
     }
 
-    /// Turn on the LDOs required for the CoreS3 LCD + 3V3 rails:
-    /// ALDO1 @ 3.3V (system), BLDO1 @ 3.3V (backlight), BLDO2 @ 3.3V (logic).
+    /// Apply the M5Stack CoreS3 power-management defaults in one shot.
     ///
-    /// Must be called before any SPI transactions targeting the LCD.
+    /// Mirrors the register sequence `M5Unified` writes on CoreS3 boot:
+    /// LDO voltages, enable bitmap, power-key timing, PMU common config,
+    /// BATFET, battery detect, and ADC enable. After this returns, the
+    /// LCD rails are up and the chip is configured not to auto-shut down
+    /// on idle.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::I2c`] if any underlying I²C transaction fails.
-    pub async fn enable_lcd_rails(&mut self) -> Result<(), Error<B::Error>> {
-        // ALDO voltage register encoding: value * 100 mV, offset 500 mV.
-        // 3.3V -> (3300 - 500) / 100 = 28.
-        self.write_reg(reg::ALDO1_VOLT, 28).await?;
-        self.write_reg(reg::BLDO1_VOLT, 28).await?;
-        self.write_reg(reg::BLDO2_VOLT, 28).await?;
-
-        // Set enable bits. LDO_ONOFF_CTL0 bit 0 = ALDO1.
-        // LDO_ONOFF_CTL1 bit 0 = BLDO1, bit 1 = BLDO2.
-        let aldo_mask = self.read_reg(reg::LDO_ONOFF_CTL0).await?;
-        self.write_reg(reg::LDO_ONOFF_CTL0, aldo_mask | 0x01)
-            .await?;
-
-        let bldo_mask = self.read_reg(reg::LDO_ONOFF_CTL1).await?;
-        self.write_reg(reg::LDO_ONOFF_CTL1, bldo_mask | 0x03)
-            .await?;
-
+    /// Returns [`Error::I2c`] on the first failed I²C write.
+    pub async fn init_cores3(&mut self) -> Result<(), Error<B::Error>> {
+        for &(reg, val) in CORES3_INIT_SEQUENCE {
+            self.write_reg(reg, val).await?;
+        }
         Ok(())
     }
 

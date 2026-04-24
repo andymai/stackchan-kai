@@ -228,9 +228,11 @@ async fn main(spawner: Spawner) -> ! {
     let mut pmic = Axp2101::new(i2c);
 
     loop {
-        match pmic.enable_lcd_rails().await {
+        match pmic.init_cores3().await {
             Ok(()) => {
-                defmt::info!("AXP2101: ALDO1/BLDO1/BLDO2 @ 3.3V — LCD rails up");
+                defmt::info!(
+                    "AXP2101: CoreS3 power defaults applied — LCD rails + power-key timing set"
+                );
                 break;
             }
             Err(e) => {
