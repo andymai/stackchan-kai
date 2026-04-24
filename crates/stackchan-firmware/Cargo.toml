@@ -124,3 +124,11 @@ path = "examples/aw88298_bench.rs"
 [[example]]
 name = "es7210_bench"
 path = "examples/es7210_bench.rs"
+
+[[example]]
+name = "tilt_extremes"
+path = "examples/tilt_extremes.rs"
+
+[[example]]
+name = "tilt_freewheel"
+path = "examples/tilt_freewheel.rs"
