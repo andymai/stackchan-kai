@@ -87,6 +87,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmm150"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1492,6 +1499,7 @@ dependencies = [
  "axp2101",
  "bm8563",
  "bmi270",
+ "bmm150",
  "critical-section",
  "defmt 1.0.1",
  "embassy-embedded-hal",

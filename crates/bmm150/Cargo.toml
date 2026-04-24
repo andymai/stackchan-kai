@@ -1,0 +1,14 @@
+[package]
+name = "bmm150"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Minimal async driver for the Bosch BMM150 3-axis geomagnetic sensor over I²C. no_std; embedded-hal-async 1.0. Ports Bosch's fixed-point trim-compensation algorithm verbatim."
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-hal-async = { workspace = true }
