@@ -13,3 +13,6 @@ workspace = true
 
 [dependencies]
 stackchan-core = { path = "../stackchan-core" }
+# Used by `Framebuffer` — the Vec<Rgb565>-backed `DrawTarget` that lets
+# render-regression tests assert against `Avatar::draw` without hardware.
+embedded-graphics = { workspace = true }
