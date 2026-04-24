@@ -31,6 +31,7 @@
 
 pub mod avatar;
 pub mod clock;
+pub mod draw;
 pub mod emotion;
 pub mod modifiers;
 

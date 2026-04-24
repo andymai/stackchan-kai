@@ -12,4 +12,9 @@ readme = "README.md"
 workspace = true
 
 [dependencies]
-# no dependencies by design -- this crate is the pure Rust core.
+# `embedded-graphics` is the only non-trivial dep: `Avatar::draw` takes any
+# `DrawTarget<Color = Rgb565>`, so the same rendering code runs against a
+# mipidsi Display on hardware and a Vec-backed framebuffer in the sim crate.
+# Kept at the workspace-pinned version so the firmware's mipidsi build sees
+# the same e-g 0.8 types this crate emits.
+embedded-graphics = { workspace = true }
