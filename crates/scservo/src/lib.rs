@@ -110,6 +110,10 @@ pub enum Instruction {
 
 /// Servo position count at the mechanical center (neutral).
 pub const POSITION_CENTER: u16 = 512;
+/// Maximum valid servo position count. SCSCL / SCS0009 use a 0..=1023
+/// range; values above are rejected by [`Scservo::write_position`] with
+/// [`Error::PositionOutOfRange`].
+pub const POSITION_MAX: u16 = 1023;
 /// Position counts per degree for SCSCL / SCS0009: 1023 counts across
 /// 300° of travel.
 pub const POSITION_PER_DEGREE: f32 = 1023.0 / 300.0;
@@ -144,6 +148,11 @@ pub enum Error<E> {
     MalformedResponse,
     /// Response packet arrived but its checksum didn't verify.
     ChecksumMismatch,
+    /// Caller passed a position value above [`POSITION_MAX`] (1023) to
+    /// [`Scservo::write_position`]. The servo would interpret the high
+    /// bits as a different address in its memory table, so we reject at
+    /// the driver boundary.
+    PositionOutOfRange(u16),
 }
 
 impl<E> From<ReadExactError<E>> for Error<E> {
@@ -183,18 +192,21 @@ impl<W: Write> Scservo<W> {
         self.uart
     }
 
-    /// Command servo `id` to `position` (step count 0..=1023),
+    /// Command servo `id` to `position` (step count 0..=[`POSITION_MAX`]),
     /// transitioning over `time_ms` milliseconds at `speed` (0 = use
     /// time control).
     ///
     /// See [`POSITION_CENTER`] / [`POSITION_PER_DEGREE`] for angle
-    /// conversion. Values outside 0..=1023 are clamped implicitly by
-    /// the servo's angle-limit registers, which is the preferred layer
-    /// for enforcing safety — ship custom limits by writing the
-    /// `MIN_ANGLE_LIMIT` / `MAX_ANGLE_LIMIT` registers directly.
+    /// conversion. Positions above [`POSITION_MAX`] are rejected with
+    /// [`Error::PositionOutOfRange`] rather than forwarded verbatim:
+    /// the servo interprets the high bits as a different memory-table
+    /// address, so silently sending them out-of-range is strictly
+    /// worse than returning an error. For tighter per-application
+    /// limits, write `MIN_ANGLE_LIMIT` / `MAX_ANGLE_LIMIT` directly.
     ///
     /// # Errors
-    /// Returns the UART transport error if the write fails.
+    /// - [`Error::PositionOutOfRange`] if `position > POSITION_MAX`.
+    /// - [`Error::Uart`] if the transport fails.
     pub async fn write_position(
         &mut self,
         id: u8,
@@ -202,6 +214,9 @@ impl<W: Write> Scservo<W> {
         time_ms: u16,
         speed: u16,
     ) -> Result<(), Error<W::Error>> {
+        if position > POSITION_MAX {
+            return Err(Error::PositionOutOfRange(position));
+        }
         let data = [
             (position >> 8) as u8,
             (position & 0xFF) as u8,
@@ -610,6 +625,23 @@ mod tests {
         let buf = bus.uart.written.borrow();
         let expected_sum = buf[2..12].iter().fold(0u8, |a, b| a.wrapping_add(*b));
         assert_eq!(buf[12], !expected_sum);
+    }
+
+    #[test]
+    fn write_position_accepts_exact_max_position() {
+        let mut bus = Scservo::new(MockUart::new());
+        // POSITION_MAX (1023) is inside the valid range — must succeed.
+        block_on(bus.write_position(1, POSITION_MAX, 0, 0)).unwrap();
+        assert!(!bus.uart.written.borrow().is_empty());
+    }
+
+    #[test]
+    fn write_position_rejects_above_max() {
+        let mut bus = Scservo::new(MockUart::new());
+        let err = block_on(bus.write_position(1, POSITION_MAX + 1, 0, 0));
+        assert!(matches!(err, Err(Error::PositionOutOfRange(p)) if p == POSITION_MAX + 1));
+        // No packet was transmitted — the guard runs before serialisation.
+        assert!(bus.uart.written.borrow().is_empty());
     }
 
     #[test]
