@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Scaffold: minimal async I²C control-path driver for the Everest ES7210 4-channel audio ADC. I2S/TDM audio transport is out of scope."
+description = "Minimal async I²C control-path driver for the Everest ES7210 4-channel audio ADC. Fixed shape: 12.288 MHz MCLK, 16 kHz mono, mic1+2 on. I2S audio transport is out of scope."
 
 [lints]
 workspace = true

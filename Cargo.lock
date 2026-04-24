@@ -1530,6 +1530,7 @@ dependencies = [
 name = "stackchan-firmware"
 version = "0.3.0"
 dependencies = [
+ "aw88298",
  "aw9523",
  "axp2101",
  "bm8563",
@@ -1546,6 +1547,7 @@ dependencies = [
  "embedded-hal-async",
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
+ "es7210",
  "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",
