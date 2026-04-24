@@ -384,7 +384,13 @@ impl<U: Read + Write> Scservo<U> {
     }
 
     /// Low-level [`Instruction::Read`] that fills `buf` with `buf.len()`
-    /// bytes read starting at `mem_addr` on servo `id`.
+    /// bytes read starting at `mem_addr` on servo `id`. Returns the
+    /// servo's **error byte** from the response (0 if the servo reports
+    /// no fault; non-zero encodes angle-limit / voltage / overload /
+    /// overheat flags — see the Feetech SCSCL memory table). Data is
+    /// always delivered regardless of the error byte: a faulting servo
+    /// still reports its current position, temperature, etc., and a
+    /// caller trying to diagnose the fault wants to see both.
     ///
     /// Outbound packet layout:
     ///
@@ -413,7 +419,7 @@ impl<U: Read + Write> Scservo<U> {
         id: u8,
         mem_addr: u8,
         buf: &mut [u8],
-    ) -> Result<(), Error<U::Error>> {
+    ) -> Result<u8, Error<U::Error>> {
         if id == BROADCAST_ID {
             return Err(Error::BroadcastNotAllowed);
         }
@@ -484,18 +490,24 @@ impl<U: Read + Write> Scservo<U> {
         // Data bytes start at index 5; skip the 2 header + 1 id + 1 msgLen +
         // 1 error bytes before them.
         buf.copy_from_slice(&response[5..5 + buf.len()]);
-        Ok(())
+        // response[4] is the servo's Error byte — surface it to the caller.
+        Ok(response[4])
     }
 
     /// Read the current position of servo `id` — the live encoder
-    /// reading, in the same 0..=1023 count space as the goal position.
-    /// Big-endian 2-byte field at [`ADDR_PRESENT_POSITION`].
+    /// reading, in the same 0..=[`POSITION_MAX`] count space as the goal
+    /// position. Big-endian 2-byte field at [`ADDR_PRESENT_POSITION`].
+    ///
+    /// Discards the servo's error byte; callers that want to detect
+    /// faults alongside the position should use [`Scservo::read_memory`]
+    /// directly.
     ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_position(&mut self, id: u8) -> Result<u16, Error<U::Error>> {
         let mut buf = [0u8; 2];
-        self.read_memory(id, ADDR_PRESENT_POSITION, &mut buf)
+        let _fault = self
+            .read_memory(id, ADDR_PRESENT_POSITION, &mut buf)
             .await?;
         Ok(u16::from_be_bytes(buf))
     }
@@ -503,21 +515,28 @@ impl<U: Read + Write> Scservo<U> {
     /// Read the current supply voltage of servo `id`. Units: 0.1 V per
     /// count (e.g. 74 → 7.4 V).
     ///
+    /// Discards the servo's error byte; use [`Scservo::read_memory`]
+    /// directly to inspect fault flags alongside the voltage.
+    ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_voltage(&mut self, id: u8) -> Result<u8, Error<U::Error>> {
         let mut buf = [0u8; 1];
-        self.read_memory(id, ADDR_PRESENT_VOLTAGE, &mut buf).await?;
+        let _fault = self.read_memory(id, ADDR_PRESENT_VOLTAGE, &mut buf).await?;
         Ok(buf[0])
     }
 
     /// Read the current internal temperature of servo `id`, in °C.
     ///
+    /// Discards the servo's error byte; use [`Scservo::read_memory`]
+    /// directly to inspect fault flags alongside the temperature.
+    ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_temperature(&mut self, id: u8) -> Result<u8, Error<U::Error>> {
         let mut buf = [0u8; 1];
-        self.read_memory(id, ADDR_PRESENT_TEMPERATURE, &mut buf)
+        let _fault = self
+            .read_memory(id, ADDR_PRESENT_TEMPERATURE, &mut buf)
             .await?;
         Ok(buf[0])
     }
@@ -526,11 +545,14 @@ impl<U: Read + Write> Scservo<U> {
     /// actively tracking toward its goal position, false once settled.
     /// Useful for "wait until move completes" loops during calibration.
     ///
+    /// Discards the servo's error byte; use [`Scservo::read_memory`]
+    /// directly to inspect fault flags alongside the moving state.
+    ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_moving(&mut self, id: u8) -> Result<bool, Error<U::Error>> {
         let mut buf = [0u8; 1];
-        self.read_memory(id, ADDR_MOVING, &mut buf).await?;
+        let _fault = self.read_memory(id, ADDR_MOVING, &mut buf).await?;
         Ok(buf[0] != 0)
     }
 }
@@ -845,6 +867,29 @@ mod tests {
             .queue_rx(&[0xFF, 0xFF, 0x01, 0x05, 0x00, 0x02, 0x00, 0xF7]);
         let err = block_on(bus.read_position(1));
         assert!(matches!(err, Err(Error::MalformedResponse)));
+    }
+
+    #[test]
+    fn read_memory_returns_fault_byte_from_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Fault byte 0x20 (overload flag set); 2 position bytes = 0x0200 (512).
+        // sum = 1+4+0x20+2+0 = 0x27, checksum = !0x27 = 0xD8.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x20, 0x02, 0x00, 0xD8]);
+        let mut buf = [0u8; 2];
+        let fault = block_on(bus.read_memory(1, ADDR_PRESENT_POSITION, &mut buf)).unwrap();
+        assert_eq!(fault, 0x20, "fault byte should be surfaced to the caller");
+        assert_eq!(buf, [0x02, 0x00], "data bytes still copied even on fault");
+    }
+
+    #[test]
+    fn read_memory_returns_zero_fault_on_healthy_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x02, 0x00, 0xF8]);
+        let mut buf = [0u8; 2];
+        let fault = block_on(bus.read_memory(1, ADDR_PRESENT_POSITION, &mut buf)).unwrap();
+        assert_eq!(fault, 0);
     }
 
     #[test]
