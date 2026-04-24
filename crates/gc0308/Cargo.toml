@@ -1,0 +1,14 @@
+[package]
+name = "gc0308"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Scaffold: minimal async I²C control-path driver for the GalaxyCore GC0308 VGA CMOS camera. Parallel/DVP video transport is out of scope."
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-hal-async = { workspace = true }

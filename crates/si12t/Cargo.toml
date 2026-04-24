@@ -1,0 +1,14 @@
+[package]
+name = "si12t"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Scaffold: minimal async I²C driver for the Si12T three-zone capacitive touch controller on the M5Stack Stack-chan body. Register surface TBD — vendor datasheet not publicly available."
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-hal-async = { workspace = true }
