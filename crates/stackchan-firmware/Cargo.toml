@@ -46,7 +46,7 @@ mipidsi = "0.10"
 # `esp-hal-embassy` for the 1.0 line.
 esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "psram", "unstable"] }
 esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp32s3"] }
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["defmt", "esp32s3"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
 
 embassy-executor = { version = "0.9.1", features = ["defmt"] }

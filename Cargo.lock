@@ -645,7 +645,7 @@ dependencies = [
  "defmt 1.0.1",
  "document-features",
  "enumset",
- "esp-config",
+ "esp-config 0.6.1",
  "esp-sync 0.1.1",
  "linked_list_allocator",
  "rlsf",
@@ -653,17 +653,17 @@ dependencies = [
 
 [[package]]
 name = "esp-bootloader-esp-idf"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02a56964ab5479ac20c9cf76fa3b0d3f2233b20b5d8554e81ef5d65f63c20567"
+checksum = "35ffc117c3a9859835d89d0e90f5ee9886ce2264a71a849a7a22ab5308f6653c"
 dependencies = [
  "cfg-if",
  "defmt 1.0.1",
  "document-features",
  "embedded-storage",
- "esp-config",
- "esp-hal-procmacros",
- "esp-metadata-generated 0.3.0",
+ "esp-config 0.7.0",
+ "esp-hal-procmacros 0.22.0",
+ "esp-metadata-generated 0.4.0",
  "esp-rom-sys",
  "jiff",
  "strum",
@@ -677,6 +677,19 @@ checksum = "102871054f8dd98202177b9890cb4b71d0c6fe1f1413b7a379a8e0841fc2473c"
 dependencies = [
  "document-features",
  "esp-metadata-generated 0.3.0",
+ "serde",
+ "serde_yaml",
+ "somni-expr",
+]
+
+[[package]]
+name = "esp-config"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d9b92fd9cfb0b4f8f1b6219b9763269a335571e307b014903b8201619374b80"
+dependencies = [
+ "document-features",
+ "esp-metadata-generated 0.4.0",
  "serde",
  "serde_yaml",
  "somni-expr",
@@ -710,8 +723,8 @@ dependencies = [
  "embedded-io-async 0.6.1",
  "embedded-io-async 0.7.0",
  "enumset",
- "esp-config",
- "esp-hal-procmacros",
+ "esp-config 0.6.1",
+ "esp-hal-procmacros 0.21.0",
  "esp-metadata-generated 0.3.0",
  "esp-riscv-rt",
  "esp-rom-sys",
@@ -746,6 +759,20 @@ checksum = "3e025a7a7a0affdb4ff913b5c4494aef96ee03d085bf83c27453ae3a71d50da6"
 dependencies = [
  "document-features",
  "object",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "termcolor",
+]
+
+[[package]]
+name = "esp-hal-procmacros"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aebfabb2c21bec45e575e4f6cb6bb7aa8e1b33e7ac45b5dffa0f9d33ff59105"
+dependencies = [
+ "document-features",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -824,9 +851,9 @@ dependencies = [
  "embassy-time-driver",
  "embassy-time-queue-utils",
  "esp-alloc",
- "esp-config",
+ "esp-config 0.6.1",
  "esp-hal",
- "esp-hal-procmacros",
+ "esp-hal-procmacros 0.21.0",
  "esp-metadata-generated 0.3.0",
  "esp-radio-rtos-driver",
  "esp-sync 0.1.1",
