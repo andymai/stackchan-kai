@@ -119,7 +119,7 @@ pub struct AudioPeripherals {
 ///
 /// Failures at any step log-and-degrade: audio goes silent (signal
 /// stays at `AudioRms(0.0)`) but the rest of the avatar keeps running.
-pub async fn run_audio_task(p: AudioPeripherals) -> ! {
+pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
     defmt::info!(
         "audio: I²S0 bring-up — {=u32} Hz / {=u8}-bit mono, MCLK {=u32} Hz",
         SAMPLE_RATE_HZ,
@@ -199,6 +199,14 @@ pub async fn run_audio_task(p: AudioPeripherals) -> ! {
         }
     }
 
+    // Diagnostic: scan the shared I²C bus to see which addresses ACK.
+    // Useful for isolating "chip missing / power fault" from "chip
+    // alive but firmware bug." Expected ACKs on the CoreS3:
+    //   0x10/11 BMM150, 0x23 LTR-553, 0x34 AXP2101, 0x36 AW88298,
+    //   0x38 FT6336U, 0x40 ES7210, 0x51 BM8563, 0x58 AW9523,
+    //   0x68/69 BMI270, 0x6F PY32.
+    scan_i2c_bus(&mut p.adc_bus).await;
+
     // ES7210 probe loop. If the first chip-ID read NACKs, retry up to
     // 5 × 100 ms — accommodates codecs that take a while to wake from
     // power-on once MCLK is present.
@@ -243,4 +251,28 @@ async fn park_forever() -> ! {
     loop {
         Timer::after(Duration::from_secs(3600)).await;
     }
+}
+
+/// Scan all 7-bit I²C addresses (`0x08..=0x77`) and log which ones
+/// ACK. Uses a 1-byte register read (`reg = 0`) — chips that require a
+/// specific opening register may still ACK the address but NACK the
+/// read; that's fine, we only care about the address-level ACK.
+///
+/// Purely diagnostic. Silent on addresses that don't respond; chatty
+/// (one info log per ACK) on addresses that do.
+async fn scan_i2c_bus<B: embedded_hal_async::i2c::I2c>(bus: &mut B) {
+    defmt::info!("audio: I²C bus scan starting (0x08..=0x77)");
+    let mut found: u32 = 0;
+    for addr in 0x08_u8..=0x77 {
+        let mut buf = [0u8; 1];
+        if bus.write_read(addr, &[0x00], &mut buf).await.is_ok() {
+            defmt::info!(
+                "audio: I²C 0x{=u8:02X} ACK (first byte @ reg 0x00 = 0x{=u8:02X})",
+                addr,
+                buf[0]
+            );
+            found += 1;
+        }
+    }
+    defmt::info!("audio: I²C bus scan complete — {=u32} devices ACKed", found);
 }
