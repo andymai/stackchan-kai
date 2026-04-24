@@ -150,8 +150,8 @@ impl DrawTarget for Framebuffer {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use stackchan_core::modifiers::{Blink, Breath, IdleDrift};
-    use stackchan_core::{Avatar, EyePhase, Modifier};
+    use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
+    use stackchan_core::{Avatar, Emotion, EyePhase, Modifier};
 
     /// End-to-end: drive a Blink + Breath + `IdleDrift` stack for 60 simulated
     /// seconds at 30 FPS and verify the avatar never enters a nonsensical
@@ -217,6 +217,70 @@ mod integration_tests {
         assert!(
             (9..=13).contains(&blink_count),
             "expected ~11 blinks in 60s, saw {blink_count}"
+        );
+    }
+
+    /// Run the full firmware-style modifier stack (emotion cycle → style →
+    /// blink → breath → drift) for one complete cycle of the default
+    /// emotion rotation and assert that every emotion visibly propagates
+    /// into the style fields. This is the host-side mirror of what the
+    /// CoreS3 render task runs at 30 FPS.
+    #[test]
+    fn full_stack_cycles_through_every_default_emotion() {
+        let clock = FakeClock::new();
+        let mut avatar = Avatar::default();
+        let mut cycle = EmotionCycle::new();
+        let mut style = EmotionStyle::new();
+        let mut blink = Blink::new();
+        let mut breath = Breath::new();
+        let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
+
+        // `EmotionCycle::DEFAULT_SEQUENCE` dwell = 4 s × 5 emotions = 20 s.
+        // Plus a healthy margin so the last emotion's transition window
+        // (300 ms) completes before we assert.
+        let tick_ms = 33_u64; // ~30 FPS
+        let total_ms = 21_000_u64;
+        let ticks = total_ms / tick_ms;
+
+        let mut seen_happy_cheeks = false;
+        let mut seen_sad_frown = false;
+        let mut seen_sleepy_droop = false;
+        let mut seen_surprised_wide = false;
+
+        for _ in 0..ticks {
+            cycle.update(&mut avatar, clock.now());
+            style.update(&mut avatar, clock.now());
+            blink.update(&mut avatar, clock.now());
+            breath.update(&mut avatar, clock.now());
+            drift.update(&mut avatar, clock.now());
+
+            // Every frame still satisfies the baseline invariants.
+            assert!(avatar.left_eye.weight <= 100);
+            assert!(avatar.right_eye.weight <= 100);
+
+            match avatar.emotion {
+                Emotion::Happy if avatar.cheek_blush > 0 => seen_happy_cheeks = true,
+                Emotion::Sad if avatar.mouth_curve < 0 => seen_sad_frown = true,
+                Emotion::Sleepy if avatar.left_eye.open_weight < 100 => seen_sleepy_droop = true,
+                Emotion::Surprised if avatar.eye_scale > 128 => seen_surprised_wide = true,
+                _ => {}
+            }
+
+            clock.advance(tick_ms);
+        }
+
+        assert!(seen_happy_cheeks, "Happy emotion never raised cheek_blush");
+        assert!(
+            seen_sad_frown,
+            "Sad emotion never produced a frown mouth_curve"
+        );
+        assert!(
+            seen_sleepy_droop,
+            "Sleepy emotion never dropped eye.open_weight below 100"
+        );
+        assert!(
+            seen_surprised_wide,
+            "Surprised emotion never raised eye_scale above baseline"
         );
     }
 }

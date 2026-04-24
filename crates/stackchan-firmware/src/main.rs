@@ -3,11 +3,12 @@
 //! Boot sequence: esp-hal init → internal SRAM + PSRAM heaps registered
 //! with `esp_alloc` → esp-rtos embassy → AXP2101 LDOs → AW9523 releases
 //! LCD reset → SPI2 + ILI9342C via mipidsi. Main then spawns a ~30 FPS
-//! embassy task that runs the full Blink/Breath/IdleDrift stack against
-//! an `Avatar`, draws into a PSRAM-backed framebuffer, and blits the
-//! whole frame to the LCD in one `fill_contiguous` call. Main drops
-//! into a heartbeat loop so "render task alive" and "main alive" show
-//! up as separate signals in the defmt log.
+//! embassy task that runs the full modifier stack
+//! (`EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift`)
+//! against an `Avatar`, draws into a PSRAM-backed framebuffer, and
+//! blits the whole frame to the LCD in one `fill_contiguous` call.
+//! Main drops into a heartbeat loop so "render task alive" and "main
+//! alive" show up as separate signals in the defmt log.
 
 #![no_std]
 #![no_main]
@@ -62,7 +63,7 @@ use mipidsi::{
 };
 use stackchan_core::{
     Avatar, Clock, Modifier,
-    modifiers::{Blink, Breath, IdleDrift},
+    modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift},
 };
 use static_cell::StaticCell;
 
@@ -138,11 +139,13 @@ type LcdDisplay = mipidsi::Display<
 /// `CASET`/`RASET`/`RAMWR` + bulk SPI write. The LCD only ever sees a
 /// complete frame, so the white-clear flicker from direct-draw is gone.
 ///
-/// Modifier order matches `stackchan_sim::sixty_second_composition_is_stable`:
-/// `Blink` → `Breath` → `IdleDrift`. The `last_rendered` dirty-check still
-/// helps between Breath's triangle-wave zero-offset ticks and rare windows
-/// where no modifier moves the avatar; when every frame differs we simply
-/// always blit.
+/// Modifier order is the canonical stackchan-core stack:
+/// `EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift`.
+/// Cycle writes `avatar.emotion`; Style eases it into the style fields;
+/// Blink and Breath read `blink_rate_scale` / `breath_depth_scale` from
+/// those fields; Drift composes last on eye centers. The `last_rendered`
+/// dirty-check short-circuits blits when no modifier actually changed
+/// anything (common between Breath's triangle-wave zero-offset ticks).
 #[embassy_executor::task]
 async fn render_task(mut display: LcdDisplay) {
     let clock = HalClock;
@@ -153,6 +156,8 @@ async fn render_task(mut display: LcdDisplay) {
         FB_HEIGHT
     );
     let mut avatar = Avatar::default();
+    let mut cycle = EmotionCycle::new();
+    let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
     // Fixed seed keeps boot-to-boot drifts identical; a future RNG-backed
@@ -166,12 +171,14 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, Blink + Breath + IdleDrift",
+        "render task: {=u64} ms tick, EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift",
         FRAME_PERIOD_MS
     );
 
     loop {
         let now = clock.now();
+        cycle.update(&mut avatar, now);
+        style.update(&mut avatar, now);
         blink.update(&mut avatar, now);
         breath.update(&mut avatar, now);
         drift.update(&mut avatar, now);

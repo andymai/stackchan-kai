@@ -4,9 +4,13 @@
 //! `no_std` + dependency-free (no `libm`). The wave period defaults to ~6 s
 //! with a 2-pixel peak-to-peak amplitude, which reads as a subtle breathing
 //! animation at 30 FPS.
+//!
+//! The amplitude is scaled per-tick by `Avatar::breath_depth_scale` so
+//! emotion-driven modifiers (Sleepy → deeper, Surprised → near-flat) can
+//! modulate breathing without owning Breath's state.
 
 use super::Modifier;
-use crate::avatar::Avatar;
+use crate::avatar::{Avatar, SCALE_DEFAULT};
 use crate::clock::Instant;
 
 /// Default full breath cycle (inhale + exhale), in milliseconds.
@@ -20,7 +24,7 @@ const DEFAULT_AMPLITUDE_PX: i32 = 2;
 pub struct Breath {
     /// Milliseconds per complete breath cycle.
     cycle_ms: u64,
-    /// Peak-to-peak amplitude in pixels.
+    /// Peak-to-peak amplitude in pixels at the baseline (scale = 128) depth.
     amplitude_px: i32,
     /// Offset applied on the previous tick; used to diff-and-undo so the
     /// modifier composes cleanly with modifiers that set absolute positions.
@@ -38,7 +42,7 @@ impl Breath {
         }
     }
 
-    /// Construct a `Breath` with custom cycle and amplitude.
+    /// Construct a `Breath` with custom cycle and baseline amplitude.
     #[must_use]
     pub const fn with_params(cycle_ms: u64, amplitude_px: i32) -> Self {
         Self {
@@ -48,10 +52,23 @@ impl Breath {
         }
     }
 
+    /// Amplitude after applying `breath_depth_scale`. `SCALE_DEFAULT` (128)
+    /// passes the baseline through unchanged.
+    fn scaled_amplitude(&self, scale: u8) -> i32 {
+        // Compute in i64 so a full-scale (255) amplitude doesn't overflow
+        // before the final /128. Baseline amplitudes are a handful of px,
+        // so truncation back to i32 is lossless in practice.
+        let numerator = i64::from(self.amplitude_px).saturating_mul(i64::from(scale));
+        #[allow(clippy::cast_possible_truncation)]
+        let scaled = (numerator / i64::from(SCALE_DEFAULT)) as i32;
+        scaled
+    }
+
     /// Compute the current offset for time `now` as an integer-pixel triangle
-    /// wave in `[-amplitude/2, +amplitude/2]`.
-    fn offset_at(&self, now: Instant) -> i32 {
-        if self.cycle_ms == 0 || self.amplitude_px == 0 {
+    /// wave in `[-amplitude/2, +amplitude/2]` at the given scale.
+    fn offset_at(&self, now: Instant, scale: u8) -> i32 {
+        let amplitude = self.scaled_amplitude(scale);
+        if self.cycle_ms == 0 || amplitude == 0 {
             return 0;
         }
         let phase = now.as_millis() % self.cycle_ms;
@@ -63,13 +80,13 @@ impl Breath {
         let within_i64 = i64::try_from(within_half).unwrap_or(i64::MAX);
         // Map within_half in 0..half to 0..amplitude linearly, then shift
         // down by half-amplitude so the wave oscillates around 0.
-        let scaled = i64::from(self.amplitude_px) * within_i64 / half_i64.max(1);
+        let scaled = i64::from(amplitude) * within_i64 / half_i64.max(1);
         #[allow(clippy::cast_possible_truncation)]
         let progress = scaled as i32;
         if ascending {
-            progress - self.amplitude_px / 2
+            progress - amplitude / 2
         } else {
-            self.amplitude_px / 2 - progress
+            amplitude / 2 - progress
         }
     }
 }
@@ -82,7 +99,7 @@ impl Default for Breath {
 
 impl Modifier for Breath {
     fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        let target = self.offset_at(now);
+        let target = self.offset_at(now, avatar.breath_depth_scale);
         let delta = target - self.last_offset_px;
         if delta == 0 {
             return;
@@ -95,6 +112,7 @@ impl Modifier for Breath {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::avatar::Avatar;
@@ -111,11 +129,11 @@ mod tests {
     }
 
     #[test]
-    fn offset_stays_within_amplitude() {
+    fn offset_stays_within_amplitude_at_default_scale() {
         let breath = Breath::with_params(1000, 4);
         // Sample across an entire cycle; offset must never exceed amplitude/2.
         for ms in 0..1000 {
-            let o = breath.offset_at(Instant::from_millis(ms));
+            let o = breath.offset_at(Instant::from_millis(ms), SCALE_DEFAULT);
             assert!((-2..=2).contains(&o), "offset {o} at ms {ms} out of range");
         }
     }
@@ -137,5 +155,35 @@ mod tests {
         let final_y = avatar.left_eye.center.y;
         let drift = (final_y - baseline_y).abs();
         assert!(drift <= 2, "drift {drift}px exceeds half-amplitude");
+    }
+
+    #[test]
+    fn depth_scale_amplifies_or_attenuates() {
+        let breath = Breath::with_params(1000, 4);
+        // Sample max absolute offset over a cycle for three scales.
+        let max_at = |scale: u8| {
+            (0..1000)
+                .map(|ms| breath.offset_at(Instant::from_millis(ms), scale).abs())
+                .max()
+                .unwrap_or(0)
+        };
+        let shallow = max_at(64); // ~half depth
+        let baseline = max_at(SCALE_DEFAULT);
+        let deep = max_at(255); // ~2x depth
+
+        assert!(shallow < baseline, "shallow={shallow}, baseline={baseline}");
+        assert!(deep > baseline, "deep={deep}, baseline={baseline}");
+    }
+
+    #[test]
+    fn depth_scale_zero_freezes_breath() {
+        let mut avatar = Avatar::default();
+        avatar.breath_depth_scale = 0;
+        let baseline_y = avatar.left_eye.center.y;
+        let mut breath = Breath::with_params(1000, 4);
+        for ms in 0..=2000 {
+            breath.update(&mut avatar, Instant::from_millis(ms));
+        }
+        assert_eq!(avatar.left_eye.center.y, baseline_y);
     }
 }

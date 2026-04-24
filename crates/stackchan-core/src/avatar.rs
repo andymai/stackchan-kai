@@ -4,6 +4,15 @@
 //! `Avatar` directly; renderers read from it. All coordinates are in an
 //! abstract 320x240 framebuffer space so the domain logic is
 //! resolution-agnostic until the pixel pipeline needs a concrete resolution.
+//!
+//! ## Style fields
+//!
+//! `Avatar` carries a handful of emotion-driven style fields
+//! (`eye_curve`, `mouth_curve`, `cheek_blush`, `eye_scale`,
+//! `blink_rate_scale`, `breath_depth_scale`). These are written by the
+//! `EmotionStyle` modifier and consumed by the renderer and by the
+//! `Blink`/`Breath` modifiers. Defaults are chosen so an `Avatar` with
+//! no `EmotionStyle` active renders exactly like v0.1.0 pre-emotion.
 
 use crate::emotion::Emotion;
 
@@ -50,6 +59,10 @@ pub struct Eye {
     /// 100 uses the full `radius_y`; lower values squish the eye vertically.
     /// The blink modifier drops this toward zero during a blink.
     pub weight: u8,
+    /// Upper bound on `weight` when the eye is open, 0..=100. `Blink` reads
+    /// this on every open transition, so `EmotionStyle` can drop it (e.g.
+    /// `Sleepy = 55`) without fighting Blink's state machine. Default 100.
+    pub open_weight: u8,
 }
 
 impl Eye {
@@ -82,10 +95,17 @@ pub struct Mouth {
     /// Vertical half-axis of the mouth in pixels.
     pub radius_y: u16,
     /// Open-amount scale, 0..=100. 0 is a flat line; 100 is fully open.
+    /// Ignored by the renderer when `Avatar::mouth_curve` is non-zero.
     pub weight: u8,
 }
 
-/// The composed avatar. Contains two eyes, a mouth, and an emotion.
+/// Neutral value for a `u8` scale field where 128 = default speed/size.
+/// Lower values dampen, higher values amplify. Centralized so tests and
+/// the renderer agree on the midpoint.
+pub const SCALE_DEFAULT: u8 = 128;
+
+/// The composed avatar. Contains two eyes, a mouth, an emotion, and the
+/// emotion-driven style fields that renderer + tempo modifiers consume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Avatar {
     /// Left eye (viewer's left).
@@ -94,8 +114,30 @@ pub struct Avatar {
     pub right_eye: Eye,
     /// Mouth.
     pub mouth: Mouth,
-    /// Current emotional expression.
+    /// Current emotional expression. Set by application code (or the demo
+    /// `EmotionCycle` modifier); consumed by `EmotionStyle` which translates
+    /// it into the style fields below.
     pub emotion: Emotion,
+    /// Eye curvature, -100..=100. 0 renders a filled ellipse (the v0.1.0
+    /// look). Positive = upward arc (smile eyes, Happy). Negative =
+    /// downward arc (sad eyes).
+    pub eye_curve: i8,
+    /// Mouth curvature, -100..=100. 0 defers to `Mouth::weight` (line when
+    /// 0, filled ellipse otherwise). Positive = smile arc. Negative =
+    /// frown arc.
+    pub mouth_curve: i8,
+    /// Cheek blush intensity, 0..=255. 0 = no cheeks drawn. The renderer
+    /// owns the palette mapping.
+    pub cheek_blush: u8,
+    /// Eye-size scale, 0..=255. `SCALE_DEFAULT` (128) = baseline radii.
+    /// Surprised raises this to enlarge the eyes.
+    pub eye_scale: u8,
+    /// Blink-cadence scale, 0..=255. `SCALE_DEFAULT` (128) = baseline
+    /// timing. 0 suppresses blinks entirely (Surprised holds eyes wide).
+    pub blink_rate_scale: u8,
+    /// Breath-amplitude scale, 0..=255. `SCALE_DEFAULT` (128) = baseline
+    /// 2px peak-to-peak. Sleepy deepens this; Surprised reduces it.
+    pub breath_depth_scale: u8,
 }
 
 impl Default for Avatar {
@@ -109,6 +151,7 @@ impl Default for Avatar {
                 radius_y: 25,
                 phase: EyePhase::Open,
                 weight: 100,
+                open_weight: 100,
             },
             right_eye: Eye {
                 center: Point::new(220, 110),
@@ -116,6 +159,7 @@ impl Default for Avatar {
                 radius_y: 25,
                 phase: EyePhase::Open,
                 weight: 100,
+                open_weight: 100,
             },
             mouth: Mouth {
                 center: Point::new(160, 180),
@@ -124,6 +168,12 @@ impl Default for Avatar {
                 weight: 0,
             },
             emotion: Emotion::Neutral,
+            eye_curve: 0,
+            mouth_curve: 0,
+            cheek_blush: 0,
+            eye_scale: SCALE_DEFAULT,
+            blink_rate_scale: SCALE_DEFAULT,
+            breath_depth_scale: SCALE_DEFAULT,
         }
     }
 }
@@ -142,6 +192,19 @@ mod tests {
     }
 
     #[test]
+    fn default_style_fields_are_neutral() {
+        let a = Avatar::default();
+        assert_eq!(a.eye_curve, 0);
+        assert_eq!(a.mouth_curve, 0);
+        assert_eq!(a.cheek_blush, 0);
+        assert_eq!(a.eye_scale, SCALE_DEFAULT);
+        assert_eq!(a.blink_rate_scale, SCALE_DEFAULT);
+        assert_eq!(a.breath_depth_scale, SCALE_DEFAULT);
+        assert_eq!(a.left_eye.open_weight, 100);
+        assert_eq!(a.right_eye.open_weight, 100);
+    }
+
+    #[test]
     fn eye_height_scales_with_weight() {
         let mut eye = Eye {
             center: Point::new(0, 0),
@@ -149,6 +212,7 @@ mod tests {
             radius_y: 25,
             phase: EyePhase::Open,
             weight: 100,
+            open_weight: 100,
         };
         assert_eq!(eye.height(), 50);
 
@@ -167,6 +231,7 @@ mod tests {
             radius_y: 25,
             phase: EyePhase::Open,
             weight: 200, // Defensive: should clamp effectively.
+            open_weight: 100,
         };
         assert!(eye.height() <= 50);
     }

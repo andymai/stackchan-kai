@@ -35,7 +35,7 @@ pub mod draw;
 pub mod emotion;
 pub mod modifiers;
 
-pub use avatar::{Avatar, Eye, EyePhase, Mouth, Point};
+pub use avatar::{Avatar, Eye, EyePhase, Mouth, Point, SCALE_DEFAULT};
 pub use clock::{Clock, Instant};
 pub use emotion::Emotion;
 pub use modifiers::Modifier;

@@ -4,14 +4,29 @@
 //! to the passage of time. Modifiers are driven by a render loop (firmware)
 //! or a simulated clock (sim crate); they never allocate and never panic.
 //!
+//! The canonical stack, outermost-first, is:
+//!
+//! 1. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`.
+//! 2. [`EmotionStyle`] — translates emotion into style fields, with a
+//!    linear ease over the transition window.
+//! 3. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//!    `blink_rate_scale` from the avatar.
+//! 4. [`Breath`] — vertical drift on all features, scaled by
+//!    `breath_depth_scale`.
+//! 5. [`IdleDrift`] — occasional eye-center jitter.
+//!
 //! [`Avatar`]: crate::avatar::Avatar
 
 mod blink;
 mod breath;
+mod emotion_cycle;
+mod emotion_style;
 mod idle_drift;
 
 pub use blink::Blink;
 pub use breath::Breath;
+pub use emotion_cycle::EmotionCycle;
+pub use emotion_style::EmotionStyle;
 pub use idle_drift::IdleDrift;
 
 use crate::avatar::Avatar;
