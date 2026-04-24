@@ -127,19 +127,23 @@ fn ease(from: i32, to: i32, elapsed_ms: u64, duration_ms: u64) -> i32 {
     from + delta
 }
 
-/// Clamp an eased `i32` back into a `u8` (0..=255) with saturating bounds.
+/// Saturating clamp of an eased `i32` into `[min, max]`, casting to `u8`.
+/// Shared between the `u8` style fields (range `0..=255`) and the
+/// `weight` fields (range `0..=100`); the caller picks the bounds.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-const fn clamp_u8(v: i32) -> u8 {
-    if v <= 0 {
-        0
-    } else if v >= 255 {
-        255
+const fn clamp_to_u8(v: i32, min: u8, max: u8) -> u8 {
+    let min = min as i32;
+    let max = max as i32;
+    if v <= min {
+        min as u8
+    } else if v >= max {
+        max as u8
     } else {
         v as u8
     }
 }
 
-/// Clamp an eased `i32` back into an `i8` (-128..=127) with saturating bounds.
+/// Saturating clamp of an eased `i32` into `i8::MIN..=i8::MAX`.
 #[allow(clippy::cast_possible_truncation)]
 const fn clamp_i8(v: i32) -> i8 {
     if v <= i8::MIN as i32 {
@@ -148,19 +152,6 @@ const fn clamp_i8(v: i32) -> i8 {
         i8::MAX
     } else {
         v as i8
-    }
-}
-
-/// Clamp an eased `i32` into the `Mouth::weight` / `Eye::open_weight` range
-/// 0..=100.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-const fn clamp_weight(v: i32) -> u8 {
-    if v <= 0 {
-        0
-    } else if v >= 100 {
-        100
-    } else {
-        v as u8
     }
 }
 
@@ -240,42 +231,66 @@ impl EmotionStyle {
                 elapsed_ms,
                 duration_ms,
             )),
-            cheek_blush: clamp_u8(ease(
-                i32::from(from.cheek_blush),
-                i32::from(to.cheek_blush),
-                elapsed_ms,
-                duration_ms,
-            )),
-            eye_scale: clamp_u8(ease(
-                i32::from(from.eye_scale),
-                i32::from(to.eye_scale),
-                elapsed_ms,
-                duration_ms,
-            )),
-            blink_rate_scale: clamp_u8(ease(
-                i32::from(from.blink_rate_scale),
-                i32::from(to.blink_rate_scale),
-                elapsed_ms,
-                duration_ms,
-            )),
-            breath_depth_scale: clamp_u8(ease(
-                i32::from(from.breath_depth_scale),
-                i32::from(to.breath_depth_scale),
-                elapsed_ms,
-                duration_ms,
-            )),
-            open_weight: clamp_weight(ease(
-                i32::from(from.open_weight),
-                i32::from(to.open_weight),
-                elapsed_ms,
-                duration_ms,
-            )),
-            mouth_weight: clamp_weight(ease(
-                i32::from(from.mouth_weight),
-                i32::from(to.mouth_weight),
-                elapsed_ms,
-                duration_ms,
-            )),
+            cheek_blush: clamp_to_u8(
+                ease(
+                    i32::from(from.cheek_blush),
+                    i32::from(to.cheek_blush),
+                    elapsed_ms,
+                    duration_ms,
+                ),
+                0,
+                u8::MAX,
+            ),
+            eye_scale: clamp_to_u8(
+                ease(
+                    i32::from(from.eye_scale),
+                    i32::from(to.eye_scale),
+                    elapsed_ms,
+                    duration_ms,
+                ),
+                0,
+                u8::MAX,
+            ),
+            blink_rate_scale: clamp_to_u8(
+                ease(
+                    i32::from(from.blink_rate_scale),
+                    i32::from(to.blink_rate_scale),
+                    elapsed_ms,
+                    duration_ms,
+                ),
+                0,
+                u8::MAX,
+            ),
+            breath_depth_scale: clamp_to_u8(
+                ease(
+                    i32::from(from.breath_depth_scale),
+                    i32::from(to.breath_depth_scale),
+                    elapsed_ms,
+                    duration_ms,
+                ),
+                0,
+                u8::MAX,
+            ),
+            open_weight: clamp_to_u8(
+                ease(
+                    i32::from(from.open_weight),
+                    i32::from(to.open_weight),
+                    elapsed_ms,
+                    duration_ms,
+                ),
+                0,
+                100,
+            ),
+            mouth_weight: clamp_to_u8(
+                ease(
+                    i32::from(from.mouth_weight),
+                    i32::from(to.mouth_weight),
+                    elapsed_ms,
+                    duration_ms,
+                ),
+                0,
+                100,
+            ),
         }
     }
 }
