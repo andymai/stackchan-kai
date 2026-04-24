@@ -5,9 +5,23 @@
   "bump-patch-for-minor-pre-major": false,
   "include-component-in-tag": false,
   "packages": {
-    ".": {
-      "release-type": "rust",
-      "package-name": "stackchan-rs"
+    "crates/stackchan-core": {
+      "package-name": "stackchan-core"
+    },
+    "crates/stackchan-sim": {
+      "package-name": "stackchan-sim"
+    },
+    "crates/axp2101": {
+      "package-name": "axp2101"
+    },
+    "crates/aw9523": {
+      "package-name": "aw9523"
+    },
+    "crates/scservo": {
+      "package-name": "scservo"
+    },
+    "crates/stackchan-firmware": {
+      "package-name": "stackchan-firmware"
     }
   },
   "plugins": [
