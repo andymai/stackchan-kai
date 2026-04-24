@@ -17,12 +17,16 @@
 //! 6. [`IdleSway`] — slow pan/tilt head wander written to
 //!    `Avatar::head_pose`. Non-visual; drives the firmware's head-update
 //!    task, not the pixel pipeline.
+//! 7. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//!    sway. Runs **after** `IdleSway` so bias composes additively rather
+//!    than fighting for absolute control of the pose.
 //!
 //! [`Avatar`]: crate::avatar::Avatar
 
 mod blink;
 mod breath;
 mod emotion_cycle;
+mod emotion_head;
 mod emotion_style;
 mod idle_drift;
 mod idle_sway;
@@ -30,6 +34,7 @@ mod idle_sway;
 pub use blink::Blink;
 pub use breath::Breath;
 pub use emotion_cycle::EmotionCycle;
+pub use emotion_head::EmotionHead;
 pub use emotion_style::EmotionStyle;
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
