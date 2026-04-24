@@ -202,6 +202,10 @@ impl HeadDriver for RecordingHead {
     clippy::field_reassign_with_default,
     reason = "test setup reads better as `let mut a = Avatar::default(); a.emotion = …;` than the struct-update equivalent"
 )]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test literals are compile-time non-zero; the unwrap can't fire"
+)]
 mod integration_tests {
     use super::*;
     use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
@@ -216,7 +220,7 @@ mod integration_tests {
         let mut avatar = Avatar::default();
         let mut blink = Blink::new();
         let mut breath = Breath::new();
-        let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
+        let mut drift = IdleDrift::with_seed(core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap());
 
         let tick_ms = 33; // ~30 FPS
         let total_ticks = 60_000 / tick_ms;
@@ -287,7 +291,7 @@ mod integration_tests {
         let mut style = EmotionStyle::new();
         let mut blink = Blink::new();
         let mut breath = Breath::new();
-        let mut drift = IdleDrift::with_seed(0xDEAD_BEEF);
+        let mut drift = IdleDrift::with_seed(core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap());
 
         // `EmotionCycle::DEFAULT_SEQUENCE` dwell = 4 s × 5 emotions = 20 s.
         // Plus a healthy margin so the last emotion's transition window

@@ -27,10 +27,8 @@
 #![no_std]
 #![no_main]
 // Example binary inherits the same ESP-IDF app-descriptor requirement
-// as the main firmware, so the same app-desc anchor + unsafe allowance
-// is needed here. Otherwise `lto = "fat"` strips the descriptor and
-// espflash refuses to flash the image.
-#![allow(unsafe_code)]
+// as the main firmware; anchoring a `&'static` reference (rather than
+// a raw-pointer newtype) keeps the symbol live without needing `unsafe`.
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 // Single-core executor; `Send`-bounded futures aren't meaningful here.
 #![allow(clippy::future_not_send)]
@@ -49,19 +47,14 @@ defmt::timestamp!("{=u64} ms", embassy_time::Instant::now().as_millis());
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// `#[used]`-anchor newtype for `ESP_APP_DESC`. See `main.rs` for the
-/// full rationale — short version: `lto = "fat"` strips the
-/// bootloader-readable descriptor unless a `#[used]` static holds a
-/// reference to it.
-#[repr(transparent)]
-struct AppDescAnchor(*const esp_bootloader_esp_idf::EspAppDesc);
-// SAFETY: the raw pointer is never dereferenced at runtime; the
-// newtype only exists so `#[used]` on the static below holds a symbol
-// reference for the linker.
-unsafe impl Sync for AppDescAnchor {}
-/// LTO anchor preventing `ESP_APP_DESC` from being stripped.
+/// LTO anchor preventing `ESP_APP_DESC` from being stripped. See
+/// `main.rs` for the full rationale — short version: `lto = "fat"`
+/// strips the bootloader-readable descriptor unless a `#[used]` static
+/// holds a reference to it. A `&'static` reference is auto-Sync (the
+/// pointee is plain POD) and avoids the raw-pointer newtype the
+/// workspace `unsafe_code = deny` rule would otherwise force.
 #[used]
-static APP_DESC_ANCHOR: AppDescAnchor = AppDescAnchor(core::ptr::addr_of!(ESP_APP_DESC));
+static _APP_DESC_ANCHOR: &esp_bootloader_esp_idf::EspAppDesc = &ESP_APP_DESC;
 
 /// Panic handler for the bench binary. Halts the core; the trace has
 /// already been emitted via defmt before we arrive here.

@@ -96,6 +96,10 @@ pub struct EmotionHead {
     to_emotion: Option<Emotion>,
     /// Monotonic time the current transition began.
     transition_start: Option<Instant>,
+    /// Bias applied on the previous tick; subtracted from
+    /// `avatar.head_pose` before writing the new one so the bias
+    /// contribution stays a delta rather than accumulating.
+    last_applied: HeadBias,
 }
 
 impl EmotionHead {
@@ -117,6 +121,7 @@ impl EmotionHead {
             to: None,
             to_emotion: None,
             transition_start: None,
+            last_applied: HeadBias::ZERO,
         }
     }
 
@@ -160,16 +165,17 @@ impl Modifier for EmotionHead {
 
         let bias = self.current_bias(now);
 
-        // Layered compose: add bias onto whatever `avatar.head_pose` already
-        // holds (written by `IdleSway` earlier in the pipeline). Clamp in
-        // case the combined value exceeds the safe range — realistic
-        // defaults stay well inside it, but a user-provided sway with
-        // larger amplitude could push over.
+        // Layered compose via diff-and-undo (matches `IdleSway` /
+        // `Breath`): subtract the previous tick's bias, then add the
+        // new one. Keeps the bias a delta on `avatar.head_pose` rather
+        // than accumulating across ticks when upstream modifiers (e.g.
+        // a future additive head-pose source) write the pose each tick.
         let combined = Pose::new(
-            avatar.head_pose.pan_deg + bias.pan_deg,
-            avatar.head_pose.tilt_deg + bias.tilt_deg,
+            avatar.head_pose.pan_deg - self.last_applied.pan_deg + bias.pan_deg,
+            avatar.head_pose.tilt_deg - self.last_applied.tilt_deg + bias.tilt_deg,
         );
         avatar.head_pose = combined.clamped();
+        self.last_applied = bias;
     }
 }
 
@@ -291,42 +297,66 @@ mod tests {
 
     #[test]
     fn changing_emotion_mid_transition_re_anchors_from_current() {
+        // Drive the pipeline naturally (no manual head_pose resets) and
+        // track the tilt trajectory across the mid-transition flip. With
+        // diff-and-undo composition, the interesting invariant is that
+        // the eventual steady-state matches the destination emotion; at
+        // no point does the bias double-count. This replaces the older
+        // pattern of resetting head_pose=0 every tick, which measured
+        // the absolute bias value only meaningful under absolute-set
+        // semantics.
         let mut avatar = Avatar::default();
         avatar.emotion = Emotion::Neutral;
         let mut eh = EmotionHead::new();
         eh.update(&mut avatar, Instant::from_millis(0));
+        assert_eq!(avatar.head_pose.tilt_deg, 0.0, "Neutral snaps to zero bias");
 
-        // Flip to Sleepy; partial ease 150 ms in → tilt ~-3.
+        // Flip to Sleepy; midway through the transition the bias is ~-3.
         avatar.emotion = Emotion::Sleepy;
-        avatar.head_pose = Pose::new(0.0, 0.0);
         eh.update(&mut avatar, Instant::from_millis(0));
-        avatar.head_pose = Pose::new(0.0, 0.0);
         eh.update(&mut avatar, Instant::from_millis(150));
-        let mid_tilt = avatar.head_pose.tilt_deg;
+        let mid_sleepy = avatar.head_pose.tilt_deg;
+        assert!(
+            (mid_sleepy - (-3.0)).abs() < 0.1,
+            "mid-transition Sleepy tilt should be ~-3, got {mid_sleepy}"
+        );
 
-        // Now flip to Happy mid-transition. The modifier should re-anchor
-        // `from` to the currently-observed 'to' (Sleepy's final bias),
-        // then ease toward Happy. Immediately after flip, bias ≈ Sleepy
-        // for one tick (t=0 of the new transition) — hold that as the
-        // "from" reference.
+        // Flip to Happy mid-transition. `from` should re-anchor to
+        // whatever `to` was before (Sleepy's final bias of -6). After
+        // the new 300 ms window elapses, we land on Happy's +3.
         avatar.emotion = Emotion::Happy;
-        avatar.head_pose = Pose::new(0.0, 0.0);
         eh.update(&mut avatar, Instant::from_millis(150));
-        // At t=0 of the new transition, the lerp returns 'from'. `from`
-        // is the last observed 'to' (Sleepy full bias of -6), so tilt
-        // reads -6.0 regardless of where mid_tilt was.
-        assert_eq!(avatar.head_pose.tilt_deg, -6.0);
-
-        // Past the new transition window, we hit Happy fully.
-        avatar.head_pose = Pose::new(0.0, 0.0);
         eh.update(
             &mut avatar,
             Instant::from_millis(150 + EmotionHead::TRANSITION_MS + 1),
         );
-        assert_eq!(avatar.head_pose.tilt_deg, 3.0);
-        // Suppress "unused variable" when the mid-tilt check above already
-        // proved the partial ease path.
-        let _ = mid_tilt;
+        assert_eq!(
+            avatar.head_pose.tilt_deg, 3.0,
+            "should fully land on Happy's +3° tilt after the transition elapses"
+        );
+    }
+
+    #[test]
+    fn bias_does_not_accumulate_across_ticks() {
+        // Regression for the diff-and-undo refactor: previously
+        // EmotionHead added bias absolutely, which relied on IdleSway
+        // clobbering head_pose first. Now that IdleSway also contributes
+        // additively, EmotionHead must subtract the previous tick's bias
+        // before adding the new one — otherwise a steady-state emotion
+        // would see its bias compound each tick.
+        let mut avatar = Avatar::default();
+        avatar.emotion = Emotion::Sleepy; // -6° tilt bias at steady state
+        let mut eh = EmotionHead::new();
+
+        // Drive past the transition, then many more ticks. The tilt must
+        // stay at -6, not drift to -12, -18, ...
+        for i in 0..=50 {
+            eh.update(
+                &mut avatar,
+                Instant::from_millis(EmotionHead::TRANSITION_MS + i * 33),
+            );
+        }
+        assert_eq!(avatar.head_pose.tilt_deg, -6.0);
     }
 
     #[test]

@@ -13,11 +13,15 @@
 //!
 //! ## Composition
 //!
-//! This modifier *sets* `avatar.head_pose` absolutely, replacing whatever
-//! was there. It is the only pose-producing modifier in v0.1.x. When a
-//! second pose source lands (e.g. emotion-coupled head bias), this
-//! modifier should switch to a compose-by-delta pattern like
-//! [`Breath::last_offset_px`](super::Breath).
+//! Contributes additively to `avatar.head_pose` using the same
+//! diff-and-undo pattern [`Breath`](super::Breath) uses for vertical
+//! offset: each tick subtracts the previous contribution and adds the
+//! new one. That way modifiers running *before* `IdleSway` (e.g. a
+//! future head-pose source that sets an absolute target) are not
+//! silently clobbered, and modifiers running *after* (e.g.
+//! [`EmotionHead`](super::EmotionHead), which biases on top) see the
+//! already-swayed pose without `IdleSway` overwriting their work on the
+//! next tick.
 
 use super::Modifier;
 use crate::avatar::Avatar;
@@ -40,8 +44,13 @@ const DEFAULT_PAN_AMPLITUDE_DEG: f32 = 4.0;
 /// headroom on the tilt axis (pan servo sits under the tilt linkage).
 const DEFAULT_TILT_AMPLITUDE_DEG: f32 = 2.5;
 
-/// Modifier that drives `avatar.head_pose` with a slow, two-axis triangle
-/// sway. Stateless — the wave is purely a function of `now`.
+/// Modifier that contributes a slow, two-axis triangle sway to
+/// `avatar.head_pose`.
+///
+/// Composition is additive via diff-and-undo: each tick subtracts the
+/// previous contribution before adding the new one, so upstream pose
+/// writes survive and downstream modifiers can bias without the sway
+/// overwriting them on the next tick.
 #[derive(Debug, Clone, Copy)]
 pub struct IdleSway {
     /// Milliseconds per full pan sweep (left → right → left).
@@ -52,6 +61,12 @@ pub struct IdleSway {
     pan_amplitude_deg: f32,
     /// Peak tilt amplitude in degrees.
     tilt_amplitude_deg: f32,
+    /// Pan contribution applied on the previous tick; subtracted before
+    /// writing the new contribution. Starts at 0 so the first tick's
+    /// output equals the first triangle sample.
+    last_pan_deg: f32,
+    /// Tilt contribution applied on the previous tick.
+    last_tilt_deg: f32,
 }
 
 impl IdleSway {
@@ -63,6 +78,8 @@ impl IdleSway {
             tilt_period_ms: DEFAULT_TILT_PERIOD_MS,
             pan_amplitude_deg: DEFAULT_PAN_AMPLITUDE_DEG,
             tilt_amplitude_deg: DEFAULT_TILT_AMPLITUDE_DEG,
+            last_pan_deg: 0.0,
+            last_tilt_deg: 0.0,
         }
     }
 
@@ -82,6 +99,8 @@ impl IdleSway {
             tilt_period_ms,
             pan_amplitude_deg,
             tilt_amplitude_deg,
+            last_pan_deg: 0.0,
+            last_tilt_deg: 0.0,
         }
     }
 
@@ -128,7 +147,18 @@ impl Modifier for IdleSway {
     fn update(&mut self, avatar: &mut Avatar, now: Instant) {
         let pan = Self::unit_triangle(self.pan_period_ms, now) * self.pan_amplitude_deg;
         let tilt = Self::unit_triangle(self.tilt_period_ms, now) * self.tilt_amplitude_deg;
-        avatar.head_pose = Pose::new(pan, tilt).clamped();
+        // Diff-and-undo: our contribution to the pose is (pan, tilt); to
+        // compose additively, remove the previous contribution first,
+        // then install the new one. `clamped` defers to the final
+        // compose step (typically EmotionHead) so we don't double-clamp
+        // during the intermediate state.
+        avatar.head_pose = Pose::new(
+            avatar.head_pose.pan_deg - self.last_pan_deg + pan,
+            avatar.head_pose.tilt_deg - self.last_tilt_deg + tilt,
+        )
+        .clamped();
+        self.last_pan_deg = pan;
+        self.last_tilt_deg = tilt;
     }
 }
 
@@ -245,6 +275,36 @@ mod tests {
                 delta <= max_pan_delta_per_step * 2.0,
                 "pan delta {delta}° between ticks exceeds bound"
             );
+        }
+    }
+
+    #[test]
+    fn sway_composes_additively_with_upstream_writes() {
+        // Regression for the diff-and-undo refactor: if some upstream
+        // modifier sets an absolute head_pose, IdleSway must bias it
+        // rather than clobber it. Across many ticks, the net upstream
+        // contribution must survive.
+        let mut sway = IdleSway::new();
+        let mut avatar = Avatar::default();
+        let upstream_pan = 1.5;
+        let upstream_tilt = -0.5;
+
+        for i in 0..100 {
+            // Simulate an upstream modifier writing an absolute target
+            // each tick.
+            avatar.head_pose = Pose::new(upstream_pan, upstream_tilt);
+            sway.update(&mut avatar, Instant::from_millis(i * 33));
+
+            // After IdleSway, the pose is the upstream target plus the
+            // sway contribution. The sway contribution magnitude is
+            // bounded by the configured amplitudes.
+            let sway_pan = avatar.head_pose.pan_deg - upstream_pan;
+            let sway_tilt = avatar.head_pose.tilt_deg - upstream_tilt;
+            assert!(
+                sway_pan.abs() <= DEFAULT_PAN_AMPLITUDE_DEG + 0.01,
+                "sway contribution {sway_pan}° exceeds amplitude"
+            );
+            assert!(sway_tilt.abs() <= DEFAULT_TILT_AMPLITUDE_DEG + 0.01);
         }
     }
 
