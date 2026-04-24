@@ -29,7 +29,6 @@
 
 extern crate alloc;
 
-mod aw9523;
 mod clock;
 mod framebuffer;
 
@@ -262,7 +261,11 @@ async fn main(spawner: Spawner) -> ! {
     // only other) I²C consumer in this PR, so a sequential hand-off avoids
     // pulling in embedded-hal-bus shared-bus machinery.
     let mut i2c = pmic.into_inner();
-    match aw9523::init_and_reset_lcd(&mut i2c).await {
+    // `embassy_time::Delay` impls `embedded_hal_async::delay::DelayNs`. The
+    // driver takes `&mut D: DelayNs`, so bind an instance rather than taking
+    // a reference to the zero-sized type itself.
+    let mut delay = Delay;
+    match aw9523::init_cores3(&mut i2c, &mut delay).await {
         Ok(()) => defmt::info!("AW9523: CoreS3 defaults applied, LCD reset pulsed (P1_1)"),
         Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
     }

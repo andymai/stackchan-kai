@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
+aw9523 = { path = "../aw9523" }
 embedded-graphics = { workspace = true }
 embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }
