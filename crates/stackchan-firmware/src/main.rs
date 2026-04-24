@@ -61,7 +61,7 @@ use stackchan_core::{
     Avatar, Clock, HeadDriver, LedFrame, Modifier,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, PickupReaction, RemoteCommand,
+        IdleDrift, IdleSway, MouthOpenAudio, PickupReaction, RemoteCommand,
     },
     render_leds,
 };
@@ -177,6 +177,7 @@ async fn render_task(mut display: LcdDisplay) {
         IdleDrift::with_seed(const { core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap() });
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
+    let mut mouth_open_audio = MouthOpenAudio::new();
     let mut last_rendered: Option<Avatar> = None;
     let mut led_frame = LedFrame::default();
 
@@ -185,7 +186,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + AmbientSleepy + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead",
+        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + AmbientSleepy + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + MouthOpenAudio",
         FRAME_PERIOD_MS
     );
 
@@ -226,6 +227,13 @@ async fn render_task(mut display: LcdDisplay) {
         if let Some(ut) = mag::MAG_SIGNAL.try_take() {
             avatar.mag_ut = Some(ut);
         }
+        // Drain the latest mic-RMS sample from the audio task. Stays
+        // at `AudioRms(0.0)` (closed mouth) until PR 2C wires the RX
+        // DMA sample loop — wiring the consumer now so the modifier
+        // is active and tested on real hardware from day one.
+        if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
+            mouth_open_audio.set_rms(rms.0);
+        }
         emotion_touch.update(&mut avatar, now);
         remote.update(&mut avatar, now);
         pickup.update(&mut avatar, now);
@@ -237,6 +245,7 @@ async fn render_task(mut display: LcdDisplay) {
         drift.update(&mut avatar, now);
         sway.update(&mut avatar, now);
         emotion_head.update(&mut avatar, now);
+        mouth_open_audio.update(&mut avatar, now);
 
         // Publish the final pose (sway + emotion bias) to the head task.
         // `Signal::signal` overwrites any un-consumed value, so a slower

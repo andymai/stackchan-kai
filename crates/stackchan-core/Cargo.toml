@@ -18,3 +18,8 @@ workspace = true
 # Kept at the workspace-pinned version so the firmware's mipidsi build sees
 # the same e-g 0.8 types this crate emits.
 embedded-graphics = { workspace = true }
+# `micromath` brings `f32::mul_add`, `ln`, etc. to `no_std` without
+# pulling in full libm. Used by `MouthOpenAudio` for the dB mapping +
+# envelope math. Already in the transitive tree (esp-hal pulls it), so
+# adding it as a direct dep costs nothing on the firmware side.
+micromath = "2"

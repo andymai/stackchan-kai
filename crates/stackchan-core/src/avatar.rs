@@ -119,7 +119,11 @@ impl Eye {
 }
 
 /// The mouth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Eq` is intentionally not derived: [`Self::mouth_open`] is `f32`,
+/// which violates reflexivity on `NaN`. Use the `PartialEq` impl for
+/// tests that compare mouth state.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mouth {
     /// Center of the mouth in framebuffer space.
     pub center: Point,
@@ -130,6 +134,16 @@ pub struct Mouth {
     /// Open-amount scale, 0..=100. 0 is a flat line; 100 is fully open.
     /// Ignored by the renderer when `Avatar::mouth_curve` is non-zero.
     pub weight: u8,
+    /// Audio-driven mouth-open amount, 0.0..=1.0.
+    ///
+    /// Written by the `MouthOpenAudio` modifier in response to
+    /// microphone input; a value of `0.0` is a closed mouth, `1.0` is
+    /// fully open. Additive to [`Self::weight`] / [`super::Avatar::mouth_curve`]
+    /// at the renderer — emotion keeps its static mouth shape while
+    /// talking drives this field for a lip-sync-like effect. Stays at
+    /// `0.0` when the audio subsystem isn't streaming, which renders
+    /// as the un-modified emotion mouth (current firmware behaviour).
+    pub mouth_open: f32,
 }
 
 /// Neutral value for a `u8` scale field where 128 = default speed/size.
@@ -283,6 +297,7 @@ impl Default for Avatar {
                 radius_x: 32,
                 radius_y: 10,
                 weight: 0,
+                mouth_open: 0.0,
             },
             emotion: Emotion::Neutral,
             eye_curve: 0,
