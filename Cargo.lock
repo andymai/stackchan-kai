@@ -417,6 +417,7 @@ checksum = "7bbd85cf5a5ae56bdf26f618364af642d1d0a4e245cdd75cd9aabda382f65a81"
 dependencies = [
  "cfg-if",
  "critical-section",
+ "defmt 1.0.1",
  "embedded-io-async 0.7.0",
  "futures-core",
  "futures-sink",
@@ -1541,7 +1542,7 @@ dependencies = [
  "defmt 1.0.1",
  "embassy-embedded-hal",
  "embassy-executor",
- "embassy-sync 0.7.2",
+ "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
  "embedded-hal 1.0.0",
