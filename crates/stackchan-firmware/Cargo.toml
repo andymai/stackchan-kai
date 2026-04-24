@@ -63,6 +63,14 @@ esp-println = { version = "0.17.0", default-features = false, features = [
 critical-section = "1.2.0"
 static_cell = "2.1.1"
 
+[lib]
+name = "stackchan_firmware"
+path = "src/lib.rs"
+
 [[bin]]
 name = "stackchan-firmware"
 path = "src/main.rs"
+
+[[example]]
+name = "bench"
+path = "examples/bench.rs"
