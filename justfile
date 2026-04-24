@@ -74,12 +74,27 @@ monitor:
 fmr: build-firmware
     sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}"
 
-# Path to the release bench example ELF.
-bench_elf := "target/xtensa-esp32s3-none-elf/release/examples/bench"
+# Path prefix for release bench example ELFs.
+example_elf_dir := "target/xtensa-esp32s3-none-elf/release/examples"
 
 # Calibration bench: flashes the sweep-and-print example + streams its
 # defmt output. The bench binary halts after one full sweep; re-flash
 # the main firmware with `just flash` or `just fmr` when done.
 bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example bench
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{bench_elf}}"
+    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/bench"
+
+# Magnetometer bench: streams trim-compensated BMM150 readings at 5 Hz.
+# Look for total field magnitude `sqrt(|B|²)` in the 25-65 µT range
+# (earth field); deviations are hard-iron offsets from the nearby
+# SCServo motors. Re-flash the main firmware with `just fmr` when done.
+mag-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example mag_bench
+    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/mag_bench"
+
+# LED-ring bench: cycles through each Emotion palette entry every 2 s,
+# independent of the modifier pipeline. Useful for verifying the PY32
+# WS2812 fan-out without the main render stack in the loop.
+leds-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example leds_bench
+    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/leds_bench"
