@@ -12,9 +12,13 @@ Cargo workspace with four crates:
 
 ```bash
 cargo test                    # host-side: core, sim, axp2101
-cargo clippy --workspace
-cargo build -p stackchan-firmware --release   # requires espup-installed esp toolchain
-espflash flash --monitor target/xtensa-esp32s3-none-elf/release/stackchan-firmware
+cargo clippy --workspace      # host crates only (firmware excluded from default-members)
+
+# Firmware: requires `source ~/export-esp.sh` first so the `esp` toolchain is on PATH.
+# `cargo run` uses the probe-rs runner declared in crates/stackchan-firmware/.cargo/config.toml,
+# which flashes over the CoreS3's built-in USB-JTAG and opens an RTT session for defmt logs.
+source ~/export-esp.sh
+cargo run -p stackchan-firmware --release
 ```
 
 ## Pre-commit Hook
@@ -59,6 +63,7 @@ No `unwrap()` / `expect()` in library code. Use `?` with typed errors (`thiserro
 - PSRAM heap via `esp-alloc`; internal SRAM reserved for ISR/real-time.
 - `/dev/ttyACM1` is the CoreS3 USB-JTAG on Andy's machine (may shuffle with `/dev/ttyACM0` which is his Pikatea macropad — check with `udevadm info` first).
 - Serial access requires `sg dialout -c '...'` wrapper on the host until `dialout` group is in the active shell's supplementary groups.
+- Logs travel over RTT via the USB-JTAG probe; `probe-rs run --chip esp32s3` is the canonical flash + log path (wired up as the `cargo run` runner in the firmware crate).
 
 ## Config + assets
 

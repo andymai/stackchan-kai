@@ -14,21 +14,26 @@ workspace = true
 [dependencies]
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
-# esp-hal + embassy dependencies are intentionally commented out in v0.1.0
-# scaffold; they come in live once the firmware begins its hardware
-# integration phase. Keeping the manifest compilable on host CI without the
-# esp toolchain is deliberate.
-# esp-hal = { version = "0.23", features = ["esp32s3"] }
-# esp-hal-embassy = { version = "0.7", features = ["esp32s3"] }
-# embassy-executor = { version = "0.6", features = ["task-arena-size-32768"] }
-# embassy-time = "0.3"
-# esp-alloc = "0.7"
-# esp-backtrace = { version = "0.14", features = ["esp32s3", "panic-handler", "println"] }
-# defmt = "0.3"
-# defmt-rtt = "0.4"
-# mipidsi = "0.8"
-# embedded-graphics = { workspace = true }
-# embedded-hal-async = { workspace = true }
+embedded-hal-async = { workspace = true }
+
+# Crate versions chosen to match the upstream `esp-generate` esp-hal 1.0
+# template. Mixing versions outside this set hits feature-unification
+# errors (the crates ship coordinated internal features that move in
+# lockstep). `esp-rtos` is the current embassy integration; it replaced
+# `esp-hal-embassy` for the 1.0 line.
+esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "unstable"] }
+esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
+esp-alloc = { version = "0.9.0", features = ["defmt"] }
+
+embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt"] }
+
+defmt = "1.0.1"
+rtt-target = { version = "0.6.2", features = ["defmt"] }
+
+critical-section = "1.2.0"
+static_cell = "2.1.1"
 
 [[bin]]
 name = "stackchan-firmware"

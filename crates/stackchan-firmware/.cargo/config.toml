@@ -1,0 +1,26 @@
+# Cargo config scoped to the firmware crate.
+#
+# `target` sets xtensa-esp32s3-none-elf so `cargo build`/`cargo run` inside
+# crates/stackchan-firmware cross-compile without requiring --target on
+# the command line. Other workspace crates are unaffected because this
+# file lives under the firmware crate, not at the workspace root.
+#
+# `runner` routes `cargo run` through probe-rs, which flashes over the
+# CoreS3's built-in USB-JTAG probe then opens an RTT session. Linker
+# scripts (linkall.x, etc.) are injected by esp-hal's build script, so
+# the only rustflag we need is -nostartfiles.
+
+[target.xtensa-esp32s3-none-elf]
+runner = "probe-rs run --chip=esp32s3 --preverify --always-print-stacktrace --no-location --catch-hardfault"
+
+[env]
+DEFMT_LOG = "info"
+
+[build]
+target = "xtensa-esp32s3-none-elf"
+rustflags = [
+    "-C", "link-arg=-nostartfiles",
+]
+
+[unstable]
+build-std = ["alloc", "core"]
