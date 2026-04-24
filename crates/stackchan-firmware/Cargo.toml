@@ -15,10 +15,11 @@ workspace = true
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
 aw9523 = { path = "../aw9523" }
-pca9685 = { path = "../pca9685" }
+scservo = { path = "../scservo" }
 embedded-graphics = { workspace = true }
 embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }
+embedded-io-async = { workspace = true }
 # `ExclusiveDevice` wraps the blocking esp-hal `Spi` + a CS pin into the
 # `SpiDevice` shape `display-interface-spi` wants. No `critical-section`
 # feature needed while the LCD is the sole SPI user.

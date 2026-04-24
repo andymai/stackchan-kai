@@ -54,6 +54,7 @@ use esp_hal::{
     },
     time::Rate,
     timer::timg::TimerGroup,
+    uart::{Config as UartConfig, Uart},
 };
 use framebuffer::{Framebuffer, HEIGHT as FB_HEIGHT, WIDTH as FB_WIDTH};
 use mipidsi::{
@@ -62,7 +63,7 @@ use mipidsi::{
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
 };
-use pca9685::Pca9685;
+use scservo::Scservo;
 use stackchan_core::{
     Avatar, Clock, HeadDriver, Modifier,
     modifiers::{Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, IdleDrift, IdleSway},
@@ -124,13 +125,21 @@ const PMIC_RETRY_MS: u64 = 500;
 /// transition where every pixel changes).
 const FRAME_PERIOD_MS: u64 = 33;
 
-/// Head-update cadence. 20 ms = 50 Hz, matching the SG90 PWM frame rate.
-/// Running faster buys nothing (the servo sees one pulse per period); a
-/// dedicated tick keeps servo cadence decoupled from render-task timing.
+/// Head-update cadence. 20 ms = 50 Hz, matching the `SCServo`
+/// recommended command rate. Running faster buys nothing — the servo's
+/// internal interpolation smooths between commands — and keeps the
+/// UART bus utilisation below 2% even with two servos per tick.
 const HEAD_PERIOD_MS: u64 = 20;
 
-/// PWM frequency programmed on the PCA9685 for servo frames (Hz).
-const SERVO_PWM_FREQ_HZ: u32 = 50;
+/// `SCServo` UART baud rate. Feetech `SCSCL` family default is 1 Mbaud.
+const SERVO_UART_BAUD: u32 = 1_000_000;
+
+/// 7-bit I²C address of the CoreS3 PY32 IO expander.
+const PY32_ADDRESS: u8 = 0x6F;
+
+/// Milliseconds to wait after raising the servo-power pin on the PY32.
+/// Matches the 200 ms delay in `hal_io_expander.cpp`.
+const SERVO_POWER_SETTLE_MS: u64 = 200;
 
 /// Concrete type of the assembled LCD display. Spelled out once here so the
 /// render task (which the `#[embassy_executor::task]` macro requires to be
@@ -146,10 +155,10 @@ type LcdDisplay = mipidsi::Display<
     NoResetPin,
 >;
 
-/// Concrete type of the PCA9685-backed head driver, needed so
+/// Concrete type of the `SCServo`-backed head driver, needed so
 /// `#[embassy_executor::task]` (which forbids generic tasks) can accept
 /// it as an argument.
-type HeadDriverImpl = head::PcaHead<I2c<'static, esp_hal::Async>>;
+type HeadDriverImpl = head::ScsHead<Uart<'static, esp_hal::Async>>;
 
 /// 30 FPS render task. Double-buffered via a PSRAM-backed [`Framebuffer`]:
 /// each frame we run the modifier stack, draw the avatar into the off-screen
@@ -236,32 +245,71 @@ async fn render_task(mut display: LcdDisplay) {
     }
 }
 
-/// 50 Hz head-update task. Consumes [`head::POSE_SIGNAL`] and commands the
-/// PCA9685. Holds the last-seen pose between updates — servos hold their
-/// position fine, so a slow render task never leaves the head wobbling.
+/// 50 Hz head-update task. Consumes [`head::POSE_SIGNAL`] and commands
+/// the `SCServo` bus. Holds the last-seen pose between updates — servos
+/// hold their position via internal torque, so a slow render task
+/// never leaves the head wobbling.
 ///
-/// I²C write failures log at `warn` and continue: a flaky servo bus
-/// shouldn't blank the face or reboot the binary. A future improvement
-/// could rate-limit the warning to avoid log-flooding a fully-unplugged
-/// PCA9685.
+/// UART write failures log at `warn` and continue: a transient bus
+/// glitch shouldn't blank the face or reboot the binary. UART writes
+/// don't NACK on missing slaves, so in a "no servos attached" state
+/// this path is silent — the face still renders.
 #[embassy_executor::task]
 async fn head_task(mut driver: HeadDriverImpl) {
     let clock = HalClock;
     let mut ticker = Ticker::every(Duration::from_millis(HEAD_PERIOD_MS));
     let mut current = stackchan_core::Pose::NEUTRAL;
     defmt::info!(
-        "head task: {=u64} ms tick, consumes POSE_SIGNAL for PCA9685 channels 0/1",
-        HEAD_PERIOD_MS
+        "head task: {=u64} ms tick, consumes POSE_SIGNAL for SCServo IDs {=u8} (yaw) / {=u8} (pitch)",
+        HEAD_PERIOD_MS,
+        head::YAW_SERVO_ID,
+        head::PITCH_SERVO_ID,
     );
     loop {
         if let Some(next) = head::POSE_SIGNAL.try_take() {
             current = next;
         }
         if let Err(e) = driver.set_pose(current, clock.now()).await {
-            defmt::warn!("head: PCA9685 write failed: {}", defmt::Debug2Format(&e));
+            defmt::warn!("head: SCServo write failed: {}", defmt::Debug2Format(&e));
         }
         ticker.next().await;
     }
+}
+
+/// Drive pin 0 of the PY32 IO expander HIGH to enable the servo power
+/// rail. Three register writes with values that match the PY32's
+/// reset-state of all zeros (no read-modify-write yet — future RGB-LED
+/// work will need that). Logs at `warn` on any I²C failure and keeps
+/// going; the firmware stays healthy even if the expander is missing.
+async fn enable_servo_power(i2c: &mut I2c<'_, esp_hal::Async>) {
+    use embedded_hal_async::i2c::I2c as AsyncI2c;
+    /// Write `[reg, value]` to the PY32; log + return Err on transport failure.
+    async fn write_py32(i2c: &mut I2c<'_, esp_hal::Async>, reg: u8, value: u8) -> Result<(), ()> {
+        // Fully-qualified `AsyncI2c::write` — `esp_hal::i2c::master::I2c`
+        // has an inherent `write` that's blocking; we want the trait
+        // version for its `async fn`.
+        match AsyncI2c::write(i2c, PY32_ADDRESS, &[reg, value]).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                defmt::warn!(
+                    "PY32 0x{=u8:02X} ← 0x{=u8:02X} failed: {}",
+                    reg,
+                    value,
+                    defmt::Debug2Format(&e)
+                );
+                Err(())
+            }
+        }
+    }
+    // Pin 0: direction = output, pull-up = enabled, level = HIGH.
+    if write_py32(i2c, 0x03, 0x01).await.is_err()
+        || write_py32(i2c, 0x09, 0x01).await.is_err()
+        || write_py32(i2c, 0x05, 0x01).await.is_err()
+    {
+        defmt::warn!("PY32: servo-power enable incomplete — servos may stay unpowered");
+        return;
+    }
+    defmt::info!("PY32: servo power enabled (pin 0 HIGH)");
 }
 
 #[esp_rtos::main]
@@ -332,46 +380,49 @@ async fn main(spawner: Spawner) -> ! {
         Ok(()) => defmt::info!("AW9523: CoreS3 defaults applied, LCD reset pulsed (P1_1)"),
         Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
     }
+
+    // Enable servo power via the PY32 IO expander (I²C addr 0x6F). Without
+    // this the SCServo rail is unpowered — the UART writes will go out
+    // cleanly but nothing moves. The PY32 resets all bits to 0, so writing
+    // `0x01` (pin 0 only) is safe — if we later drive RGB LEDs on pin 13
+    // we'll need read-modify-write via a dedicated driver.
+    //
+    // Register map (from `PY32IOExpander_Class.cpp` in the old C++ firmware):
+    //   0x03  GPIO direction-low  (1 = output)
+    //   0x05  GPIO output-low     (the actual pin level)
+    //   0x09  GPIO pull-up-low    (pull-up enable)
+    //
+    // Sequence matches `hal_io_expander.cpp`: direction → pull-up →
+    // level HIGH → 200 ms for the rail to stabilise.
+    enable_servo_power(&mut i2c).await;
+    Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
+
     // Internal I²C (I2C0) is done for this boot — drop it so the compiler
     // catches any accidental later uses (touch / battery drivers come in
     // future PRs).
     drop(i2c);
 
-    // CoreS3 external I²C Port A: SDA=GPIO2, SCL=GPIO1. Separate peripheral
-    // (I2C1) from the internal AXP2101/AW9523 bus so the two have no
-    // shared-bus ordering hazard. 400 kHz is the conservative fast-mode
-    // rate the PCA9685 spec sheet accepts; the chip supports up to 1 MHz.
-    let i2c1_cfg = I2cConfig::default().with_frequency(Rate::from_khz(400));
-    let i2c1 = match I2c::new(peripherals.I2C1, i2c1_cfg) {
-        Ok(bus) => bus
-            .with_sda(peripherals.GPIO2)
-            .with_scl(peripherals.GPIO1)
+    // CoreS3 SCServo bus: UART1 TX=GPIO6, RX=GPIO7 @ 1 Mbaud. Matches the
+    // old C++ firmware's `_scs_bus.begin(UART_NUM_1, 1000000, 6, 7)` call.
+    // Two smart servos (yaw=1, pitch=2) share this half-duplex bus; the
+    // base board handles direction switching externally.
+    //
+    // UART writes don't NACK like I²C, so we can't detect a missing bus
+    // at init time — the head task will blast packets regardless. If no
+    // servos are wired, nothing moves; firmware stays healthy.
+    let uart_cfg = UartConfig::default().with_baudrate(SERVO_UART_BAUD);
+    let servo_uart = match Uart::new(peripherals.UART1, uart_cfg) {
+        Ok(uart) => uart
+            .with_tx(peripherals.GPIO6)
+            .with_rx(peripherals.GPIO7)
             .into_async(),
-        Err(e) => defmt::panic!("I2C1 config rejected: {}", defmt::Debug2Format(&e)),
+        Err(e) => defmt::panic!("UART1 config rejected: {}", defmt::Debug2Format(&e)),
     };
-    defmt::debug!("I2C1 (Port A) ready on GPIO2/1 @ 400 kHz");
-
-    let mut pca = Pca9685::new(i2c1, pca9685::DEFAULT_ADDRESS);
-    let pca_head: Option<HeadDriverImpl> = match pca.init(SERVO_PWM_FREQ_HZ, &mut delay).await {
-        Ok(()) => {
-            defmt::info!(
-                "PCA9685: init OK, PWM prescaled for {=u32} Hz servo frame",
-                SERVO_PWM_FREQ_HZ
-            );
-            Some(head::PcaHead::new(pca))
-        }
-        Err(e) => {
-            // Don't panic: the PCA9685 may not be physically attached yet
-            // (new unit, bring-up). Log loudly and skip spawning the head
-            // task so the face still renders. Reconnect + reboot to get
-            // servos back.
-            defmt::error!(
-                "PCA9685 init failed — skipping head task, face-only mode: {}",
-                defmt::Debug2Format(&e)
-            );
-            None
-        }
-    };
+    defmt::info!(
+        "SCServo bus ready on UART1 (TX=GPIO6, RX=GPIO7) @ {=u32} baud",
+        SERVO_UART_BAUD
+    );
+    let scs_head = head::ScsHead::new(Scservo::new(servo_uart));
 
     // CoreS3 LCD (ILI9342C) on SPI2.
     //   SCK  = GPIO36
@@ -424,9 +475,7 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(e) = spawner.spawn(render_task(display)) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
-    if let Some(driver) = pca_head
-        && let Err(e) = spawner.spawn(head_task(driver))
-    {
+    if let Err(e) = spawner.spawn(head_task(scs_head)) {
         defmt::panic!("spawn head_task failed: {}", defmt::Debug2Format(&e));
     }
 

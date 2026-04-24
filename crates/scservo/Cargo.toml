@@ -1,0 +1,14 @@
+[package]
+name = "scservo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Minimal no_std driver for the Feetech SCServo (SCSCL / SCS0009) family — smart serial servos on a half-duplex TTL UART bus."
+
+[lints]
+workspace = true
+
+[dependencies]
+embedded-io-async = { workspace = true }
