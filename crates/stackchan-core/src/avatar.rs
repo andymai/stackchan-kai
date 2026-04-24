@@ -13,8 +13,17 @@
 //! `EmotionStyle` modifier and consumed by the renderer and by the
 //! `Blink`/`Breath` modifiers. Defaults are chosen so an `Avatar` with
 //! no `EmotionStyle` active renders exactly like v0.1.0 pre-emotion.
+//!
+//! ## Motion fields
+//!
+//! `head_pose` carries the current pan/tilt command produced by motion
+//! modifiers (e.g. `IdleSway`). It is **not** part of the pixel output —
+//! on hardware, the LCD moves with the head, so the face stays centered
+//! on screen. Use [`Avatar::frame_eq`] (not `==`) for render-loop dirty
+//! checks so pose updates don't force redundant LCD blits.
 
 use crate::emotion::Emotion;
+use crate::head::Pose;
 
 /// A 2D integer point in framebuffer space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -104,9 +113,16 @@ pub struct Mouth {
 /// the renderer agree on the midpoint.
 pub const SCALE_DEFAULT: u8 = 128;
 
-/// The composed avatar. Contains two eyes, a mouth, an emotion, and the
-/// emotion-driven style fields that renderer + tempo modifiers consume.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The composed avatar. Contains two eyes, a mouth, an emotion, the
+/// emotion-driven style fields that renderer + tempo modifiers consume,
+/// and the head [`Pose`] produced by motion modifiers.
+///
+/// `Eq` is intentionally **not** derived: [`Pose`] uses `f32`, which
+/// violates reflexivity for `NaN`. Use [`Avatar::frame_eq`] for the
+/// render-loop dirty-check so `head_pose` changes (which don't affect
+/// pixels) don't force redundant LCD blits; use `==` (`PartialEq`) for
+/// tests that do care about the full state.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Avatar {
     /// Left eye (viewer's left).
     pub left_eye: Eye,
@@ -138,6 +154,39 @@ pub struct Avatar {
     /// Breath-amplitude scale, 0..=255. `SCALE_DEFAULT` (128) = baseline
     /// 2px peak-to-peak. Sleepy deepens this; Surprised reduces it.
     pub breath_depth_scale: u8,
+    /// Head pan/tilt pose in degrees. Produced by motion modifiers (e.g.
+    /// `IdleSway`); consumed by firmware's head-update task, not the
+    /// pixel renderer. Excluded from [`Avatar::frame_eq`].
+    pub head_pose: Pose,
+}
+
+impl Avatar {
+    /// Visual-state equality: true iff `self` and `other` would render to
+    /// the same pixels. Excludes [`Avatar::head_pose`], which is a
+    /// kinematic quantity — the LCD is rigidly mounted to the head, so
+    /// rotating the head does not move anything on screen.
+    ///
+    /// The firmware render task uses this as its dirty-check so that
+    /// continuous `IdleSway` pose updates don't force redundant blits.
+    /// Sim tests that care about full equality (including pose) can use
+    /// `==` via [`PartialEq`] instead.
+    ///
+    /// *Maintenance note:* adding a new pixel-affecting field to
+    /// `Avatar` requires extending the comparison below. Non-visual
+    /// fields (audio, motor, sensor state) must stay excluded.
+    #[must_use]
+    pub fn frame_eq(&self, other: &Self) -> bool {
+        self.left_eye == other.left_eye
+            && self.right_eye == other.right_eye
+            && self.mouth == other.mouth
+            && self.emotion == other.emotion
+            && self.eye_curve == other.eye_curve
+            && self.mouth_curve == other.mouth_curve
+            && self.cheek_blush == other.cheek_blush
+            && self.eye_scale == other.eye_scale
+            && self.blink_rate_scale == other.blink_rate_scale
+            && self.breath_depth_scale == other.breath_depth_scale
+    }
 }
 
 impl Default for Avatar {
@@ -174,6 +223,7 @@ impl Default for Avatar {
             eye_scale: SCALE_DEFAULT,
             blink_rate_scale: SCALE_DEFAULT,
             breath_depth_scale: SCALE_DEFAULT,
+            head_pose: Pose::NEUTRAL,
         }
     }
 }

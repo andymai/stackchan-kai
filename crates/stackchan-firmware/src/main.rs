@@ -187,7 +187,14 @@ async fn render_task(mut display: LcdDisplay) {
         breath.update(&mut avatar, now);
         drift.update(&mut avatar, now);
 
-        if last_rendered != Some(avatar) {
+        // `frame_eq` intentionally skips `head_pose` — the LCD is mounted
+        // rigidly to the head, so pan/tilt updates never change pixels.
+        // `IdleSway` will mutate `avatar.head_pose` every tick; using `==`
+        // here would force a full-frame SPI blit on every sway step.
+        if last_rendered
+            .as_ref()
+            .is_none_or(|prev| !prev.frame_eq(&avatar))
+        {
             // Draw is Infallible on `Framebuffer`; the `let _ =` discards
             // the `Result<(), Infallible>` without triggering unwrap lints.
             let _ = avatar.draw(&mut fb);
