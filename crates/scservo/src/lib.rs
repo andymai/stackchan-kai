@@ -110,6 +110,10 @@ pub enum Instruction {
 
 /// Servo position count at the mechanical center (neutral).
 pub const POSITION_CENTER: u16 = 512;
+/// Maximum valid servo position count. SCSCL / SCS0009 use a 0..=1023
+/// range; values above are rejected by [`Scservo::write_position`] with
+/// [`Error::PositionOutOfRange`].
+pub const POSITION_MAX: u16 = 1023;
 /// Position counts per degree for SCSCL / SCS0009: 1023 counts across
 /// 300° of travel.
 pub const POSITION_PER_DEGREE: f32 = 1023.0 / 300.0;
@@ -144,6 +148,17 @@ pub enum Error<E> {
     MalformedResponse,
     /// Response packet arrived but its checksum didn't verify.
     ChecksumMismatch,
+    /// Caller passed a position value above [`POSITION_MAX`] (1023) to
+    /// [`Scservo::write_position`]. The servo would interpret the high
+    /// bits as a different address in its memory table, so we reject at
+    /// the driver boundary.
+    PositionOutOfRange(u16),
+    /// Caller used [`BROADCAST_ID`] on an operation that requires a
+    /// response ([`Scservo::ping`] / [`Scservo::read_memory`]): every
+    /// servo on the bus would try to reply at once, garbling the frame.
+    /// Broadcasting writes (`write_position`, `write_torque_enable`,
+    /// `write_memory`) remains supported — those don't need a response.
+    BroadcastNotAllowed,
 }
 
 impl<E> From<ReadExactError<E>> for Error<E> {
@@ -183,18 +198,21 @@ impl<W: Write> Scservo<W> {
         self.uart
     }
 
-    /// Command servo `id` to `position` (step count 0..=1023),
+    /// Command servo `id` to `position` (step count 0..=[`POSITION_MAX`]),
     /// transitioning over `time_ms` milliseconds at `speed` (0 = use
     /// time control).
     ///
     /// See [`POSITION_CENTER`] / [`POSITION_PER_DEGREE`] for angle
-    /// conversion. Values outside 0..=1023 are clamped implicitly by
-    /// the servo's angle-limit registers, which is the preferred layer
-    /// for enforcing safety — ship custom limits by writing the
-    /// `MIN_ANGLE_LIMIT` / `MAX_ANGLE_LIMIT` registers directly.
+    /// conversion. Positions above [`POSITION_MAX`] are rejected with
+    /// [`Error::PositionOutOfRange`] rather than forwarded verbatim:
+    /// the servo interprets the high bits as a different memory-table
+    /// address, so silently sending them out-of-range is strictly
+    /// worse than returning an error. For tighter per-application
+    /// limits, write `MIN_ANGLE_LIMIT` / `MAX_ANGLE_LIMIT` directly.
     ///
     /// # Errors
-    /// Returns the UART transport error if the write fails.
+    /// - [`Error::PositionOutOfRange`] if `position > POSITION_MAX`.
+    /// - [`Error::Uart`] if the transport fails.
     pub async fn write_position(
         &mut self,
         id: u8,
@@ -202,6 +220,9 @@ impl<W: Write> Scservo<W> {
         time_ms: u16,
         speed: u16,
     ) -> Result<(), Error<W::Error>> {
+        if position > POSITION_MAX {
+            return Err(Error::PositionOutOfRange(position));
+        }
         let data = [
             (position >> 8) as u8,
             (position & 0xFF) as u8,
@@ -302,6 +323,8 @@ impl<U: Read + Write> Scservo<U> {
     /// packet size, distinguishable from its own echo).
     ///
     /// # Errors
+    /// - [`Error::BroadcastNotAllowed`] if `id == BROADCAST_ID` — every
+    ///   servo would respond and the bus would collide.
     /// - [`Error::Uart`] on transport failure.
     /// - [`Error::NoResponse`] if the UART closes before a full
     ///   response arrives.
@@ -310,6 +333,9 @@ impl<U: Read + Write> Scservo<U> {
     /// - [`Error::ChecksumMismatch`] if the response checksum is
     ///   invalid.
     pub async fn ping(&mut self, id: u8) -> Result<(), Error<U::Error>> {
+        if id == BROADCAST_ID {
+            return Err(Error::BroadcastNotAllowed);
+        }
         // PING outbound: FF FF ID 02 01 ~(ID+2+1).
         let checksum = !id.wrapping_add(0x02).wrapping_add(Instruction::Ping as u8);
         let outbound = [
@@ -321,6 +347,12 @@ impl<U: Read + Write> Scservo<U> {
             checksum,
         ];
         self.uart.write_all(&outbound).await?;
+        // Flush before switching to RX: `write_all` only guarantees the
+        // bytes were accepted by the TX FIFO, not that they've left the
+        // wire. On a half-duplex converter we must drain TX before
+        // sampling RX so the first byte we read isn't the tail of our
+        // own packet.
+        self.uart.flush().await?;
 
         // Expected response layout: FF FF ID 02 Error ~checksum (6 bytes).
         let mut response = [0u8; 6];
@@ -352,7 +384,13 @@ impl<U: Read + Write> Scservo<U> {
     }
 
     /// Low-level [`Instruction::Read`] that fills `buf` with `buf.len()`
-    /// bytes read starting at `mem_addr` on servo `id`.
+    /// bytes read starting at `mem_addr` on servo `id`. Returns the
+    /// servo's **error byte** from the response (0 if the servo reports
+    /// no fault; non-zero encodes angle-limit / voltage / overload /
+    /// overheat flags — see the Feetech SCSCL memory table). Data is
+    /// always delivered regardless of the error byte: a faulting servo
+    /// still reports its current position, temperature, etc., and a
+    /// caller trying to diagnose the fault wants to see both.
     ///
     /// Outbound packet layout:
     ///
@@ -370,6 +408,8 @@ impl<U: Read + Write> Scservo<U> {
     /// `embassy_time::with_timeout` for bounded waits.
     ///
     /// # Errors
+    /// - [`Error::BroadcastNotAllowed`] if `id == BROADCAST_ID` — reads
+    ///   require exactly one responder.
     /// - [`Error::PayloadTooLarge`] if `buf.len() > MAX_DATA_BYTES`.
     /// - [`Error::Uart`] on transport failure.
     /// - [`Error::NoResponse`] / [`Error::MalformedResponse`] /
@@ -379,7 +419,10 @@ impl<U: Read + Write> Scservo<U> {
         id: u8,
         mem_addr: u8,
         buf: &mut [u8],
-    ) -> Result<(), Error<U::Error>> {
+    ) -> Result<u8, Error<U::Error>> {
+        if id == BROADCAST_ID {
+            return Err(Error::BroadcastNotAllowed);
+        }
         if buf.len() > MAX_DATA_BYTES {
             return Err(Error::PayloadTooLarge);
         }
@@ -408,6 +451,8 @@ impl<U: Read + Write> Scservo<U> {
             !sum,
         ];
         self.uart.write_all(&outbound).await?;
+        // Drain TX before reading — see `ping` for the half-duplex rationale.
+        self.uart.flush().await?;
 
         // Response: 2 header + 1 id + 1 len-field + 1 error + N data + 1 checksum.
         let response_total = 6 + buf.len();
@@ -445,18 +490,24 @@ impl<U: Read + Write> Scservo<U> {
         // Data bytes start at index 5; skip the 2 header + 1 id + 1 msgLen +
         // 1 error bytes before them.
         buf.copy_from_slice(&response[5..5 + buf.len()]);
-        Ok(())
+        // response[4] is the servo's Error byte — surface it to the caller.
+        Ok(response[4])
     }
 
     /// Read the current position of servo `id` — the live encoder
-    /// reading, in the same 0..=1023 count space as the goal position.
-    /// Big-endian 2-byte field at [`ADDR_PRESENT_POSITION`].
+    /// reading, in the same 0..=[`POSITION_MAX`] count space as the goal
+    /// position. Big-endian 2-byte field at [`ADDR_PRESENT_POSITION`].
+    ///
+    /// Discards the servo's error byte; callers that want to detect
+    /// faults alongside the position should use [`Scservo::read_memory`]
+    /// directly.
     ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_position(&mut self, id: u8) -> Result<u16, Error<U::Error>> {
         let mut buf = [0u8; 2];
-        self.read_memory(id, ADDR_PRESENT_POSITION, &mut buf)
+        let _fault = self
+            .read_memory(id, ADDR_PRESENT_POSITION, &mut buf)
             .await?;
         Ok(u16::from_be_bytes(buf))
     }
@@ -464,21 +515,28 @@ impl<U: Read + Write> Scservo<U> {
     /// Read the current supply voltage of servo `id`. Units: 0.1 V per
     /// count (e.g. 74 → 7.4 V).
     ///
+    /// Discards the servo's error byte; use [`Scservo::read_memory`]
+    /// directly to inspect fault flags alongside the voltage.
+    ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_voltage(&mut self, id: u8) -> Result<u8, Error<U::Error>> {
         let mut buf = [0u8; 1];
-        self.read_memory(id, ADDR_PRESENT_VOLTAGE, &mut buf).await?;
+        let _fault = self.read_memory(id, ADDR_PRESENT_VOLTAGE, &mut buf).await?;
         Ok(buf[0])
     }
 
     /// Read the current internal temperature of servo `id`, in °C.
     ///
+    /// Discards the servo's error byte; use [`Scservo::read_memory`]
+    /// directly to inspect fault flags alongside the temperature.
+    ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_temperature(&mut self, id: u8) -> Result<u8, Error<U::Error>> {
         let mut buf = [0u8; 1];
-        self.read_memory(id, ADDR_PRESENT_TEMPERATURE, &mut buf)
+        let _fault = self
+            .read_memory(id, ADDR_PRESENT_TEMPERATURE, &mut buf)
             .await?;
         Ok(buf[0])
     }
@@ -487,11 +545,14 @@ impl<U: Read + Write> Scservo<U> {
     /// actively tracking toward its goal position, false once settled.
     /// Useful for "wait until move completes" loops during calibration.
     ///
+    /// Discards the servo's error byte; use [`Scservo::read_memory`]
+    /// directly to inspect fault flags alongside the moving state.
+    ///
     /// # Errors
     /// Same as [`Scservo::read_memory`].
     pub async fn read_moving(&mut self, id: u8) -> Result<bool, Error<U::Error>> {
         let mut buf = [0u8; 1];
-        self.read_memory(id, ADDR_MOVING, &mut buf).await?;
+        let _fault = self.read_memory(id, ADDR_MOVING, &mut buf).await?;
         Ok(buf[0] != 0)
     }
 }
@@ -610,6 +671,23 @@ mod tests {
         let buf = bus.uart.written.borrow();
         let expected_sum = buf[2..12].iter().fold(0u8, |a, b| a.wrapping_add(*b));
         assert_eq!(buf[12], !expected_sum);
+    }
+
+    #[test]
+    fn write_position_accepts_exact_max_position() {
+        let mut bus = Scservo::new(MockUart::new());
+        // POSITION_MAX (1023) is inside the valid range — must succeed.
+        block_on(bus.write_position(1, POSITION_MAX, 0, 0)).unwrap();
+        assert!(!bus.uart.written.borrow().is_empty());
+    }
+
+    #[test]
+    fn write_position_rejects_above_max() {
+        let mut bus = Scservo::new(MockUart::new());
+        let err = block_on(bus.write_position(1, POSITION_MAX + 1, 0, 0));
+        assert!(matches!(err, Err(Error::PositionOutOfRange(p)) if p == POSITION_MAX + 1));
+        // No packet was transmitted — the guard runs before serialisation.
+        assert!(bus.uart.written.borrow().is_empty());
     }
 
     #[test]
@@ -753,6 +831,26 @@ mod tests {
     }
 
     #[test]
+    fn ping_rejects_broadcast_id() {
+        let mut bus = Scservo::new(MockUart::new());
+        let err = block_on(bus.ping(BROADCAST_ID));
+        assert!(matches!(err, Err(Error::BroadcastNotAllowed)));
+        assert!(
+            bus.uart.written.borrow().is_empty(),
+            "guard must run before any TX"
+        );
+    }
+
+    #[test]
+    fn read_memory_rejects_broadcast_id() {
+        let mut bus = Scservo::new(MockUart::new());
+        let mut buf = [0u8; 2];
+        let err = block_on(bus.read_memory(BROADCAST_ID, ADDR_PRESENT_POSITION, &mut buf));
+        assert!(matches!(err, Err(Error::BroadcastNotAllowed)));
+        assert!(bus.uart.written.borrow().is_empty());
+    }
+
+    #[test]
     fn read_memory_rejects_oversized_buf() {
         let mut bus = Scservo::new(MockUart::new());
         let mut buf = [0u8; MAX_DATA_BYTES + 1];
@@ -769,6 +867,29 @@ mod tests {
             .queue_rx(&[0xFF, 0xFF, 0x01, 0x05, 0x00, 0x02, 0x00, 0xF7]);
         let err = block_on(bus.read_position(1));
         assert!(matches!(err, Err(Error::MalformedResponse)));
+    }
+
+    #[test]
+    fn read_memory_returns_fault_byte_from_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Fault byte 0x20 (overload flag set); 2 position bytes = 0x0200 (512).
+        // sum = 1+4+0x20+2+0 = 0x27, checksum = !0x27 = 0xD8.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x20, 0x02, 0x00, 0xD8]);
+        let mut buf = [0u8; 2];
+        let fault = block_on(bus.read_memory(1, ADDR_PRESENT_POSITION, &mut buf)).unwrap();
+        assert_eq!(fault, 0x20, "fault byte should be surfaced to the caller");
+        assert_eq!(buf, [0x02, 0x00], "data bytes still copied even on fault");
+    }
+
+    #[test]
+    fn read_memory_returns_zero_fault_on_healthy_response() {
+        let mut bus = Scservo::new(MockUart::new());
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x02, 0x00, 0xF8]);
+        let mut buf = [0u8; 2];
+        let fault = block_on(bus.read_memory(1, ADDR_PRESENT_POSITION, &mut buf)).unwrap();
+        assert_eq!(fault, 0);
     }
 
     #[test]

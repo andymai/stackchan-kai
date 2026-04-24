@@ -287,7 +287,7 @@ async fn head_task(mut driver: HeadDriverImpl) {
                     defmt::Debug2Format(&e)
                 ),
                 Err(_) => {
-                    defmt::warn!("head: read_pose timed out after {=u64} ms", READ_TIMEOUT_MS)
+                    defmt::warn!("head: read_pose timed out after {=u64} ms", READ_TIMEOUT_MS);
                 }
             }
         }
