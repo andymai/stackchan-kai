@@ -121,6 +121,14 @@ impl<W: Write> ScsHead<W> {
     /// count back into degrees in the same reference frame the caller
     /// commanded. Used by the 1 Hz position poll.
     fn deg_for(position: u16, trim_deg: f32, direction: f32) -> f32 {
+        // `direction` is a ±1.0 const today; belt-and-suspenders check
+        // against a future refactor that makes it runtime-configurable,
+        // because a 0.0 would silently return ±inf here rather than an
+        // out-of-range Pose that later clamps cleanly.
+        debug_assert!(
+            direction.is_finite() && direction != 0.0,
+            "direction must be a non-zero finite sign; a 0.0 would make deg_for return ±inf"
+        );
         let offset = f32::from(position) - f32::from(POSITION_CENTER);
         let effective = offset / POSITION_PER_DEGREE;
         // Inverse direction + trim from `position_for`.
