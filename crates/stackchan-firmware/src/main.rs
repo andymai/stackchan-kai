@@ -1,10 +1,10 @@
 //! StackChan firmware for the M5Stack CoreS3.
 //!
-//! v0.2.0 minimal boot: esp-hal init → esp-rtos embassy → AXP2101 LDO
-//! bring-up → defmt "hello" over RTT. The LCD SPI init, mipidsi driver,
-//! and avatar render loop land in the next PR — this PR proves the
-//! toolchain, power-on sequencing, and telemetry path end-to-end on
-//! real hardware.
+//! Boot sequence: esp-hal init → esp-rtos embassy → AXP2101 LDOs →
+//! AW9523 releases LCD reset → SPI2 + ILI9342C via mipidsi → one-shot
+//! render of the default `Avatar`. The animated render loop (BlinkModifier
+//! et al. @ 30 FPS) lands in a follow-up PR; isolating the draw pipeline
+//! from the animation state machine keeps the regression surface small.
 
 #![no_std]
 #![no_main]
@@ -24,15 +24,31 @@
 
 extern crate alloc;
 
+mod aw9523;
+
 use axp2101::Axp2101;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Delay, Duration, Timer};
+use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::{
     clock::CpuClock,
+    gpio::{Level, Output, OutputConfig},
     i2c::master::{Config as I2cConfig, I2c},
+    spi::{
+        Mode as SpiMode,
+        master::{Config as SpiConfig, Spi},
+    },
     time::Rate,
     timer::timg::TimerGroup,
 };
+use mipidsi::{
+    Builder,
+    interface::SpiInterface,
+    models::ILI9342CRgb565,
+    options::{ColorInversion, ColorOrder},
+};
+use stackchan_core::Avatar;
+use static_cell::StaticCell;
 
 // esp-println registers a `#[defmt::global_logger]` that writes
 // defmt-encoded bytes to the USB-Serial-JTAG peripheral. Importing for
@@ -82,9 +98,9 @@ const PMIC_RETRY_MS: u64 = 500;
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    // Spawner is unused in v0.2.0 (no background tasks yet); the LCD
-    // render task in the next PR will consume it. Drop explicitly so
-    // the unused-var warning doesn't mask real issues.
+    // Spawner is unused in the static-face PR; the 30 FPS render task in the
+    // next PR will consume it. Drop explicitly so the unused-var warning
+    // can't mask a real regression.
     let _ = spawner;
 
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -131,6 +147,70 @@ async fn main(spawner: Spawner) -> ! {
                 Timer::after(Duration::from_millis(PMIC_RETRY_MS)).await;
             }
         }
+    }
+
+    // Reclaim the I²C bus from the PMIC driver; the AW9523 is the next (and
+    // only other) I²C consumer in this PR, so a sequential hand-off avoids
+    // pulling in embedded-hal-bus shared-bus machinery.
+    let mut i2c = pmic.into_inner();
+    match aw9523::release_lcd_reset(&mut i2c).await {
+        Ok(()) => defmt::info!("AW9523: LCD reset released (P0_0 high)"),
+        Err(e) => defmt::panic!("AW9523 reset-release failed: {}", defmt::Debug2Format(&e)),
+    }
+    // I²C is no longer needed in this PR; drop it so the compiler catches
+    // any accidental later uses (touch/battery drivers come in future PRs).
+    drop(i2c);
+
+    // CoreS3 LCD (ILI9342C) on SPI2.
+    //   SCK  = GPIO36
+    //   MOSI = GPIO37
+    //   CS   = GPIO3  (active low)
+    //   DC   = GPIO35 (0 = command, 1 = data)
+    //   RST  = AW9523 P0_0 (handled above — mipidsi sees `NoResetPin`)
+    //   BL   = AXP2101 BLDO1 (handled by `enable_lcd_rails`)
+    let spi_cfg = SpiConfig::default()
+        .with_frequency(Rate::from_mhz(40))
+        .with_mode(SpiMode::_0);
+    let spi_bus = match Spi::new(peripherals.SPI2, spi_cfg) {
+        Ok(bus) => bus
+            .with_sck(peripherals.GPIO36)
+            .with_mosi(peripherals.GPIO37),
+        Err(e) => defmt::panic!("SPI2 config rejected: {}", defmt::Debug2Format(&e)),
+    };
+    let cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
+    let dc = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
+
+    let spi_device = match ExclusiveDevice::new(spi_bus, cs, Delay) {
+        Ok(dev) => dev,
+        Err(e) => defmt::panic!("ExclusiveDevice init failed: {}", defmt::Debug2Format(&e)),
+    };
+
+    // mipidsi's `SpiInterface` batches pixel writes through a caller-owned
+    // buffer. 4 KiB ≈ 2048 px per SPI transaction — a good speed/RAM balance
+    // for 320x240 clears on the internal SRAM heap. Parked in a `StaticCell`
+    // so the buffer outlives this frame and never needs reallocation.
+    static SPI_DI_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+    let spi_di_buf = SPI_DI_BUF.init([0u8; 4096]);
+    let di = SpiInterface::new(spi_device, dc, spi_di_buf);
+
+    // `NoResetPin` is implied by omitting `.reset_pin(...)` — the hardware
+    // reset is already done via AW9523 above. BGR color order matches the
+    // CoreS3 panel wiring; without `invert_colors` the image appears as a
+    // color-inverted negative on this specific module.
+    let mut display = match Builder::new(ILI9342CRgb565, di)
+        .display_size(320, 240)
+        .color_order(ColorOrder::Bgr)
+        .invert_colors(ColorInversion::Inverted)
+        .init(&mut Delay)
+    {
+        Ok(d) => d,
+        Err(e) => defmt::panic!("mipidsi init failed: {}", defmt::Debug2Format(&e)),
+    };
+    defmt::info!("ILI9342C ready — rendering default Avatar");
+
+    match Avatar::default().draw(&mut display) {
+        Ok(()) => defmt::info!("Avatar drawn to LCD"),
+        Err(e) => defmt::error!("Avatar::draw failed: {}", defmt::Debug2Format(&e)),
     }
 
     defmt::info!("boot complete — idle heartbeat");

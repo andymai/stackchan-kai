@@ -14,7 +14,17 @@ workspace = true
 [dependencies]
 stackchan-core = { path = "../stackchan-core" }
 axp2101 = { path = "../axp2101" }
+embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }
+# `ExclusiveDevice` wraps the blocking esp-hal `Spi` + a CS pin into the
+# `SpiDevice` shape `display-interface-spi` wants. No `critical-section`
+# feature needed while the LCD is the sole SPI user.
+embedded-hal-bus = "0.3"
+# `mipidsi` drives the ILI9342C on CoreS3 over SPI. Its built-in
+# `interface::SpiInterface` packages an SpiDevice + DC-pin into the
+# `Interface` trait the driver consumes — no separate
+# `display-interface-spi` needed at the 0.10 release.
+mipidsi = "0.10"
 
 # Crate versions chosen to match the upstream `esp-generate` esp-hal 1.0
 # template. Mixing versions outside this set hits feature-unification

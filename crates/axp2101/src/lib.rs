@@ -75,6 +75,15 @@ where
         Self { bus }
     }
 
+    /// Consume the driver and return the underlying I²C bus.
+    ///
+    /// Useful for single-task firmware that needs to hand the bus to a
+    /// second peripheral (e.g. the CoreS3's AW9523 IO expander) after
+    /// PMIC bring-up is done, without pulling in a shared-bus abstraction.
+    pub fn into_inner(self) -> B {
+        self.bus
+    }
+
     /// Turn on the LDOs required for the CoreS3 LCD + 3V3 rails:
     /// ALDO1 @ 3.3V (system), BLDO1 @ 3.3V (backlight), BLDO2 @ 3.3V (logic).
     ///
