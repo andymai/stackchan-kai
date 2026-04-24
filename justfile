@@ -14,8 +14,15 @@ set shell := ["bash", "-cu"]
 # Path to the release firmware ELF. Used by `flash`, `monitor`, `fmr`.
 firmware_elf := "target/xtensa-esp32s3-none-elf/release/stackchan-firmware"
 
-# Default port for CoreS3 USB-Serial-JTAG. Override by prefixing `just PORT=/dev/ttyACM0 …`.
-PORT := "/dev/ttyACM1"
+# Default port for CoreS3 USB-Serial-JTAG.
+# Linux enumerates as /dev/ttyACM*, macOS as /dev/cu.usbmodem*.
+# Override by prefixing `just PORT=/dev/cu.usbmodem2101 …`.
+PORT := if os() == "macos" { "/dev/cu.usbmodem2101" } else { "/dev/ttyACM1" }
+
+# On Linux the `dialout` group gate requires `sg dialout -c '…'`; macOS
+# grants serial access directly, so the wrapper is a no-op passthrough.
+_serial_prefix := if os() == "macos" { "" } else { "sg dialout -c '" }
+_serial_suffix := if os() == "macos" { "" } else { "'" }
 
 # Default: list available recipes.
 default:
@@ -54,12 +61,11 @@ clippy-firmware:
 build-firmware:
     cd crates/stackchan-firmware && cargo +esp build --release
 
-# ----- Flash + monitor (requires `sg dialout` on this distrobox) -----------
+# ----- Flash + monitor ----------------------------------------------------
 #
-# probe-rs is blocked by SELinux on Andy's Aurora-distrobox setup, so these
-# recipes go through espflash over the serial-JTAG port. The `sg dialout`
-# wrapper is required until dialout group membership is active in the
-# interactive shell's supplementary groups.
+# These recipes go through espflash over the serial-JTAG port. On Linux
+# (distrobox), the `sg dialout` wrapper is injected automatically via
+# `_serial_prefix`/`_serial_suffix`; on macOS the commands run directly.
 #
 # ## USB-Serial-JTAG reliability
 #
@@ -76,26 +82,26 @@ build-firmware:
 # split out only for CI or scripted workflows that don't want a monitor
 # attached.
 flash: build-firmware
-    sg dialout -c "espflash flash --port {{PORT}} {{firmware_elf}}"
+    {{_serial_prefix}}espflash flash --port {{PORT}} {{firmware_elf}}{{_serial_suffix}}
 
 # Monitor defmt logs from a running device (no reflash). Exits on Ctrl+C.
 # Default form triggers a chip reset on attach — use `just reattach`
 # instead to preserve the current boot state.
 monitor:
-    sg dialout -c "espflash monitor --port {{PORT}} --log-format defmt --elf {{firmware_elf}}"
+    {{_serial_prefix}}espflash monitor --port {{PORT}} --log-format defmt --elf {{firmware_elf}}{{_serial_suffix}}
 
 # Re-attach to a running device *without* resetting it. Useful when a
 # monitor session dropped (`Ctrl+C`, terminal closed, ssh dropped) and
 # you want to pick up the log stream without restarting the firmware.
 # Also the safer choice when debugging the USB-JTAG disconnect pattern.
 reattach:
-    sg dialout -c "espflash monitor --no-reset --port {{PORT}} --log-format defmt --elf {{firmware_elf}}"
+    {{_serial_prefix}}espflash monitor --no-reset --port {{PORT}} --log-format defmt --elf {{firmware_elf}}{{_serial_suffix}}
 
 # Flash + monitor in one recipe. `fmr` = flash-monitor-reload, the
 # default inner-loop verb. Build first, then flash, then stream logs.
 # One port-open, one reset — preferred over split `flash; monitor`.
 fmr: build-firmware
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}"
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}{{_serial_suffix}}
 
 # Path prefix for release bench example ELFs.
 example_elf_dir := "target/xtensa-esp32s3-none-elf/release/examples"
@@ -105,7 +111,7 @@ example_elf_dir := "target/xtensa-esp32s3-none-elf/release/examples"
 # the main firmware with `just flash` or `just fmr` when done.
 bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example bench
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/bench"
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/bench{{_serial_suffix}}
 
 # Magnetometer bench: streams trim-compensated BMM150 readings at 5 Hz.
 # Look for total field magnitude `sqrt(|B|²)` in the 25-65 µT range
@@ -113,14 +119,14 @@ bench:
 # SCServo motors. Re-flash the main firmware with `just fmr` when done.
 mag-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example mag_bench
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/mag_bench"
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/mag_bench{{_serial_suffix}}
 
 # LED-ring bench: cycles through each Emotion palette entry every 2 s,
 # independent of the modifier pipeline. Useful for verifying the PY32
 # WS2812 fan-out without the main render stack in the loop.
 leds-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example leds_bench
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/leds_bench"
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/leds_bench{{_serial_suffix}}
 
 # AW88298 control-path bench: runs the amp's full I²C init sequence
 # (reset → enable → configure I2S 16 kHz mono → mute → disable boost)
@@ -129,7 +135,7 @@ leds-bench:
 # acceptance only.
 aw88298-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example aw88298_bench
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/aw88298_bench"
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/aw88298_bench{{_serial_suffix}}
 
 # ES7210 control-path bench: runs the ADC's full I²C init sequence
 # (reset → clock tree for 12.288 MHz / 16 kHz → mic1+2 power-on → latch
@@ -138,4 +144,4 @@ aw88298-bench:
 # register-sequence acceptance only.
 es7210-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example es7210_bench
-    sg dialout -c "espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/es7210_bench"
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/es7210_bench{{_serial_suffix}}
