@@ -62,11 +62,19 @@ jobs:
           ldproxy: false
       - uses: Swatinem/rust-cache@v2
 
+      # Run from inside the firmware crate so cargo picks up
+      # crates/stackchan-firmware/.cargo/config.toml, which sets
+      # `unstable.build-std = ["alloc", "core"]` — required because
+      # `core` isn't precompiled for xtensa-esp32s3-none-elf. The
+      # previous workspace-root invocation bypassed this config and
+      # failed with `error[E0463]: can't find crate for 'core'`.
       - name: Clippy (firmware)
-        run: cargo clippy -p stackchan-firmware --target xtensa-esp32s3-none-elf --all-features -- -D warnings
+        working-directory: crates/stackchan-firmware
+        run: cargo clippy --all-features -- -D warnings
 
       - name: Check (firmware)
-        run: cargo check -p stackchan-firmware --target xtensa-esp32s3-none-elf --all-features
+        working-directory: crates/stackchan-firmware
+        run: cargo check --all-features
 
   msrv:
     name: MSRV (host crates)
