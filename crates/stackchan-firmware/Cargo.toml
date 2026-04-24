@@ -20,6 +20,7 @@ bmi270 = { path = "../bmi270" }
 ft6336u = { path = "../ft6336u" }
 ir-nec = { path = "../ir-nec" }
 ltr553 = { path = "../ltr553" }
+py32 = { path = "../py32" }
 scservo = { path = "../scservo" }
 embedded-graphics = { workspace = true }
 embedded-hal = { workspace = true }
@@ -104,3 +105,7 @@ path = "examples/ambient_bench.rs"
 [[example]]
 name = "ir_bench"
 path = "examples/ir_bench.rs"
+
+[[example]]
+name = "leds_bench"
+path = "examples/leds_bench.rs"
