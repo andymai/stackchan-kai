@@ -20,6 +20,15 @@ DEFMT_LOG = "info"
 target = "xtensa-esp32s3-none-elf"
 rustflags = [
     "-C", "link-arg=-nostartfiles",
+    # esp-hal's linker script. Without it, `.rodata_desc.appdesc` lands
+    # wherever the linker feels like, and the 2nd-stage bootloader reads
+    # random code bytes as the ESP-IDF app descriptor — causing the
+    # "efuse blk rev >= v98.56" false-positive reject.
+    "-C", "link-arg=-Tlinkall.x",
+    # defmt's decoder needs the format-string interning table in a
+    # `.defmt` ELF section; `defmt.x` wires it in via a linker script
+    # shipped by the `defmt` crate's build script.
+    "-C", "link-arg=-Tdefmt.x",
 ]
 
 [unstable]

@@ -16,6 +16,11 @@
 // esp-rtos runs a single-core executor on this chip; `Send`-bounded
 // futures aren't meaningful here. The nursery lint fires on every task.
 #![allow(clippy::future_not_send)]
+// Firmware needs unsafe for one narrow reason: a `Sync` promise on a
+// raw-pointer newtype used as an LTO anchor for the ESP-IDF app
+// descriptor. No pointer dereference happens here. The workspace-wide
+// `unsafe_code = deny` rule still applies to the host crates.
+#![allow(unsafe_code)]
 
 extern crate alloc;
 
@@ -29,9 +34,32 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 
+// esp-println registers a `#[defmt::global_logger]` that writes
+// defmt-encoded bytes to the USB-Serial-JTAG peripheral. Importing for
+// side effects only — no init call needed.
+use esp_println as _;
+
+// defmt 1.0 requires a timestamp provider linked into the binary.
+// Embassy's `Instant::now()` reads the timer driver that esp-rtos has
+// already started by the time the first log macro fires.
+defmt::timestamp!("{=u64} ms", embassy_time::Instant::now().as_millis());
+
 // The ESP-IDF second-stage bootloader reads an `app_desc` struct at a
 // fixed offset; the macro emits one in a dedicated linker section.
 esp_bootloader_esp_idf::esp_app_desc!();
+
+// The macro above emits `pub static ESP_APP_DESC` without `#[used]`,
+// so `lto = "fat"` strips it and espflash refuses the image. Anchor
+// its address in a `#[used]` static to keep it in .rodata_desc.appdesc.
+// Raw pointers aren't `Sync` by default; wrap in a newtype and promise
+// the invariant ourselves — the address is never read through this.
+#[repr(transparent)]
+struct AppDescAnchor(*const esp_bootloader_esp_idf::EspAppDesc);
+// SAFETY: the anchor is never dereferenced; its only purpose is to hold
+// a symbol reference so LTO cannot discard ESP_APP_DESC.
+unsafe impl Sync for AppDescAnchor {}
+#[used]
+static _APP_DESC_ANCHOR: AppDescAnchor = AppDescAnchor(core::ptr::addr_of!(ESP_APP_DESC));
 
 /// Panic handler. Halts the core; esp-rtos emits the trace over RTT
 /// before we arrive here (via `--catch-hardfault` on the probe-rs side).
@@ -59,8 +87,6 @@ async fn main(spawner: Spawner) -> ! {
     // the unused-var warning doesn't mask real issues.
     let _ = spawner;
 
-    rtt_target::rtt_init_defmt!();
-
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: HEAP_SIZE);
@@ -73,18 +99,20 @@ async fn main(spawner: Spawner) -> ! {
         env!("CARGO_PKG_VERSION")
     );
 
-    // CoreS3 internal I²C bus: GPIO11 = SDA, GPIO12 = SCL.
+    // CoreS3 internal I²C bus: GPIO11 = SCL, GPIO12 = SDA.
+    // (Confirmed against M5Unified source: `In SCL, SDA = GPIO_NUM_11, GPIO_NUM_12`.)
     // AXP2101 (0x34), AW9523 IO expander, and the touch controller all
     // sit on this bus. 100 kHz is the conservative standard-mode rate
     // that works from cold boot before PLLs are fully settled.
     let i2c_cfg = I2cConfig::default().with_frequency(Rate::from_khz(100));
     let i2c = match I2c::new(peripherals.I2C0, i2c_cfg) {
         Ok(bus) => bus
-            .with_sda(peripherals.GPIO11)
-            .with_scl(peripherals.GPIO12)
+            .with_sda(peripherals.GPIO12)
+            .with_scl(peripherals.GPIO11)
             .into_async(),
         Err(e) => defmt::panic!("I2C0 config rejected: {}", defmt::Debug2Format(&e)),
     };
+    defmt::debug!("I2C0 ready on GPIO12/11 @ 100 kHz");
 
     let mut pmic = Axp2101::new(i2c);
 
