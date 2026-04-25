@@ -174,6 +174,8 @@ pub enum Field {
     UsbPowerPresent,
     /// `entity.perception.audio_rms`
     AudioRms,
+    /// `entity.perception.body_touch`
+    BodyTouch,
 
     // ---- Mind ----
     /// `entity.mind.affect.emotion`
@@ -226,6 +228,7 @@ impl Field {
         Self::BatteryPercent,
         Self::UsbPowerPresent,
         Self::AudioRms,
+        Self::BodyTouch,
         Self::Emotion,
         Self::Autonomy,
         Self::Intent,
@@ -262,7 +265,8 @@ impl Field {
             | Self::AmbientLux
             | Self::BatteryPercent
             | Self::UsbPowerPresent
-            | Self::AudioRms => FieldGroup::Perception,
+            | Self::AudioRms
+            | Self::BodyTouch => FieldGroup::Perception,
             Self::Emotion | Self::Autonomy | Self::Intent | Self::Attention => FieldGroup::Mind,
             Self::ChirpRequest => FieldGroup::Voice,
             Self::TapPending | Self::RemotePending => FieldGroup::Input,
@@ -347,6 +351,7 @@ impl Field {
                 (None, None) => false,
                 _ => true,
             },
+            Self::BodyTouch => before.perception.body_touch != after.perception.body_touch,
             Self::Emotion => before.mind.affect.emotion != after.mind.affect.emotion,
             Self::Autonomy => before.mind.autonomy != after.mind.autonomy,
             Self::Intent => before.mind.intent != after.mind.intent,
@@ -761,7 +766,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            32,
+            33,
             "update Field::ALL when adding variants"
         );
     }

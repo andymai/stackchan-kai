@@ -60,6 +60,6 @@ pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
 pub use mind::{Affect, Attention, Autonomy, Intent, Mind, OverrideSource};
 pub use modifier::Modifier;
 pub use motor::Motor;
-pub use perception::Perception;
+pub use perception::{BodyTouch, Perception};
 pub use skill::{Skill, SkillStatus};
 pub use voice::{ChirpKind, Voice};
