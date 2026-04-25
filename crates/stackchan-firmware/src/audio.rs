@@ -18,19 +18,17 @@
 //! 3. Small settle delay
 //! 4. Bring up AW88298 (doesn't need MCLK but comes up with the pair)
 //! 5. Bring up ES7210 (now responds — MCLK is flowing)
-//! 6. [TODO PR 2C] enter the sample-processing loop: pop DMA samples,
-//!    compute RMS per ~33 ms window, publish via [`AUDIO_RMS_SIGNAL`]
+//! 6. Enter the sample-processing loop: pop DMA samples, compute
+//!    linear RMS over each [`RMS_WINDOW_SAMPLES`]-sample window
+//!    (~33 ms at 16 kHz, one render frame at 30 FPS), normalise
+//!    against full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
 //!
 //! This matches esp-bsp's ordering in `bsp_audio_codec_microphone_init`:
 //! `bsp_audio_init` (spins up I²S + MCLK) runs *before* `es7210_codec_new`.
 //!
-//! ## What this PR lands (PR 2B)
-//!
-//! Steps 1–5 above. The task parks after both codecs are up. Sample
-//! processing + RMS publication land in PR 2C, which replaces the park
-//! with a real loop. [`AUDIO_RMS_SIGNAL`] stays at its default
-//! `AudioRms(0.0)` until then — consumer modifiers see a silent mic,
-//! which produces a closed mouth in the downstream binding.
+//! Failures inside the RMS loop log-and-degrade: a DMA pop error
+//! publishes `AudioRms(0.0)` (silent mic → closed mouth downstream)
+//! and resumes after a short backoff rather than parking the task.
 
 use aw88298::Aw88298;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
@@ -42,6 +40,7 @@ use esp_hal::{
     peripherals::{DMA_CH0, GPIO0, GPIO13, GPIO14, GPIO33, GPIO34, I2S0},
     time::Rate,
 };
+use micromath::F32Ext as _;
 
 use crate::board::SharedI2c;
 
@@ -65,6 +64,27 @@ pub const BIT_DEPTH_BITS: u8 = 16;
 /// 8 KiB is a comfortable middle ground and fits in internal SRAM
 /// (DMA-capable) without impacting the PSRAM framebuffer budget.
 const RX_DMA_BYTES: usize = 8 * 1024;
+
+/// RMS analysis window, in samples. ~33 ms at 16 kHz — matches one
+/// render frame at 30 FPS, so the consumer in `main.rs` sees a fresh
+/// value on (almost) every tick.
+const RMS_WINDOW_SAMPLES: u32 = SAMPLE_RATE_HZ * 33 / 1000;
+
+/// Bytes per `pop` from the circular DMA tail. Sample-aligned (×2 = ×16-bit).
+/// 256 bytes ≈ 8 ms of audio: small enough that we don't sit idle
+/// waiting for a giant chunk, large enough to amortise pop overhead.
+const POP_SCRATCH_BYTES: usize = 256;
+
+/// Diagnostic log cadence inside the RMS loop. One info line every
+/// ~2 s of audio (60 windows × 33 ms ≈ 1.98 s) — enough to eyeball mic
+/// activity over RTT without flooding the link.
+const LOG_EVERY_N_WINDOWS: u32 = 60;
+
+/// `i16::MIN.unsigned_abs()² = 32768² = 2³⁰`. Pre-computed because the
+/// per-window normalisation `(mean_sq / FULL_SCALE_SQ).sqrt()` runs
+/// 30 times a second; the value is exact in f32 (mantissa fits 24
+/// bits, this needs 1).
+const FULL_SCALE_SQ: f32 = 32768.0 * 32768.0;
 
 /// Microphone RMS sample, published per render tick.
 ///
@@ -102,8 +122,8 @@ pub struct AudioPeripherals {
     /// Data-in pin (ES7210 → ESP32-S3). CoreS3 schematic: `GPIO14`.
     pub din: GPIO14<'static>,
     /// Data-out pin (ESP32-S3 → AW88298). CoreS3 schematic: `GPIO13`.
-    /// Held even though this PR doesn't stream TX, so PR 2C/3 can
-    /// wire speaker output without another plumbing change.
+    /// Held for future TX streaming (speaker output) — wiring it through
+    /// now avoids another plumbing change when that lands.
     pub dout: GPIO13<'static>,
     /// I²C device handle for the AW88298.
     pub amp_bus: SharedI2c,
@@ -113,12 +133,13 @@ pub struct AudioPeripherals {
 
 /// Audio task entry point.
 ///
-/// Runs the full bring-up sequence (I²S + codecs), then parks
-/// indefinitely. PR 2C replaces the park with the real RMS-processing
-/// loop.
+/// Runs the full bring-up sequence (I²S + codecs), then enters the
+/// per-window RMS loop that pops DMA samples and publishes
+/// [`AUDIO_RMS_SIGNAL`].
 ///
-/// Failures at any step log-and-degrade: audio goes silent (signal
-/// stays at `AudioRms(0.0)`) but the rest of the avatar keeps running.
+/// Failures during bring-up park the task — audio goes silent
+/// (`AudioRms(0.0)`) but the rest of the avatar keeps running.
+/// Failures inside the loop log-and-resync rather than parking.
 pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
     defmt::info!(
         "audio: I²S0 bring-up — {=u32} Hz / {=u8}-bit mono, MCLK {=u32} Hz",
@@ -166,8 +187,9 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
 
     // Start the RX DMA circular transfer. From this point MCLK / BCLK
     // / LRCK are all clocking on their pins; ES7210 can now answer
-    // I²C. The transfer keeps running for the lifetime of the task.
-    let _rx_transfer = match i2s_rx.read_dma_circular_async(rx_buffer) {
+    // I²C. The transfer keeps running for the lifetime of the task —
+    // the RMS loop below pops samples off its tail.
+    let mut rx_transfer = match i2s_rx.read_dma_circular_async(rx_buffer) {
         Ok(t) => t,
         Err(e) => {
             defmt::error!(
@@ -241,8 +263,115 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         }
     }
 
-    defmt::info!("audio: bring-up complete — I²S RX running, RMS processing TODO (PR 2C)");
-    park_forever().await
+    defmt::info!(
+        "audio: bring-up complete — entering RMS loop ({=u32}-sample / ~33 ms windows)",
+        RMS_WINDOW_SAMPLES,
+    );
+
+    run_rms_loop(&mut rx_transfer).await
+}
+
+/// Per-window RMS computation loop. Pops samples off the running
+/// circular DMA transfer, accumulates `sum(sample²)` for
+/// [`RMS_WINDOW_SAMPLES`] samples, then publishes the normalised RMS
+/// on [`AUDIO_RMS_SIGNAL`].
+///
+/// Pulled out of [`run_audio_task`] mainly to keep that function a
+/// readable bring-up sequence; this fn owns its own state machine
+/// (accumulator, byte-carry, log throttle) and never returns.
+async fn run_rms_loop<BUFFER>(
+    rx_transfer: &mut esp_hal::i2s::master::asynch::I2sReadDmaTransferAsync<'_, BUFFER>,
+) -> ! {
+    let mut scratch = [0u8; POP_SCRATCH_BYTES];
+    // Per-window accumulator. Reset on every publish.
+    let mut sum_sq: f32 = 0.0;
+    let mut count: u32 = 0;
+    // Carries the low byte of an i16 sample whose two bytes straddle a
+    // pop boundary — `chunks_exact(2)` would otherwise drop it.
+    let mut byte_carry: Option<u8> = None;
+    // Wrapping window counter; only used to throttle the diagnostic log.
+    let mut window_no: u32 = 0;
+
+    loop {
+        let n = match rx_transfer.pop(&mut scratch).await {
+            Ok(n) => n,
+            Err(e) => {
+                defmt::warn!(
+                    "audio: DMA pop error ({:?}); publishing silence and resyncing",
+                    defmt::Debug2Format(&e)
+                );
+                AUDIO_RMS_SIGNAL.signal(AudioRms(0.0));
+                sum_sq = 0.0;
+                count = 0;
+                byte_carry = None;
+                Timer::after(Duration::from_millis(10)).await;
+                continue;
+            }
+        };
+        if n == 0 {
+            continue;
+        }
+
+        let mut bytes = &scratch[..n];
+
+        // Reassemble the sample whose low byte was carried over from the
+        // previous pop, if any.
+        if let Some(low) = byte_carry.take() {
+            if let Some((&high, rest)) = bytes.split_first() {
+                accumulate(&mut sum_sq, &mut count, i16::from_le_bytes([low, high]));
+                bytes = rest;
+            } else {
+                byte_carry = Some(low);
+                continue;
+            }
+        }
+
+        let mut chunks = bytes.chunks_exact(2);
+        for pair in &mut chunks {
+            accumulate(
+                &mut sum_sq,
+                &mut count,
+                i16::from_le_bytes([pair[0], pair[1]]),
+            );
+
+            if count >= RMS_WINDOW_SAMPLES {
+                // `count` is bounded by `RMS_WINDOW_SAMPLES` (528 in
+                // the current config) — well below f32's 24-bit mantissa
+                // limit, so the `as f32` cast is exact.
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "count <= RMS_WINDOW_SAMPLES ≪ 2²⁴, exact in f32"
+                )]
+                let mean_sq = sum_sq / (count as f32);
+                // i16::MIN.abs() is one larger than i16::MAX, so a
+                // saturated negative sample can yield rms_norm slightly
+                // above 1.0 (~3e-5). Clamp so consumers can rely on the
+                // documented [0, 1] contract.
+                let rms_norm = (mean_sq / FULL_SCALE_SQ).sqrt().min(1.0);
+                AUDIO_RMS_SIGNAL.signal(AudioRms(rms_norm));
+
+                sum_sq = 0.0;
+                count = 0;
+                window_no = window_no.wrapping_add(1);
+
+                if window_no.is_multiple_of(LOG_EVERY_N_WINDOWS) {
+                    defmt::info!("audio: RMS {=f32} (linear, full-scale = 1.0)", rms_norm);
+                }
+            }
+        }
+
+        // Stash an odd trailing byte for the next pop.
+        byte_carry = chunks.remainder().first().copied();
+    }
+}
+
+/// Add one i16 sample's contribution to the running window accumulator.
+/// `f32::from(i16)` is exact (24-bit mantissa > 16-bit range).
+#[inline]
+fn accumulate(sum_sq: &mut f32, count: &mut u32, sample: i16) {
+    let s = f32::from(sample);
+    *sum_sq += s * s;
+    *count += 1;
 }
 
 /// Infinite sleep for tasks that have nothing else to do. `-> !` so

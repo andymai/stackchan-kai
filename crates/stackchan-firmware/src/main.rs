@@ -227,10 +227,10 @@ async fn render_task(mut display: LcdDisplay) {
         if let Some(ut) = mag::MAG_SIGNAL.try_take() {
             avatar.mag_ut = Some(ut);
         }
-        // Drain the latest mic-RMS sample from the audio task. Stays
-        // at `AudioRms(0.0)` (closed mouth) until PR 2C wires the RX
-        // DMA sample loop — wiring the consumer now so the modifier
-        // is active and tested on real hardware from day one.
+        // Drain the latest mic-RMS sample from the audio task — the
+        // task publishes a fresh `AudioRms(linear)` per ~33 ms window
+        // (one render frame at 30 FPS). `try_take` is non-blocking and
+        // misses are fine: latest-wins matches mic semantics.
         if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
             mouth_open_audio.set_rms(rms.0);
         }
@@ -419,9 +419,8 @@ async fn mag_task(shared_i2c: SharedI2c) -> ! {
 
 /// Audio task. Owns the I²S0 peripheral + DMA, runs the full bring-up
 /// sequence (I²S MCLK first so ES7210 can answer I²C, then both
-/// codecs), and (in PR 2C) will compute mic RMS per render window
-/// publishing to [`audio::AUDIO_RMS_SIGNAL`]. Today parks after
-/// bring-up.
+/// codecs), then computes mic RMS per ~33 ms window and publishes on
+/// [`audio::AUDIO_RMS_SIGNAL`].
 #[embassy_executor::task]
 async fn audio_task(peripherals: audio::AudioPeripherals) -> ! {
     audio::run_audio_task(peripherals).await
