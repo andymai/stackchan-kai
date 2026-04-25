@@ -43,6 +43,12 @@ const REG_IRQ_STATUS_1: u8 = 0x49;
 /// estimate. Reads outside that range only happen during transient
 /// chip warm-up and are clamped by [`Axp2101::read_battery_percent`].
 const REG_BAT_GAUGE: u8 = 0xA4;
+/// `PMU_STATUS_1` register address (`0x00`). Bit 5 = `VBUSGD`, set
+/// when the chip detects a valid VBUS voltage on the USB-C input.
+const REG_PMU_STATUS_1: u8 = 0x00;
+/// Bit mask for `VBUSGD` inside `PMU_STATUS_1`. `1` = USB power good
+/// (chip can be charging or simply running off USB).
+const VBUS_GOOD_BIT: u8 = 1 << 5;
 
 /// Maximum value the AXP2101 battery-gauge register reports. Anything
 /// higher is read-back noise during ADC settle and is saturated by
@@ -243,6 +249,22 @@ where
         Ok(true)
     }
 
+    /// Read whether the AXP2101 sees valid VBUS (USB) input voltage.
+    ///
+    /// Returns `true` when the chip's `VBUSGD` flag in `PMU_STATUS_1`
+    /// is set. The flag asserts whenever there's enough voltage on the
+    /// USB-C input for the chip to consider it a valid source —
+    /// independent of whether the unit is actively charging the
+    /// battery, just running off USB, or both.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::I2c`] on bus errors.
+    pub async fn read_usb_power_good(&mut self) -> Result<bool, Error<B::Error>> {
+        let status = self.read_reg(REG_PMU_STATUS_1).await?;
+        Ok(status & VBUS_GOOD_BIT != 0)
+    }
+
     /// Read the AXP2101's battery state-of-charge estimate, in percent.
     ///
     /// Returns a value in <code>0..=[BATTERY_PERCENT_MAX]</code>. The
@@ -432,5 +454,32 @@ mod tests {
         let mut pmic = Axp2101::new(bus);
         let pct = block_on(pmic.read_battery_percent()).unwrap();
         assert_eq!(pct, 0);
+    }
+
+    #[test]
+    fn read_usb_power_good_true_when_vbus_bit_set() {
+        // PMU_STATUS_1 with VBUSGD bit set + some unrelated bits.
+        let bus = MockI2c::new().with_register(REG_PMU_STATUS_1, VBUS_GOOD_BIT | 0x83);
+        let mut pmic = Axp2101::new(bus);
+        let usb_good = block_on(pmic.read_usb_power_good()).unwrap();
+        assert!(usb_good);
+    }
+
+    #[test]
+    fn read_usb_power_good_false_when_vbus_bit_clear() {
+        // PMU_STATUS_1 with everything except VBUSGD set — the read
+        // must isolate the right bit, not key off any-bit-set.
+        let bus = MockI2c::new().with_register(REG_PMU_STATUS_1, !VBUS_GOOD_BIT);
+        let mut pmic = Axp2101::new(bus);
+        let usb_good = block_on(pmic.read_usb_power_good()).unwrap();
+        assert!(!usb_good);
+    }
+
+    #[test]
+    fn read_usb_power_good_zero_register_returns_false() {
+        let bus = MockI2c::new().with_register(REG_PMU_STATUS_1, 0);
+        let mut pmic = Axp2101::new(bus);
+        let usb_good = block_on(pmic.read_usb_power_good()).unwrap();
+        assert!(!usb_good);
     }
 }

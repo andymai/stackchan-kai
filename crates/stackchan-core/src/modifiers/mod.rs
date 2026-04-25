@@ -75,7 +75,14 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
-pub use low_battery::{LOW_BATTERY_HOLD_MS, LOW_BATTERY_THRESHOLD_PERCENT, LowBatteryEmotion};
+#[allow(
+    deprecated,
+    reason = "re-exporting deprecated alias for downstream compat"
+)]
+pub use low_battery::LOW_BATTERY_THRESHOLD_PERCENT;
+pub use low_battery::{
+    LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT, LOW_BATTERY_HOLD_MS, LowBatteryEmotion,
+};
 pub use mouth_open_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthOpenAudio,
 };

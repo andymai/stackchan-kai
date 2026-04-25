@@ -3,16 +3,31 @@
 //!
 //! ## Detection shape
 //!
-//! Reads `avatar.battery_percent` each tick. Single-threshold check
-//! (no hysteresis); the AXP2101's internal `SoC` estimate is already
-//! smoothed and the threshold is conservative enough that bouncing
-//! across the boundary should be rare in practice. If hardware
-//! observation shows flicker, swap to a two-threshold variant
-//! mirroring [`super::AmbientSleepy`].
+//! Reads `avatar.battery_percent` each tick. Two-threshold hysteresis
+//! mirrors [`super::AmbientSleepy`]:
+//!
+//! - **Enter low:** percent below [`LOW_BATTERY_ENTER_PERCENT`] while
+//!   not already low.
+//! - **Exit low:** percent above [`LOW_BATTERY_EXIT_PERCENT`] while
+//!   currently low. Clears this modifier's own state so autonomy
+//!   resumes immediately on the next tick.
+//! - Between the two thresholds, the modifier holds its current
+//!   state — preventing flicker if the chip's `SoC` estimate is
+//!   noisy near the trigger.
 //!
 //! Unknown battery (`battery_percent = None`, i.e. the power task
 //! hasn't published a reading yet) is treated as "no information"
-//! and never triggers the override.
+//! and never transitions either way.
+//!
+//! ## USB-power suppression
+//!
+//! Even when the percent is below the enter threshold, the modifier
+//! stands down if `avatar.usb_power_present == Some(true)`. The
+//! reasoning: the unit is charging (or running off USB), so going
+//! "sleepy" is the wrong UX — it should look attentive while plugged
+//! in even with a depleted battery. Unknown USB state
+//! (`usb_power_present = None`) is treated as not-charging, so a
+//! pre-first-read tick still allows the override.
 //!
 //! ## Coordination with the other emotion modifiers
 //!
@@ -24,9 +39,9 @@
 //!
 //! When the modifier fires, it sets a [`LOW_BATTERY_HOLD_MS`] hold.
 //! Subsequent ticks short-circuit on the active hold; once it expires
-//! and the battery is still low, the next tick re-fires and sets a
-//! fresh hold. So Sleepy effectively rolls forward in
-//! [`LOW_BATTERY_HOLD_MS`]-sized chunks, mirroring `AmbientSleepy`.
+//! and the battery is still low (and not on USB), the next tick
+//! re-fires and sets a fresh hold. So Sleepy effectively rolls forward
+//! in [`LOW_BATTERY_HOLD_MS`]-sized chunks, mirroring `AmbientSleepy`.
 //!
 //! [`Avatar::manual_until`]: crate::avatar::Avatar::manual_until
 
@@ -40,7 +55,27 @@ use crate::emotion::Emotion;
 /// 15% is "still has time to find a charger but should stop being cute
 /// about it" — chosen so the avatar's behaviour change is a usable
 /// hint that the unit needs power, not a panic state.
-pub const LOW_BATTERY_THRESHOLD_PERCENT: u8 = 15;
+pub const LOW_BATTERY_ENTER_PERCENT: u8 = 15;
+
+/// Battery percent above which the modifier exits low-battery state.
+///
+/// 20% is the hysteresis upper bound: charging back to ≥ 20% releases
+/// the override. The 5-percentage-point gap is wide enough to absorb
+/// the AXP2101's typical reporting noise (1–2% LSB jitter under the
+/// CoreS3's discharge curve) without flicker.
+pub const LOW_BATTERY_EXIT_PERCENT: u8 = 20;
+
+/// Backwards-compat alias for the old single-threshold const.
+///
+/// Kept so downstream code that imported
+/// [`LOW_BATTERY_THRESHOLD_PERCENT`] (e.g. firmware's threshold-
+/// crossing detector for the alert beep) keeps compiling; new code
+/// should use the explicit `ENTER` / `EXIT` consts.
+#[deprecated(
+    since = "0.6.0",
+    note = "use LOW_BATTERY_ENTER_PERCENT or LOW_BATTERY_EXIT_PERCENT"
+)]
+pub const LOW_BATTERY_THRESHOLD_PERCENT: u8 = LOW_BATTERY_ENTER_PERCENT;
 
 /// How long the low-battery hold pins Sleepy once set, in ms.
 ///
@@ -51,30 +86,54 @@ pub const LOW_BATTERY_THRESHOLD_PERCENT: u8 = 15;
 pub const LOW_BATTERY_HOLD_MS: u64 = 5_000;
 
 /// Modifier that watches [`Avatar::battery_percent`] and forces
-/// `Emotion::Sleepy` below a threshold.
+/// `Emotion::Sleepy` below a threshold, with hysteresis and USB-power
+/// suppression.
 ///
-/// Stateless — purely reads the current battery field and writes
-/// emotion. The threshold is configurable per-instance so apps can
-/// dial the trigger up or down without recompiling the core crate.
+/// Thresholds are configurable per-instance so apps can dial them up
+/// or down without recompiling the core crate.
 #[derive(Debug, Clone, Copy)]
 pub struct LowBatteryEmotion {
-    /// Trigger threshold; sleepy fires when `battery_percent < threshold`.
-    pub threshold_percent: u8,
+    /// Lower threshold (`<`): transitions out of healthy into low.
+    pub enter_threshold_percent: u8,
+    /// Upper threshold (`>`): transitions out of low back into healthy.
+    pub exit_threshold_percent: u8,
+    /// Hysteresis state: `true` once we've crossed below the enter
+    /// threshold, `false` once we've crossed back above the exit
+    /// threshold. Drives the actual override decision each tick.
+    is_low: bool,
 }
 
 impl LowBatteryEmotion {
-    /// Construct with the default threshold ([`LOW_BATTERY_THRESHOLD_PERCENT`]).
+    /// Construct with the default thresholds
+    /// ([`LOW_BATTERY_ENTER_PERCENT`] / [`LOW_BATTERY_EXIT_PERCENT`]).
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            threshold_percent: LOW_BATTERY_THRESHOLD_PERCENT,
+            enter_threshold_percent: LOW_BATTERY_ENTER_PERCENT,
+            exit_threshold_percent: LOW_BATTERY_EXIT_PERCENT,
+            is_low: false,
         }
     }
 
-    /// Construct with a custom threshold.
+    /// Construct with custom thresholds. `exit_threshold_percent`
+    /// should normally be greater than `enter_threshold_percent` for
+    /// real hysteresis; the modifier doesn't enforce this so unusual
+    /// configurations (single-threshold by setting them equal) work
+    /// without ceremony.
     #[must_use]
-    pub const fn with_threshold(threshold_percent: u8) -> Self {
-        Self { threshold_percent }
+    pub const fn with_thresholds(enter_threshold_percent: u8, exit_threshold_percent: u8) -> Self {
+        Self {
+            enter_threshold_percent,
+            exit_threshold_percent,
+            is_low: false,
+        }
+    }
+
+    /// Exposed for tests: whether the modifier currently believes the
+    /// battery is in the low state.
+    #[cfg(test)]
+    const fn is_low(self) -> bool {
+        self.is_low
     }
 }
 
@@ -91,8 +150,22 @@ impl Modifier for LowBatteryEmotion {
             return;
         };
 
-        if percent >= self.threshold_percent {
-            // Battery healthy; defer to the autonomy stack.
+        // Hysteresis: update our internal "is_low" belief.
+        if !self.is_low && percent < self.enter_threshold_percent {
+            self.is_low = true;
+        } else if self.is_low && percent > self.exit_threshold_percent {
+            self.is_low = false;
+        }
+
+        if !self.is_low {
+            return;
+        }
+
+        // USB power present — the unit is charging or running off USB.
+        // Going "sleepy" while plugged in is the wrong UX; suppress.
+        // Unknown USB state (None) falls through and lets the override
+        // fire, so a still-booting power task doesn't block the cue.
+        if avatar.usb_power_present == Some(true) {
             return;
         }
 
@@ -201,25 +274,93 @@ mod tests {
     }
 
     #[test]
-    fn threshold_boundary_at_exactly_threshold_does_not_fire() {
-        // The check is `percent < threshold`, so exactly-at-threshold
-        // is considered healthy. Pin this so it doesn't drift.
+    fn enter_threshold_boundary_at_exactly_threshold_does_not_fire() {
+        // The check is `percent < enter_threshold`, so
+        // exactly-at-threshold is considered healthy.
         let mut modifier = LowBatteryEmotion::new();
         let mut avatar = Avatar {
-            battery_percent: Some(LOW_BATTERY_THRESHOLD_PERCENT),
+            battery_percent: Some(LOW_BATTERY_ENTER_PERCENT),
             emotion: Emotion::Happy,
             ..Avatar::default()
         };
         modifier.update(&mut avatar, Instant::ZERO);
         assert_eq!(avatar.emotion, Emotion::Happy);
+        assert!(!modifier.is_low());
+    }
+
+    #[test]
+    fn enter_threshold_boundary_one_below_fires() {
+        let mut modifier = LowBatteryEmotion::new();
+        let mut avatar = Avatar {
+            battery_percent: Some(LOW_BATTERY_ENTER_PERCENT - 1),
+            ..Avatar::default()
+        };
+        modifier.update(&mut avatar, Instant::ZERO);
+        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        assert!(modifier.is_low());
+    }
+
+    #[test]
+    fn hysteresis_holds_low_state_within_band() {
+        // Once below the enter threshold, the modifier stays low until
+        // the percent crosses *above* the exit threshold — even if it
+        // climbs above the enter threshold along the way.
+        let mut modifier = LowBatteryEmotion::new();
+        let mut avatar = Avatar {
+            battery_percent: Some(10),
+            ..Avatar::default()
+        };
+        modifier.update(&mut avatar, Instant::from_millis(0));
+        assert!(modifier.is_low());
+
+        // Climb to mid-band: still low.
+        avatar.battery_percent = Some(17);
+        modifier.update(&mut avatar, Instant::from_millis(LOW_BATTERY_HOLD_MS + 1));
+        assert!(modifier.is_low());
+
+        // Climb just above exit threshold: still low (need *above*, not at).
+        avatar.battery_percent = Some(LOW_BATTERY_EXIT_PERCENT);
+        modifier.update(
+            &mut avatar,
+            Instant::from_millis(2 * LOW_BATTERY_HOLD_MS + 1),
+        );
+        assert!(modifier.is_low());
+
+        // Climb past exit: clears.
+        avatar.battery_percent = Some(LOW_BATTERY_EXIT_PERCENT + 1);
+        modifier.update(
+            &mut avatar,
+            Instant::from_millis(3 * LOW_BATTERY_HOLD_MS + 1),
+        );
+        assert!(!modifier.is_low());
+    }
+
+    #[test]
+    fn usb_power_suppresses_low_battery_override() {
+        // Battery is below threshold but USB is plugged in — modifier
+        // tracks "is_low" but does not write Sleepy.
+        let mut modifier = LowBatteryEmotion::new();
+        let mut avatar = Avatar {
+            battery_percent: Some(5),
+            usb_power_present: Some(true),
+            emotion: Emotion::Happy,
+            ..Avatar::default()
+        };
+        modifier.update(&mut avatar, Instant::ZERO);
+        assert!(modifier.is_low());
+        assert_eq!(avatar.emotion, Emotion::Happy);
         assert!(avatar.manual_until.is_none());
     }
 
     #[test]
-    fn threshold_boundary_one_below_fires() {
+    fn unknown_usb_state_lets_override_fire() {
+        // `usb_power_present = None` (pre-first-read) shouldn't block
+        // the modifier; we'd rather show low-battery once and correct
+        // later than miss the cue.
         let mut modifier = LowBatteryEmotion::new();
         let mut avatar = Avatar {
-            battery_percent: Some(LOW_BATTERY_THRESHOLD_PERCENT - 1),
+            battery_percent: Some(5),
+            usb_power_present: None,
             ..Avatar::default()
         };
         modifier.update(&mut avatar, Instant::ZERO);
@@ -227,14 +368,48 @@ mod tests {
     }
 
     #[test]
-    fn custom_threshold_takes_effect() {
-        let mut modifier = LowBatteryEmotion::with_threshold(50);
+    fn unplugging_usb_releases_suppression() {
+        // Plugged in, low battery → no override.
+        // Unplug while still low → override fires on the next tick.
+        let mut modifier = LowBatteryEmotion::new();
+        let mut avatar = Avatar {
+            battery_percent: Some(5),
+            usb_power_present: Some(true),
+            ..Avatar::default()
+        };
+        modifier.update(&mut avatar, Instant::from_millis(0));
+        assert_eq!(avatar.emotion, Emotion::Neutral);
+        assert!(modifier.is_low());
+
+        // Unplug.
+        avatar.usb_power_present = Some(false);
+        modifier.update(&mut avatar, Instant::from_millis(1_000));
+        assert_eq!(avatar.emotion, Emotion::Sleepy);
+    }
+
+    #[test]
+    fn custom_thresholds_take_effect() {
+        let mut modifier = LowBatteryEmotion::with_thresholds(50, 60);
         let mut avatar = Avatar {
             battery_percent: Some(40),
             ..Avatar::default()
         };
         modifier.update(&mut avatar, Instant::ZERO);
         assert_eq!(avatar.emotion, Emotion::Sleepy);
+        assert!(modifier.is_low());
+
+        // Climb to between custom enter/exit: still low.
+        avatar.battery_percent = Some(55);
+        modifier.update(&mut avatar, Instant::from_millis(LOW_BATTERY_HOLD_MS + 1));
+        assert!(modifier.is_low());
+
+        // Climb past custom exit: clears.
+        avatar.battery_percent = Some(61);
+        modifier.update(
+            &mut avatar,
+            Instant::from_millis(2 * LOW_BATTERY_HOLD_MS + 1),
+        );
+        assert!(!modifier.is_low());
     }
 
     #[test]
@@ -265,5 +440,39 @@ mod tests {
         modifier.update(&mut avatar, later);
         assert_eq!(avatar.manual_until, Some(later + LOW_BATTERY_HOLD_MS));
         assert!(avatar.manual_until > first_deadline);
+    }
+
+    #[test]
+    fn hysteresis_band_walk_does_not_flicker() {
+        // Walking up and down inside the dead-band should not cause
+        // emotion thrash. Specifically: enter low, climb into band,
+        // dip back below enter, climb again — emotion stays Sleepy
+        // throughout (after the initial trigger).
+        let mut modifier = LowBatteryEmotion::new();
+        let mut avatar = Avatar {
+            battery_percent: Some(10),
+            ..Avatar::default()
+        };
+
+        // Step the time past each hold window so the modifier
+        // re-fires; otherwise the manual_until short-circuit
+        // would mask any real change of behaviour.
+        let mut t = 1_000u64;
+        let step = LOW_BATTERY_HOLD_MS + 1;
+
+        for percent in [10, 17, 14, 18, 13, 19, 12] {
+            avatar.battery_percent = Some(percent);
+            modifier.update(&mut avatar, Instant::from_millis(t));
+            assert!(
+                modifier.is_low(),
+                "percent={percent} flipped is_low off mid-band"
+            );
+            assert_eq!(
+                avatar.emotion,
+                Emotion::Sleepy,
+                "percent={percent} drove emotion off Sleepy"
+            );
+            t += step;
+        }
     }
 }

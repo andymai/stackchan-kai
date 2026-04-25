@@ -62,8 +62,8 @@ use stackchan_core::{
     Avatar, Clock, HeadDriver, LedFrame, Modifier,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, LOW_BATTERY_THRESHOLD_PERCENT, LowBatteryEmotion, MouthOpenAudio,
-        PickupReaction, RemoteCommand,
+        IdleDrift, IdleSway, LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT,
+        LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand,
     },
     render_leds,
 };
@@ -187,12 +187,13 @@ async fn render_task(mut display: LcdDisplay) {
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut last_rendered: Option<Avatar> = None;
     let mut led_frame = LedFrame::default();
-    // Tracks the previous battery-percent reading so we can detect a
-    // *downward* crossing of `LOW_BATTERY_THRESHOLD_PERCENT` and fire
-    // the low-battery alert clip exactly once per crossing event.
-    // `None` until the first reading; the boot reading itself never
-    // counts as a crossing.
-    let mut last_battery_percent: Option<u8> = None;
+    // Hysteresis state for the low-battery alert beep. Mirrors the
+    // emotion-side `LowBatteryEmotion` modifier: the beep fires once
+    // when the battery transitions from healthy to low, and re-arms
+    // only when the percent climbs back above the *exit* threshold.
+    // Starts `false`; the boot reading itself only fires the beep if
+    // we boot already below the enter threshold (and unplugged).
+    let mut alert_armed_for_low: bool = false;
 
     // Pre-compute the blit rect once; it never changes.
     let canvas = Rectangle::new(EgPoint::zero(), Size::new(FB_WIDTH, FB_HEIGHT));
@@ -240,18 +241,22 @@ async fn render_task(mut display: LcdDisplay) {
         if let Some(ut) = mag::MAG_SIGNAL.try_take() {
             avatar.mag_ut = Some(ut);
         }
-        // Drain the latest battery-percent reading from the AXP2101
-        // power task (1 Hz publish rate). `LowBatteryEmotion` reads
-        // `avatar.battery_percent` to decide whether to force Sleepy.
-        // A *downward* crossing of the threshold (e.g. 16% → 14%)
-        // also fires the low-battery alert clip once per crossing —
-        // the audible cue complements the silent emotion change.
-        if let Some(percent) = power::BATTERY_PERCENT_SIGNAL.try_take() {
-            avatar.battery_percent = Some(percent);
-            if let Some(prev) = last_battery_percent
-                && prev >= LOW_BATTERY_THRESHOLD_PERCENT
-                && percent < LOW_BATTERY_THRESHOLD_PERCENT
-            {
+        // Drain the latest power status from the AXP2101 task (1 Hz).
+        // `LowBatteryEmotion` reads `avatar.battery_percent` and
+        // `avatar.usb_power_present` for hysteresis + USB suppression.
+        // The alert beep mirrors the modifier's hysteresis: arm on a
+        // downward enter-threshold crossing (and only when not on USB
+        // power), re-arm only after climbing past the exit threshold.
+        if let Some(status) = power::POWER_STATUS_SIGNAL.try_take() {
+            avatar.battery_percent = Some(status.battery_percent);
+            avatar.usb_power_present = Some(status.usb_power);
+
+            if alert_armed_for_low {
+                if status.battery_percent > LOW_BATTERY_EXIT_PERCENT {
+                    alert_armed_for_low = false;
+                }
+            } else if status.battery_percent < LOW_BATTERY_ENTER_PERCENT && !status.usb_power {
+                alert_armed_for_low = true;
                 if let Err(e) = audio::try_enqueue_clip(audio::LOW_BATTERY_ALERT) {
                     defmt::warn!(
                         "audio: low-battery alert dropped, queue full ({:?})",
@@ -259,14 +264,12 @@ async fn render_task(mut display: LcdDisplay) {
                     );
                 } else {
                     defmt::info!(
-                        "audio: low-battery alert enqueued ({=u8}% → {=u8}%, threshold {=u8}%)",
-                        prev,
-                        percent,
-                        LOW_BATTERY_THRESHOLD_PERCENT,
+                        "audio: low-battery alert enqueued ({=u8}%, enter < {=u8}%)",
+                        status.battery_percent,
+                        LOW_BATTERY_ENTER_PERCENT,
                     );
                 }
             }
-            last_battery_percent = Some(percent);
         }
         // Drain the latest mic-RMS sample from the audio task — the
         // task publishes a fresh `AudioRms(linear)` per ~33 ms window

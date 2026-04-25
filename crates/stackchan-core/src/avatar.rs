@@ -247,6 +247,15 @@ pub struct Avatar {
     /// [`Avatar::frame_eq`] — modifiers translate the percentage into
     /// visible state via `Avatar::emotion`, never directly into pixels.
     pub battery_percent: Option<u8>,
+    /// Whether the AXP2101 reports valid USB power on its VBUS input,
+    /// or `None` before the first successful read. Written by the
+    /// firmware power task. `Some(true)` indicates the unit is
+    /// charging or running off USB; consumers (e.g.
+    /// [`super::modifiers::LowBatteryEmotion`]) can suppress
+    /// low-battery behaviour while plugged in. Excluded from
+    /// [`Avatar::frame_eq`] for the same reasons as
+    /// [`Avatar::battery_percent`].
+    pub usb_power_present: Option<bool>,
 }
 
 impl Avatar {
@@ -325,6 +334,8 @@ impl Default for Avatar {
             mag_ut: None,
             // No battery reading until the AXP2101 task publishes one.
             battery_percent: None,
+            // No USB-power reading until the AXP2101 task publishes one.
+            usb_power_present: None,
         }
     }
 }
