@@ -27,7 +27,7 @@ Cargo workspace with 19 crates, grouped by purpose:
 - `crates/ltr553` — LTR-553 ambient-light + proximity sensor.
 - `crates/py32` — PY32 co-processor (servo-power gate, WS2812 LED ring).
 - `crates/scservo` — Feetech SCServo half-duplex serial driver (UART1).
-- `crates/si12t` / `crates/st25r3916` — Scaffolded only.
+- `crates/si12t` — `Si12T` 3-zone capacitive touch (back-of-head body pads), I²C, polled at 50 ms.
 
 **Firmware**
 - `crates/stackchan-firmware` — Binary crate. `no_std` + `alloc`. Embassy executor on CoreS3.

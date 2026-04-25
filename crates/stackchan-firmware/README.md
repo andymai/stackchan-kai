@@ -118,5 +118,5 @@ port is `/dev/ttyACM1`; override with `just PORT=/dev/ttyACM0 flash`.
 ## Integration
 
 - **Consumes `stackchan-core`** for every domain type (`Avatar`, `Modifier`, `Pose`, `Clock`, `HeadDriver`, `LedFrame`)
-- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, es7210, ft6336u, ir-nec, ltr553, py32, scservo. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (boot greeting + silence). bmm150 is bench-only (`examples/mag_bench.rs`) until a real consumer modifier is built. Scaffolded-only: gc0308, si12t, st25r3916
+- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, es7210, ft6336u, ir-nec, ltr553, py32, scservo, si12t. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (boot greeting + silence). Si12T 3-zone body-touch publishes via `src/body_touch.rs`. bmm150 is bench-only (`examples/mag_bench.rs`) until a real consumer modifier is built. Scaffolded-only: gc0308.
 - **HIL via probe-rs + defmt-test** (planned) — CI runs host tests today; on-device integration tests run on a flash-and-capture rig
