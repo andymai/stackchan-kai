@@ -57,6 +57,15 @@ check:
 doc-drift:
     @bash scripts/check-doc-drift.sh {{ if env_var_or_default("STRICT", "") == "1" { "--strict" } else { "" } }}
 
+# Boot-log regression guard — diff /tmp/scfmr.log (last `just fmr` /
+# `just fmr-agent` flash) against `tests/golden/boot.txt`. Reports
+# missing golden lines (regression) and unexpected WARN/ERROR lines
+# (new noise) with known-noise filtered. Run after every flash to catch
+# silent regressions. Pass `--update` to rewrite the golden from the
+# current live log when boot output changes intentionally.
+verify-boot *args:
+    @bash scripts/check-boot.sh {{args}}
+
 # Everything the CI host job runs (adds doc-lint + cargo-deny).
 ci: check
     cargo deny check

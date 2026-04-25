@@ -1,0 +1,47 @@
+# Golden boot log — expected info-line set after a clean firmware boot.
+#
+# This file is the canonical "what does a healthy boot look like" record.
+# `scripts/check-boot.sh` greps the live log (default /tmp/scfmr.log)
+# for each line below and reports any line that didn't appear, plus any
+# unexpected `WARN`/`ERROR` lines. Timestamps are stripped before
+# comparison, so timing variation between flashes doesn't trigger drift.
+#
+# Lines beginning with `#` are comments. Each non-comment line is a
+# substring match — the live log line must contain the golden text
+# verbatim. Use this for boot-up signals only; don't try to capture
+# steady-state log lines (head: cmd= etc.) here.
+#
+# Update this file when:
+#   - A new task spawns at boot and prints a "task: {period} ms tick" line
+#   - A new chip-detection signal is added (e.g. "FOO: detected at 0xNN")
+#   - A bring-up implementation step graduates from `debug` to `info`
+#
+# When boot output changes deliberately, run:
+#   just verify-boot --update   (writes whatever is in /tmp/scfmr.log)
+# Review the diff carefully before committing.
+
+stackchan-firmware v
+AXP2101: CoreS3 power defaults applied
+AW9523: CoreS3 defaults applied
+PY32: servo power enabled
+SCServo bus ready on UART1
+SCServo[1]: present
+SCServo[2]: present
+boot-nod: yes nod start
+boot-nod: complete
+ILI9342C ready — spawning render task
+idle drift seed:
+head task:
+render task:
+boot @
+boot complete — idle heartbeat
+FT6336U: vendor ID
+touch task:
+LTR-553: init complete
+BMI270: detected at
+audio: ES7210 ready
+audio: AW88298 un-muted — speaker live
+audio: bring-up complete
+camera: GC0308 SCCB init complete
+camera: PSRAM buffers allocated
+LED ring: boot fade complete
