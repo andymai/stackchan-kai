@@ -72,8 +72,9 @@ ci: check
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --exclude stackchan-firmware --all-features
 
 # MSRV check — matches the `msrv` CI job. Requires `rustup toolchain install 1.88`.
+# Default features only — optional dev-tool features (e.g. `viz`) aren't MSRV-gated.
 msrv:
-    cargo +1.88 build --workspace --exclude stackchan-firmware --all-features
+    cargo +1.88 build --workspace --exclude stackchan-firmware
 
 # ----- Firmware (requires `source ~/export-esp.sh` first) ------------------
 
