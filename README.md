@@ -59,9 +59,10 @@ for ms in (0..10_000).step_by(33) {
 
 Each `Modifier` declares a phase (`Affect`, `Expression`, `Motion`,
 `Audio`) and a priority; the Director sorts once and ticks per frame.
-The 14 stock modifiers cover blinking, breathing, idle drift, head
-sway, emotion transitions, touch / IR / voice / ambient / battery
-reactions, and audio-driven mouth motion. See the
+Stock modifiers cover blinking, breathing, idle drift, head sway,
+emotion transitions, touch / IR / voice / ambient / battery reactions,
+attention-driven head tilt, and audio-driven mouth motion. A parallel
+`Skill` surface carries predicate-fired capabilities. See the
 [architecture overview](https://andymai.github.io/stackchan-kai/architecture)
 and [modifier authoring guide](https://andymai.github.io/stackchan-kai/modifiers)
 for the details.

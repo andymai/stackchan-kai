@@ -52,9 +52,12 @@ pub const SKILL_CAP: usize = 16;
 /// - `Affect` (7): `EmotionTouch`, `RemoteCommand`, `PickupReaction`,
 ///   `WakeOnVoice`, `AmbientSleepy`, `LowBatteryEmotion`, `EmotionCycle`
 /// - `Expression` (4): `EmotionStyle`, Blink, Breath, `IdleDrift`
-/// - `Motion` (2): `IdleSway`, `EmotionHead`
+/// - `Motion` (3): `IdleSway`, `EmotionHead`, `ListenHead`
 /// - `Audio` (1): `MouthOpenAudio`
 /// - `Perception` / `Cognition` / `Speech` / `Output`: empty
+///
+/// Skills (1): `LookAtSound` (sets `mind.attention = Listening` on
+/// sustained `perception.audio_rms`).
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {

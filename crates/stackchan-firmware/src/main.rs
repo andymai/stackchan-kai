@@ -66,10 +66,11 @@ use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand,
-        WakeOnVoice,
+        IdleDrift, IdleSway, ListenHead, LowBatteryEmotion, MouthOpenAudio, PickupReaction,
+        RemoteCommand, WakeOnVoice,
     },
     render_leds,
+    skills::LookAtSound,
     voice::ChirpKind,
 };
 use static_cell::StaticCell;
@@ -146,11 +147,14 @@ type LcdDisplay = mipidsi::Display<
 ///
 /// Modifier order is the canonical stackchan-core stack:
 /// `EmotionTouch` → `EmotionCycle` → `EmotionStyle` → `Blink` →
-/// `Breath` → `IdleDrift` → `IdleSway` → `EmotionHead`. `EmotionTouch`
-/// runs first so a tap queued from the touch task becomes the active
-/// emotion before `EmotionCycle` checks the `manual_until` gate.
-/// `IdleSway` writes the base `avatar.head_pose` (slow wander);
-/// `EmotionHead` adds an emotion-keyed bias on top (layered compose).
+/// `Breath` → `IdleDrift` → `IdleSway` → `EmotionHead` →
+/// `ListenHead`. `EmotionTouch` runs first so a tap queued from the
+/// touch task becomes the active emotion before `EmotionCycle` checks
+/// the `manual_until` gate. `IdleSway` writes the base
+/// `avatar.head_pose` (slow wander); `EmotionHead` adds an
+/// emotion-keyed bias on top; `ListenHead` adds an upward listening
+/// tilt when the `LookAtSound` skill (registered separately) sets
+/// `mind.attention = Listening`.
 /// The final pose is published to the 50 Hz head task via
 /// [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when no
 /// pixel-affecting modifier changed anything — pose updates alone never
@@ -190,10 +194,13 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut drift = IdleDrift::with_seed(drift_seed);
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
+    let mut listen_head = ListenHead::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
+    let mut look_at_sound = LookAtSound::new();
     let mut last_rendered: Option<Face> = None;
 
-    // Build the Director and register the canonical 14-modifier stack.
+    // Build the Director and register the canonical modifier stack
+    // plus skills (via add_skill).
     // Phase ordering (Affect → Expression → Motion → Audio) is enforced
     // by `ModifierMeta::phase`; intra-phase ordering is registration
     // order modulated by per-modifier `priority`. See AGENTS.md and
@@ -223,8 +230,14 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .add_modifier(&mut emotion_head)
         .expect("registry full");
     director
+        .add_modifier(&mut listen_head)
+        .expect("registry full");
+    director
         .add_modifier(&mut mouth_open_audio)
         .expect("registry full");
+    director
+        .add_skill(&mut look_at_sound)
+        .expect("skill registry full");
     let mut led_frame = LedFrame::default();
     // Camera-mode state. The button task's long-press handler is the
     // sole producer of `CAMERA_MODE_SIGNAL`; we mirror it locally so
@@ -243,7 +256,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + MouthOpenAudio",
+        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + MouthOpenAudio + LookAtSound[skill]",
         FRAME_PERIOD_MS
     );
 
