@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -1708,7 +1708,7 @@ dependencies = [
 
 [[package]]
 name = "tracker"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "stackchan-core",
 ]
