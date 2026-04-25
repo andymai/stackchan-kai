@@ -23,9 +23,9 @@ crates/
 ├── stackchan-sim    # host simulator (FakeClock, Framebuffer, viz binary)
 ├── stackchan-firmware  # CoreS3 firmware binary (embassy + esp-rtos)
 ├── tracker          # block-grid motion tracker for the camera path
-└── 14 driver crates # axp2101, aw9523, aw88298, bm8563, bmi270, bmm150,
+└── driver crates    # axp2101, aw9523, aw88298, bm8563, bmi270, bmm150,
                     # es7210, ft6336u, gc0308, ir-nec, ltr553, py32,
-                    # scservo, si12t, st25r3916
+                    # scservo, si12t
 ```
 
 See [STABILITY.md](https://github.com/andymai/stackchan-kai/blob/main/STABILITY.md)

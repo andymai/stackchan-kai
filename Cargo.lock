@@ -4129,13 +4129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "st25r3916"
-version = "0.3.0"
-dependencies = [
- "embedded-hal-async",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

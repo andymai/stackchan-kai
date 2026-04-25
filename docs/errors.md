@@ -96,14 +96,7 @@ Half-duplex serial servo bus.
 - `BroadcastNotAllowed` — caller used `BROADCAST_ID` on an operation requiring a response.
 
 ### `si12t::Error<E>`
-Scaffolded only.
-- `I2c(E)` — bus error.
-- `BadIdentity` — placeholder; register surface not filled in.
-
-### `st25r3916::Error<E>`
-NFC reader IC, scaffolded.
-- `Spi(E)` — bus error.
-- `BadIcIdentity(u8)` — `IC_IDENTITY` mismatch.
+- `I2c(E)` — bus error during init or `OUTPUT1` read.
 
 ### `ir-nec`
 No `Error` enum — decoder returns `Option<NecCommand>` and treats noise as "no decode" rather than an error.

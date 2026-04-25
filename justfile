@@ -252,9 +252,8 @@ tracker-bench:
 
 # I²C bus probe: sweeps 0x08..=0x77 and logs which addresses ACK. Used
 # to confirm chip presence on the shared I²C bus before committing to
-# address constants in driver crates without a published datasheet
-# (e.g. si12t, st25r3916). One-shot — re-flash the main firmware with
-# `just fmr` when done.
+# address constants in driver crates without a published datasheet.
+# One-shot — re-flash the main firmware with `just fmr` when done.
 i2c-probe:
     cd crates/stackchan-firmware && cargo +esp build --release --example i2c_probe
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/i2c_probe{{_serial_suffix}}
