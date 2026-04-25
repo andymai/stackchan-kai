@@ -315,7 +315,7 @@ async fn log_angle_limits(driver: &mut HeadDriverImpl, id: u8) {
         Ok(_err_byte) => {
             let min = (u16::from(buf[0]) << 8) | u16::from(buf[1]);
             let max = (u16::from(buf[2]) << 8) | u16::from(buf[3]);
-            defmt::info!(
+            defmt::debug!(
                 "SCServo[{=u8}]: angle limits MIN={=u16} MAX={=u16} (pos counts; full range is 0..=1023)",
                 id,
                 min,
@@ -336,7 +336,7 @@ async fn log_angle_limits(driver: &mut HeadDriverImpl, id: u8) {
 async fn enable_torque(driver: &mut HeadDriverImpl, id: u8) {
     let bus = driver.bus_mut();
     match bus.write_torque_enable(id, true).await {
-        Ok(()) => defmt::info!("SCServo[{=u8}]: torque enabled", id),
+        Ok(()) => defmt::debug!("SCServo[{=u8}]: torque enabled", id),
         Err(e) => defmt::warn!(
             "SCServo[{=u8}]: torque-enable failed: {}",
             id,
