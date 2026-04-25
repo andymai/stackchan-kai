@@ -91,7 +91,7 @@ impl Modifier for EmotionCycle {
             // Runs last in Affect so it observes the final manual_until
             // state set by Touch/Remote/Pickup/Voice/Ambient/LowBattery.
             priority: 100,
-            reads: &[Field::Autonomy, Field::Emotion],
+            reads: &[Field::Autonomy],
             writes: &[Field::Emotion],
         };
         &META

@@ -118,7 +118,7 @@ impl Modifier for WakeOnVoice {
                           (wake from Sleepy). Sets voice.chirp_request = Wake on the rising edge.",
             phase: Phase::Affect,
             priority: -70,
-            reads: &[Field::AudioRms, Field::Autonomy, Field::Emotion],
+            reads: &[Field::AudioRms, Field::Autonomy],
             writes: &[Field::Emotion, Field::Autonomy, Field::ChirpRequest],
         };
         &META

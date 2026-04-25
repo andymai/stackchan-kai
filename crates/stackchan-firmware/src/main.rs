@@ -151,7 +151,7 @@ type LcdDisplay = mipidsi::Display<
 /// `ListenHead`. `EmotionTouch` runs first so a tap queued from the
 /// touch task becomes the active emotion before `EmotionCycle` checks
 /// the `manual_until` gate. `IdleSway` writes the base
-/// `avatar.head_pose` (slow wander); `EmotionHead` adds an
+/// `entity.motor.head_pose` (slow wander); `EmotionHead` adds an
 /// emotion-keyed bias on top; `ListenHead` adds an upward listening
 /// tilt when the `LookAtSound` skill (registered separately) sets
 /// `mind.attention = Listening`.
@@ -558,7 +558,7 @@ async fn led_task(shared_i2c: SharedI2c) -> ! {
 
 /// AXP2101 battery-monitor task. Polls the gauge register at 1 Hz
 /// and publishes the `SoC` percent on [`power::BATTERY_PERCENT_SIGNAL`]
-/// for the render task to drain into `avatar.battery_percent`.
+/// for the render task to drain into `entity.perception.battery_percent`.
 #[embassy_executor::task]
 async fn power_task(shared_i2c: SharedI2c) -> ! {
     power::run_power_loop(shared_i2c).await

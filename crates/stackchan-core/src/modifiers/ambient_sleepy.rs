@@ -94,7 +94,7 @@ impl Modifier for AmbientSleepy {
                           mind.autonomy.manual_until.",
             phase: Phase::Affect,
             priority: -50,
-            reads: &[Field::AmbientLux, Field::Autonomy, Field::Emotion],
+            reads: &[Field::AmbientLux, Field::Autonomy],
             writes: &[Field::Emotion, Field::Autonomy],
         };
         &META

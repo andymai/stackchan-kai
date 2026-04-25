@@ -108,7 +108,12 @@ impl Modifier for Breath {
                           breathing. Scaled by face.style.breath_depth_scale.",
             phase: Phase::Expression,
             priority: 0,
-            reads: &[Field::BreathDepthScale],
+            reads: &[
+                Field::BreathDepthScale,
+                Field::LeftEyeCenter,
+                Field::RightEyeCenter,
+                Field::MouthCenter,
+            ],
             writes: &[
                 Field::LeftEyeCenter,
                 Field::RightEyeCenter,
