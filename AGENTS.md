@@ -23,6 +23,20 @@ keeps the work scoped.
 4. `just check` — gates pass before flashing.
 5. Optional: `just fmr` to confirm on hardware.
 
+### Shape 1b: skill authoring
+Skills are predicate-fired capabilities that write `mind.intent` /
+`mind.attention` / `voice` / `events`; modifiers in later phases
+translate that into face / motor.
+1. Read `crates/stackchan-core/src/skill.rs` for the trait and pick
+   any existing impl in `crates/stackchan-core/src/skills/` as a
+   starting point.
+2. Add the new file under `crates/stackchan-core/src/skills/`,
+   re-export from `mod.rs`.
+3. Register in `render_task` via `director.add_skill(&mut x)`.
+4. If the skill's intent needs a visible response, add or extend a
+   modifier (`Phase::Motion` for pose, `Phase::Expression` for
+   face) that reads `mind.intent` / `mind.attention`.
+
 ### Shape 2: driver work (one of the 14 driver crates)
 1. Read the crate's README to understand current scope.
 2. Add registers, driver methods, or init steps; keep `embedded-hal-async` boundary clean.

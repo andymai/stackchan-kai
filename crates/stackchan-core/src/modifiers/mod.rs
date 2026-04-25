@@ -36,11 +36,14 @@
 //!   3. [`Breath`] — vertical drift on all features.
 //!   4. [`IdleDrift`] — occasional eye-center jitter.
 //!
-//! - **[`crate::director::Phase::Motion`]** — head motion. 2 modifiers:
+//! - **[`crate::director::Phase::Motion`]** — head motion. 3 modifiers:
 //!   1. [`IdleSway`] — slow pan/tilt head wander written to
 //!      `motor.head_pose`.
 //!   2. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top
 //!      of sway.
+//!   3. [`ListenHead`] — upward tilt bias when `mind.attention` is
+//!      `Listening` (cocked-head listening posture). Added on top of
+//!      sway + emotion bias.
 //!
 //! - **[`crate::director::Phase::Audio`]** — audio-driven visual. 1
 //!   modifier:
@@ -62,6 +65,7 @@ mod emotion_style;
 mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
+mod listen_head;
 mod low_battery;
 mod mouth_open_audio;
 mod pickup_reaction;
@@ -77,6 +81,7 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
+pub use listen_head::{LISTEN_HEAD_EASE_MS, LISTEN_HEAD_TILT_DEG, ListenHead};
 pub use low_battery::{
     LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT, LOW_BATTERY_HOLD_MS, LowBatteryEmotion,
 };

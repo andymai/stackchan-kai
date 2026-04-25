@@ -1,12 +1,14 @@
 //! Cognitive layer of the entity.
 //!
-//! [`Mind`] holds [`Affect`] (current emotion) and [`Autonomy`]
-//! (manual-override gating). [`Intent`], [`Attention`], and [`Memory`]
-//! are placeholder marker types reserved for future use. Modifiers in
+//! [`Mind`] holds [`Affect`] (current emotion), [`Autonomy`]
+//! (manual-override gating), [`Intent`] (current goal), and
+//! [`Attention`] (current focus). [`Memory`] is a marker type
+//! reserved for future cross-boot persistence. Modifiers in
 //! [`Phase::Affect`] write `mind.affect.emotion` and
-//! `mind.autonomy.manual_until`; modifiers in [`Phase::Expression`]
-//! and [`Phase::Motion`] read `mind.affect.emotion` to choose a face
-//! style and head bias.
+//! `mind.autonomy.manual_until`; skills write `mind.intent` and
+//! `mind.attention`; modifiers in [`Phase::Expression`] and
+//! [`Phase::Motion`] read `mind.affect.emotion` (for style + pose
+//! bias) and `mind.attention` (for attention-driven pose).
 //!
 //! Splitting `Affect` (what the entity feels) from `Autonomy` (whether
 //! autonomous drivers are allowed to override) lets emotion drivers
@@ -67,15 +69,37 @@ pub struct Autonomy {
     pub source: Option<OverrideSource>,
 }
 
-/// Current goal or planned action of the entity. Placeholder marker
-/// type; not yet populated.
+/// Current goal or planned action of the entity. Set by skills and
+/// read by modifiers in later phases. Default: [`Intent::Idle`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Intent;
+#[non_exhaustive]
+pub enum Intent {
+    /// No active goal.
+    #[default]
+    Idle,
+    /// Listening to ambient sound. Set by
+    /// [`crate::skills::LookAtSound`]; cleared on release.
+    Listen,
+}
 
-/// What the entity is currently focused on. Placeholder marker type;
-/// not yet populated.
+/// What the entity is currently focused on.
+///
+/// Carries enough state for downstream modifiers to animate the focus
+/// (e.g. ease-in based on `since`). Default: [`Attention::None`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Attention;
+#[non_exhaustive]
+pub enum Attention {
+    /// Not focused on anything specific.
+    #[default]
+    None,
+    /// Listening to a sound source. `since` is the instant the
+    /// listening attention began; consumers (e.g.
+    /// [`crate::modifiers::ListenHead`]) use it for ease-in animation.
+    Listening {
+        /// When the listening attention began.
+        since: Instant,
+    },
+}
 
 /// Persistent facts the entity remembers across boots. Placeholder
 /// marker type; not yet populated.

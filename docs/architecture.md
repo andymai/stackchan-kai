@@ -99,19 +99,27 @@ shipped implementations yet.
 Modifiers run in phase order, then by priority within a phase, then by
 registration order:
 
-| Phase        | Numeric | Population                                            |
+| Phase        | Numeric | Role                                                  |
 | ------------ | ------- | ----------------------------------------------------- |
 | `Perception` | 10      | empty (render task drains Signals before `run()`)     |
 | `Cognition`  | 20      | empty                                                 |
-| `Affect`     | 30      | 7 emotion deciders (Touch/Remote/Pickup/Voice/...)    |
+| `Affect`     | 30      | emotion deciders (Touch/Remote/Pickup/Voice/...)      |
 | `Speech`     | 40      | empty                                                 |
-| `Expression` | 50      | 4 visual modifiers (`EmotionStyle`, Blink, Breath, …) |
-| `Motion`     | 60      | 2 head modifiers (`IdleSway`, `EmotionHead`)          |
-| `Audio`      | 70      | 1 audio-driven (`MouthOpenAudio`)                     |
+| `Expression` | 50      | visual modifiers (`EmotionStyle`, Blink, Breath, …)   |
+| `Motion`     | 60      | head modifiers (`IdleSway`, `EmotionHead`, …)         |
+| `Audio`      | 70      | audio-driven visual (`MouthOpenAudio`)                |
 | `Output`     | 80      | empty (render task draws after `run()`)               |
 
 Numeric gaps of 10 leave room to insert a phase between existing
-variants without renumbering.
+variants without renumbering. The current population list lives in
+`crates/stackchan-core/src/modifiers/mod.rs` and the `Phase` enum
+docstring — those track the source of truth.
+
+`Skill`s run after the modifier pass each frame; the `Director`
+polls each registered skill's `should_fire` predicate and invokes
+matching ones in priority order. Skills write `mind.intent` /
+`mind.attention` / `voice` / `events`; modifiers in later phases
+translate that into face / motor.
 
 ## Entity components
 
