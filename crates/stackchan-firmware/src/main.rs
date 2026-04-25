@@ -163,7 +163,7 @@ type LcdDisplay = mipidsi::Display<
 async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let clock = HalClock;
     let mut fb = Framebuffer::new();
-    defmt::info!(
+    defmt::debug!(
         "framebuffer allocated in PSRAM: {=u32}x{=u32} Rgb565",
         FB_WIDTH,
         FB_HEIGHT

@@ -479,7 +479,7 @@ pub struct AudioPeripherals {
               the I²S → codec → TX ordering invariants for negligible benefit"
 )]
 pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
-    defmt::info!(
+    defmt::debug!(
         "audio: I²S0 bring-up — {=u32} Hz / {=u8}-bit mono, MCLK {=u32} Hz",
         SAMPLE_RATE_HZ,
         BIT_DEPTH_BITS,
@@ -544,7 +544,7 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
             park_forever().await;
         }
     };
-    defmt::info!("audio: I²S RX DMA running — MCLK / BCLK / LRCK clocking");
+    defmt::debug!("audio: I²S RX DMA running — MCLK / BCLK / LRCK clocking");
 
     // MCLK settle. ES7210 datasheet says "a few ms" but empirically
     // (and per esp-adf), the chip can take longer to latch the clock
@@ -554,7 +554,7 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
     let mut delay = Delay;
     let mut amp = Aw88298::new(p.amp_bus);
     match amp.init(&mut delay).await {
-        Ok(()) => defmt::info!(
+        Ok(()) => defmt::debug!(
             "audio: AW88298 ready — I²S 16 kHz mono, muted, boost off (un-mute deferred)"
         ),
         Err(e) => {
@@ -620,7 +620,7 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
             defmt::Debug2Format(&e)
         );
     } else {
-        defmt::info!(
+        defmt::debug!(
             "audio: AW88298 volume set to {=i8} dB (boot default)",
             BOOT_VOLUME_DB
         );
@@ -638,7 +638,7 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
             run_rms_loop(&mut rx_transfer).await
         }
     };
-    defmt::info!("audio: I²S TX DMA running — feeding silence");
+    defmt::debug!("audio: I²S TX DMA running — feeding silence");
 
     Timer::after(Duration::from_millis(u64::from(TX_SETTLE_MS))).await;
 
@@ -915,12 +915,12 @@ async fn park_forever() -> ! {
 /// Purely diagnostic. Silent on addresses that don't respond; chatty
 /// (one info log per ACK) on addresses that do.
 async fn scan_i2c_bus<B: embedded_hal_async::i2c::I2c>(bus: &mut B) {
-    defmt::info!("audio: I²C bus scan starting (0x08..=0x77)");
+    defmt::debug!("audio: I²C bus scan starting (0x08..=0x77)");
     let mut found: u32 = 0;
     for addr in 0x08_u8..=0x77 {
         let mut buf = [0u8; 1];
         if bus.write_read(addr, &[0x00], &mut buf).await.is_ok() {
-            defmt::info!(
+            defmt::debug!(
                 "audio: I²C 0x{=u8:02X} ACK (first byte @ reg 0x00 = 0x{=u8:02X})",
                 addr,
                 buf[0]
@@ -928,5 +928,5 @@ async fn scan_i2c_bus<B: embedded_hal_async::i2c::I2c>(bus: &mut B) {
             found += 1;
         }
     }
-    defmt::info!("audio: I²C bus scan complete — {=u32} devices ACKed", found);
+    defmt::debug!("audio: I²C bus scan complete — {=u32} devices ACKed", found);
 }
