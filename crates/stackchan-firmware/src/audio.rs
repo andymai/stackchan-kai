@@ -701,6 +701,7 @@ async fn run_rms_loop<BUFFER>(
     // pops so the symptom stays visible without drowning the channel.
     let mut consecutive_dma_errs: u32 = 0;
     /// Log only every Nth consecutive pop error.
+    #[allow(clippy::items_after_statements)]
     const LOG_EVERY_N_DMA_ERRS: u32 = 200;
 
     loop {
