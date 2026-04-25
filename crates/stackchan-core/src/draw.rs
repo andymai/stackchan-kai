@@ -9,11 +9,14 @@
 //!
 //! - Background: `Rgb565::WHITE`.
 //! - Eyes: `Rgb565::BLACK`, either filled ellipses (when
-//!   [`Style::eye_curve`] is 0) or a stroked polyline arc (otherwise).
+//!   [`Style::eye_curve`](crate::face::Style::eye_curve) is 0) or a
+//!   stroked polyline arc (otherwise).
 //! - Mouth: pink (`MOUTH_COLOR`), either the v0.1.0 line/ellipse (when
-//!   [`Style::mouth_curve`] is 0) or a stroked polyline curve.
+//!   [`Style::mouth_curve`](crate::face::Style::mouth_curve) is 0) or
+//!   a stroked polyline curve.
 //! - Cheeks: a weight-blended white→pink circle below each eye when
-//!   [`Style::cheek_blush`] is non-zero.
+//!   [`Style::cheek_blush`](crate::face::Style::cheek_blush) is
+//!   non-zero.
 //!
 //! ## Curves
 //!
