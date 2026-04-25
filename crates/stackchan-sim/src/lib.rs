@@ -209,11 +209,14 @@ impl HeadDriver for RecordingHead {
 mod integration_tests {
     use super::*;
     use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
-    use stackchan_core::{Emotion, Entity, EyePhase, Modifier, SCALE_DEFAULT};
+    use stackchan_core::{Director, Emotion, Entity, EyePhase, Modifier, SCALE_DEFAULT};
 
-    /// End-to-end: drive a Blink + Breath + `IdleDrift` stack for 60 simulated
-    /// seconds at 30 FPS and verify the avatar never enters a nonsensical
-    /// state (e.g. eyes walking off-screen, weight out of range).
+    /// End-to-end: drive a Blink + Breath + `IdleDrift` stack via the
+    /// `Director` for 60 simulated seconds at 30 FPS and verify the
+    /// avatar never enters a nonsensical state (e.g. eyes walking
+    /// off-screen, weight out of range). Routing through `Director`
+    /// also exercises the debug-mode `writes:` enforcement on every
+    /// frame.
     #[test]
     fn sixty_second_composition_is_stable() {
         let clock = FakeClock::new();
@@ -221,17 +224,16 @@ mod integration_tests {
         let mut blink = Blink::new();
         let mut breath = Breath::new();
         let mut drift = IdleDrift::with_seed(core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap());
+        let mut director = Director::new();
+        director.add_modifier(&mut blink).unwrap();
+        director.add_modifier(&mut breath).unwrap();
+        director.add_modifier(&mut drift).unwrap();
 
         let tick_ms = 33; // ~30 FPS
         let total_ticks = 60_000 / tick_ms;
 
         for _ in 0..total_ticks {
-            avatar.tick.now = clock.now();
-            blink.update(&mut avatar);
-            avatar.tick.now = clock.now();
-            breath.update(&mut avatar);
-            avatar.tick.now = clock.now();
-            drift.update(&mut avatar);
+            director.run(&mut avatar, clock.now());
 
             // Invariants that must hold every frame:
             assert!(avatar.face.left_eye.weight <= 100);
@@ -331,10 +333,11 @@ mod integration_tests {
     }
 
     /// Run the full firmware-style modifier stack (emotion cycle → style →
-    /// blink → breath → drift) for one complete cycle of the default
-    /// emotion rotation and assert that every emotion visibly propagates
-    /// into the style fields. This is the host-side mirror of what the
-    /// CoreS3 render task runs at 30 FPS.
+    /// blink → breath → drift) via the `Director` for one complete
+    /// cycle of the default emotion rotation and assert that every
+    /// emotion visibly propagates into the style fields. This is the
+    /// host-side mirror of what the CoreS3 render task runs at 30 FPS,
+    /// including the debug-mode `writes:` enforcement.
     #[test]
     fn full_stack_cycles_through_every_default_emotion() {
         let clock = FakeClock::new();
@@ -344,6 +347,12 @@ mod integration_tests {
         let mut blink = Blink::new();
         let mut breath = Breath::new();
         let mut drift = IdleDrift::with_seed(core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap());
+        let mut director = Director::new();
+        director.add_modifier(&mut cycle).unwrap();
+        director.add_modifier(&mut style).unwrap();
+        director.add_modifier(&mut blink).unwrap();
+        director.add_modifier(&mut breath).unwrap();
+        director.add_modifier(&mut drift).unwrap();
 
         // `EmotionCycle::DEFAULT_SEQUENCE` dwell = 4 s × 5 emotions = 20 s.
         // Plus a healthy margin so the last emotion's transition window
@@ -358,16 +367,7 @@ mod integration_tests {
         let mut seen_surprised_wide = false;
 
         for _ in 0..ticks {
-            avatar.tick.now = clock.now();
-            cycle.update(&mut avatar);
-            avatar.tick.now = clock.now();
-            style.update(&mut avatar);
-            avatar.tick.now = clock.now();
-            blink.update(&mut avatar);
-            avatar.tick.now = clock.now();
-            breath.update(&mut avatar);
-            avatar.tick.now = clock.now();
-            drift.update(&mut avatar);
+            director.run(&mut avatar, clock.now());
 
             // Every frame still satisfies the baseline invariants.
             assert!(avatar.face.left_eye.weight <= 100);
@@ -403,46 +403,45 @@ mod integration_tests {
         );
     }
 
-    /// Regression test for the `EmotionStyle → Blink` ordering contract in
-    /// `modifiers::mod`. The canonical pipeline must preserve the invariant
-    /// that Blink's effect on `Eye::weight` reflects the *current* tick's
-    /// `blink_rate_scale`, not a stale value from a previous tick — which
-    /// is only guaranteed if [`EmotionStyle`] runs first on the same tick.
+    /// Regression test for the `EmotionStyle → Blink` ordering contract.
+    /// The Director sorts modifiers by `(phase, priority,
+    /// registration_order)`; `EmotionStyle` has priority `-10` while
+    /// `Blink` has priority `0`, both in `Phase::Expression`, so
+    /// `EmotionStyle` runs first regardless of registration order.
+    /// Blink's effect on `Eye::weight` therefore reflects the *current*
+    /// tick's `blink_rate_scale`, not a stale value from a previous tick.
+    /// This pin would catch a future priority swap that broke the
+    /// invariant.
     #[test]
     fn canonical_order_propagates_blink_rate_within_one_tick() {
         let mut avatar = Entity::default();
         avatar.mind.affect.emotion = Emotion::Surprised;
         let mut style = EmotionStyle::new();
         let mut blink = Blink::new();
+        let mut director = Director::new();
+        // Register in REVERSE of canonical order to prove the Director's
+        // sort by `priority` is what enforces ordering, not insertion.
+        director.add_modifier(&mut blink).unwrap();
+        director.add_modifier(&mut style).unwrap();
 
-        // First tick establishes Surprised as both from + to in EmotionStyle,
-        // and rate = 0 takes effect immediately.
-        avatar.tick.now = Instant::from_millis(0);
-        style.update(&mut avatar);
+        // First frame: Surprised establishes from + to in EmotionStyle,
+        // rate = 0 takes effect, Blink suppresses on the same frame.
+        director.run(&mut avatar, Instant::from_millis(0));
         assert_eq!(
             avatar.face.style.blink_rate_scale, 0,
             "EmotionStyle must snap to target on first observation of a new emotion"
         );
-
-        // Blink sees rate == 0 on the same tick and suppresses.
-        avatar.tick.now = Instant::from_millis(0);
-        blink.update(&mut avatar);
         assert_eq!(
             avatar.face.left_eye.phase,
             EyePhase::Open,
-            "rate == 0 must force eyes open on the same tick EmotionStyle wrote it"
+            "rate == 0 must force eyes open on the same frame EmotionStyle wrote it"
         );
 
-        // Baseline sanity: with Neutral, the default rate propagates.
+        // Baseline sanity: switch to Neutral, advance past the
+        // 300 ms transition window, rate ramps to SCALE_DEFAULT.
         avatar.mind.affect.emotion = Emotion::Neutral;
-        avatar.tick.now = Instant::from_millis(10_000);
-        style.update(&mut avatar);
-        avatar.tick.now = Instant::from_millis(10_000);
-        blink.update(&mut avatar);
-        // After the transition elapses (at next tick past 10_000 + 300 ms),
-        // rate is SCALE_DEFAULT.
-        avatar.tick.now = Instant::from_millis(10_400);
-        style.update(&mut avatar);
+        director.run(&mut avatar, Instant::from_millis(10_000));
+        director.run(&mut avatar, Instant::from_millis(10_400));
         assert_eq!(avatar.face.style.blink_rate_scale, SCALE_DEFAULT);
     }
 }
