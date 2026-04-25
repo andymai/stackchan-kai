@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.0](https://github.com/andymai/stackchan-kai/compare/v0.8.0...v0.9.0) (2026-04-25)
+
+
+### Features
+
+* BM8563 wall-clock + LTR-553 AmbientSleepy modifier ([#18](https://github.com/andymai/stackchan-kai/issues/18)) ([8405d0d](https://github.com/andymai/stackchan-kai/commit/8405d0d0f1619d400ff2bd1691995135f9c25316))
+* BMI270 IMU + pickup-reaction modifier ([#17](https://github.com/andymai/stackchan-kai/issues/17)) ([8624ceb](https://github.com/andymai/stackchan-kai/commit/8624ceb92bcb355a28fa3c98ee6499171cb12a2b))
+* BMM150 magnetometer (9-axis data path) ([#22](https://github.com/andymai/stackchan-kai/issues/22)) ([eea9212](https://github.com/andymai/stackchan-kai/commit/eea921233444d2efe68d7ee502e14be390778c20))
+* **core:** MouthOpenAudio modifier + Mouth::mouth_open field ([#32](https://github.com/andymai/stackchan-kai/issues/32)) ([79020ed](https://github.com/andymai/stackchan-kai/commit/79020ed266f510b1bd2da1f7ecc01f8465105737))
+* **core:** render Avatar onto any embedded-graphics DrawTarget ([a8d9b80](https://github.com/andymai/stackchan-kai/commit/a8d9b80a65ef8557d0cd829eadd873246b434138))
+* **core:** wire Emotion into a style-field pipeline with eased transitions ([bfd6a3a](https://github.com/andymai/stackchan-kai/commit/bfd6a3a168ad8f6bcece0e5bfc47f01e791ab8ff))
+* **draw:** visibly render Mouth::mouth_open as growing ellipse ([#33](https://github.com/andymai/stackchan-kai/issues/33)) ([c21f9da](https://github.com/andymai/stackchan-kai/commit/c21f9da786472e94dbbe5e307dd052e172ebf646))
+* emotion-coupled head motion (EmotionHead modifier) ([#4](https://github.com/andymai/stackchan-kai/issues/4)) ([3f197f1](https://github.com/andymai/stackchan-kai/commit/3f197f106527977da99cdd9ac75dab79462290c4))
+* emotion-transition chirps — pickup, wake, low-battery audio cues ([#56](https://github.com/andymai/stackchan-kai/issues/56)) ([f097f8c](https://github.com/andymai/stackchan-kai/commit/f097f8c78f0e8299f088e8aac8180a17b89ad623))
+* FT6336U tap-to-cycle emotion + shared I²C0 bus ([#15](https://github.com/andymai/stackchan-kai/issues/15)) ([b3fb8de](https://github.com/andymai/stackchan-kai/commit/b3fb8de289ac45f9c5537516a79c2dd2e3a4e6cb))
+* low-battery hysteresis + USB-power aware override ([#54](https://github.com/andymai/stackchan-kai/issues/54)) ([0741a2e](https://github.com/andymai/stackchan-kai/commit/0741a2edcb9478c34e1fdb4e6739393cedfd2019))
+* low-battery sleepy emotion — AXP2101 SoC reader, power task, modifier ([#52](https://github.com/andymai/stackchan-kai/issues/52)) ([d6add63](https://github.com/andymai/stackchan-kai/commit/d6add63fa0a16dc17cb5984c163eab80600f0885))
+* pan/tilt servo head motion (+aw9523 extract, pca9685 driver) ([#2](https://github.com/andymai/stackchan-kai/issues/2)) ([9bc40a1](https://github.com/andymai/stackchan-kai/commit/9bc40a11b76108aad8a58af7a941a28fade5ea0c))
+* power-button taps + IR NEC RemoteCommand modifier ([#19](https://github.com/andymai/stackchan-kai/issues/19)) ([f29c92e](https://github.com/andymai/stackchan-kai/commit/f29c92e7550fa450be0adb8b94a8b57801e18ddf))
+* PY32 WS2812 LED ring + first output-sink path ([#20](https://github.com/andymai/stackchan-kai/issues/20)) ([14dcbd3](https://github.com/andymai/stackchan-kai/commit/14dcbd3be257175f0df973c5cb616c41d92c483b))
+* servo position readback + calibration bench binary ([#11](https://github.com/andymai/stackchan-kai/issues/11)) ([890c8f8](https://github.com/andymai/stackchan-kai/commit/890c8f8232f80f3b6f861ded1ec2b2e386fbc31d))
+* WakeOnVoice modifier — sustained mic activity wakes to Happy ([#55](https://github.com/andymai/stackchan-kai/issues/55)) ([c8729bf](https://github.com/andymai/stackchan-kai/commit/c8729bfbac9d78de54f20c64875d42e8544d0b8c))
+
+
+### Bug Fixes
+
+* tilt calibration for offset-encoder unit + asymmetric range support ([#47](https://github.com/andymai/stackchan-kai/issues/47)) ([52b8c4d](https://github.com/andymai/stackchan-kai/commit/52b8c4d47477baf776c82446d02431d08d24f941))
+
 ## [0.8.0](https://github.com/andymai/stackchan-kai/compare/v0.7.0...v0.8.0) (2026-04-25)
 
 
