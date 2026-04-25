@@ -14,12 +14,13 @@ status: stable
 `no_std` async driver for the X-Powers AXP2101 power-management IC on
 the M5Stack CoreS3. Scope is the minimum needed to boot the LCD rails
 *and* configure the chip not to auto-shutdown on idle, plus one-shot
-power-key IRQ helpers for the hardware button. Battery-state readout
-and charging config are left for future releases.
+power-key IRQ helpers for the hardware button and a battery
+state-of-charge reader. Charge-current / voltage readout and full
+charging config are left for future releases.
 
 ## Key Files
 
-- `src/lib.rs` — `ADDRESS`, register + bit constants, `CORES3_INIT_SEQUENCE` (the full `M5Unified` register sequence as a `[(reg, value)]` slice), `Axp2101` struct, `init_cores3`, `read_reg` / `write_reg`, power-key IRQ helpers, mock-I²C golden-sequence tests
+- `src/lib.rs` — `ADDRESS`, register + bit constants, `CORES3_INIT_SEQUENCE` (the full `M5Unified` register sequence as a `[(reg, value)]` slice), `Axp2101` struct, `init_cores3`, `read_reg` / `write_reg`, power-key IRQ helpers, `read_battery_percent`, mock-I²C tests
 
 ## Bus + Addressing
 
