@@ -59,22 +59,24 @@ const ADDR_HI: u8 = 0x77;
 
 /// Known-chip lookup. Each entry: `(7-bit address, label)`. Labels
 /// describe the chip we EXPECT at that address based on this firmware's
-/// driver crates and the M5Stack CoreS3 + Stack-chan body BOM. An
-/// ACK at an address NOT in this table is logged as `(UNKNOWN)`.
+/// driver crates and a verified probe of the M5Stack CoreS3 +
+/// Stack-chan body BOM. An ACK at an address NOT in this table is
+/// logged as `(UNKNOWN)`.
+///
+/// `BMM150` is intentionally absent: it sits behind BMI270's auxiliary
+/// I²C interface (Bosch reference topology) and is invisible to a
+/// main-bus probe by design. See the unit-hardware memory entry.
 const KNOWN: &[(u8, &str)] = &[
-    (0x10, "ES7210"),
-    (0x13, "BMM150"),
-    (0x18, "AW88298"),
-    (0x20, "AW9523"),
     (0x23, "LTR-553"),
     (0x34, "AXP2101"),
-    (0x36, "AW88298 (alt)"),
+    (0x36, "AW88298"),
     (0x38, "FT6336U"),
-    (0x40, "ES7210 (alt)"),
-    (0x44, "AW88298 (alt)"),
-    (0x50, "Si12T (provisional)"),
+    (0x40, "ES7210"),
+    (0x50, "Si12T"),
     (0x51, "BM8563"),
+    (0x58, "AW9523"),
     (0x68, "BMI270"),
+    (0x69, "BMI270 (SDO=high alt)"),
 ];
 
 /// Look up the known-chip label for an address, or `None` if no entry.

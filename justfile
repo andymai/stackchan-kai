@@ -258,3 +258,11 @@ tracker-bench:
 i2c-probe:
     cd crates/stackchan-firmware && cargo +esp build --release --example i2c_probe
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/i2c_probe{{_serial_suffix}}
+
+# Si12T body-touch bench: initialises the 3-zone capacitive touch
+# controller on the back of the head and polls OUTPUT1 at 50 ms,
+# logging zone-state changes. Tap each pad to verify the bit-to-zone
+# mapping the upstream M5Stack driver uses.
+si12t-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example si12t_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/si12t_bench{{_serial_suffix}}

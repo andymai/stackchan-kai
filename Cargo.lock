@@ -4184,6 +4184,7 @@ dependencies = [
  "mipidsi",
  "py32",
  "scservo",
+ "si12t",
  "stackchan-core",
  "static_cell",
  "tracker",
