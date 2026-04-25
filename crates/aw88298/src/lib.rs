@@ -77,7 +77,7 @@ const REG_HAGCCFG4: u8 = 0x0C;
 /// `BSTCTRL2` register. Boost converter mode + current-limit config.
 const REG_BSTCTRL2: u8 = 0x61;
 
-/// Reset-magic written to [`REG_RESET`].
+/// Reset-magic written to `REG_RESET`.
 const RESET_MAGIC: u16 = 0x55AA;
 /// `SYSCTRL` value: `I2SEN = 1`, `AMPPD = 0`, `PWDN = 0`.
 const SYSCTRL_ENABLE: u16 = 0x4040;
@@ -98,7 +98,7 @@ const BSTCTRL2_BOOST_OFF: u16 = 0x0673;
 /// Post-reset settle delay, in milliseconds. Datasheet ≥1 ms.
 const RESET_SETTLE_MS: u32 = 5;
 
-/// Supported I²S sample rates. Nibble value written into [`REG_I2SCTRL`].
+/// Supported I²S sample rates. Nibble value written into `REG_I2SCTRL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SampleRate {

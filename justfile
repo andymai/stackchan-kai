@@ -145,3 +145,22 @@ aw88298-bench:
 es7210-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example es7210_bench
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/es7210_bench{{_serial_suffix}}
+
+# Tilt extremes calibration: drives the pitch servo through 0° → ±50°
+# in 5° steps (5° past `MAX_TILT_DEG`'s safety bound) and reads back
+# the live encoder, stopping the sweep early once readings plateau.
+# Use the SUMMARY/SUGGEST lines to set EEPROM angle limits and
+# `TILT_TRIM_DEG` in `head.rs`. Re-flash main firmware with
+# `just fmr` when done.
+tilt-extremes:
+    cd crates/stackchan-firmware && cargo +esp build --release --example tilt_extremes
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/tilt_extremes{{_serial_suffix}}
+
+# Tilt freewheel diagnostic: disables torque on the pitch servo and
+# live-streams the encoder reading at 5 Hz so the operator can hand-
+# rotate the head and verify whether the internal position sensor is
+# tracking. Use after `tilt-extremes` flags STUCK + OVERLOAD to
+# distinguish "encoder dead" from "controller stuck in OVERLOAD".
+tilt-freewheel:
+    cd crates/stackchan-firmware && cargo +esp build --release --example tilt_freewheel
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/tilt_freewheel{{_serial_suffix}}

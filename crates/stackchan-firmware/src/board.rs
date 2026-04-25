@@ -330,6 +330,9 @@ async fn log_angle_limits(driver: &mut HeadDriverImpl, id: u8) {
     }
 }
 
+/// Enable the servo's torque output, then drain the post-write status
+/// frame so it does not collide with the next command. Logs and
+/// continues on error — a silent servo must not wedge boot.
 async fn enable_torque(driver: &mut HeadDriverImpl, id: u8) {
     let bus = driver.bus_mut();
     match bus.write_torque_enable(id, true).await {

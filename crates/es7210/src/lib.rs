@@ -40,9 +40,9 @@ use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 /// Default 7-bit I²C address with `AD1 = AD0 = GND`.
 pub const ADDRESS: u8 = 0x40;
 
-/// Expected chip-ID low byte at [`REG_CHIP_ID1`].
+/// Expected chip-ID low byte at `REG_CHIP_ID1`.
 pub const CHIP_ID1: u8 = 0x72;
-/// Expected chip-ID high byte at [`REG_CHIP_ID2`].
+/// Expected chip-ID high byte at `REG_CHIP_ID2`.
 pub const CHIP_ID2: u8 = 0x10;
 
 /// `RESET` register. `0x71` asserts software reset, `0x41` releases.

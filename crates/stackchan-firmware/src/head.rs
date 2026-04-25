@@ -58,9 +58,23 @@ const TILT_DIRECTION: f32 = 1.0;
 
 /// Per-unit pan trim, in degrees. Positive = head points rightward at
 /// commanded NEUTRAL. Zero until bench-measured on a real unit.
-const PAN_TRIM_DEG: f32 = 0.0;
+pub const PAN_TRIM_DEG: f32 = 0.0;
 /// Per-unit tilt trim, in degrees. Positive = head aims up at NEUTRAL.
-const TILT_TRIM_DEG: f32 = 0.0;
+/// Combines two corrections:
+///
+/// - **Encoder offset (~+44°):** the pitch servo's internal encoder
+///   zero (raw=512) sits ~44° below physical horizontal on this unit.
+/// - **Anti-droop bias (~+5°):** without a small upward over-command,
+///   `cmd=0` lands at gravity-rest (head visibly drooping ~1° below
+///   level). Adding ~5° pushes the motor's goal high enough to overcome
+///   the front-heavy gravity load and hold the head visibly tilted up
+///   when idle. Bench data: `cmd=+5°` produced actual ≈ +5 raw counts
+///   above rest, so this bias keeps the motor outside its dead-band.
+///
+/// Cleaner long-term: write the SCSCL Position Correction register
+/// (EEPROM `0x1F`) and add a counterweight; re-measure with
+/// `examples/tilt_freewheel.rs`.
+pub const TILT_TRIM_DEG: f32 = 49.0;
 
 /// Move-time sent with every `WritePos`. `SCServo` servos interpolate
 /// internally over this many milliseconds, smoothing out the 50 Hz
