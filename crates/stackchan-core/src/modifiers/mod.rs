@@ -19,32 +19,39 @@
 //!    `Surprised` with a `manual_until` hold when a pickup / drop is
 //!    detected. Stands down when `manual_until` is already set (so
 //!    explicit touch / remote wins).
-//! 4. [`AmbientSleepy`] — reads `Avatar::ambient_lux`, flips emotion
+//! 4. [`WakeOnVoice`] — reads `Avatar::audio_rms`, flips emotion to
+//!    `Happy` with a `manual_until` hold when sustained voice
+//!    activity is detected. Runs *before* the environmental-override
+//!    group so it can wake the avatar from `Sleepy` (e.g. dark room
+//!    with someone talking, or low-battery while plugged in).
+//!    Respects existing holds set by touch / pickup / remote — those
+//!    still win since they run earlier.
+//! 5. [`AmbientSleepy`] — reads `Avatar::ambient_lux`, flips emotion
 //!    to `Sleepy` with a short `manual_until` hold in dark rooms
 //!    (hysteresis 20/50 lux). Runs after `PickupReaction` so a
 //!    pickup-in-the-dark still surfaces as Surprised rather than
 //!    Sleepy.
-//! 5. [`LowBatteryEmotion`] — reads `Avatar::battery_percent`, forces
+//! 6. [`LowBatteryEmotion`] — reads `Avatar::battery_percent`, forces
 //!    `Sleepy` (with a short `manual_until` hold) when the `SoC` drops
 //!    below a threshold. Runs alongside `AmbientSleepy` as the
 //!    "environmental override" group; touch / pickup / remote still
 //!    win since this respects an existing `manual_until` hold.
-//! 6. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
+//! 7. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
 //!    when `manual_until` is unset or expired.
-//! 7. [`EmotionStyle`] — translates emotion into style fields, with a
+//! 8. [`EmotionStyle`] — translates emotion into style fields, with a
 //!    linear ease over the transition window.
-//! 8. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//! 9. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
 //!    `blink_rate_scale` from the avatar.
-//! 9. [`Breath`] — vertical drift on all features, scaled by
-//!    `breath_depth_scale`.
-//! 10. [`IdleDrift`] — occasional eye-center jitter.
-//! 11. [`IdleSway`] — slow pan/tilt head wander written to
+//! 10. [`Breath`] — vertical drift on all features, scaled by
+//!     `breath_depth_scale`.
+//! 11. [`IdleDrift`] — occasional eye-center jitter.
+//! 12. [`IdleSway`] — slow pan/tilt head wander written to
 //!     `Avatar::head_pose`. Non-visual; drives the firmware's head-update
 //!     task, not the pixel pipeline.
-//! 12. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//! 13. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
 //!     sway. Runs **after** `IdleSway` so bias composes additively rather
 //!     than fighting for absolute control of the pose.
-//! 13. [`MouthOpenAudio`] — reads `Avatar::mouth.weight` preserved by
+//! 14. [`MouthOpenAudio`] — reads `Avatar::mouth.weight` preserved by
 //!     earlier modifiers, writes `Avatar::mouth.mouth_open` from
 //!     microphone RMS via a dB-mapped attack/release envelope. Runs
 //!     last in the visual stack so emotion geometry stays the static
@@ -65,6 +72,7 @@ mod low_battery;
 mod mouth_open_audio;
 mod pickup_reaction;
 mod remote_command;
+mod wake_on_voice;
 
 pub use ambient_sleepy::{AMBIENT_HOLD_MS, AmbientSleepy, SLEEPY_ENTER_LUX, SLEEPY_EXIT_LUX};
 pub use blink::Blink;
@@ -88,6 +96,7 @@ pub use mouth_open_audio::{
 };
 pub use pickup_reaction::{PICKUP_DEBOUNCE_MS, PICKUP_DEVIATION_G, PickupReaction};
 pub use remote_command::{RemoteCommand, RemoteMapping};
+pub use wake_on_voice::{WAKE_HOLD_MS, WAKE_RMS_THRESHOLD, WAKE_SUSTAIN_TICKS, WakeOnVoice};
 
 use crate::avatar::Avatar;
 use crate::clock::Instant;

@@ -256,6 +256,16 @@ pub struct Avatar {
     /// [`Avatar::frame_eq`] for the same reasons as
     /// [`Avatar::battery_percent`].
     pub usb_power_present: Option<bool>,
+    /// Latest microphone RMS amplitude, normalised against full-scale
+    /// i16 (`0.0..=1.0`), or `None` before the audio task publishes
+    /// its first window. Written by the firmware render task draining
+    /// the audio task's signal channel; consumed by both
+    /// [`super::modifiers::MouthOpenAudio`] (visual: mouth opens with
+    /// loudness) and [`super::modifiers::WakeOnVoice`] (emotional:
+    /// sustained voice wakes the avatar to Happy). Excluded from
+    /// [`Avatar::frame_eq`] — modifiers translate RMS into pixels via
+    /// emotion / mouth fields, never directly.
+    pub audio_rms: Option<f32>,
 }
 
 impl Avatar {
@@ -336,6 +346,8 @@ impl Default for Avatar {
             battery_percent: None,
             // No USB-power reading until the AXP2101 task publishes one.
             usb_power_present: None,
+            // No mic RMS reading until the audio task publishes one.
+            audio_rms: None,
         }
     }
 }
