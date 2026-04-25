@@ -1,27 +1,14 @@
 //! # stackchan-core
 //!
-//! `no_std` domain library for the StackChan NPC. Models the entity as
-//! a composition of typed sub-components ([`Entity`] = `{ face, motor,
-//! perception, voice, mind, events, tick }`) animated by two trait
-//! families:
+//! `no_std` engine for the StackChan NPC. An [`Entity`] holds the state
+//! (face, motor, perception, voice, mind, events, input, tick); a
+//! [`Director`] sorts [`Modifier`]s by [`director::Phase`] + priority
+//! and ticks them each frame.
 //!
-//! - [`Modifier`] — per-frame state mutators (the 14 stock animation
-//!   behaviors live here).
-//! - [`Skill`] — Claude-Code-Skill-style discoverable capabilities
-//!   (trait surface only today; v2.x).
+//! [`Skill`] is a longer-running NPC capability with `name` +
+//! `description` metadata shaped for a future dispatcher.
 //!
-//! Behaviors register with a [`Director`] which sorts modifiers by
-//! [`director::Phase`] + priority and runs them each frame. The phase
-//! enum encodes the canonical NPC tick order (Perception → Cognition →
-//! Affect → Speech → Expression → Motion → Audio → Output).
-//!
-//! The crate has no hardware, OS, or allocation dependencies — it's the
-//! platform-independent heart of the firmware.
-//!
-//! ## Stability
-//!
-//! Everything in this crate is **experimental** as of v0.x. See the
-//! top-level `STABILITY.md`.
+//! No hardware, OS, or allocation dependencies.
 //!
 //! ## Example
 //!
@@ -33,7 +20,6 @@
 //! let mut director = Director::new();
 //! director.add_modifier(&mut blink).expect("registry has room");
 //!
-//! // Advance simulated time; the blink modifier animates the eyes.
 //! for ms in (0..10_000).step_by(33) {
 //!     director.run(&mut entity, Instant::from_millis(ms));
 //! }
@@ -71,8 +57,6 @@ pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
 pub use input::Input;
 pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
 pub use mind::{Affect, Autonomy, Mind, OverrideSource};
-// Intent / Attention / Memory are v2.x stub markers; reach via
-// `crate::mind::*` until they have real shape.
 pub use modifier::Modifier;
 pub use motor::Motor;
 pub use perception::Perception;

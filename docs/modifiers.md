@@ -4,11 +4,10 @@ title: Modifier authoring guide
 
 # Modifier authoring guide
 
-A `Modifier` is a state machine that mutates an `Entity` once per
-frame. Modifiers compose by registration order with a [`Director`]
-that sorts them by `(phase, priority, registration_order)` before the
-first tick. Each later modifier observes the cumulative effect of all
-earlier ones.
+A `Modifier` mutates an `Entity` once per frame. The [`Director`] sorts
+registered modifiers by `(phase, priority, registration_order)` before
+the first tick; each later modifier observes the cumulative effect of
+all earlier ones.
 
 ## The trait
 
@@ -19,18 +18,16 @@ pub trait Modifier {
 }
 ```
 
-Two methods. `meta` returns a `&'static ModifierMeta` constant
-declaring `name`, `description`, `phase`, `priority`, and the `reads`
-/ `writes` field sets. `update` is the only mutation surface — read
-the entity, decide, write back. Time flows in via `entity.tick.now`
-(stamped by `Director::run`); modifiers don't take a `now` parameter.
+`meta` returns a `&'static ModifierMeta` constant declaring `name`,
+`description`, `phase`, `priority`, and the `reads` / `writes` field
+sets. `update` is the only mutation surface; time flows in via
+`entity.tick.now` (stamped by `Director::run`).
 
-## Steps to add a new modifier
+## Adding a new modifier
 
-1. **Choose the file.** New modifiers go under
-   `crates/stackchan-core/src/modifiers/<your_name>.rs`.
+1. Create `crates/stackchan-core/src/modifiers/<your_name>.rs`.
 
-2. **Implement the state machine.** Pattern:
+2. Implement the state machine:
 
    ```rust
    use crate::director::{Field, ModifierMeta, Phase};
@@ -38,7 +35,7 @@ the entity, decide, write back. Time flows in via `entity.tick.now`
    use crate::modifier::Modifier;
 
    pub struct YourModifier {
-       // state fields — timers, RNG, last-value
+       // state: timers, RNG, last-value
    }
 
    impl YourModifier {
@@ -52,7 +49,7 @@ the entity, decide, write back. Time flows in via `entity.tick.now`
                name: "YourModifier",
                description: "One sentence: what triggers this and what \
                              entity fields it writes.",
-               phase: Phase::Expression, // or Affect / Motion / Audio / ...
+               phase: Phase::Expression,
                priority: 0,
                reads: &[/* Field::... */],
                writes: &[/* Field::... */],
@@ -62,57 +59,43 @@ the entity, decide, write back. Time flows in via `entity.tick.now`
 
        fn update(&mut self, entity: &mut Entity) {
            let now = entity.tick.now;
-           // Read entity fields the modifier is aware of.
-           // Mutate entity fields the modifier owns.
+           // Read + mutate entity fields.
        }
    }
    ```
 
-3. **Pick a phase.** See the architecture doc's phase table. Most
-   custom behaviors are `Affect` (decide an emotion), `Expression`
-   (modulate face style), `Motion` (head pose), or `Audio`
-   (audio-driven visual).
+3. Pick a phase. `Affect` decides emotions, `Expression` modulates face
+   style, `Motion` writes head pose, `Audio` drives visual from audio.
 
-4. **Add unit tests.** Each modifier file has a `mod tests` at the
-   bottom that exercises edge cases against `Instant::from_millis(...)`
-   sequences. Pattern: assert specific entity fields after a known tick
-   sequence. Set the time on `entity.tick.now`, call `update`,
-   assert.
+4. Add unit tests in a `mod tests` at the bottom of the file. Set
+   `entity.tick.now`, call `update`, assert.
 
-5. **Wire into `render_task`.** Open
-   `crates/stackchan-firmware/src/main.rs`, construct your modifier
-   alongside the others, and call
-   `director.add_modifier(&mut your_modifier).expect("registry full")`
-   in the canonical order. Update the boot info-line listing.
+5. Register in `crates/stackchan-firmware/src/main.rs::render_task`:
+   `director.add_modifier(&mut your_modifier).expect("registry full")`.
+   Update the boot info-line listing.
 
-6. **Add a sim integration test if behavior is non-local.** In
-   `crates/stackchan-sim/src/lib.rs`'s `integration_tests` mod, add a
-   test that drives the new modifier through a realistic time sequence
-   alongside related modifiers. Use `FakeClock` for deterministic
-   time.
+6. If the behavior is non-local, add a `stackchan-sim` integration
+   test that drives the new modifier alongside related ones.
 
 ## Reads vs writes
 
 Entity fields fall into a few buckets:
 
-- **Pixel-affecting** (`face.*`): listed in `Face::frame_eq`. New
-  pixel-affecting fields **must** be added to `frame_eq` so the render
+- Pixel-affecting (`face.*`): listed in `Face::frame_eq`. New
+  pixel-affecting fields must be added to `frame_eq` so the render
   task's dirty-check works correctly.
-- **Sensor inputs** (`perception.*`): firmware writes from sensor
-  drains; modifiers read.
-- **Pending inputs** (`input.tap_pending`, `input.remote_pending`):
+- Sensor inputs (`perception.*`): firmware writes; modifiers read.
+- Pending inputs (`input.tap_pending`, `input.remote_pending`):
   firmware writes; the consuming modifier reads + clears in the same
   tick.
-- **Cognitive state** (`mind.*`): emotion modifiers write
+- Cognitive state (`mind.*`): emotion modifiers write
   `mind.affect.emotion` + `mind.autonomy.manual_until`; downstream
   modifiers read.
-- **Output requests** (`voice.chirp_request`): modifiers write a
-  request; firmware reads + clears after `Director::run`.
+- Output requests (`voice.chirp_request`): modifiers write; firmware
+  reads + clears after `Director::run`.
 
-The `reads` / `writes` slices on `ModifierMeta` are documentation
-today. v2.x will enforce them via debug-mode assertions after each
-`update` — a write to an undeclared field becomes a panic in debug
-builds.
+The `reads` / `writes` slices on `ModifierMeta` are documentation;
+debug-mode enforcement after each `update` is planned.
 
 ## Field granularity
 
@@ -121,37 +104,32 @@ builds.
 false-flag as conflicts. `Field::group()` buckets fine variants into
 coarse `FieldGroup`s for human-readable conflict reports.
 
-## When ordering matters
+## Ordering
 
-The canonical Affect phase ordering is non-trivial. Examples:
+The Affect phase ordering matters:
 
-- `EmotionTouch` runs first (priority `-100`) — a tap queued from
-  the touch task must take effect before any environmental override.
-- `EmotionCycle` runs last in Affect — the autonomous advancer only
+- `EmotionTouch` runs first (priority `-100`) so a tap takes effect
+  before any environmental override.
+- `EmotionCycle` runs last in Affect; the autonomous advancer only
   fires when no input modifier set `mind.autonomy.manual_until`.
 - `EmotionStyle` runs in `Expression` and reads
-  `mind.affect.emotion` set by Affect modifiers; Blink / Breath /
-  IdleDrift then add per-frame deltas on top.
-- `IdleSway` (Motion) writes the base `motor.head_pose`;
-  `EmotionHead` (also Motion, registered later) adds an emotion-keyed
-  bias on top.
+  `mind.affect.emotion`; Blink / Breath / IdleDrift then add per-frame
+  deltas on top.
+- `IdleSway` (Motion) writes the base `motor.head_pose`; `EmotionHead`
+  (registered later in Motion) adds an emotion-keyed bias on top.
 - `MouthOpenAudio` runs in `Audio` so audio-driven mouth-open isn't
   overwritten by a stale earlier write.
 
 When in doubt, mirror the registration order in `render_task` and add
-a `stackchan-sim` integration test that asserts the visible behavior
-(eyes don't walk off-screen, mouth doesn't oscillate at 60 Hz, etc.).
+a sim integration test that asserts the visible behavior.
 
-## Skills (not modifiers)
+## Skills
 
-A modifier is the right shape when the behavior runs every frame and
-its job is to translate state. A `Skill` is the right shape when the
-behavior is **discoverable** — the kind of thing a future LLM
-dispatcher might pick from a menu by reading its description. Skills
-have `should_fire(&Entity)` + `invoke(&mut Entity)` + a richer
-`SkillMeta` and are bound by a doc-enforced rule: **no direct writes
-to `face` or `motor`** (skills go through `mind` / `voice` /
-`events`; modifiers translate). Trait surface ships today; zero skill
-implementations have landed.
+A `Skill` has `should_fire(&Entity) -> bool` and
+`invoke(&mut Entity) -> SkillStatus`, plus richer metadata than a
+modifier. Use it when the behavior is discoverable — selected from a
+menu rather than always-on. Skills don't write `face` or `motor`
+directly; they go through `mind` / `voice` / `events` and modifiers
+translate. The trait ships; no implementations have landed.
 
 [`Director`]: https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/director.rs

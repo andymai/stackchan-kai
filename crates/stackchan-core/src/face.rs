@@ -1,24 +1,15 @@
 //! Visual surface of the entity: the rendered face.
 //!
-//! [`Face`] groups the eye / mouth geometry plus the emotion-driven
+//! [`Face`] groups the eye and mouth geometry plus the emotion-driven
 //! [`Style`] that shapes how those primitives are drawn. It owns
 //! everything the renderer needs to produce a frame; non-visual state
-//! (sensors, motor pose, mind/affect, voice queue) lives elsewhere on
-//! [`Entity`].
-//!
-//! The split exists because v0.x packed all of these into a single
-//! `Avatar` struct, which made it impossible to express domain
-//! boundaries in the type system: a mod that "tweaks the face" had to
-//! reach across motor + sensor fields too. With `Face` as a sub-component
-//! of [`Entity`], modifiers in [`Phase::Expression`] borrow only the
-//! visual surface they actually mutate.
+//! (sensors, motor pose, mind, voice) lives elsewhere on [`Entity`].
 //!
 //! All coordinates are in an abstract 320×240 framebuffer space so the
-//! domain logic stays resolution-agnostic until the pixel pipeline needs
-//! a concrete resolution.
+//! domain logic stays resolution-agnostic until the pixel pipeline
+//! needs a concrete resolution.
 //!
 //! [`Entity`]: crate::entity::Entity
-//! [`Phase::Expression`]: crate::director::Phase::Expression
 
 /// A 2D integer point in framebuffer space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

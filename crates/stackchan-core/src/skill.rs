@@ -1,49 +1,33 @@
-//! The [`Skill`] trait — discoverable NPC capabilities.
+//! [`Skill`] — longer-running NPC capability with discoverable
+//! metadata.
 //!
-//! **Status:** trait surface only. No implementations today.
+//! Each skill self-describes when to fire (its
+//! [`SkillMeta::description`] is meant for human readers and a future
+//! dispatcher) and what to do once fired. The [`crate::Director`]
+//! polls each registered skill's [`Skill::should_fire`] predicate per
+//! frame and invokes those that return `true`.
 //!
-//! Skills are modeled on the **Claude Code Skill** pattern: each skill
-//! self-describes *when to fire* (the [`SkillMeta::description`] field
-//! doubles as trigger guidance for human readers and, in v2.x,
-//! LAN-host-LLM dispatch) and *what to do once fired* (the trait body).
-//! This makes skills a literal capability menu: today the [`crate::Director`]
-//! polls each skill's [`Skill::should_fire`] predicate; tomorrow a
-//! cognition bridge can read all skills' descriptions and pick which
-//! to invoke.
-//!
-//! ## The single most important rule
-//!
-//! **Skills MUST NOT write to `entity.face` or `entity.motor` directly.**
-//! Skills express intent through `entity.mind`, `entity.voice`, and
+//! Skills don't write `entity.face` or `entity.motor` directly. They
+//! express intent through `entity.mind`, `entity.voice`, and
 //! `entity.events`; modifiers in [`crate::director::Phase::Expression`]
 //! and [`crate::director::Phase::Motion`] translate that intent into
-//! rendered face and physical motion.
-//!
-//! This invariant is doc-enforced today (Rust doesn't prevent a
-//! misbehaving skill from reaching into `face`). v2.x will introduce a
-//! `SkillView<'a>` borrow type that mechanically excludes `face` /
-//! `motor` from the writable surface, turning the rule into a compile
-//! error. Until then, treating it as a hard rule is the architectural
-//! contract.
+//! rendered face and physical motion. The rule is documented; a
+//! `SkillView<'a>` borrow type that enforces it via the type system is
+//! sketched but not implemented.
 //!
 //! ## Lifecycle
 //!
-//! Three methods total:
-//!
-//! 1. [`Skill::meta`] — static identity + description + arbitration data.
-//! 2. [`Skill::should_fire`] — predicate the [`crate::Director`] polls
-//!    every frame. Returning `true` causes the skill to be invoked.
-//!    Multiple skills can fire on the same frame; ordering is by
-//!    [`SkillMeta::priority`] (higher first).
+//! 1. [`Skill::meta`] — static identity, description, priority.
+//! 2. [`Skill::should_fire`] — polled each frame. Multiple skills may
+//!    fire on the same frame; order is by [`SkillMeta::priority`]
+//!    (higher first).
 //! 3. [`Skill::invoke`] — the action. Returns [`SkillStatus::Done`]
-//!    (one-shot finished) or [`SkillStatus::Continuing`] (poll
-//!    `should_fire` again next frame).
+//!    (finished) or [`SkillStatus::Continuing`] (re-invoke next frame
+//!    while `should_fire` stays `true`).
 //!
-//! Skills that need persistent cross-frame state hold it internally
-//! (e.g. a `last_fired: Option<Instant>` field). Skills that need
-//! cleanup-on-deactivation can detect the should-fire→false transition
-//! by tracking that internally too. v2.x may grow an `on_exit` hook
-//! with a default no-op impl if the pattern needs it.
+//! Persistent cross-frame state lives inside the skill; cleanup on
+//! deactivation is detected by tracking the should-fire→false
+//! transition internally.
 
 use crate::director::SkillMeta;
 use crate::entity::Entity;
@@ -60,19 +44,18 @@ pub enum SkillStatus {
     Continuing,
 }
 
-/// A discoverable NPC capability.
-///
-/// See module-level docs for the **face/motor write prohibition**.
+/// A discoverable NPC capability. See the module docs for the
+/// face/motor write prohibition.
 pub trait Skill {
-    /// Static identity + description + arbitration metadata.
+    /// Identity, description, priority.
     fn meta(&self) -> &'static SkillMeta;
 
-    /// Trigger predicate. Polled by [`crate::Director`] each frame;
-    /// `true` causes [`Skill::invoke`] to be called.
+    /// Trigger predicate. Polled each frame; `true` causes
+    /// [`Skill::invoke`] to be called.
     fn should_fire(&self, entity: &Entity) -> bool;
 
-    /// Invoke the skill. Returns [`SkillStatus::Done`] if the skill
-    /// has finished or [`SkillStatus::Continuing`] if it wants to be
-    /// invoked again next frame (subject to `should_fire`).
+    /// Invoke the skill. Returns [`SkillStatus::Done`] if finished or
+    /// [`SkillStatus::Continuing`] if it wants to be invoked again
+    /// next frame (subject to `should_fire`).
     fn invoke(&mut self, entity: &mut Entity) -> SkillStatus;
 }

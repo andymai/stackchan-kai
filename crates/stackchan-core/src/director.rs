@@ -1,36 +1,24 @@
-//! [`Director`] — the orchestrator that ticks an [`Entity`] each frame.
+//! [`Director`] — orchestrator that ticks an [`Entity`] each frame.
 //!
-//! The "AI Director" is canonical in NPC AI literature (Left 4 Dead's
-//! director is the textbook example): a meta-orchestrator that decides
-//! what an NPC does and when, by composing smaller behaviors. Our
-//! [`Director`] does exactly that — it owns a registry of [`Modifier`]s
-//! (per-frame mutators) and [`Skill`]s (Claude-Code-Skill-style
-//! discoverable capabilities), and per-frame:
+//! Per frame, the Director:
 //!
-//! 1. Stamps `entity.tick` (now / `dt_ms` / frame counter).
+//! 1. Stamps `entity.tick` (now, `dt_ms`, frame counter).
 //! 2. Clears `entity.events` (one-frame fire flags).
-//! 3. Runs each registered modifier in `(phase, priority, registration_order)`
-//!    order.
-//! 4. Polls each registered skill's `should_fire` and invokes those
-//!    that match.
+//! 3. Runs each registered modifier in `(phase, priority,
+//!    registration_order)` order.
+//! 4. Polls each registered skill's `should_fire` and invokes the
+//!    matching ones.
 //!
-//! ## Modifier vs Skill
-//!
-//! - **Modifiers** are per-frame face/motor/affect mutators. They live
-//!   in declared [`Phase`]s and produce visible output (eye position,
-//!   head pose, mouth open). The 14 v0.x modifiers all migrate here.
-//! - **Skills** are discoverable capabilities that fire when their
-//!   `should_fire` predicate matches. They write to mind / voice /
-//!   events only (never face / motor — that's modifier territory).
-//!   Today: zero skills shipped. Surface ready for v2.x.
-//!
-//! ## Storage shape
+//! Modifiers are per-frame face / motor / affect mutators living in
+//! declared [`Phase`]s; skills are longer-running capabilities with
+//! `should_fire` + `invoke`. Skills don't write `face` or `motor`
+//! directly (see [`crate::skill`]).
 //!
 //! Modifiers and skills are held as `&'a mut dyn Modifier` / `&'a mut
-//! dyn Skill` references in fixed-capacity [`heapless::Vec`]s. Caller
-//! (firmware `render_task` or sim) owns the modifier instances as
-//! locals; Director only borrows. This keeps `stackchan-core`
-//! `no_std` + alloc-free.
+//! dyn Skill` references in fixed-capacity [`heapless::Vec`]s. The
+//! caller (firmware `render_task` or sim) owns the instances as
+//! locals; the Director only borrows. The crate stays `no_std` and
+//! alloc-free.
 //!
 //! [`Entity`]: crate::entity::Entity
 //! [`Modifier`]: crate::modifier::Modifier
@@ -44,8 +32,7 @@ use crate::events::Events;
 use crate::modifier::Modifier;
 use crate::skill::{Skill, SkillStatus};
 
-/// Maximum number of modifiers a [`Director`] can hold. Sized for the
-/// 14 stock modifiers + ample headroom for third-party additions.
+/// Maximum number of modifiers a [`Director`] can hold.
 pub const MODIFIER_CAP: usize = 32;
 
 /// Maximum number of skills a [`Director`] can hold.
@@ -53,58 +40,47 @@ pub const SKILL_CAP: usize = 16;
 
 /// Phases of the per-frame tick.
 ///
-/// `#[repr(u8)]` with explicit numeric gaps of 10 leaves room for v2.x
-/// phases (e.g. `PostPerception = 15`) to slot in without renumbering
-/// existing variants. Modifiers are sorted by `(phase, priority,
-/// registration_order)` before execution.
+/// `#[repr(u8)]` with numeric gaps of 10 leaves room to insert phases
+/// between existing variants without renumbering. Modifiers are sorted
+/// by `(phase, priority, registration_order)` before execution.
 ///
-/// ## Why these phases
+/// Sensors observe the world, cognition picks an intent, emotion
+/// follows, speech queues, expression renders, motion executes, audio
+/// drives the visual envelope, and output ships the frame.
 ///
-/// The phase order encodes the canonical NPC tick: sensors observe the
-/// world; cognition picks an intent; emotion (affect) follows; speech
-/// queues; expression renders; motion executes; audio drives the visual
-/// envelope; output ships the frame.
-///
-/// Today, modifier population:
+/// Population:
 /// - `Affect` (7): `EmotionTouch`, `RemoteCommand`, `PickupReaction`,
 ///   `WakeOnVoice`, `AmbientSleepy`, `LowBatteryEmotion`, `EmotionCycle`
 /// - `Expression` (4): `EmotionStyle`, Blink, Breath, `IdleDrift`
 /// - `Motion` (2): `IdleSway`, `EmotionHead`
 /// - `Audio` (1): `MouthOpenAudio`
-/// - `Perception` / `Cognition` / `Speech` / `Output`: empty (stubs for v2.x)
+/// - `Perception` / `Cognition` / `Speech` / `Output`: empty
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
-    /// Sensors → world model. Empty today: firmware drains Signal
-    /// channels into `entity.perception` *before* `Director::run`.
-    /// Future modifiers in this phase would do post-sensor smoothing,
-    /// gaze-target tracking, etc.
+    /// Sensors → world model. Empty: the firmware drains Signal
+    /// channels into `entity.perception` before `Director::run`.
     Perception = 10,
-    /// World model + memory → intent. Empty today; v2.x: an adapter
-    /// modifier reads from a `MindBridge` Signal channel that an
-    /// async firmware task fills with results from a LAN-host LLM.
+    /// World model + memory → intent. Empty.
     Cognition = 20,
-    /// Intent + sensors → emotion. Where the 7 emotion-driving
-    /// modifiers run. Touch / Remote / Pickup / Voice run first
-    /// (input-edge driven); Ambient / `LowBattery` (environmental
-    /// overrides) next; `EmotionCycle` (autonomous advance) last.
+    /// Intent + sensors → emotion. Touch / Remote / Pickup / Voice
+    /// run first (input-edge driven); Ambient / `LowBattery`
+    /// (environmental overrides) next; `EmotionCycle` (autonomous
+    /// advance) last.
     Affect = 30,
-    /// Intent → speech queue. Empty today; v2.x: a TTS feeder modifier
-    /// translates `mind.intent` into `voice.speech_queue` payloads.
+    /// Intent → speech queue. Empty.
     Speech = 40,
-    /// Emotion → face style. Where `EmotionStyle` picks
-    /// curve/scale/blush, then Blink / Breath / `IdleDrift` add their
-    /// per-frame deltas.
+    /// Emotion → face style. `EmotionStyle` picks curve / scale /
+    /// blush; Blink / Breath / `IdleDrift` add per-frame deltas.
     Expression = 50,
-    /// Intent + emotion → pose. `IdleSway` writes a baseline; `EmotionHead`
-    /// adds an emotion-keyed bias on top.
+    /// Intent + emotion → pose. `IdleSway` writes a baseline;
+    /// `EmotionHead` adds an emotion-keyed bias on top.
     Motion = 60,
-    /// Audio-driven visual updates. `MouthOpenAudio` drives `mouth.mouth_open`
-    /// from the mic RMS.
+    /// Audio-driven visual updates. `MouthOpenAudio` drives
+    /// `mouth.mouth_open` from the mic RMS.
     Audio = 70,
-    /// Face → frame, pose → servos. Empty for modifiers; the firmware's
-    /// render task does the actual draw + servo command after `Director::run`
-    /// returns.
+    /// Face → frame, pose → servos. Empty for modifiers; the render
+    /// task does the draw + servo command after `Director::run`.
     Output = 80,
 }
 
@@ -130,13 +106,10 @@ pub enum FieldGroup {
 /// Fine-grained identifiers for the entity's mutable surface.
 ///
 /// Modifiers declare their `reads` / `writes` via `&'static [Field]`
-/// slices on [`ModifierMeta`]; the Director can use these to detect
-/// conflicts at registration time (today: declarative only; v2.x:
-/// actual enforcement).
-///
-/// Granularity is per-leaf-field so different sub-fields of the same
-/// component (e.g. `LeftEyePhase` vs `LeftEyeWeight`) don't false-flag
-/// as conflicts.
+/// slices on [`ModifierMeta`]. Today the slices are documentation;
+/// debug-mode enforcement after each `update` is planned. Per-leaf
+/// granularity (e.g. `LeftEyePhase` vs `LeftEyeWeight`) keeps
+/// sub-fields of the same component from false-flagging as conflicts.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Field {
@@ -257,59 +230,45 @@ impl Field {
 /// `const META: ModifierMeta = ...` in each modifier's impl.
 #[derive(Debug)]
 pub struct ModifierMeta {
-    /// Stable identifier — typically the impl's type name (e.g. `"Blink"`).
+    /// Stable identifier — typically the impl's type name.
     pub name: &'static str,
-    /// Human/LLM-readable description: what this modifier does in one
-    /// sentence. Used by introspection tools and (v2.x) the LAN-host
-    /// cognition bridge to reason about active behavior.
+    /// One-sentence description of what this modifier does. Read by
+    /// humans and (eventually) a dispatcher.
     pub description: &'static str,
-    /// Which phase this modifier runs in. Determines coarse ordering.
+    /// Phase this modifier runs in. Determines coarse ordering.
     pub phase: Phase,
-    /// Tiebreaker for modifiers within the same phase. Lower priority
-    /// runs first; default `0`.
+    /// Intra-phase tiebreaker. Lower priority runs first; default `0`.
     pub priority: i8,
-    /// Fields this modifier reads. Today: documentation only; v2.x:
-    /// enforced via debug-mode assertions.
+    /// Fields this modifier reads.
     pub reads: &'static [Field],
-    /// Fields this modifier writes. Today: documentation only; v2.x:
-    /// enforced.
+    /// Fields this modifier writes.
     pub writes: &'static [Field],
 }
 
-/// Static metadata for a [`Skill`] type. Modeled on Claude Code Skills:
-/// a stable `name` plus a `description` that doubles as trigger
-/// guidance for LLM-driven dispatch in v2.x.
+/// Static metadata for a [`Skill`] type: a stable `name` plus a
+/// `description` consumable by a dispatcher.
 #[derive(Debug)]
 pub struct SkillMeta {
-    /// Stable identifier (e.g. `"BootGreeting"`).
+    /// Stable identifier.
     pub name: &'static str,
-    /// Trigger guidance + action summary. Read by humans and (v2.x)
-    /// LLMs to decide when this skill applies.
+    /// Trigger guidance + action summary.
     pub description: &'static str,
     /// Arbitration priority among overlapping skills. Higher wins.
     pub priority: u8,
     /// Fields this skill is allowed to write. By convention, skills
-    /// only touch `Mind` / `Voice` / `Events` — `Face` and `Motor`
-    /// are modifier territory. Documentation-only enforcement today.
+    /// touch `Mind` / `Voice` / `Events` — `Face` and `Motor` are
+    /// modifier territory.
     pub writes: &'static [Field],
 }
 
 /// The orchestrator. Holds borrowed modifier + skill registries; ticks
 /// the entity each frame.
-///
-/// ## Lifetime
-///
-/// `'a` is the lifetime of the modifier / skill instances. Caller owns
-/// them as locals (typically in firmware `render_task` or sim
-/// scaffolding) and registers `&'a mut dyn` references with the
-/// Director. Director's lifetime ≤ caller's locals.
 /// One entry in the modifier registry. Pairs the modifier reference
-/// with a registration counter so the sort is stable on `(phase,
-/// priority)` ties — `core::slice::sort_unstable_by_key` (which is
-/// what we use, since stable sort isn't in `core`) needs an explicit
-/// secondary key for deterministic ordering.
+/// with a registration counter; needed because `core` only provides
+/// `sort_unstable_by_key`, so stability on `(phase, priority)` ties
+/// requires an explicit secondary key.
 struct ModifierSlot<'a> {
-    /// 0-based registration order. Set when `add_modifier` is called.
+    /// 0-based registration order, assigned by `add_modifier`.
     registered_at: u16,
     /// The modifier itself.
     modifier: &'a mut dyn Modifier,
@@ -337,10 +296,8 @@ impl core::fmt::Display for RegistryFull {
 
 /// The orchestrator that ticks an [`Entity`] each frame.
 ///
-/// `'a` is the lifetime of the modifier / skill instances. Caller owns
-/// them as locals (typically in firmware `render_task` or sim
-/// scaffolding) and registers `&'a mut dyn` references with the
-/// Director. Director's lifetime ≤ caller's locals.
+/// `'a` is the lifetime of the modifier / skill instances; the caller
+/// owns them as locals and registers `&'a mut dyn` references.
 pub struct Director<'a> {
     /// Registered modifiers, sorted by `(phase, priority,
     /// registered_at)` on first `run()` call.
@@ -418,19 +375,16 @@ impl<'a> Director<'a> {
     ///    returns true.
     pub fn run(&mut self, entity: &mut Entity, now: Instant) {
         if !self.sorted {
-            // `core::slice::sort_unstable_by_key` is the no_std-friendly
-            // sort. Stability comes from including `registered_at` in the
-            // key — distinct slots can never produce equal keys, so the
-            // unstable sort produces a deterministic order matching
-            // `(phase, priority, registration order)`.
+            // `sort_unstable_by_key` is the no_std-friendly sort.
+            // Stability comes from including `registered_at` in the
+            // key: distinct slots can never produce equal keys, so the
+            // result matches `(phase, priority, registration_order)`.
             self.modifiers.as_mut_slice().sort_unstable_by_key(|slot| {
                 let meta = slot.modifier.meta();
                 (meta.phase, meta.priority, slot.registered_at)
             });
-            // Skills sort by `priority` *descending* (higher fires
-            // first) — opposite of modifiers, where lower = earlier.
-            // Negate the priority to get a descending sort from
-            // sort_unstable_by_key.
+            // Skills sort by priority descending (higher fires first),
+            // opposite of modifiers.
             self.skills
                 .as_mut_slice()
                 .sort_unstable_by_key(|s| core::cmp::Reverse(s.meta().priority));
@@ -448,24 +402,19 @@ impl<'a> Director<'a> {
             frame: self.frame,
         };
 
-        // Start-of-frame clear of one-frame fire flags. Modifiers populate
-        // events during their pass; firmware reads them after run() returns.
+        // Clear one-frame fire flags. Modifiers populate events during
+        // their pass; firmware reads them after `run()` returns.
         entity.events = Events::default();
 
-        // Modifier pass.
         for slot in &mut self.modifiers {
             slot.modifier.update(entity);
         }
 
-        // Skill pass. Each frame, every registered skill's `should_fire`
-        // is polled; matches are `invoke`d. Continuing skills will be
-        // re-invoked next frame as long as `should_fire` keeps matching.
         for s in &mut self.skills {
             if s.should_fire(entity) {
+                // `should_fire` is the only gate; `SkillStatus::Done`
+                // vs `Continuing` is reserved for skill state-tracking.
                 let _status: SkillStatus = s.invoke(entity);
-                // SkillStatus::Done vs Continuing semantics will matter
-                // in v2.x when skill state-tracking arrives. Today,
-                // should_fire is the gate.
             }
         }
 
