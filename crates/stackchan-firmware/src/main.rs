@@ -63,7 +63,7 @@ use mipidsi::{
     options::{ColorInversion, ColorOrder},
 };
 use stackchan_core::{
-    Avatar, Clock, HeadDriver, LedFrame, Modifier,
+    Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
         IdleDrift, IdleSway, LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT,
@@ -168,7 +168,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         FB_WIDTH,
         FB_HEIGHT
     );
-    let mut avatar = Avatar::default();
+    let mut entity = Entity::default();
     let mut emotion_touch = EmotionTouch::new();
     // Empty remote mapping by default. Populate with your specific
     // NEC `(address, command, emotion)` tuples after running
@@ -190,7 +190,40 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
-    let mut last_rendered: Option<Avatar> = None;
+    let mut last_rendered: Option<Face> = None;
+
+    // Build the Director and register the canonical 14-modifier stack.
+    // Phase ordering (Affect → Expression → Motion → Audio) is enforced
+    // by `ModifierMeta::phase`; intra-phase ordering is registration
+    // order modulated by per-modifier `priority`. See AGENTS.md and
+    // `crates/stackchan-core/src/director.rs` for the rationale.
+    let mut director = Director::new();
+    director
+        .add_modifier(&mut emotion_touch)
+        .expect("registry full");
+    director.add_modifier(&mut remote).expect("registry full");
+    director.add_modifier(&mut pickup).expect("registry full");
+    director
+        .add_modifier(&mut wake_on_voice)
+        .expect("registry full");
+    director
+        .add_modifier(&mut ambient_sleepy)
+        .expect("registry full");
+    director
+        .add_modifier(&mut low_battery)
+        .expect("registry full");
+    director.add_modifier(&mut cycle).expect("registry full");
+    director.add_modifier(&mut style).expect("registry full");
+    director.add_modifier(&mut blink).expect("registry full");
+    director.add_modifier(&mut breath).expect("registry full");
+    director.add_modifier(&mut drift).expect("registry full");
+    director.add_modifier(&mut sway).expect("registry full");
+    director
+        .add_modifier(&mut emotion_head)
+        .expect("registry full");
+    director
+        .add_modifier(&mut mouth_open_audio)
+        .expect("registry full");
     let mut led_frame = LedFrame::default();
     // Hysteresis state for the low-battery alert beep. Mirrors the
     // emotion-side `LowBatteryEmotion` modifier: the beep fires once
@@ -271,36 +304,26 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
                 camera::CAMERA_CAPTURE_REQUEST.signal(());
                 defmt::debug!("render: tap in camera mode → capture request");
             } else {
-                emotion_touch.tap();
+                entity.input.tap_pending = true;
             }
         }
         // Drain IR-remote decoded commands, if any.
         if let Some(cmd) = ir::REMOTE_SIGNAL.try_take() {
-            remote.queue(cmd.address, cmd.command);
+            entity.input.remote_pending = Some((cmd.address, cmd.command));
         }
-        // Drain the latest IMU reading. Published at ~100 Hz by the
-        // imu task; at a 33 ms render tick we'll usually have a fresh
-        // sample available, but if we don't, last-known values stay
-        // on `avatar` so `PickupReaction` keeps a coherent view.
+        // Drain the latest IMU reading.
         if let Some(m) = imu::IMU_SIGNAL.try_take() {
-            avatar.accel_g = m.accel_g;
-            avatar.gyro_dps = m.gyro_dps;
+            entity.perception.accel_g = m.accel_g;
+            entity.perception.gyro_dps = m.gyro_dps;
         }
-        // Drain the latest ambient reading. 2 Hz publish rate, so most
-        // render ticks see nothing new — last-known lux stays on the
-        // avatar so `AmbientSleepy` has coherent input.
+        // Drain the latest ambient reading.
         if let Some(lux) = ambient::AMBIENT_LUX_SIGNAL.try_take() {
-            avatar.ambient_lux = Some(lux);
+            entity.perception.ambient_lux = Some(lux);
         }
-        // Drain the latest power status from the AXP2101 task (1 Hz).
-        // `LowBatteryEmotion` reads `avatar.battery_percent` and
-        // `avatar.usb_power_present` for hysteresis + USB suppression.
-        // The alert beep mirrors the modifier's hysteresis: arm on a
-        // downward enter-threshold crossing (and only when not on USB
-        // power), re-arm only after climbing past the exit threshold.
+        // Drain the latest power status from the AXP2101 task.
         if let Some(status) = power::POWER_STATUS_SIGNAL.try_take() {
-            avatar.battery_percent = Some(status.battery_percent);
-            avatar.usb_power_present = Some(status.usb_power);
+            entity.perception.battery_percent = Some(status.battery_percent);
+            entity.perception.usb_power_present = Some(status.usb_power);
 
             if alert_armed_for_low {
                 if status.battery_percent > LOW_BATTERY_EXIT_PERCENT {
@@ -322,21 +345,22 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
                 }
             }
         }
-        // Drain the latest mic-RMS sample from the audio task — the
-        // task publishes a fresh `AudioRms(linear)` per ~33 ms window
-        // (one render frame at 30 FPS). `try_take` is non-blocking and
-        // misses are fine: latest-wins matches mic semantics. Both
-        // `MouthOpenAudio` (visual) and `WakeOnVoice` (emotional)
-        // consume this — the former via its internal `set_rms`, the
-        // latter via reading `avatar.audio_rms` in `update`.
+        // Drain the latest mic-RMS sample. MouthOpenAudio reads
+        // entity.perception.audio_rms now (no more .set_rms()).
         if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
-            mouth_open_audio.set_rms(rms.0);
-            avatar.audio_rms = Some(rms.0);
+            entity.perception.audio_rms = Some(rms.0);
         }
-        emotion_touch.update(&mut avatar, now);
-        remote.update(&mut avatar, now);
-        pickup.update(&mut avatar, now);
-        if pickup.just_fired()
+
+        // Run the entire modifier graph in one call. The Director sorts
+        // by (phase, priority, registration order) and ticks each
+        // modifier — see `crate::director` for the full pipeline.
+        director.run(&mut entity, now);
+
+        // React to one-frame fire flags the modifiers raised during
+        // this tick. Director clears `entity.events` at the START of
+        // each frame, so reading them after `run()` is the canonical
+        // post-modifier sample point.
+        if entity.events.pickup_fired
             && let Err(e) = audio::try_enqueue_pickup_chirp()
         {
             defmt::warn!(
@@ -344,8 +368,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
                 defmt::Debug2Format(&e)
             );
         }
-        wake_on_voice.update(&mut avatar, now);
-        if wake_on_voice.just_fired()
+        if entity.events.wake_fired
             && let Err(e) = audio::try_enqueue_wake_chirp()
         {
             defmt::warn!(
@@ -353,36 +376,17 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
                 defmt::Debug2Format(&e)
             );
         }
-        ambient_sleepy.update(&mut avatar, now);
-        low_battery.update(&mut avatar, now);
-        cycle.update(&mut avatar, now);
-        style.update(&mut avatar, now);
-        blink.update(&mut avatar, now);
-        breath.update(&mut avatar, now);
-        drift.update(&mut avatar, now);
-        sway.update(&mut avatar, now);
-        emotion_head.update(&mut avatar, now);
-        mouth_open_audio.update(&mut avatar, now);
 
-        // Publish the final pose (sway + emotion bias) to the head task.
-        // `Signal::signal` overwrites any un-consumed value, so a slower
-        // head task never builds up a backlog — it just reads the most
-        // recent pose.
-        head::POSE_SIGNAL.signal(avatar.head_pose);
+        // Publish the final pose to the head task.
+        head::POSE_SIGNAL.signal(entity.motor.head_pose);
 
-        // Render the LED ring from the same avatar state and publish to
-        // the led task. The led task owns the PY32 transport; this
-        // keeps I²C latency off the render path. Always publish —
-        // `Signal::signal` overwrites unread values so the led task
-        // can tick at its own cadence without building up a backlog.
-        render_leds(&avatar, now, &mut led_frame);
+        // Render the LED ring from the same entity state.
+        render_leds(&entity, now, &mut led_frame);
         leds::LED_FRAME_SIGNAL.signal(led_frame);
 
-        // Drain the latest observed pose from the head task. Updated at
-        // ~1 Hz over there, so most render ticks see nothing new and
-        // hold the previous value — which is exactly what we want.
+        // Drain the latest observed pose from the head task.
         if let Some(actual) = head::HEAD_POSE_ACTUAL_SIGNAL.try_take() {
-            avatar.head_pose_actual = actual;
+            entity.motor.head_pose_actual = actual;
         }
 
         // Pick a blit target based on mode:
@@ -411,20 +415,21 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
             last_rendered = None;
         } else if last_rendered
             .as_ref()
-            .is_none_or(|prev| !prev.frame_eq(&avatar))
+            .is_none_or(|prev| *prev != entity.face)
         {
-            // `frame_eq` intentionally skips `head_pose` — the LCD is
-            // mounted rigidly to the head, so pan/tilt updates never
-            // change pixels. `IdleSway` mutates `avatar.head_pose`
-            // every tick; using `==` here would force a full-frame
-            // SPI blit on every sway step.
+            // Compare faces directly: `Face` has `PartialEq` derived on
+            // every visual field. Non-visual state (pose, sensors,
+            // mind, events, tick) lives elsewhere on `Entity` and so
+            // can't trigger spurious blits — `IdleSway` mutates
+            // `motor.head_pose`, which is invisible to this dirty
+            // check by construction.
             //
             // Draw is Infallible on `Framebuffer`; the `let _ =`
             // discards the `Result<(), Infallible>` without
             // triggering unwrap lints.
-            let _ = avatar.draw(&mut fb);
+            let _ = entity.face.draw(&mut fb);
             match display.fill_contiguous(&canvas, fb.as_slice().iter().copied()) {
-                Ok(()) => last_rendered = Some(avatar),
+                Ok(()) => last_rendered = Some(entity.face),
                 Err(e) => defmt::error!("render: blit failed: {}", defmt::Debug2Format(&e)),
             }
         }

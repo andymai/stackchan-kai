@@ -25,10 +25,12 @@
 //!
 //! [`Avatar::manual_until`]: crate::avatar::Avatar::manual_until
 
-use super::{MANUAL_HOLD_MS, Modifier};
-use crate::avatar::Avatar;
+use super::MANUAL_HOLD_MS;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
+use crate::entity::Entity;
+use crate::modifier::Modifier;
 
 /// One entry in the remote-command-to-emotion lookup table.
 ///
@@ -96,32 +98,40 @@ impl Default for RemoteCommand {
 }
 
 impl Modifier for RemoteCommand {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "RemoteCommand",
+            description: "Maps queued IR-remote (address, command) pairs to emotions via a \
+                          user-supplied table. Stands down when an earlier modifier already \
+                          set mind.autonomy.manual_until.",
+            phase: Phase::Affect,
+            priority: -90,
+            reads: &[Field::Autonomy],
+            writes: &[Field::Emotion, Field::Autonomy],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
         let Some((address, command)) = self.pending.take() else {
             return;
         };
 
-        // Another modifier (touch, pickup, ambient) already claimed
-        // the emotion. Drop the event on the floor — explicit input
-        // wins over remote-control input.
-        if let Some(until) = avatar.manual_until
+        if let Some(until) = entity.mind.autonomy.manual_until
             && now < until
         {
             return;
         }
 
-        // Linear scan of the mapping — table is expected to be tiny
-        // (one or two dozen entries at most). First match wins.
         for entry in self.mapping {
             if entry.address == address && entry.command == command {
-                avatar.emotion = entry.emotion;
-                avatar.manual_until = Some(now + MANUAL_HOLD_MS);
+                entity.mind.affect.emotion = entry.emotion;
+                entity.mind.autonomy.manual_until = Some(now + MANUAL_HOLD_MS);
+                entity.mind.autonomy.source = Some(crate::mind::OverrideSource::Remote);
                 return;
             }
         }
-        // Unknown code: ignore silently. The firmware `ir` task logs
-        // every decoded command at info level already, so there's no
-        // observability loss here.
     }
 }
 
@@ -144,79 +154,87 @@ mod tests {
 
     #[test]
     fn mapped_code_sets_emotion_and_hold() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
         remote.queue(0xFF00, 0x01);
-        remote.update(&mut avatar, Instant::from_millis(1_000));
-        assert_eq!(avatar.emotion, Emotion::Happy);
+        entity.tick.now = Instant::from_millis(1_000);
+        remote.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
         assert_eq!(
-            avatar.manual_until,
+            entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(1_000 + MANUAL_HOLD_MS)),
         );
     }
 
     #[test]
     fn unmapped_code_is_silent_noop() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
         remote.queue(0x1234, 0x56);
-        remote.update(&mut avatar, Instant::from_millis(1_000));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
-        assert!(avatar.manual_until.is_none());
+        entity.tick.now = Instant::from_millis(1_000);
+        remote.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn empty_mapping_is_always_noop() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut remote = RemoteCommand::new();
         remote.queue(0xFF00, 0x01);
-        remote.update(&mut avatar, Instant::from_millis(1_000));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
-        assert!(avatar.manual_until.is_none());
+        entity.tick.now = Instant::from_millis(1_000);
+        remote.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn queued_command_collapses_to_latest() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
         // Queue Happy, then overwrite with Sad before the next update.
         remote.queue(0xFF00, 0x01);
         remote.queue(0xFF00, 0x02);
-        remote.update(&mut avatar, Instant::from_millis(1_000));
-        assert_eq!(avatar.emotion, Emotion::Sad);
+        entity.tick.now = Instant::from_millis(1_000);
+        remote.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sad);
     }
 
     #[test]
     fn update_consumes_queued_command() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
         remote.queue(0xFF00, 0x01);
-        remote.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        remote.update(&mut entity);
         // Simulate the hold expiring + being cleared by EmotionTouch.
-        avatar.manual_until = None;
-        avatar.emotion = Emotion::Neutral;
+        entity.mind.autonomy.manual_until = None;
+        entity.mind.affect.emotion = Emotion::Neutral;
         // Another update with no new queued command must be a no-op.
-        remote.update(&mut avatar, Instant::from_millis(100_000));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        entity.tick.now = Instant::from_millis(100_000);
+        remote.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
     }
 
     #[test]
     fn active_hold_blocks_remote() {
-        let mut avatar = Avatar {
-            emotion: Emotion::Surprised,
-            manual_until: Some(Instant::from_millis(30_000)),
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.mind.affect.emotion = Emotion::Surprised;
+            e.mind.autonomy.manual_until = Some(Instant::from_millis(30_000));
+            e
         };
         let mut remote = RemoteCommand::with_mapping(MAPPING);
         remote.queue(0xFF00, 0x01);
-        remote.update(&mut avatar, Instant::from_millis(1_000));
+        entity.tick.now = Instant::from_millis(1_000);
+        remote.update(&mut entity);
         assert_eq!(
-            avatar.emotion,
+            entity.mind.affect.emotion,
             Emotion::Surprised,
             "touch / pickup / ambient hold must outrank remote",
         );
         assert_eq!(
-            avatar.manual_until,
+            entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(30_000)),
             "hold deadline must be preserved",
         );
@@ -224,18 +242,20 @@ mod tests {
 
     #[test]
     fn remote_fires_after_hold_expires() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
 
         // Hold set by (say) touch in the recent past.
-        avatar.manual_until = Some(Instant::from_millis(1_000));
+        entity.mind.autonomy.manual_until = Some(Instant::from_millis(1_000));
         remote.queue(0xFF00, 0x01);
-        remote.update(&mut avatar, Instant::from_millis(500));
+        entity.tick.now = Instant::from_millis(500);
+        remote.update(&mut entity);
         // Command was consumed but had no effect because the hold was
         // active. Clear and try again.
-        avatar.manual_until = None;
+        entity.mind.autonomy.manual_until = None;
         remote.queue(0xFF00, 0x01);
-        remote.update(&mut avatar, Instant::from_millis(2_000));
-        assert_eq!(avatar.emotion, Emotion::Happy);
+        entity.tick.now = Instant::from_millis(2_000);
+        remote.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
 }

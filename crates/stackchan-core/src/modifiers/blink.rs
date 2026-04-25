@@ -10,9 +10,11 @@
 //!   drops this to ~55 for a droopy-lid look without changing Blink's
 //!   state machine.
 
-use super::Modifier;
-use crate::avatar::{Avatar, EyePhase, SCALE_DEFAULT};
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
+use crate::entity::Entity;
+use crate::face::{EyePhase, SCALE_DEFAULT};
+use crate::modifier::Modifier;
 
 /// Default time eyes stay open between blinks, in milliseconds.
 const DEFAULT_OPEN_MS: u64 = 5_200;
@@ -41,7 +43,7 @@ pub struct Blink {
 /// transition time. That way, rate changes mid-phase take effect on the
 /// next tick without stranding a stale absolute deadline — we always
 /// compute `phase_start + scaled_open_ms(current_rate)` from the
-/// current `avatar.blink_rate_scale`.
+/// current `entity.face.style.blink_rate_scale`.
 #[derive(Debug, Clone, Copy)]
 enum BlinkState {
     /// Waiting to initialize on the first `update` call. Used so the very
@@ -113,8 +115,32 @@ impl Default for Blink {
 }
 
 impl Modifier for Blink {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        let rate = avatar.blink_rate_scale;
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "Blink",
+            description: "Drives both eyes through open→closed→open cycles. Reads \
+                          face.style.blink_rate_scale for cadence (0 = blinks suppressed) \
+                          and Eye::open_weight for the open-amplitude bound.",
+            phase: Phase::Expression,
+            priority: 0,
+            reads: &[
+                Field::BlinkRateScale,
+                Field::LeftEyeOpenWeight,
+                Field::RightEyeOpenWeight,
+            ],
+            writes: &[
+                Field::LeftEyePhase,
+                Field::LeftEyeWeight,
+                Field::RightEyePhase,
+                Field::RightEyeWeight,
+            ],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
+        let rate = entity.face.style.blink_rate_scale;
 
         // Suppression path: scale == 0 forces eyes open. Stored as an
         // explicit state so a later non-zero scale cleanly resumes the
@@ -122,7 +148,7 @@ impl Modifier for Blink {
         // to elapse first.
         if rate == 0 {
             self.state = BlinkState::Suppressed;
-            open_both_eyes(avatar);
+            open_both_eyes(entity);
             return;
         }
 
@@ -133,7 +159,7 @@ impl Modifier for Blink {
             // open phase anchored to `now`.
             BlinkState::Uninitialized | BlinkState::Suppressed => {
                 self.state = BlinkState::Open { phase_start: now };
-                open_both_eyes(avatar);
+                open_both_eyes(entity);
             }
             // Open phase: elapsed since phase_start is always compared
             // against the *current* scaled_open_ms, so a rate change
@@ -143,7 +169,7 @@ impl Modifier for Blink {
                 let elapsed = now.saturating_duration_since(phase_start);
                 if elapsed >= open_ms {
                     self.state = BlinkState::Closed { phase_start: now };
-                    close_both_eyes(avatar);
+                    close_both_eyes(entity);
                 }
                 // Else: still open; no writes required.
             }
@@ -151,7 +177,7 @@ impl Modifier for Blink {
                 let elapsed = now.saturating_duration_since(phase_start);
                 if elapsed >= self.closed_ms {
                     self.state = BlinkState::Open { phase_start: now };
-                    open_both_eyes(avatar);
+                    open_both_eyes(entity);
                 }
             }
         }
@@ -162,85 +188,95 @@ impl Modifier for Blink {
 /// emotion code can animate the two lids independently (e.g. a wink
 /// variant could set one eye's `open_weight` to 0 without Blink
 /// clobbering the asymmetry).
-const fn open_both_eyes(avatar: &mut Avatar) {
-    avatar.left_eye.phase = EyePhase::Open;
-    avatar.left_eye.weight = avatar.left_eye.open_weight;
-    avatar.right_eye.phase = EyePhase::Open;
-    avatar.right_eye.weight = avatar.right_eye.open_weight;
+const fn open_both_eyes(entity: &mut Entity) {
+    entity.face.left_eye.phase = EyePhase::Open;
+    entity.face.left_eye.weight = entity.face.left_eye.open_weight;
+    entity.face.right_eye.phase = EyePhase::Open;
+    entity.face.right_eye.weight = entity.face.right_eye.open_weight;
 }
 
 /// Close both eyes. Weight is 0 in both; renderers distinguish closed
 /// from almost-open via the `phase` field rather than a weight threshold.
-const fn close_both_eyes(avatar: &mut Avatar) {
-    avatar.left_eye.phase = EyePhase::Closed;
-    avatar.left_eye.weight = 0;
-    avatar.right_eye.phase = EyePhase::Closed;
-    avatar.right_eye.weight = 0;
+const fn close_both_eyes(entity: &mut Entity) {
+    entity.face.left_eye.phase = EyePhase::Closed;
+    entity.face.left_eye.weight = 0;
+    entity.face.right_eye.phase = EyePhase::Closed;
+    entity.face.right_eye.weight = 0;
 }
 
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::avatar::Avatar;
+    use crate::director::{Field, ModifierMeta, Phase};
+    use crate::entity::Entity;
+    use crate::modifier::Modifier;
 
     #[test]
     fn first_update_leaves_eyes_open() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut blink = Blink::new();
-        blink.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
-        assert_eq!(avatar.right_eye.phase, EyePhase::Open);
-        assert_eq!(avatar.left_eye.weight, 100);
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
+        assert_eq!(entity.face.right_eye.phase, EyePhase::Open);
+        assert_eq!(entity.face.left_eye.weight, 100);
     }
 
     #[test]
     fn blinks_after_open_window_elapses() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut blink = Blink::with_timing(100, 20);
 
-        blink.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
 
         // Just before the transition -- still open.
-        blink.update(&mut avatar, Instant::from_millis(99));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
+        entity.tick.now = Instant::from_millis(99);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
 
         // At the transition -- eyes close.
-        blink.update(&mut avatar, Instant::from_millis(100));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Closed);
-        assert_eq!(avatar.left_eye.weight, 0);
-        assert_eq!(avatar.right_eye.phase, EyePhase::Closed);
+        entity.tick.now = Instant::from_millis(100);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Closed);
+        assert_eq!(entity.face.left_eye.weight, 0);
+        assert_eq!(entity.face.right_eye.phase, EyePhase::Closed);
     }
 
     #[test]
     fn reopens_after_closed_window_elapses() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut blink = Blink::with_timing(100, 20);
 
         // Cycle through: init -> open -> closed -> open again.
-        blink.update(&mut avatar, Instant::from_millis(0));
-        blink.update(&mut avatar, Instant::from_millis(100));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Closed);
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
+        entity.tick.now = Instant::from_millis(100);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Closed);
 
-        blink.update(&mut avatar, Instant::from_millis(120));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
-        assert_eq!(avatar.left_eye.weight, 100);
+        entity.tick.now = Instant::from_millis(120);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
+        assert_eq!(entity.face.left_eye.weight, 100);
     }
 
     #[test]
     fn cycle_repeats_indefinitely() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut blink = Blink::with_timing(100, 20);
 
         // Simulate ~5 full cycles.
         let mut transitions = 0_u32;
         let mut last_phase = EyePhase::Open;
         for ms in 0..=600 {
-            blink.update(&mut avatar, Instant::from_millis(ms));
-            if avatar.left_eye.phase != last_phase {
+            entity.tick.now = Instant::from_millis(ms);
+            blink.update(&mut entity);
+            if entity.face.left_eye.phase != last_phase {
                 transitions += 1;
-                last_phase = avatar.left_eye.phase;
+                last_phase = entity.face.left_eye.phase;
             }
         }
         // 600 ms / (100 + 20) = 5 cycles -> 10 transitions (open->closed->open pairs).
@@ -250,32 +286,36 @@ mod tests {
 
     #[test]
     fn open_weight_caps_reopen_amount() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         // Sleepy-style droopy lid: cap the open weight at 55.
-        avatar.left_eye.open_weight = 55;
-        avatar.right_eye.open_weight = 55;
+        entity.face.left_eye.open_weight = 55;
+        entity.face.right_eye.open_weight = 55;
 
         let mut blink = Blink::with_timing(100, 20);
-        blink.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.left_eye.weight, 55);
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.weight, 55);
 
         // Close and reopen -- the reopen still honors the cap.
-        blink.update(&mut avatar, Instant::from_millis(100));
-        blink.update(&mut avatar, Instant::from_millis(120));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
-        assert_eq!(avatar.left_eye.weight, 55);
+        entity.tick.now = Instant::from_millis(100);
+        blink.update(&mut entity);
+        entity.tick.now = Instant::from_millis(120);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
+        assert_eq!(entity.face.left_eye.weight, 55);
     }
 
     #[test]
     fn blink_rate_scale_zero_suppresses_blinks() {
-        let mut avatar = Avatar::default();
-        avatar.blink_rate_scale = 0;
+        let mut entity = Entity::default();
+        entity.face.style.blink_rate_scale = 0;
 
         let mut blink = Blink::with_timing(100, 20);
         // Drive through what would normally be many blinks.
         for ms in 0..1_000 {
-            blink.update(&mut avatar, Instant::from_millis(ms));
-            assert_eq!(avatar.left_eye.phase, EyePhase::Open, "ms={ms}");
+            entity.tick.now = Instant::from_millis(ms);
+            blink.update(&mut entity);
+            assert_eq!(entity.face.left_eye.phase, EyePhase::Open, "ms={ms}");
         }
     }
 
@@ -287,22 +327,26 @@ mod tests {
         // deadline stayed in the future so blinks never resumed. With
         // the explicit Suppressed state, the first non-zero tick anchors
         // a fresh Open phase and the normal cycle fires within open_ms.
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut blink = Blink::with_timing(100, 20);
 
         // Enter suppression.
-        avatar.blink_rate_scale = 0;
-        blink.update(&mut avatar, Instant::from_millis(0));
-        blink.update(&mut avatar, Instant::from_millis(500));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open, "suppressed");
+        entity.face.style.blink_rate_scale = 0;
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
+        entity.tick.now = Instant::from_millis(500);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open, "suppressed");
 
         // Rate returns to default; blinks should resume within the
         // normal open window relative to the resume instant, not stay
         // parked in the distant future.
-        avatar.blink_rate_scale = SCALE_DEFAULT;
-        blink.update(&mut avatar, Instant::from_millis(500));
-        blink.update(&mut avatar, Instant::from_millis(600));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Closed);
+        entity.face.style.blink_rate_scale = SCALE_DEFAULT;
+        entity.tick.now = Instant::from_millis(500);
+        blink.update(&mut entity);
+        entity.tick.now = Instant::from_millis(600);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Closed);
     }
 
     #[test]
@@ -312,22 +356,25 @@ mod tests {
         // phase entry, so shortening the open window later didn't fire
         // the blink any sooner. With phase_start + current-tick rate,
         // a rate change is observed immediately.
-        let mut avatar = Avatar::default();
-        avatar.blink_rate_scale = 64; // slower cadence → longer open
+        let mut entity = Entity::default();
+        entity.face.style.blink_rate_scale = 64; // slower cadence → longer open
         let mut blink = Blink::with_timing(200, 20);
 
-        blink.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
         // scaled_open_ms(64) = 200 * 128 / 64 = 400 ms. At ms=200 we're
         // only halfway through the slow open window.
-        blink.update(&mut avatar, Instant::from_millis(200));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
+        entity.tick.now = Instant::from_millis(200);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
 
         // Speed up to 4x — scaled_open_ms(255) = 200 * 128 / 255 ≈ 100 ms.
         // We're already past that window since phase_start=0, ms=200.
-        avatar.blink_rate_scale = 255;
-        blink.update(&mut avatar, Instant::from_millis(200));
+        entity.face.style.blink_rate_scale = 255;
+        entity.tick.now = Instant::from_millis(200);
+        blink.update(&mut entity);
         assert_eq!(
-            avatar.left_eye.phase,
+            entity.face.left_eye.phase,
             EyePhase::Closed,
             "faster rate should fire the blink on the same tick we crossed the new window"
         );
@@ -339,53 +386,57 @@ mod tests {
         // asymmetric open_weights (e.g. a wink) must survive Blink's
         // re-open writes rather than being clobbered by whatever the
         // left eye happens to hold.
-        let mut avatar = Avatar::default();
-        avatar.left_eye.open_weight = 100;
-        avatar.right_eye.open_weight = 30; // partially closed right eye
+        let mut entity = Entity::default();
+        entity.face.left_eye.open_weight = 100;
+        entity.face.right_eye.open_weight = 30; // partially closed right eye
 
         let mut blink = Blink::with_timing(100, 20);
-        blink.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.left_eye.weight, 100);
+        entity.tick.now = Instant::from_millis(0);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.weight, 100);
         assert_eq!(
-            avatar.right_eye.weight, 30,
+            entity.face.right_eye.weight, 30,
             "right eye's open_weight preserved"
         );
 
         // Close + reopen preserves the asymmetry.
-        blink.update(&mut avatar, Instant::from_millis(100));
-        blink.update(&mut avatar, Instant::from_millis(120));
-        assert_eq!(avatar.left_eye.phase, EyePhase::Open);
-        assert_eq!(avatar.left_eye.weight, 100);
-        assert_eq!(avatar.right_eye.weight, 30);
+        entity.tick.now = Instant::from_millis(100);
+        blink.update(&mut entity);
+        entity.tick.now = Instant::from_millis(120);
+        blink.update(&mut entity);
+        assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
+        assert_eq!(entity.face.left_eye.weight, 100);
+        assert_eq!(entity.face.right_eye.weight, 30);
     }
 
     #[test]
     fn blink_rate_scale_slows_cadence() {
-        let mut slow = Avatar::default();
-        slow.blink_rate_scale = 64; // half the default speed
+        let mut slow = Entity::default();
+        slow.face.style.blink_rate_scale = 64; // half the default speed
 
-        let mut fast = Avatar::default(); // default = SCALE_DEFAULT
+        let mut fast = Entity::default(); // default = SCALE_DEFAULT
 
         let mut slow_blink = Blink::with_timing(100, 20);
         let mut fast_blink = Blink::with_timing(100, 20);
 
-        // Count transitions over a fixed window.
         let mut slow_blinks = 0;
         let mut fast_blinks = 0;
         let (mut last_slow, mut last_fast) = (EyePhase::Open, EyePhase::Open);
 
         for ms in 0..=1_000 {
-            slow_blink.update(&mut slow, Instant::from_millis(ms));
-            fast_blink.update(&mut fast, Instant::from_millis(ms));
+            slow.tick.now = Instant::from_millis(ms);
+            slow_blink.update(&mut slow);
+            fast.tick.now = Instant::from_millis(ms);
+            fast_blink.update(&mut fast);
 
-            if slow.left_eye.phase == EyePhase::Closed && last_slow == EyePhase::Open {
+            if slow.face.left_eye.phase == EyePhase::Closed && last_slow == EyePhase::Open {
                 slow_blinks += 1;
             }
-            if fast.left_eye.phase == EyePhase::Closed && last_fast == EyePhase::Open {
+            if fast.face.left_eye.phase == EyePhase::Closed && last_fast == EyePhase::Open {
                 fast_blinks += 1;
             }
-            last_slow = slow.left_eye.phase;
-            last_fast = fast.left_eye.phase;
+            last_slow = slow.face.left_eye.phase;
+            last_fast = fast.face.left_eye.phase;
         }
 
         assert!(

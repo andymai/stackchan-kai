@@ -23,7 +23,7 @@
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Ticker, Timer};
-use stackchan_core::{Avatar, Instant, LED_COUNT, LedFrame, render_leds};
+use stackchan_core::{Entity, Instant, LED_COUNT, LedFrame, render_leds};
 
 use crate::board::SharedI2c;
 
@@ -105,7 +105,7 @@ where
 fn neutral_peak_frame() -> LedFrame {
     let mut frame = LedFrame::default();
     // Breath peaks at the halfway point of the 6 s cycle.
-    render_leds(&Avatar::default(), Instant::from_millis(3_000), &mut frame);
+    render_leds(&Entity::default(), Instant::from_millis(3_000), &mut frame);
     frame
 }
 

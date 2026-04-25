@@ -4,7 +4,7 @@
 //!
 //! - [`FakeClock`]: a deterministic [`Clock`] whose time is set by tests.
 //! - [`Framebuffer`]: a `Vec<Rgb565>`-backed [`DrawTarget`] that lets render
-//!   regression tests assert on the output of `Avatar::draw` without running
+//!   regression tests assert on the output of `Entity::draw` without running
 //!   on hardware.
 //! - [`RecordingHead`]: a [`HeadDriver`] impl that captures the
 //!   `(Instant, Pose)` trajectory, for golden tests of motion modifiers.
@@ -64,7 +64,7 @@ impl Clock for FakeClock {
 /// An in-memory RGB565 framebuffer used for render-regression tests.
 ///
 /// Implements [`DrawTarget`] with [`core::convert::Infallible`] errors, so
-/// any call to `Avatar::draw` that typechecks against a
+/// any call to `Entity::draw` that typechecks against a
 /// `DrawTarget<Color = Rgb565>` also runs against this buffer. Pixels
 /// outside the buffer bounds are silently dropped, matching how
 /// `embedded-graphics` clips to [`OriginDimensions`].
@@ -152,7 +152,7 @@ impl DrawTarget for Framebuffer {
 /// [`HeadDriver`] that records every `set_pose` call into a `Vec`.
 ///
 /// Pair with [`FakeClock`] to test motion modifiers without a real `SCServo`
-/// bus: drive the modifier pipeline, push `avatar.head_pose` into a
+/// bus: drive the modifier pipeline, push `avatar.motor.head_pose` into a
 /// `RecordingHead` each tick, then assert amplitude / period / trajectory
 /// bounds on [`RecordingHead::records`].
 ///
@@ -160,7 +160,7 @@ impl DrawTarget for Framebuffer {
 /// driver shape, but the recorded future is always immediately `Ready` —
 /// tests can drive it with the small `block_on` helper in the
 /// `head_sway.rs` integration test, or skip the trait entirely and inspect
-/// `avatar.head_pose` directly for simple cases.
+/// `avatar.motor.head_pose` directly for simple cases.
 #[derive(Debug, Default)]
 pub struct RecordingHead {
     /// Every `(now, pose)` pair passed to `set_pose`, in call order.
@@ -200,7 +200,7 @@ impl HeadDriver for RecordingHead {
 #[cfg(test)]
 #[allow(
     clippy::field_reassign_with_default,
-    reason = "test setup reads better as `let mut a = Avatar::default(); a.emotion = …;` than the struct-update equivalent"
+    reason = "test setup reads better as `let mut a = Entity::default(); a.emotion = …;` than the struct-update equivalent"
 )]
 #[allow(
     clippy::unwrap_used,
@@ -209,7 +209,7 @@ impl HeadDriver for RecordingHead {
 mod integration_tests {
     use super::*;
     use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
-    use stackchan_core::{Avatar, Emotion, EyePhase, Modifier, SCALE_DEFAULT};
+    use stackchan_core::{Emotion, Entity, EyePhase, Modifier, SCALE_DEFAULT};
 
     /// End-to-end: drive a Blink + Breath + `IdleDrift` stack for 60 simulated
     /// seconds at 30 FPS and verify the avatar never enters a nonsensical
@@ -217,7 +217,7 @@ mod integration_tests {
     #[test]
     fn sixty_second_composition_is_stable() {
         let clock = FakeClock::new();
-        let mut avatar = Avatar::default();
+        let mut avatar = Entity::default();
         let mut blink = Blink::new();
         let mut breath = Breath::new();
         let mut drift = IdleDrift::with_seed(core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap());
@@ -226,23 +226,26 @@ mod integration_tests {
         let total_ticks = 60_000 / tick_ms;
 
         for _ in 0..total_ticks {
-            blink.update(&mut avatar, clock.now());
-            breath.update(&mut avatar, clock.now());
-            drift.update(&mut avatar, clock.now());
+            avatar.tick.now = clock.now();
+            blink.update(&mut avatar);
+            avatar.tick.now = clock.now();
+            breath.update(&mut avatar);
+            avatar.tick.now = clock.now();
+            drift.update(&mut avatar);
 
             // Invariants that must hold every frame:
-            assert!(avatar.left_eye.weight <= 100);
-            assert!(avatar.right_eye.weight <= 100);
+            assert!(avatar.face.left_eye.weight <= 100);
+            assert!(avatar.face.right_eye.weight <= 100);
             // Framebuffer is 320x240; eyes must stay reasonably on-face.
             assert!(
-                (0..320).contains(&avatar.left_eye.center.x),
+                (0..320).contains(&avatar.face.left_eye.center.x),
                 "left eye x = {}",
-                avatar.left_eye.center.x
+                avatar.face.left_eye.center.x
             );
             assert!(
-                (0..320).contains(&avatar.right_eye.center.x),
+                (0..320).contains(&avatar.face.right_eye.center.x),
                 "right eye x = {}",
-                avatar.right_eye.center.x
+                avatar.face.right_eye.center.x
             );
 
             clock.advance(tick_ms);
@@ -266,8 +269,8 @@ mod integration_tests {
         let mut drift_a = IdleDrift::with_seed(seed_a);
         let mut drift_b = IdleDrift::with_seed(seed_b);
 
-        let mut avatar_a = Avatar::default();
-        let mut avatar_b = Avatar::default();
+        let mut avatar_a = Entity::default();
+        let mut avatar_b = Entity::default();
         let clock = FakeClock::new();
 
         let interval_ms = 4_000_u64; // matches IdleDrift::DEFAULT_INTERVAL_MS
@@ -276,9 +279,11 @@ mod integration_tests {
             // Tick exactly at each drift boundary so an offset is
             // applied on every iteration after the scheduling tick.
             let now = stackchan_core::Instant::from_millis(i * interval_ms);
-            drift_a.update(&mut avatar_a, now);
-            drift_b.update(&mut avatar_b, now);
-            if avatar_a.left_eye.center != avatar_b.left_eye.center {
+            avatar_a.tick.now = now;
+            drift_a.update(&mut avatar_a);
+            avatar_b.tick.now = now;
+            drift_b.update(&mut avatar_b);
+            if avatar_a.face.left_eye.center != avatar_b.face.left_eye.center {
                 diverged = true;
                 break;
             }
@@ -298,7 +303,7 @@ mod integration_tests {
     #[test]
     fn blink_frequency_over_one_minute() {
         let clock = FakeClock::new();
-        let mut avatar = Avatar::default();
+        let mut avatar = Entity::default();
         let mut blink = Blink::new();
 
         let tick_ms = 10;
@@ -308,11 +313,12 @@ mod integration_tests {
         let mut prev_phase = EyePhase::Open;
 
         for _ in 0..total_ticks {
-            blink.update(&mut avatar, clock.now());
-            if avatar.left_eye.phase == EyePhase::Closed && prev_phase == EyePhase::Open {
+            avatar.tick.now = clock.now();
+            blink.update(&mut avatar);
+            if avatar.face.left_eye.phase == EyePhase::Closed && prev_phase == EyePhase::Open {
                 blink_count += 1;
             }
-            prev_phase = avatar.left_eye.phase;
+            prev_phase = avatar.face.left_eye.phase;
             clock.advance(tick_ms);
         }
 
@@ -332,7 +338,7 @@ mod integration_tests {
     #[test]
     fn full_stack_cycles_through_every_default_emotion() {
         let clock = FakeClock::new();
-        let mut avatar = Avatar::default();
+        let mut avatar = Entity::default();
         let mut cycle = EmotionCycle::new();
         let mut style = EmotionStyle::new();
         let mut blink = Blink::new();
@@ -352,21 +358,30 @@ mod integration_tests {
         let mut seen_surprised_wide = false;
 
         for _ in 0..ticks {
-            cycle.update(&mut avatar, clock.now());
-            style.update(&mut avatar, clock.now());
-            blink.update(&mut avatar, clock.now());
-            breath.update(&mut avatar, clock.now());
-            drift.update(&mut avatar, clock.now());
+            avatar.tick.now = clock.now();
+            cycle.update(&mut avatar);
+            avatar.tick.now = clock.now();
+            style.update(&mut avatar);
+            avatar.tick.now = clock.now();
+            blink.update(&mut avatar);
+            avatar.tick.now = clock.now();
+            breath.update(&mut avatar);
+            avatar.tick.now = clock.now();
+            drift.update(&mut avatar);
 
             // Every frame still satisfies the baseline invariants.
-            assert!(avatar.left_eye.weight <= 100);
-            assert!(avatar.right_eye.weight <= 100);
+            assert!(avatar.face.left_eye.weight <= 100);
+            assert!(avatar.face.right_eye.weight <= 100);
 
-            match avatar.emotion {
-                Emotion::Happy if avatar.cheek_blush > 0 => seen_happy_cheeks = true,
-                Emotion::Sad if avatar.mouth_curve < 0 => seen_sad_frown = true,
-                Emotion::Sleepy if avatar.left_eye.open_weight < 100 => seen_sleepy_droop = true,
-                Emotion::Surprised if avatar.eye_scale > 128 => seen_surprised_wide = true,
+            match avatar.mind.affect.emotion {
+                Emotion::Happy if avatar.face.style.cheek_blush > 0 => seen_happy_cheeks = true,
+                Emotion::Sad if avatar.face.style.mouth_curve < 0 => seen_sad_frown = true,
+                Emotion::Sleepy if avatar.face.left_eye.open_weight < 100 => {
+                    seen_sleepy_droop = true
+                }
+                Emotion::Surprised if avatar.face.style.eye_scale > 128 => {
+                    seen_surprised_wide = true
+                }
                 _ => {}
             }
 
@@ -395,34 +410,39 @@ mod integration_tests {
     /// is only guaranteed if [`EmotionStyle`] runs first on the same tick.
     #[test]
     fn canonical_order_propagates_blink_rate_within_one_tick() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Surprised;
+        let mut avatar = Entity::default();
+        avatar.mind.affect.emotion = Emotion::Surprised;
         let mut style = EmotionStyle::new();
         let mut blink = Blink::new();
 
         // First tick establishes Surprised as both from + to in EmotionStyle,
         // and rate = 0 takes effect immediately.
-        style.update(&mut avatar, Instant::from_millis(0));
+        avatar.tick.now = Instant::from_millis(0);
+        style.update(&mut avatar);
         assert_eq!(
-            avatar.blink_rate_scale, 0,
+            avatar.face.style.blink_rate_scale, 0,
             "EmotionStyle must snap to target on first observation of a new emotion"
         );
 
         // Blink sees rate == 0 on the same tick and suppresses.
-        blink.update(&mut avatar, Instant::from_millis(0));
+        avatar.tick.now = Instant::from_millis(0);
+        blink.update(&mut avatar);
         assert_eq!(
-            avatar.left_eye.phase,
+            avatar.face.left_eye.phase,
             EyePhase::Open,
             "rate == 0 must force eyes open on the same tick EmotionStyle wrote it"
         );
 
         // Baseline sanity: with Neutral, the default rate propagates.
-        avatar.emotion = Emotion::Neutral;
-        style.update(&mut avatar, Instant::from_millis(10_000));
-        blink.update(&mut avatar, Instant::from_millis(10_000));
+        avatar.mind.affect.emotion = Emotion::Neutral;
+        avatar.tick.now = Instant::from_millis(10_000);
+        style.update(&mut avatar);
+        avatar.tick.now = Instant::from_millis(10_000);
+        blink.update(&mut avatar);
         // After the transition elapses (at next tick past 10_000 + 300 ms),
         // rate is SCALE_DEFAULT.
-        style.update(&mut avatar, Instant::from_millis(10_400));
-        assert_eq!(avatar.blink_rate_scale, SCALE_DEFAULT);
+        avatar.tick.now = Instant::from_millis(10_400);
+        style.update(&mut avatar);
+        assert_eq!(avatar.face.style.blink_rate_scale, SCALE_DEFAULT);
     }
 }

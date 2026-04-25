@@ -23,10 +23,11 @@
 //! already-swayed pose without `IdleSway` overwriting their work on the
 //! next tick.
 
-use super::Modifier;
-use crate::avatar::Avatar;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
+use crate::entity::Entity;
 use crate::head::Pose;
+use crate::modifier::Modifier;
 
 /// Default pan wander period, in milliseconds (~11 s).
 const DEFAULT_PAN_PERIOD_MS: u64 = 11_000;
@@ -149,20 +150,29 @@ impl Default for IdleSway {
 }
 
 impl Modifier for IdleSway {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "IdleSway",
+            description: "Slow two-axis triangle-wave wander on motor.head_pose so the head \
+                          looks alive at rest. Composes additively with upstream pose writes.",
+            phase: Phase::Motion,
+            priority: 0,
+            reads: &[Field::HeadPose],
+            writes: &[Field::HeadPose],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
         let pan = Self::unit_triangle(self.pan_period_ms, now) * self.pan_amplitude_deg;
         let tilt = Self::unit_triangle(self.tilt_period_ms, now) * self.tilt_amplitude_deg;
-        // Diff-and-undo: recover upstream pose by removing our last
-        // *applied* contribution, then add the new request and clamp.
-        // Storing the effective (post-clamp) contribution into
-        // `last_*_deg` keeps the next tick's "undo" honest under
-        // asymmetric clamping — see field docs.
-        let upstream_pan = avatar.head_pose.pan_deg - self.last_pan_deg;
-        let upstream_tilt = avatar.head_pose.tilt_deg - self.last_tilt_deg;
+        let upstream_pan = entity.motor.head_pose.pan_deg - self.last_pan_deg;
+        let upstream_tilt = entity.motor.head_pose.tilt_deg - self.last_tilt_deg;
         let new_pose = Pose::new(upstream_pan + pan, upstream_tilt + tilt).clamped();
         self.last_pan_deg = new_pose.pan_deg - upstream_pan;
         self.last_tilt_deg = new_pose.tilt_deg - upstream_tilt;
-        avatar.head_pose = new_pose;
+        entity.motor.head_pose = new_pose;
     }
 }
 
@@ -174,18 +184,19 @@ impl Modifier for IdleSway {
 )]
 mod tests {
     use super::*;
+    use crate::Entity;
     use crate::head::{MAX_PAN_DEG, MAX_TILT_DEG};
 
     /// Advance an `IdleSway` across `duration_ms` at `step_ms` granularity,
     /// returning the sequence of poses observed.
     fn sample(sway: &mut IdleSway, duration_ms: u64, step_ms: u64) -> Vec<Pose> {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let steps = duration_ms / step_ms.max(1);
         (0..=steps)
             .map(|i| {
-                let now = Instant::from_millis(i * step_ms);
-                sway.update(&mut avatar, now);
-                avatar.head_pose
+                entity.tick.now = Instant::from_millis(i * step_ms);
+                sway.update(&mut entity);
+                entity.motor.head_pose
             })
             .collect()
     }
@@ -284,26 +295,18 @@ mod tests {
 
     #[test]
     fn sway_composes_additively_with_upstream_writes() {
-        // Regression for the diff-and-undo refactor: if some upstream
-        // modifier sets an absolute head_pose, IdleSway must bias it
-        // rather than clobber it. Across many ticks, the net upstream
-        // contribution must survive.
         let mut sway = IdleSway::new();
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let upstream_pan = 1.5;
         let upstream_tilt = -0.5;
 
         for i in 0..100 {
-            // Simulate an upstream modifier writing an absolute target
-            // each tick.
-            avatar.head_pose = Pose::new(upstream_pan, upstream_tilt);
-            sway.update(&mut avatar, Instant::from_millis(i * 33));
+            entity.motor.head_pose = Pose::new(upstream_pan, upstream_tilt);
+            entity.tick.now = Instant::from_millis(i * 33);
+            sway.update(&mut entity);
 
-            // After IdleSway, the pose is the upstream target plus the
-            // sway contribution. The sway contribution magnitude is
-            // bounded by the configured amplitudes.
-            let sway_pan = avatar.head_pose.pan_deg - upstream_pan;
-            let sway_tilt = avatar.head_pose.tilt_deg - upstream_tilt;
+            let sway_pan = entity.motor.head_pose.pan_deg - upstream_pan;
+            let sway_tilt = entity.motor.head_pose.tilt_deg - upstream_tilt;
             assert!(
                 sway_pan.abs() <= DEFAULT_PAN_AMPLITUDE_DEG + 0.01,
                 "sway contribution {sway_pan}° exceeds amplitude"
@@ -313,13 +316,14 @@ mod tests {
     }
 
     #[test]
-    fn pose_matches_state_read_back_from_avatar() {
+    fn pose_matches_state_read_back_from_entity() {
         let mut sway = IdleSway::new();
-        let mut avatar = Avatar::default();
-        sway.update(&mut avatar, Instant::from_millis(2_750));
+        let mut entity = Entity::default();
+        entity.tick.now = Instant::from_millis(2_750);
+        sway.update(&mut entity);
         let direct_pan =
             IdleSway::unit_triangle(DEFAULT_PAN_PERIOD_MS, Instant::from_millis(2_750))
                 * DEFAULT_PAN_AMPLITUDE_DEG;
-        assert_eq!(avatar.head_pose.pan_deg, direct_pan);
+        assert_eq!(entity.motor.head_pose.pan_deg, direct_pan);
     }
 }

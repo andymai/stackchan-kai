@@ -3,7 +3,7 @@
 //!
 //! ## Detection shape
 //!
-//! Reads `avatar.battery_percent` each tick. Two-threshold hysteresis
+//! Reads `entity.perception.battery_percent` each tick. Two-threshold hysteresis
 //! mirrors [`super::AmbientSleepy`]:
 //!
 //! - **Enter low:** percent below [`LOW_BATTERY_ENTER_PERCENT`] while
@@ -22,7 +22,7 @@
 //! ## USB-power suppression
 //!
 //! Even when the percent is below the enter threshold, the modifier
-//! stands down if `avatar.usb_power_present == Some(true)`. The
+//! stands down if `entity.perception.usb_power_present == Some(true)`. The
 //! reasoning: the unit is charging (or running off USB), so going
 //! "sleepy" is the wrong UX — it should look attentive while plugged
 //! in even with a depleted battery. Unknown USB state
@@ -45,10 +45,11 @@
 //!
 //! [`Avatar::manual_until`]: crate::avatar::Avatar::manual_until
 
-use super::Modifier;
-use crate::avatar::Avatar;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
+use crate::entity::Entity;
+use crate::modifier::Modifier;
 
 /// Battery percent below which `Emotion::Sleepy` is forced.
 ///
@@ -144,8 +145,33 @@ impl Default for LowBatteryEmotion {
 }
 
 impl Modifier for LowBatteryEmotion {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        let Some(percent) = avatar.battery_percent else {
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "LowBatteryEmotion",
+            description: "Hysteresis on perception.battery_percent + usb_power_present: forces \
+                          emotion=Sleepy below threshold while unplugged. Sets \
+                          events.low_battery_armed + voice.chirp_request on the arming edge.",
+            phase: Phase::Affect,
+            priority: -50,
+            reads: &[
+                Field::BatteryPercent,
+                Field::UsbPowerPresent,
+                Field::Autonomy,
+                Field::Emotion,
+            ],
+            writes: &[
+                Field::Emotion,
+                Field::Autonomy,
+                Field::LowBatteryArmed,
+                Field::ChirpRequest,
+            ],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
+        let Some(percent) = entity.perception.battery_percent else {
             // No reading yet — nothing to do.
             return;
         };
@@ -165,24 +191,24 @@ impl Modifier for LowBatteryEmotion {
         // Going "sleepy" while plugged in is the wrong UX; suppress.
         // Unknown USB state (None) falls through and lets the override
         // fire, so a still-booting power task doesn't block the cue.
-        if avatar.usb_power_present == Some(true) {
+        if entity.perception.usb_power_present == Some(true) {
             return;
         }
 
         // Another modifier (touch, pickup, remote) has already claimed
         // the emotion. Stand down — low battery is background state,
         // explicit input wins.
-        if let Some(until) = avatar.manual_until
+        if let Some(until) = entity.mind.autonomy.manual_until
             && now < until
         {
             return;
         }
 
-        avatar.emotion = Emotion::Sleepy;
+        entity.mind.affect.emotion = Emotion::Sleepy;
         // Set a fresh hold. Subsequent ticks within the hold window
         // short-circuit at the manual_until check above; once the
         // hold expires, the next low-battery tick rolls a new one.
-        avatar.manual_until = Some(now + LOW_BATTERY_HOLD_MS);
+        entity.mind.autonomy.manual_until = Some(now + LOW_BATTERY_HOLD_MS);
     }
 }
 
@@ -191,18 +217,20 @@ mod tests {
     use super::*;
 
     /// Helper: avatar with a healthy battery, well above the threshold.
-    fn healthy_avatar() -> Avatar {
-        Avatar {
-            battery_percent: Some(80),
-            ..Avatar::default()
+    fn healthy_avatar() -> Entity {
+        {
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(80);
+            e
         }
     }
 
     /// Helper: avatar with a low battery, well below the threshold.
-    fn low_battery_avatar() -> Avatar {
-        Avatar {
-            battery_percent: Some(5),
-            ..Avatar::default()
+    fn low_battery_avatar() -> Entity {
+        {
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(5);
+            e
         }
     }
 
@@ -210,67 +238,79 @@ mod tests {
     fn no_battery_reading_does_nothing() {
         let mut modifier = LowBatteryEmotion::new();
         // battery_percent = None
-        let mut avatar = Avatar {
-            emotion: Emotion::Happy,
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.mind.affect.emotion = Emotion::Happy;
+            e
         };
-        modifier.update(&mut avatar, Instant::ZERO);
-        assert_eq!(avatar.emotion, Emotion::Happy);
-        assert!(avatar.manual_until.is_none());
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn healthy_battery_does_nothing() {
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            emotion: Emotion::Happy,
-            ..healthy_avatar()
+        let mut entity = {
+            let mut e = healthy_avatar();
+            e.mind.affect.emotion = Emotion::Happy;
+            e
         };
-        modifier.update(&mut avatar, Instant::ZERO);
-        assert_eq!(avatar.emotion, Emotion::Happy);
-        assert!(avatar.manual_until.is_none());
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn low_battery_forces_sleepy() {
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            emotion: Emotion::Happy,
-            ..low_battery_avatar()
+        let mut entity = {
+            let mut e = low_battery_avatar();
+            e.mind.affect.emotion = Emotion::Happy;
+            e
         };
         let now = Instant::from_millis(1_000);
-        modifier.update(&mut avatar, now);
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
-        assert_eq!(avatar.manual_until, Some(now + LOW_BATTERY_HOLD_MS));
+        entity.tick.now = now;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
+        assert_eq!(
+            entity.mind.autonomy.manual_until,
+            Some(now + LOW_BATTERY_HOLD_MS)
+        );
     }
 
     #[test]
     fn manual_hold_suppresses_low_battery_override() {
         let mut modifier = LowBatteryEmotion::new();
         let hold_deadline = Instant::from_millis(10_000);
-        let mut avatar = Avatar {
-            // Claimed by e.g. PickupReaction.
-            emotion: Emotion::Surprised,
-            manual_until: Some(hold_deadline),
-            ..low_battery_avatar()
+        let mut entity = {
+            let mut e = low_battery_avatar();
+            e.mind.affect.emotion = Emotion::Surprised;
+            e.mind.autonomy.manual_until = Some(hold_deadline);
+            e
         };
-        modifier.update(&mut avatar, Instant::from_millis(5_000));
+        entity.tick.now = Instant::from_millis(5_000);
+        modifier.update(&mut entity);
         // Hold still active — modifier stands down.
-        assert_eq!(avatar.emotion, Emotion::Surprised);
-        assert_eq!(avatar.manual_until, Some(hold_deadline));
+        assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
+        assert_eq!(entity.mind.autonomy.manual_until, Some(hold_deadline));
     }
 
     #[test]
     fn expired_manual_hold_lets_low_battery_through() {
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            manual_until: Some(Instant::from_millis(1_000)),
-            ..low_battery_avatar()
-        };
+        let mut entity = low_battery_avatar();
+        entity.mind.autonomy.manual_until = Some(Instant::from_millis(1_000));
         let now = Instant::from_millis(2_000);
-        modifier.update(&mut avatar, now);
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
-        assert_eq!(avatar.manual_until, Some(now + LOW_BATTERY_HOLD_MS));
+        entity.tick.now = now;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
+        assert_eq!(
+            entity.mind.autonomy.manual_until,
+            Some(now + LOW_BATTERY_HOLD_MS)
+        );
     }
 
     #[test]
@@ -278,25 +318,26 @@ mod tests {
         // The check is `percent < enter_threshold`, so
         // exactly-at-threshold is considered healthy.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(LOW_BATTERY_ENTER_PERCENT),
-            emotion: Emotion::Happy,
-            ..Avatar::default()
-        };
-        modifier.update(&mut avatar, Instant::ZERO);
-        assert_eq!(avatar.emotion, Emotion::Happy);
+        let mut entity = Entity::default();
+        entity.perception.battery_percent = Some(LOW_BATTERY_ENTER_PERCENT);
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
         assert!(!modifier.is_low());
     }
 
     #[test]
     fn enter_threshold_boundary_one_below_fires() {
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(LOW_BATTERY_ENTER_PERCENT - 1),
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(LOW_BATTERY_ENTER_PERCENT - 1);
+            e
         };
-        modifier.update(&mut avatar, Instant::ZERO);
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
         assert!(modifier.is_low());
     }
 
@@ -306,32 +347,31 @@ mod tests {
         // the percent crosses *above* the exit threshold — even if it
         // climbs above the enter threshold along the way.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(10),
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(10);
+            e
         };
-        modifier.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        modifier.update(&mut entity);
         assert!(modifier.is_low());
 
         // Climb to mid-band: still low.
-        avatar.battery_percent = Some(17);
-        modifier.update(&mut avatar, Instant::from_millis(LOW_BATTERY_HOLD_MS + 1));
+        entity.perception.battery_percent = Some(17);
+        entity.tick.now = Instant::from_millis(LOW_BATTERY_HOLD_MS + 1);
+        modifier.update(&mut entity);
         assert!(modifier.is_low());
 
         // Climb just above exit threshold: still low (need *above*, not at).
-        avatar.battery_percent = Some(LOW_BATTERY_EXIT_PERCENT);
-        modifier.update(
-            &mut avatar,
-            Instant::from_millis(2 * LOW_BATTERY_HOLD_MS + 1),
-        );
+        entity.perception.battery_percent = Some(LOW_BATTERY_EXIT_PERCENT);
+        entity.tick.now = Instant::from_millis(2 * LOW_BATTERY_HOLD_MS + 1);
+        modifier.update(&mut entity);
         assert!(modifier.is_low());
 
         // Climb past exit: clears.
-        avatar.battery_percent = Some(LOW_BATTERY_EXIT_PERCENT + 1);
-        modifier.update(
-            &mut avatar,
-            Instant::from_millis(3 * LOW_BATTERY_HOLD_MS + 1),
-        );
+        entity.perception.battery_percent = Some(LOW_BATTERY_EXIT_PERCENT + 1);
+        entity.tick.now = Instant::from_millis(3 * LOW_BATTERY_HOLD_MS + 1);
+        modifier.update(&mut entity);
         assert!(!modifier.is_low());
     }
 
@@ -340,75 +380,69 @@ mod tests {
         // Battery is below threshold but USB is plugged in — modifier
         // tracks "is_low" but does not write Sleepy.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(5),
-            usb_power_present: Some(true),
-            emotion: Emotion::Happy,
-            ..Avatar::default()
-        };
-        modifier.update(&mut avatar, Instant::ZERO);
+        let mut entity = Entity::default();
+        entity.perception.battery_percent = Some(5);
+        entity.perception.usb_power_present = Some(true);
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
         assert!(modifier.is_low());
-        assert_eq!(avatar.emotion, Emotion::Happy);
-        assert!(avatar.manual_until.is_none());
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn unknown_usb_state_lets_override_fire() {
-        // `usb_power_present = None` (pre-first-read) shouldn't block
-        // the modifier; we'd rather show low-battery once and correct
-        // later than miss the cue.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(5),
-            usb_power_present: None,
-            ..Avatar::default()
-        };
-        modifier.update(&mut avatar, Instant::ZERO);
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        let mut entity = Entity::default();
+        entity.perception.battery_percent = Some(5);
+        entity.perception.usb_power_present = None;
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
     }
 
     #[test]
     fn unplugging_usb_releases_suppression() {
-        // Plugged in, low battery → no override.
-        // Unplug while still low → override fires on the next tick.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(5),
-            usb_power_present: Some(true),
-            ..Avatar::default()
-        };
-        modifier.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        let mut entity = Entity::default();
+        entity.perception.battery_percent = Some(5);
+        entity.perception.usb_power_present = Some(true);
+        entity.tick.now = Instant::from_millis(0);
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
         assert!(modifier.is_low());
 
         // Unplug.
-        avatar.usb_power_present = Some(false);
-        modifier.update(&mut avatar, Instant::from_millis(1_000));
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        entity.perception.usb_power_present = Some(false);
+        entity.tick.now = Instant::from_millis(1_000);
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
     }
 
     #[test]
     fn custom_thresholds_take_effect() {
         let mut modifier = LowBatteryEmotion::with_thresholds(50, 60);
-        let mut avatar = Avatar {
-            battery_percent: Some(40),
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(40);
+            e
         };
-        modifier.update(&mut avatar, Instant::ZERO);
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        entity.tick.now = Instant::ZERO;
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
         assert!(modifier.is_low());
 
         // Climb to between custom enter/exit: still low.
-        avatar.battery_percent = Some(55);
-        modifier.update(&mut avatar, Instant::from_millis(LOW_BATTERY_HOLD_MS + 1));
+        entity.perception.battery_percent = Some(55);
+        entity.tick.now = Instant::from_millis(LOW_BATTERY_HOLD_MS + 1);
+        modifier.update(&mut entity);
         assert!(modifier.is_low());
 
         // Climb past custom exit: clears.
-        avatar.battery_percent = Some(61);
-        modifier.update(
-            &mut avatar,
-            Instant::from_millis(2 * LOW_BATTERY_HOLD_MS + 1),
-        );
+        entity.perception.battery_percent = Some(61);
+        entity.tick.now = Instant::from_millis(2 * LOW_BATTERY_HOLD_MS + 1);
+        modifier.update(&mut entity);
         assert!(!modifier.is_low());
     }
 
@@ -419,12 +453,14 @@ mod tests {
         // The hold rolls forward in [LOW_BATTERY_HOLD_MS]-sized
         // chunks, not on every tick.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = low_battery_avatar();
-        modifier.update(&mut avatar, Instant::from_millis(1_000));
-        let first_deadline = avatar.manual_until;
+        let mut entity = low_battery_avatar();
+        entity.tick.now = Instant::from_millis(1_000);
+        modifier.update(&mut entity);
+        let first_deadline = entity.mind.autonomy.manual_until;
         // Tick again 1 s later — well within the 5 s hold window.
-        modifier.update(&mut avatar, Instant::from_millis(2_000));
-        assert_eq!(avatar.manual_until, first_deadline);
+        entity.tick.now = Instant::from_millis(2_000);
+        modifier.update(&mut entity);
+        assert_eq!(entity.mind.autonomy.manual_until, first_deadline);
     }
 
     #[test]
@@ -432,14 +468,19 @@ mod tests {
         // After the first hold expires, a still-low battery should
         // re-fire the modifier and set a fresh hold.
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = low_battery_avatar();
-        modifier.update(&mut avatar, Instant::from_millis(1_000));
-        let first_deadline = avatar.manual_until;
+        let mut entity = low_battery_avatar();
+        entity.tick.now = Instant::from_millis(1_000);
+        modifier.update(&mut entity);
+        let first_deadline = entity.mind.autonomy.manual_until;
         // Tick after the hold has expired.
         let later = Instant::from_millis(1_000 + LOW_BATTERY_HOLD_MS + 1);
-        modifier.update(&mut avatar, later);
-        assert_eq!(avatar.manual_until, Some(later + LOW_BATTERY_HOLD_MS));
-        assert!(avatar.manual_until > first_deadline);
+        entity.tick.now = later;
+        modifier.update(&mut entity);
+        assert_eq!(
+            entity.mind.autonomy.manual_until,
+            Some(later + LOW_BATTERY_HOLD_MS)
+        );
+        assert!(entity.mind.autonomy.manual_until > first_deadline);
     }
 
     #[test]
@@ -449,9 +490,10 @@ mod tests {
         // dip back below enter, climb again — emotion stays Sleepy
         // throughout (after the initial trigger).
         let mut modifier = LowBatteryEmotion::new();
-        let mut avatar = Avatar {
-            battery_percent: Some(10),
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(10);
+            e
         };
 
         // Step the time past each hold window so the modifier
@@ -461,14 +503,15 @@ mod tests {
         let step = LOW_BATTERY_HOLD_MS + 1;
 
         for percent in [10, 17, 14, 18, 13, 19, 12] {
-            avatar.battery_percent = Some(percent);
-            modifier.update(&mut avatar, Instant::from_millis(t));
+            entity.perception.battery_percent = Some(percent);
+            entity.tick.now = Instant::from_millis(t);
+            modifier.update(&mut entity);
             assert!(
                 modifier.is_low(),
                 "percent={percent} flipped is_low off mid-band"
             );
             assert_eq!(
-                avatar.emotion,
+                entity.mind.affect.emotion,
                 Emotion::Sleepy,
                 "percent={percent} drove emotion off Sleepy"
             );

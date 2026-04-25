@@ -2,7 +2,7 @@
 //!
 //! Runs the canonical firmware modifier stack
 //! (`Blink` → `Breath` → `IdleDrift` → `IdleSway`) against a wall-clock
-//! source and renders the resulting `Avatar` into a 320×240 window via
+//! source and renders the resulting `Entity` into a 320×240 window via
 //! `egui` + `winit` at ~30 FPS. Lets behavior changes iterate in
 //! sub-second cycles instead of the 30 s+ build → flash → boot loop.
 //!
@@ -40,7 +40,7 @@ use std::time::Instant as StdInstant;
 use eframe::egui;
 use embedded_graphics::pixelcolor::RgbColor;
 use stackchan_core::modifiers::{Blink, Breath, IdleDrift, IdleSway};
-use stackchan_core::{Avatar, Clock, Emotion, Instant, Modifier};
+use stackchan_core::{Clock, Emotion, Entity, Instant, Modifier};
 use stackchan_sim::Framebuffer;
 
 /// Display dimensions match the firmware's ILI9342C panel.
@@ -96,7 +96,7 @@ fn framebuffer_to_color_image(fb: &Framebuffer) -> egui::ColorImage {
 }
 
 struct VizApp {
-    avatar: Avatar,
+    avatar: Entity,
     fb: Framebuffer,
     clock: WallClock,
     blink: Blink,
@@ -116,7 +116,7 @@ impl VizApp {
     fn new() -> Self {
         let drift_seed = 0xDEAD_BEEF;
         Self {
-            avatar: Avatar::default(),
+            avatar: Entity::default(),
             fb: Framebuffer::new(FB_WIDTH, FB_HEIGHT),
             clock: WallClock::new(),
             blink: Blink::new(),
@@ -134,19 +134,19 @@ impl VizApp {
     }
 
     fn tick_modifiers(&mut self) {
-        let now = self.clock.now();
         if let Some(e) = self.emotion_override {
-            self.avatar.emotion = e;
+            self.avatar.mind.affect.emotion = e;
         }
-        self.blink.update(&mut self.avatar, now);
-        self.breath.update(&mut self.avatar, now);
-        self.drift.update(&mut self.avatar, now);
-        self.sway.update(&mut self.avatar, now);
+        self.avatar.tick.now = self.clock.now();
+        self.blink.update(&mut self.avatar);
+        self.breath.update(&mut self.avatar);
+        self.drift.update(&mut self.avatar);
+        self.sway.update(&mut self.avatar);
     }
 
     fn redraw_framebuffer(&mut self) {
-        // Clear + redraw. Avatar::draw returns Infallible on Framebuffer.
-        let _ = self.avatar.draw(&mut self.fb);
+        // Clear + redraw. Face::draw returns Infallible on Framebuffer.
+        let _ = self.avatar.face.draw(&mut self.fb);
     }
 
     fn update_fps_counter(&mut self) {
@@ -233,16 +233,16 @@ impl eframe::App for VizApp {
             ui.separator();
 
             ui.label("avatar fields:");
-            ui.label(format!("emotion: {:?}", self.avatar.emotion));
+            ui.label(format!("emotion: {:?}", self.avatar.mind.affect.emotion));
             ui.label(format!(
                 "left eye: ({}, {}) w={}",
-                self.avatar.left_eye.center.x,
-                self.avatar.left_eye.center.y,
-                self.avatar.left_eye.weight,
+                self.avatar.face.left_eye.center.x,
+                self.avatar.face.left_eye.center.y,
+                self.avatar.face.left_eye.weight,
             ));
             ui.label(format!(
                 "mouth: w={} open={:.2}",
-                self.avatar.mouth.weight, self.avatar.mouth.mouth_open,
+                self.avatar.face.mouth.weight, self.avatar.face.mouth.mouth_open,
             ));
         });
 

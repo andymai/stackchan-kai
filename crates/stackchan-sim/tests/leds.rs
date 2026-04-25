@@ -10,18 +10,18 @@
 
 #![allow(
     clippy::field_reassign_with_default,
-    reason = "Avatar has many fields; post-init assignment is clearer than ..Default::default() here"
+    reason = "Entity has many fields; post-init assignment is clearer than ..Default::default() here"
 )]
 
 use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
-use stackchan_core::{Avatar, BRIGHTNESS_PEAK, Clock, Emotion, LED_COUNT, LedFrame, Modifier};
+use stackchan_core::{BRIGHTNESS_PEAK, Clock, Emotion, Entity, LED_COUNT, LedFrame, Modifier};
 use stackchan_core::{Instant, render_leds};
 use stackchan_sim::FakeClock;
 
 /// Run the default v0.1.0 modifier stack for `ms` milliseconds of
 /// simulated time (no clock ticks between; modifiers are sampled at
 /// the end-state only), then render LEDs and return the frame.
-fn render_at(avatar: &mut Avatar, modifiers_at: u64) -> LedFrame {
+fn render_at(avatar: &mut Entity, modifiers_at: u64) -> LedFrame {
     let clock = FakeClock::new();
     let mut emotion_cycle = EmotionCycle::new();
     let mut emotion_style = EmotionStyle::new();
@@ -34,11 +34,16 @@ fn render_at(avatar: &mut Avatar, modifiers_at: u64) -> LedFrame {
     let mut t = 0u64;
     while t <= modifiers_at {
         clock.set(Instant::from_millis(t));
-        emotion_cycle.update(avatar, clock.now());
-        emotion_style.update(avatar, clock.now());
-        blink.update(avatar, clock.now());
-        breath.update(avatar, clock.now());
-        drift.update(avatar, clock.now());
+        avatar.tick.now = clock.now();
+        emotion_cycle.update(avatar);
+        avatar.tick.now = clock.now();
+        emotion_style.update(avatar);
+        avatar.tick.now = clock.now();
+        blink.update(avatar);
+        avatar.tick.now = clock.now();
+        breath.update(avatar);
+        avatar.tick.now = clock.now();
+        drift.update(avatar);
         t += 33;
     }
 
@@ -49,8 +54,8 @@ fn render_at(avatar: &mut Avatar, modifiers_at: u64) -> LedFrame {
 
 #[test]
 fn neutral_emotion_lights_soft_white_at_peak_breath() {
-    let mut avatar = Avatar::default();
-    avatar.emotion = Emotion::Neutral;
+    let mut avatar = Entity::default();
+    avatar.mind.affect.emotion = Emotion::Neutral;
     // No modifier pipeline — we want a pure palette probe.
     let mut frame = LedFrame::default();
     render_leds(&avatar, Instant::from_millis(3_000), &mut frame);
@@ -86,8 +91,8 @@ fn each_emotion_produces_a_distinct_pixel_at_peak() {
         Emotion::Sleepy,
         Emotion::Surprised,
     ] {
-        let mut avatar = Avatar::default();
-        avatar.emotion = emotion;
+        let mut avatar = Entity::default();
+        avatar.mind.affect.emotion = emotion;
         render_leds(&avatar, now, &mut frame);
         let px = frame.0[0];
         assert!(
@@ -101,8 +106,8 @@ fn each_emotion_produces_a_distinct_pixel_at_peak() {
 
 #[test]
 fn breath_envelope_dims_the_ring_at_cycle_trough() {
-    let mut avatar = Avatar::default();
-    avatar.emotion = Emotion::Happy; // amber has big R + G components
+    let mut avatar = Entity::default();
+    avatar.mind.affect.emotion = Emotion::Happy; // amber has big R + G components
     let mut trough = LedFrame::default();
     let mut peak = LedFrame::default();
     render_leds(&avatar, Instant::from_millis(0), &mut trough);
@@ -124,7 +129,7 @@ fn breath_envelope_dims_the_ring_at_cycle_trough() {
 fn render_leds_integrated_with_emotion_cycle() {
     // Drive the stack long enough that EmotionCycle has definitely
     // moved off Neutral, then confirm the LED palette follows.
-    let mut avatar = Avatar::default();
+    let mut avatar = Entity::default();
     let neutral_frame = {
         let mut f = LedFrame::default();
         render_leds(&avatar, Instant::from_millis(3_000), &mut f);
@@ -135,7 +140,7 @@ fn render_leds_integrated_with_emotion_cycle() {
     // so the emotion will definitely have changed from Neutral.
     let later = render_at(&mut avatar, 30_000);
     assert_ne!(
-        avatar.emotion,
+        avatar.mind.affect.emotion,
         Emotion::Neutral,
         "EmotionCycle should have advanced off Neutral by 30s"
     );
@@ -153,8 +158,8 @@ fn frame_never_exceeds_brightness_cap() {
     // Sweep a full breath cycle and verify no channel exceeds what
     // BRIGHTNESS_PEAK allows. Tightens the host-side bound into a
     // sim-level guarantee.
-    let mut avatar = Avatar::default();
-    avatar.emotion = Emotion::Surprised; // max R+G+B case
+    let mut avatar = Entity::default();
+    avatar.mind.affect.emotion = Emotion::Surprised; // max R+G+B case
     let max_5bit = u16::from(BRIGHTNESS_PEAK) >> 3; // 5-bit R/B field
     let max_6bit = u16::from(BRIGHTNESS_PEAK) >> 2; // 6-bit G field
     let mut frame = LedFrame::default();

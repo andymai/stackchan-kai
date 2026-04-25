@@ -4,7 +4,7 @@
 //!
 //! ## Detection shape
 //!
-//! Reads `avatar.ambient_lux` each tick. The trigger uses hysteresis
+//! Reads `entity.perception.ambient_lux` each tick. The trigger uses hysteresis
 //! to absorb sensor noise + natural light variation:
 //!
 //! - **Enter Sleepy:** `lux` below [`SLEEPY_ENTER_LUX`] while not
@@ -31,10 +31,11 @@
 //! itself re-affirms the hold on every dark tick so Sleepy sticks as
 //! long as the room stays dim.
 
-use super::Modifier;
-use crate::avatar::Avatar;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
+use crate::entity::Entity;
+use crate::modifier::Modifier;
 
 /// Ambient lux below which Sleepy triggers.
 ///
@@ -86,8 +87,23 @@ impl AmbientSleepy {
 }
 
 impl Modifier for AmbientSleepy {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        let Some(lux) = avatar.ambient_lux else {
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "AmbientSleepy",
+            description: "Hysteresis on perception.ambient_lux: forces emotion=Sleepy in dark \
+                          rooms. Stands down when an earlier modifier already holds \
+                          mind.autonomy.manual_until.",
+            phase: Phase::Affect,
+            priority: -50,
+            reads: &[Field::AmbientLux, Field::Autonomy, Field::Emotion],
+            writes: &[Field::Emotion, Field::Autonomy],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
+        let Some(lux) = entity.perception.ambient_lux else {
             // No reading yet — nothing to do.
             return;
         };
@@ -102,17 +118,17 @@ impl Modifier for AmbientSleepy {
         // Another modifier (touch, pickup) has already claimed the
         // emotion. Stand down — ambient is background state, explicit
         // input wins.
-        if let Some(until) = avatar.manual_until
+        if let Some(until) = entity.mind.autonomy.manual_until
             && now < until
         {
             return;
         }
 
         if self.is_asleep {
-            avatar.emotion = Emotion::Sleepy;
+            entity.mind.affect.emotion = Emotion::Sleepy;
             // Re-affirm the hold every dark tick so Sleepy persists
             // as long as the room stays dim.
-            avatar.manual_until = Some(now + AMBIENT_HOLD_MS);
+            entity.mind.autonomy.manual_until = Some(now + AMBIENT_HOLD_MS);
         }
         // When `is_asleep == false` and no hold is active we do
         // nothing — `EmotionCycle` takes over on the next tick and
@@ -128,80 +144,89 @@ mod tests {
 
     /// Helper: make a bright-ambient avatar (well above the exit
     /// threshold).
-    fn bright() -> Avatar {
-        Avatar {
-            ambient_lux: Some(200.0),
-            ..Avatar::default()
+    fn bright() -> Entity {
+        {
+            let mut e = Entity::default();
+            e.perception.ambient_lux = Some(200.0);
+            e
         }
     }
 
     /// Helper: make a dark-ambient avatar (well below enter threshold).
-    fn dark() -> Avatar {
-        Avatar {
-            ambient_lux: Some(5.0),
-            ..Avatar::default()
+    fn dark() -> Entity {
+        {
+            let mut e = Entity::default();
+            e.perception.ambient_lux = Some(5.0);
+            e
         }
     }
 
     #[test]
     fn no_reading_does_nothing() {
-        let mut avatar = Avatar::default(); // ambient_lux = None
+        let mut entity = Entity::default(); // ambient_lux = None
         let mut sleepy = AmbientSleepy::new();
         for t in (0..1_000).step_by(50) {
-            sleepy.update(&mut avatar, Instant::from_millis(t));
+            entity.tick.now = Instant::from_millis(t);
+            sleepy.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Neutral);
-        assert!(avatar.manual_until.is_none());
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn dark_room_triggers_sleepy() {
-        let mut avatar = dark();
+        let mut entity = dark();
         let mut sleepy = AmbientSleepy::new();
-        sleepy.update(&mut avatar, Instant::from_millis(100));
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        entity.tick.now = Instant::from_millis(100);
+        sleepy.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
         assert!(sleepy.is_asleep());
         assert_eq!(
-            avatar.manual_until,
+            entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(100 + AMBIENT_HOLD_MS)),
         );
     }
 
     #[test]
     fn bright_room_does_not_trigger() {
-        let mut avatar = bright();
+        let mut entity = bright();
         let mut sleepy = AmbientSleepy::new();
-        sleepy.update(&mut avatar, Instant::from_millis(100));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        entity.tick.now = Instant::from_millis(100);
+        sleepy.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
         assert!(!sleepy.is_asleep());
-        assert!(avatar.manual_until.is_none());
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn hysteresis_holds_sleep_between_thresholds() {
-        let mut avatar = dark();
+        let mut entity = dark();
         let mut sleepy = AmbientSleepy::new();
 
         // Enter sleep at 5 lux.
-        sleepy.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        sleepy.update(&mut entity);
         assert!(sleepy.is_asleep());
 
         // Dim bulb lights up — 30 lux is between ENTER (20) and EXIT
         // (50) thresholds. Must stay asleep.
-        avatar.ambient_lux = Some(30.0);
-        sleepy.update(&mut avatar, Instant::from_millis(100));
+        entity.perception.ambient_lux = Some(30.0);
+        entity.tick.now = Instant::from_millis(100);
+        sleepy.update(&mut entity);
         assert!(sleepy.is_asleep(), "30 lux is inside the hysteresis band");
-        assert_eq!(avatar.emotion, Emotion::Sleepy);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
     }
 
     #[test]
     fn bright_room_wakes_from_sleep() {
-        let mut avatar = dark();
+        let mut entity = dark();
         let mut sleepy = AmbientSleepy::new();
-        sleepy.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        sleepy.update(&mut entity);
 
-        avatar.ambient_lux = Some(200.0);
-        sleepy.update(&mut avatar, Instant::from_millis(100));
+        entity.perception.ambient_lux = Some(200.0);
+        entity.tick.now = Instant::from_millis(100);
+        sleepy.update(&mut entity);
         assert!(!sleepy.is_asleep());
         // Prior-frame hold remains (the modifier re-affirms but
         // doesn't actively clear); EmotionTouch::update clears
@@ -214,14 +239,16 @@ mod tests {
         // used one threshold at 35 lux the output would flicker. With
         // hysteresis (20 / 50), a hover in the 25–45 band never
         // toggles state.
-        let mut avatar = dark();
+        let mut entity = dark();
         let mut sleepy = AmbientSleepy::new();
-        sleepy.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        sleepy.update(&mut entity);
         assert!(sleepy.is_asleep());
 
         for (i, lux) in [25.0_f32, 45.0, 30.0, 40.0, 35.0].into_iter().enumerate() {
-            avatar.ambient_lux = Some(lux);
-            sleepy.update(&mut avatar, Instant::from_millis(100 + (i as u64) * 100));
+            entity.perception.ambient_lux = Some(lux);
+            entity.tick.now = Instant::from_millis(100 + (i as u64) * 100);
+            sleepy.update(&mut entity);
             assert!(
                 sleepy.is_asleep(),
                 "lux {lux} in hysteresis band should hold prior state",
@@ -231,20 +258,21 @@ mod tests {
 
     #[test]
     fn touch_hold_blocks_ambient_sleepy() {
-        let mut avatar = dark();
+        let mut entity = dark();
         // Touch just set emotion=Happy + 30 s hold.
-        avatar.emotion = Emotion::Happy;
-        avatar.manual_until = Some(Instant::from_millis(30_000));
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.mind.autonomy.manual_until = Some(Instant::from_millis(30_000));
         let mut sleepy = AmbientSleepy::new();
 
-        sleepy.update(&mut avatar, Instant::from_millis(100));
+        entity.tick.now = Instant::from_millis(100);
+        sleepy.update(&mut entity);
         assert_eq!(
-            avatar.emotion,
+            entity.mind.affect.emotion,
             Emotion::Happy,
             "touch-set emotion must survive concurrent darkness",
         );
         assert_eq!(
-            avatar.manual_until,
+            entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(30_000)),
             "touch-set hold deadline must be preserved",
         );
@@ -252,24 +280,26 @@ mod tests {
 
     #[test]
     fn ambient_hold_is_renewed_every_dark_tick() {
-        let mut avatar = dark();
+        let mut entity = dark();
         let mut sleepy = AmbientSleepy::new();
 
         // First dark tick.
-        sleepy.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        sleepy.update(&mut entity);
         assert_eq!(
-            avatar.manual_until,
+            entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(AMBIENT_HOLD_MS))
         );
 
         // Simulate clearing by EmotionTouch::update when the hold
         // expires (3 s later, still dark — modifier stack would see
         // the clear before AmbientSleepy runs in the same frame).
-        avatar.manual_until = None;
+        entity.mind.autonomy.manual_until = None;
 
-        sleepy.update(&mut avatar, Instant::from_millis(3_000));
+        entity.tick.now = Instant::from_millis(3_000);
+        sleepy.update(&mut entity);
         assert_eq!(
-            avatar.manual_until,
+            entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(3_000 + AMBIENT_HOLD_MS)),
             "still-dark ticks must re-arm the hold",
         );

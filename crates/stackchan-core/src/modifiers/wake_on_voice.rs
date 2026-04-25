@@ -3,7 +3,7 @@
 //!
 //! ## Detection shape
 //!
-//! Watches `avatar.audio_rms` (linear, `0.0..=1.0`, normalised against
+//! Watches `entity.perception.audio_rms` (linear, `0.0..=1.0`, normalised against
 //! full-scale i16). A tick "counts as loud" when the RMS exceeds
 //! [`WAKE_RMS_THRESHOLD`]. Once the consecutive loud-tick count
 //! reaches [`WAKE_SUSTAIN_TICKS`] the modifier triggers: emotion goes
@@ -33,10 +33,11 @@
 //!
 //! [`Avatar::manual_until`]: crate::avatar::Avatar::manual_until
 
-use super::Modifier;
-use crate::avatar::Avatar;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
+use crate::entity::Entity;
+use crate::modifier::Modifier;
 
 /// Linear RMS threshold for the "loud" classification. `0.05 ≈ -26
 /// dBFS`, well above ambient room noise on the CoreS3 mic but below
@@ -130,12 +131,29 @@ impl Default for WakeOnVoice {
 }
 
 impl Modifier for WakeOnVoice {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        // Clear the edge flag at the start of every tick — it only
-        // ever signals the *current* tick's transition.
-        self.just_fired = false;
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "WakeOnVoice",
+            description: "Sustained perception.audio_rms above threshold flips emotion to Happy \
+                          (wake from Sleepy). Sets events.wake_fired + voice.chirp_request = \
+                          Wake on the rising edge.",
+            phase: Phase::Affect,
+            priority: -70,
+            reads: &[Field::AudioRms, Field::Autonomy, Field::Emotion],
+            writes: &[
+                Field::Emotion,
+                Field::Autonomy,
+                Field::WakeFired,
+                Field::ChirpRequest,
+            ],
+        };
+        &META
+    }
 
-        let Some(rms) = avatar.audio_rms else {
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
+
+        let Some(rms) = entity.perception.audio_rms else {
             // No reading yet — treat as silent, reset counter.
             self.consecutive_loud = 0;
             return;
@@ -158,14 +176,17 @@ impl Modifier for WakeOnVoice {
         // don't extend it on every tick (mirrors AmbientSleepy's
         // rolling-hold behaviour); once it expires, the next still-
         // loud tick rolls a new one.
-        if let Some(until) = avatar.manual_until
+        if let Some(until) = entity.mind.autonomy.manual_until
             && now < until
         {
             return;
         }
 
-        avatar.emotion = Emotion::Happy;
-        avatar.manual_until = Some(now + WAKE_HOLD_MS);
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.mind.autonomy.manual_until = Some(now + WAKE_HOLD_MS);
+        entity.mind.autonomy.source = Some(crate::mind::OverrideSource::Voice);
+        entity.events.wake_fired = true;
+        entity.voice.chirp_request = Some(crate::voice::ChirpKind::Wake);
         // Reset so the next wake requires a fresh sustained period
         // rather than firing every tick within a single loud burst.
         self.consecutive_loud = 0;
@@ -177,65 +198,74 @@ impl Modifier for WakeOnVoice {
 mod tests {
     use super::*;
 
-    fn loud_avatar() -> Avatar {
-        Avatar {
-            audio_rms: Some(0.3),
-            ..Avatar::default()
+    fn loud_avatar() -> Entity {
+        {
+            let mut e = Entity::default();
+            e.perception.audio_rms = Some(0.3);
+            e
         }
     }
 
-    fn quiet_avatar() -> Avatar {
-        Avatar {
-            audio_rms: Some(0.001),
-            ..Avatar::default()
+    fn quiet_avatar() -> Entity {
+        {
+            let mut e = Entity::default();
+            e.perception.audio_rms = Some(0.001);
+            e
         }
     }
 
     #[test]
     fn no_reading_keeps_counter_zero() {
         let mut wake = WakeOnVoice::new();
-        let mut avatar = Avatar::default(); // audio_rms = None
+        let mut entity = Entity::default(); // audio_rms = None
         for t in 0..20 {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
         assert_eq!(wake.consecutive_loud(), 0);
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
     }
 
     #[test]
     fn quiet_keeps_counter_zero() {
         let mut wake = WakeOnVoice::new();
-        let mut avatar = quiet_avatar();
+        let mut entity = quiet_avatar();
         for t in 0..20 {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
         assert_eq!(wake.consecutive_loud(), 0);
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
     }
 
     #[test]
     fn loud_below_sustain_does_not_fire() {
         // sustain_ticks - 1 loud ticks should NOT trigger.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Neutral);
-        assert!(avatar.manual_until.is_none());
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
     fn sustained_loud_triggers_happy() {
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS)) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Happy);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
         // Hold deadline = now + WAKE_HOLD_MS at the firing tick.
         let firing_now = Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) - 1) * 33);
-        assert_eq!(avatar.manual_until, Some(firing_now + WAKE_HOLD_MS));
+        assert_eq!(
+            entity.mind.autonomy.manual_until,
+            Some(firing_now + WAKE_HOLD_MS)
+        );
     }
 
     #[test]
@@ -243,24 +273,21 @@ mod tests {
         // 9 loud ticks, one quiet (resets), then 9 more loud — should
         // not yet fire because each run is below sustain.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        avatar.audio_rms = Some(0.001); // quiet
-        wake.update(
-            &mut avatar,
-            Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) - 1) * 33),
-        );
+        entity.perception.audio_rms = Some(0.001); // quiet
+        entity.tick.now = Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) - 1) * 33);
+        wake.update(&mut entity);
         assert_eq!(wake.consecutive_loud(), 0);
-        avatar.audio_rms = Some(0.3); // loud again
+        entity.perception.audio_rms = Some(0.3); // loud again
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
-            wake.update(
-                &mut avatar,
-                Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) + t) * 33),
-            );
+            entity.tick.now = Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) + t) * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
     }
 
     #[test]
@@ -270,18 +297,20 @@ mod tests {
         // manual_until check; only after the hold expires AND a
         // fresh sustain accumulates does it fire again.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         // First fire.
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS)) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        let first_deadline = avatar.manual_until;
+        let first_deadline = entity.mind.autonomy.manual_until;
         // Continue loud through the hold window. Counter should
         // accumulate but the hold should suppress re-firing.
         for t in (u64::from(WAKE_SUSTAIN_TICKS))..(u64::from(WAKE_SUSTAIN_TICKS) + 30) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.manual_until, first_deadline);
+        assert_eq!(entity.mind.autonomy.manual_until, first_deadline);
     }
 
     #[test]
@@ -291,16 +320,18 @@ mod tests {
         // ticks but stands down — explicit input wins.
         let mut wake = WakeOnVoice::new();
         let pickup_deadline = Instant::from_millis(30_000);
-        let mut avatar = Avatar {
-            emotion: Emotion::Surprised,
-            manual_until: Some(pickup_deadline),
-            ..loud_avatar()
+        let mut entity = {
+            let mut e = loud_avatar();
+            e.mind.affect.emotion = Emotion::Surprised;
+            e.mind.autonomy.manual_until = Some(pickup_deadline);
+            e
         };
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) + 5) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Surprised);
-        assert_eq!(avatar.manual_until, Some(pickup_deadline));
+        assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
+        assert_eq!(entity.mind.autonomy.manual_until, Some(pickup_deadline));
     }
 
     #[test]
@@ -310,17 +341,19 @@ mod tests {
         // Happy with a fresh hold.
         let mut wake = WakeOnVoice::new();
         let expired = Instant::from_millis(0);
-        let mut avatar = Avatar {
-            emotion: Emotion::Sleepy,
-            manual_until: Some(expired),
-            ..loud_avatar()
+        let mut entity = {
+            let mut e = loud_avatar();
+            e.mind.affect.emotion = Emotion::Sleepy;
+            e.mind.autonomy.manual_until = Some(expired);
+            e
         };
         // Tick at well past the expiry.
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS)) {
-            wake.update(&mut avatar, Instant::from_millis(10_000 + t * 33));
+            entity.tick.now = Instant::from_millis(10_000 + t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Happy);
-        assert!(avatar.manual_until > Some(expired));
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        assert!(entity.mind.autonomy.manual_until > Some(expired));
     }
 
     #[test]
@@ -328,25 +361,27 @@ mod tests {
         // 300 loud ticks (well past u8::MAX) should not panic and
         // should keep the modifier in a consistent state.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         for t in 0..300_u64 {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
         // Either fired and reset, or held in saturating state.
         // The contract: no panic and the avatar emotion is one of the
         // expected values (Happy after fire, default Neutral never).
-        assert!(matches!(avatar.emotion, Emotion::Happy));
+        assert!(matches!(entity.mind.affect.emotion, Emotion::Happy));
     }
 
     #[test]
     fn custom_config_takes_effect() {
         // Lower sustain count fires faster.
         let mut wake = WakeOnVoice::with_config(0.05, 3);
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         for t in 0..3 {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Happy);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
 
     #[test]
@@ -354,36 +389,38 @@ mod tests {
         // Sustained loudness fires on the Nth tick. just_fired is
         // true on that tick, false on the (N+1)th.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
+        let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
             assert!(!wake.just_fired(), "fired early on tick {t}");
         }
         // Trigger tick.
-        wake.update(
-            &mut avatar,
-            Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) - 1) * 33),
-        );
-        assert!(wake.just_fired(), "did not fire on threshold tick");
+        entity.tick.now = Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) - 1) * 33);
+        wake.update(&mut entity);
+        assert!(entity.events.wake_fired, "did not fire on threshold tick");
         // Next tick: still loud, but inside hold window — not a fresh
-        // fire, so just_fired clears.
-        wake.update(
-            &mut avatar,
-            Instant::from_millis(u64::from(WAKE_SUSTAIN_TICKS) * 33),
+        // fire. Director clears events at frame start; tests must do the same.
+        entity.events.wake_fired = false;
+        entity.tick.now = Instant::from_millis(u64::from(WAKE_SUSTAIN_TICKS) * 33);
+        wake.update(&mut entity);
+        assert!(
+            !entity.events.wake_fired,
+            "stuck-fired across consecutive ticks"
         );
-        assert!(!wake.just_fired(), "stuck-fired across consecutive ticks");
     }
 
     #[test]
     fn just_fired_clears_when_quiet_tick_resets_counter() {
-        // A quiet tick mid-burst resets the counter and zeroes
-        // just_fired (which was already false).
         let mut wake = WakeOnVoice::new();
-        let mut avatar = loud_avatar();
-        wake.update(&mut avatar, Instant::from_millis(0));
-        avatar.audio_rms = Some(0.001);
-        wake.update(&mut avatar, Instant::from_millis(33));
-        assert!(!wake.just_fired());
+        let mut entity = loud_avatar();
+        entity.tick.now = Instant::from_millis(0);
+        wake.update(&mut entity);
+        entity.events.wake_fired = false;
+        entity.perception.audio_rms = Some(0.001);
+        entity.tick.now = Instant::from_millis(33);
+        wake.update(&mut entity);
+        assert!(!entity.events.wake_fired);
         assert_eq!(wake.consecutive_loud(), 0);
     }
 
@@ -393,16 +430,18 @@ mod tests {
         // *not* set just_fired — emotion / hold are unchanged so
         // there's no transition to chirp about.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = Avatar {
-            emotion: Emotion::Surprised,
-            manual_until: Some(Instant::from_millis(30_000)),
-            ..loud_avatar()
+        let mut entity = {
+            let mut e = loud_avatar();
+            e.mind.affect.emotion = Emotion::Surprised;
+            e.mind.autonomy.manual_until = Some(Instant::from_millis(30_000));
+            e
         };
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) + 5) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
         assert!(!wake.just_fired());
-        assert_eq!(avatar.emotion, Emotion::Surprised);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
     }
 
     #[test]
@@ -410,14 +449,16 @@ mod tests {
         // The check is `rms > threshold`, so exactly-at-threshold is
         // treated as quiet. Pin this so it doesn't drift to `>=`.
         let mut wake = WakeOnVoice::new();
-        let mut avatar = Avatar {
-            audio_rms: Some(WAKE_RMS_THRESHOLD),
-            ..Avatar::default()
+        let mut entity = {
+            let mut e = Entity::default();
+            e.perception.audio_rms = Some(WAKE_RMS_THRESHOLD);
+            e
         };
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) + 5) {
-            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            entity.tick.now = Instant::from_millis(t * 33);
+            wake.update(&mut entity);
         }
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
         assert_eq!(wake.consecutive_loud(), 0);
     }
 }

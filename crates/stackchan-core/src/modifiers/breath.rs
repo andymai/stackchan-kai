@@ -9,9 +9,11 @@
 //! emotion-driven modifiers (Sleepy → deeper, Surprised → near-flat) can
 //! modulate breathing without owning Breath's state.
 
-use super::Modifier;
-use crate::avatar::{Avatar, SCALE_DEFAULT};
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
+use crate::entity::Entity;
+use crate::face::SCALE_DEFAULT;
+use crate::modifier::Modifier;
 
 /// Default full breath cycle (inhale + exhale), in milliseconds.
 const DEFAULT_CYCLE_MS: u64 = 6_000;
@@ -98,15 +100,32 @@ impl Default for Breath {
 }
 
 impl Modifier for Breath {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        let target = self.offset_at(now, avatar.breath_depth_scale);
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "Breath",
+            description: "Slow rise-and-fall vertical offset on every facial feature, evoking \
+                          breathing. Scaled by face.style.breath_depth_scale.",
+            phase: Phase::Expression,
+            priority: 0,
+            reads: &[Field::BreathDepthScale],
+            writes: &[
+                Field::LeftEyeCenter,
+                Field::RightEyeCenter,
+                Field::MouthCenter,
+            ],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let target = self.offset_at(entity.tick.now, entity.face.style.breath_depth_scale);
         let delta = target - self.last_offset_px;
         if delta == 0 {
             return;
         }
-        avatar.left_eye.center.y += delta;
-        avatar.right_eye.center.y += delta;
-        avatar.mouth.center.y += delta;
+        entity.face.left_eye.center.y += delta;
+        entity.face.right_eye.center.y += delta;
+        entity.face.mouth.center.y += delta;
         self.last_offset_px = target;
     }
 }
@@ -115,17 +134,18 @@ impl Modifier for Breath {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::avatar::Avatar;
+    use crate::Entity;
 
     #[test]
     fn zero_amplitude_is_noop() {
-        let mut avatar = Avatar::default();
-        let baseline_y = avatar.left_eye.center.y;
+        let mut entity = Entity::default();
+        let baseline_y = entity.face.left_eye.center.y;
         let mut breath = Breath::with_params(1000, 0);
         for ms in 0..2000 {
-            breath.update(&mut avatar, Instant::from_millis(ms));
+            entity.tick.now = Instant::from_millis(ms);
+            breath.update(&mut entity);
         }
-        assert_eq!(avatar.left_eye.center.y, baseline_y);
+        assert_eq!(entity.face.left_eye.center.y, baseline_y);
     }
 
     #[test]
@@ -140,19 +160,15 @@ mod tests {
 
     #[test]
     fn composes_across_ticks_without_drift() {
-        let mut avatar = Avatar::default();
-        let baseline_y = avatar.left_eye.center.y;
+        let mut entity = Entity::default();
+        let baseline_y = entity.face.left_eye.center.y;
         let mut breath = Breath::with_params(1000, 4);
 
-        // Drive through two complete cycles; at the end of every cycle the
-        // offset returns to the starting phase so there should be zero net
-        // drift.
         for ms in 0..=2000 {
-            breath.update(&mut avatar, Instant::from_millis(ms));
+            entity.tick.now = Instant::from_millis(ms);
+            breath.update(&mut entity);
         }
-        // At ms=2000 we're back at phase 0 -- offset is -amplitude/2.
-        // The key invariant is "no cumulative drift" rather than "exactly zero".
-        let final_y = avatar.left_eye.center.y;
+        let final_y = entity.face.left_eye.center.y;
         let drift = (final_y - baseline_y).abs();
         assert!(drift <= 2, "drift {drift}px exceeds half-amplitude");
     }
@@ -160,16 +176,15 @@ mod tests {
     #[test]
     fn depth_scale_amplifies_or_attenuates() {
         let breath = Breath::with_params(1000, 4);
-        // Sample max absolute offset over a cycle for three scales.
         let max_at = |scale: u8| {
             (0..1000)
                 .map(|ms| breath.offset_at(Instant::from_millis(ms), scale).abs())
                 .max()
                 .unwrap_or(0)
         };
-        let shallow = max_at(64); // ~half depth
+        let shallow = max_at(64);
         let baseline = max_at(SCALE_DEFAULT);
-        let deep = max_at(255); // ~2x depth
+        let deep = max_at(255);
 
         assert!(shallow < baseline, "shallow={shallow}, baseline={baseline}");
         assert!(deep > baseline, "deep={deep}, baseline={baseline}");
@@ -177,13 +192,14 @@ mod tests {
 
     #[test]
     fn depth_scale_zero_freezes_breath() {
-        let mut avatar = Avatar::default();
-        avatar.breath_depth_scale = 0;
-        let baseline_y = avatar.left_eye.center.y;
+        let mut entity = Entity::default();
+        entity.face.style.breath_depth_scale = 0;
+        let baseline_y = entity.face.left_eye.center.y;
         let mut breath = Breath::with_params(1000, 4);
         for ms in 0..=2000 {
-            breath.update(&mut avatar, Instant::from_millis(ms));
+            entity.tick.now = Instant::from_millis(ms);
+            breath.update(&mut entity);
         }
-        assert_eq!(avatar.left_eye.center.y, baseline_y);
+        assert_eq!(entity.face.left_eye.center.y, baseline_y);
     }
 }
