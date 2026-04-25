@@ -95,6 +95,17 @@ async fn probe<B: I2c>(bus: &mut B, addr: u8) -> bool {
     bus.read(addr, &mut buf).await.is_ok()
 }
 
+/// Read register `0x00` from the chip at `addr` (write-then-read).
+/// Many chips expose `WHO_AM_I` / `CHIP_ID` here (BMI270 = 0x24,
+/// BMM150 = 0x32, LIS3DH = 0x33, MPU6050 = 0x68, etc.) — useful for
+/// disambiguating UNKNOWN ACKs without a separate datasheet hunt.
+/// Returns `Some(byte)` on success, `None` on bus error.
+async fn read_reg0<B: I2c>(bus: &mut B, addr: u8) -> Option<u8> {
+    let mut buf = [0u8; 1];
+    bus.write_read(addr, &[0x00], &mut buf).await.ok()?;
+    Some(buf[0])
+}
+
 #[esp_rtos::main]
 #[allow(
     clippy::used_underscore_binding,
@@ -140,11 +151,31 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     for addr in ADDR_LO..=ADDR_HI {
         if probe(&mut i2c, addr).await {
             acked += 1;
-            match label_for(addr) {
-                Some(label) => {
-                    defmt::info!("i2c-probe: 0x{=u8:02X} ACK ({=str} expected)", addr, label);
+            // Read register 0x00 to capture WHO_AM_I / CHIP_ID where
+            // the chip exposes one. Logged as "id=??" if the read
+            // fails (some chips refuse register-read after a bare
+            // address-byte read; not fatal).
+            let id = read_reg0(&mut i2c, addr).await;
+            match (label_for(addr), id) {
+                (Some(label), Some(byte)) => defmt::info!(
+                    "i2c-probe: 0x{=u8:02X} ACK ({=str} expected) reg0=0x{=u8:02X}",
+                    addr,
+                    label,
+                    byte,
+                ),
+                (Some(label), None) => defmt::info!(
+                    "i2c-probe: 0x{=u8:02X} ACK ({=str} expected) reg0=??",
+                    addr,
+                    label,
+                ),
+                (None, Some(byte)) => defmt::info!(
+                    "i2c-probe: 0x{=u8:02X} ACK (UNKNOWN) reg0=0x{=u8:02X}",
+                    addr,
+                    byte,
+                ),
+                (None, None) => {
+                    defmt::info!("i2c-probe: 0x{=u8:02X} ACK (UNKNOWN) reg0=??", addr);
                 }
-                None => defmt::info!("i2c-probe: 0x{=u8:02X} ACK (UNKNOWN)", addr),
             }
         }
     }
