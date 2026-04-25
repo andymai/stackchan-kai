@@ -90,4 +90,4 @@ No `unwrap()` / `expect()` in library code. Use `?` with typed errors (`thiserro
 
 ## Config + assets
 
-None yet. v0.1.0 avatar geometry is hardcoded in `stackchan-core::avatar`. Later releases may add RON-configurable appearance.
+None yet. Avatar geometry is hardcoded in `stackchan-core::avatar`. Later releases may add RON-configurable appearance.
