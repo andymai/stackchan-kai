@@ -258,14 +258,14 @@ async fn render_task(mut display: LcdDisplay) {
                 }
             } else if status.battery_percent < LOW_BATTERY_ENTER_PERCENT && !status.usb_power {
                 alert_armed_for_low = true;
-                if let Err(e) = audio::try_enqueue_clip(audio::LOW_BATTERY_ALERT) {
+                if let Err(e) = audio::try_enqueue_low_battery_alert() {
                     defmt::warn!(
-                        "audio: low-battery alert dropped, queue full ({:?})",
+                        "audio: low-battery alert (partially) dropped ({:?})",
                         defmt::Debug2Format(&e)
                     );
                 } else {
                     defmt::info!(
-                        "audio: low-battery alert enqueued ({=u8}%, enter < {=u8}%)",
+                        "audio: low-battery alert enqueued (2 beeps, {=u8}%, enter < {=u8}%)",
                         status.battery_percent,
                         LOW_BATTERY_ENTER_PERCENT,
                     );
@@ -286,7 +286,23 @@ async fn render_task(mut display: LcdDisplay) {
         emotion_touch.update(&mut avatar, now);
         remote.update(&mut avatar, now);
         pickup.update(&mut avatar, now);
+        if pickup.just_fired()
+            && let Err(e) = audio::try_enqueue_pickup_chirp()
+        {
+            defmt::warn!(
+                "audio: pickup chirp (partially) dropped ({:?})",
+                defmt::Debug2Format(&e)
+            );
+        }
         wake_on_voice.update(&mut avatar, now);
+        if wake_on_voice.just_fired()
+            && let Err(e) = audio::try_enqueue_wake_chirp()
+        {
+            defmt::warn!(
+                "audio: wake chirp dropped, queue full ({:?})",
+                defmt::Debug2Format(&e)
+            );
+        }
         ambient_sleepy.update(&mut avatar, now);
         low_battery.update(&mut avatar, now);
         cycle.update(&mut avatar, now);

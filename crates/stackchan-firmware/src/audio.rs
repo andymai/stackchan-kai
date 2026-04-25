@@ -138,6 +138,17 @@ const SINE_1KHZ_CYCLE: [i16; 16] = [
 /// pitch makes it distinct from the boot greeting.
 const SINE_2KHZ_CYCLE: [i16; 8] = [0, 5793, 8192, 5793, 0, -5793, -8192, -5793];
 
+/// One-cycle 4 kHz sine table at 16 kHz sample rate. 4 samples per
+/// cycle (the highest pitch we can produce cleanly without going
+/// past the Nyquist limit). Used as the top of the
+/// [`PICKUP_CHIRP`] rising sweep.
+const SINE_4KHZ_CYCLE: [i16; 4] = [0, 8192, 0, -8192];
+
+/// 8-sample silence cycle for [`AudioClip`]-encoded gaps. Used between
+/// successive beeps in [`try_enqueue_low_battery_alert`] so the user
+/// hears two distinct pulses rather than one long tone.
+const SILENCE_CYCLE: [i16; 8] = [0; 8];
+
 /// Boot-greeting clip: 500 ms of 1 kHz sine. Plays once at boot via
 /// [`run_audio_task`] enqueueing it into [`AUDIO_TX_QUEUE`].
 ///
@@ -149,18 +160,42 @@ pub const BOOT_GREETING: AudioClip = AudioClip {
     cycles: 500,
 };
 
-/// Two short 2 kHz beeps separated by silence — the canonical
-/// "low battery" alert. Producers (e.g. main.rs's render loop on a
-/// threshold-crossing detection) enqueue this clip via
-/// [`try_enqueue_clip`].
+/// Single-clip "wake" chirp: 100 ms of 1 kHz sine. Audibly soft but
+/// distinct from the boot greeting (which is 5× longer); enqueued
+/// when [`stackchan_core::modifiers::WakeOnVoice`] just fired.
 ///
-/// One full beep = 200 ms = 400 cycles at 8 samples / cycle.
-/// The current encoding is one continuous beep; if hardware listening
-/// suggests two short pulses are clearer, swap the table for
-/// `[beep, gap, beep]` of equivalent total length.
-pub const LOW_BATTERY_ALERT: AudioClip = AudioClip {
+/// `100 cycles × 16 samples = 1 600 samples = 100 ms`.
+pub const WAKE_CHIRP: AudioClip = AudioClip {
+    samples: &SINE_1KHZ_CYCLE,
+    cycles: 100,
+};
+
+/// First leg of the pickup chirp: 50 ms of 2 kHz.
+const PICKUP_CHIRP_LO: AudioClip = AudioClip {
     samples: &SINE_2KHZ_CYCLE,
-    cycles: 400,
+    cycles: 100,
+};
+/// Second leg of the pickup chirp: 50 ms of 4 kHz. Played
+/// back-to-back with [`PICKUP_CHIRP_LO`] for an upward sweep that
+/// matches the "Surprised!" emotion fire from
+/// [`stackchan_core::modifiers::PickupReaction`].
+const PICKUP_CHIRP_HI: AudioClip = AudioClip {
+    samples: &SINE_4KHZ_CYCLE,
+    cycles: 200,
+};
+
+/// Single beep used inside [`try_enqueue_low_battery_alert`]. 100 ms
+/// of 2 kHz; two of these separated by silence form the full alert.
+const LOW_BATTERY_BEEP: AudioClip = AudioClip {
+    samples: &SINE_2KHZ_CYCLE,
+    cycles: 200,
+};
+/// 80 ms gap between the two low-battery beeps. Silence stored as a
+/// short cycle table looped many times — keeps the tx feeder code
+/// uniform (everything goes through clip playback).
+const LOW_BATTERY_GAP: AudioClip = AudioClip {
+    samples: &SILENCE_CYCLE,
+    cycles: 160,
 };
 
 /// PCM audio clip queued for TX playback.
@@ -224,6 +259,55 @@ pub static AUDIO_TX_QUEUE: Channel<CriticalSectionRawMutex, AudioClip, 4> = Chan
 /// already queued.
 pub fn try_enqueue_clip(clip: AudioClip) -> Result<(), TrySendError<AudioClip>> {
     AUDIO_TX_QUEUE.try_send(clip)
+}
+
+/// Enqueue the canonical low-battery alert: two 100 ms 2 kHz beeps
+/// separated by an 80 ms gap. Three queued clips total.
+///
+/// Best-effort: if the queue fills mid-sequence, the partially-queued
+/// alert plays as far as it got and the helper returns the failure.
+/// The render-loop caller logs once and continues; partial alerts
+/// are unlikely in practice (the queue starts empty between fires).
+///
+/// # Errors
+///
+/// Returns the first [`TrySendError::Full`] encountered. Earlier
+/// clips that did fit are not rolled back — they will play.
+pub fn try_enqueue_low_battery_alert() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(LOW_BATTERY_BEEP)?;
+    AUDIO_TX_QUEUE.try_send(LOW_BATTERY_GAP)?;
+    AUDIO_TX_QUEUE.try_send(LOW_BATTERY_BEEP)?;
+    Ok(())
+}
+
+/// Enqueue the wake chirp: 100 ms of 1 kHz. One queued clip.
+///
+/// Pair with [`stackchan_core::modifiers::WakeOnVoice::just_fired`]
+/// to play a confirmation tone the same tick the modifier flips
+/// emotion to `Happy`.
+///
+/// # Errors
+///
+/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] is full.
+pub fn try_enqueue_wake_chirp() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(WAKE_CHIRP)
+}
+
+/// Enqueue the pickup chirp: 50 ms of 2 kHz then 50 ms of 4 kHz —
+/// an upward sweep that matches the "Surprised!" emotion fire from
+/// [`stackchan_core::modifiers::PickupReaction`]. Two queued clips.
+///
+/// Best-effort, same partial-queue caveat as
+/// [`try_enqueue_low_battery_alert`].
+///
+/// # Errors
+///
+/// Returns the first [`TrySendError::Full`] encountered. The first
+/// clip, if it queued successfully, will play.
+pub fn try_enqueue_pickup_chirp() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_LO)?;
+    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_HI)?;
+    Ok(())
 }
 
 /// Microphone RMS sample, published per render tick.
