@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.5.0](https://github.com/andymai/stackchan-kai/compare/v0.4.0...v0.5.0) (2026-04-25)
+
+
+### Features
+
+* **audio:** codec bring-up + audio signal plumbing (firmware task scaffold) ([#29](https://github.com/andymai/stackchan-kai/issues/29)) ([0ad42aa](https://github.com/andymai/stackchan-kai/commit/0ad42aa851978c008a9c0684445ece99654ee183))
+* **audio:** I²S0 master + MCLK, codec bring-up inside task ([#30](https://github.com/andymai/stackchan-kai/issues/30)) ([e080ffd](https://github.com/andymai/stackchan-kai/commit/e080ffd82e3e2200e20736e6c35431bb23420535))
+* **audio:** real AW88298 + ES7210 driver impls + control-path benches ([#28](https://github.com/andymai/stackchan-kai/issues/28)) ([bdd9038](https://github.com/andymai/stackchan-kai/commit/bdd9038653198e9df64d315951533ecae5378aae))
+* BM8563 wall-clock + LTR-553 AmbientSleepy modifier ([#18](https://github.com/andymai/stackchan-kai/issues/18)) ([8405d0d](https://github.com/andymai/stackchan-kai/commit/8405d0d0f1619d400ff2bd1691995135f9c25316))
+* BMI270 IMU + pickup-reaction modifier ([#17](https://github.com/andymai/stackchan-kai/issues/17)) ([8624ceb](https://github.com/andymai/stackchan-kai/commit/8624ceb92bcb355a28fa3c98ee6499171cb12a2b))
+* BMM150 magnetometer (9-axis data path) ([#22](https://github.com/andymai/stackchan-kai/issues/22)) ([eea9212](https://github.com/andymai/stackchan-kai/commit/eea921233444d2efe68d7ee502e14be390778c20))
+* **core:** MouthOpenAudio modifier + Mouth::mouth_open field ([#32](https://github.com/andymai/stackchan-kai/issues/32)) ([79020ed](https://github.com/andymai/stackchan-kai/commit/79020ed266f510b1bd2da1f7ecc01f8465105737))
+* **core:** wire Emotion into a style-field pipeline with eased transitions ([bfd6a3a](https://github.com/andymai/stackchan-kai/commit/bfd6a3a168ad8f6bcece0e5bfc47f01e791ab8ff))
+* **dx:** boot PING health check + boot-nod gesture + justfile ([#6](https://github.com/andymai/stackchan-kai/issues/6)) ([3955354](https://github.com/andymai/stackchan-kai/commit/3955354bcbbf904f5dc88f032dccf1327677399f))
+* emotion-coupled head motion (EmotionHead modifier) ([#4](https://github.com/andymai/stackchan-kai/issues/4)) ([3f197f1](https://github.com/andymai/stackchan-kai/commit/3f197f106527977da99cdd9ac75dab79462290c4))
+* **firmware:** 30 FPS render task with Blink + dirty-check ([46d52ed](https://github.com/andymai/stackchan-kai/commit/46d52ed49ad4024a5d5de8c91b8c2db7c340d326))
+* **firmware:** add Breath + IdleDrift to the render stack ([7c1c1af](https://github.com/andymai/stackchan-kai/commit/7c1c1af413a478a2b895c3acc869cb12808516cb))
+* **firmware:** double-buffer via PSRAM to eliminate direct-draw flicker ([940551c](https://github.com/andymai/stackchan-kai/commit/940551c5767d1221bbc354f1787e2e903dd83758))
+* **firmware:** esp-rtos boot + AXP2101 LCD rails ([212dc5c](https://github.com/andymai/stackchan-kai/commit/212dc5c93a3a179bea956ebf1b7f538d3111f1e4))
+* **firmware:** ILI9342C via mipidsi — one-shot Avatar render ([9265830](https://github.com/andymai/stackchan-kai/commit/926583005f80c4b4755f196707f7888d36cd5987))
+* FT6336U tap-to-cycle emotion + shared I²C0 bus ([#15](https://github.com/andymai/stackchan-kai/issues/15)) ([b3fb8de](https://github.com/andymai/stackchan-kai/commit/b3fb8de289ac45f9c5537516a79c2dd2e3a4e6cb))
+* pan/tilt servo head motion (+aw9523 extract, pca9685 driver) ([#2](https://github.com/andymai/stackchan-kai/issues/2)) ([9bc40a1](https://github.com/andymai/stackchan-kai/commit/9bc40a11b76108aad8a58af7a941a28fade5ea0c))
+* power-button taps + IR NEC RemoteCommand modifier ([#19](https://github.com/andymai/stackchan-kai/issues/19)) ([f29c92e](https://github.com/andymai/stackchan-kai/commit/f29c92e7550fa450be0adb8b94a8b57801e18ddf))
+* PY32 WS2812 LED ring + first output-sink path ([#20](https://github.com/andymai/stackchan-kai/issues/20)) ([14dcbd3](https://github.com/andymai/stackchan-kai/commit/14dcbd3be257175f0df973c5cb616c41d92c483b))
+* servo position readback + calibration bench binary ([#11](https://github.com/andymai/stackchan-kai/issues/11)) ([890c8f8](https://github.com/andymai/stackchan-kai/commit/890c8f8232f80f3b6f861ded1ec2b2e386fbc31d))
+* swap PCA9685 for Feetech SCServo on UART1 (matches real HW) ([#5](https://github.com/andymai/stackchan-kai/issues/5)) ([1ff3376](https://github.com/andymai/stackchan-kai/commit/1ff3376440453924e64cb7497c1e3a8e698fdb48))
+
+
+### Bug Fixes
+
+* **axp2101:** apply full M5Unified CoreS3 init to stop idle shutdown ([f5bc712](https://github.com/andymai/stackchan-kai/commit/f5bc712073813630f3fe78d1331d918799e55f70))
+* **es7210:** drop invented chip-ID check blocking bring-up ([#31](https://github.com/andymai/stackchan-kai/issues/31)) ([304ef58](https://github.com/andymai/stackchan-kai/commit/304ef582e025713f420ab30970781c9a9d11ae64))
+* **firmware:** boot on CoreS3 hardware end-to-end ([dba4c89](https://github.com/andymai/stackchan-kai/commit/dba4c89b89ad27b8adc07143a8163607410efd69))
+* **firmware:** enable SCServo torque after ping, restore yes-nod gesture ([5398094](https://github.com/andymai/stackchan-kai/commit/5398094e86512d6ff4f928c16471a96f65b0d4e4))
+* **firmware:** enable SCServo torque after ping, restore yes-nod gesture ([daf03b7](https://github.com/andymai/stackchan-kai/commit/daf03b771aa6a72235773c4ee7eefc262901ed06))
+* **firmware:** I²C 400 kHz, justfile `reattach` recipe + reliability notes ([#34](https://github.com/andymai/stackchan-kai/issues/34)) ([82a462a](https://github.com/andymai/stackchan-kai/commit/82a462a3d50c93207ce60a8b8af4ab12693c6615))
+* **firmware:** quiet boot-time warnings, drop SCServo FIFO-overflow spam ([10fd917](https://github.com/andymai/stackchan-kai/commit/10fd917651c66e6c3dcda939654f238e7b0e68ec))
+* **firmware:** quiet boot-time warnings, drop SCServo FIFO-overflow spam ([28015fd](https://github.com/andymai/stackchan-kai/commit/28015fdb76c7523c249b4cbff239de33ba692589))
+* **firmware:** restore LCD backlight + full AW9523 init on CoreS3 ([31ea98e](https://github.com/andymai/stackchan-kai/commit/31ea98e0d49a9329e72bf35357e227301492e23a))
+* **firmware:** retry BMI270 init on I²C timeout, log SCServo angle limits ([0d477e5](https://github.com/andymai/stackchan-kai/commit/0d477e5e2c609e35df8df4279be9083280f56949))
+* **firmware:** retry BMI270 init on I²C timeout, log SCServo angle limits ([fdbdbda](https://github.com/andymai/stackchan-kai/commit/fdbdbdaa41c826188fd4b3b37b85ffec9cff2bc1))
+* **firmware:** revert I²C to 100 kHz, reduce boot-nod tilt amplitude ([f42315c](https://github.com/andymai/stackchan-kai/commit/f42315cd105f24396f3948c14be1b10e3d6d14f9))
+* **firmware:** revert I²C to 100 kHz, reduce boot-nod tilt amplitude ([cb74dca](https://github.com/andymai/stackchan-kai/commit/cb74dcad6caa2c74b7ae1d3434dd9c98f6cd992d))
+* **firmware:** satisfy pedantic clippy lints blocking CI ([0a37661](https://github.com/andymai/stackchan-kai/commit/0a37661ab74f4081f3ce5e4ba015236b5bce76c4))
+* tilt calibration for offset-encoder unit + asymmetric range support ([#47](https://github.com/andymai/stackchan-kai/issues/47)) ([52b8c4d](https://github.com/andymai/stackchan-kai/commit/52b8c4d47477baf776c82446d02431d08d24f941))
+
 ## [0.4.0](https://github.com/andymai/stackchan-kai/compare/v0.3.0...v0.4.0) (2026-04-24)
 
 
