@@ -1,23 +1,24 @@
-//! `EmotionCycle`: a demo modifier that rotates `Avatar::emotion` through
+//! `EmotionCycle`: a demo modifier that rotates `entity.mind.affect.emotion` through
 //! a fixed sequence of emotions on a timer.
 //!
 //! Used by the firmware to exercise the full emotion pipeline on hardware
 //! without needing input (touch, network, serial). It writes *only* to
-//! `Avatar::emotion`; the downstream `EmotionStyle` modifier does the
+//! `entity.mind.affect.emotion`; the downstream `EmotionStyle` modifier does the
 //! actual style-field mutation.
 //!
 //! Cycle order is the default StackChan demo rotation; see
 //! [`EmotionCycle::DEFAULT_SEQUENCE`].
 
-use super::Modifier;
-use crate::avatar::Avatar;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
+use crate::entity::Entity;
+use crate::modifier::Modifier;
 
 /// Default dwell time per emotion, in milliseconds.
 const DEFAULT_DWELL_MS: u64 = 4_000;
 
-/// A modifier that rotates `avatar.emotion` through a fixed sequence,
+/// A modifier that rotates `entity.mind.affect.emotion` through a fixed sequence,
 /// dwelling on each emotion for `dwell_ms` milliseconds.
 #[derive(Debug, Clone)]
 pub struct EmotionCycle {
@@ -55,7 +56,7 @@ impl EmotionCycle {
     /// # Panics
     ///
     /// Does not panic, but `sequence` must be non-empty for the cycle to
-    /// advance; an empty slice leaves the avatar's emotion untouched.
+    /// advance; an empty slice leaves the entity's emotion untouched.
     #[must_use]
     pub const fn with_params(sequence: &'static [Emotion], dwell_ms: u64) -> Self {
         Self {
@@ -81,17 +82,32 @@ impl Default for EmotionCycle {
 }
 
 impl Modifier for EmotionCycle {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "EmotionCycle",
+            description: "Autonomous demo: cycles mind.affect.emotion through a fixed sequence on \
+                          a dwell timer. Stands down while mind.autonomy.manual_until holds.",
+            phase: Phase::Affect,
+            // Runs last in Affect so it observes the final manual_until
+            // state set by Touch/Remote/Pickup/Voice/Ambient/LowBattery.
+            priority: 100,
+            reads: &[Field::Autonomy, Field::Emotion],
+            writes: &[Field::Emotion],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
         // Empty sequence: nothing to drive.
         if self.sequence.is_empty() || self.dwell_ms == 0 {
             return;
         }
 
-        // Manual-override active: user input (e.g. `EmotionTouch`) has
-        // pinned the emotion until a deadline. Re-anchor `started_at` so
-        // the cycle resumes cleanly when the hold expires instead of
-        // snap-advancing by however many dwell windows passed.
-        if let Some(until) = avatar.manual_until
+        // Manual-override active: user input has pinned the emotion until
+        // a deadline. Re-anchor `started_at` so the cycle resumes cleanly
+        // when the hold expires.
+        if let Some(until) = entity.mind.autonomy.manual_until
             && now < until
         {
             self.started_at = Some(now);
@@ -102,7 +118,7 @@ impl Modifier for EmotionCycle {
             // First tick: anchor to now and apply index 0 immediately.
             self.started_at = Some(now);
             if let Some(first) = self.sequence.first() {
-                avatar.emotion = *first;
+                entity.mind.affect.emotion = *first;
             }
             return;
         };
@@ -113,16 +129,12 @@ impl Modifier for EmotionCycle {
             return;
         }
 
-        // Advance by as many dwell windows as elapsed; this makes the
-        // cycle robust to missed ticks without skipping visually.
         let new_index =
             (self.index + usize::try_from(steps).unwrap_or(usize::MAX)) % self.sequence.len();
         if new_index != self.index {
             self.index = new_index;
-            avatar.emotion = self.sequence[self.index];
+            entity.mind.affect.emotion = self.sequence[self.index];
         }
-        // Re-anchor to the current dwell window boundary rather than
-        // `now`, so drift doesn't accumulate across many cycles.
         let consumed_ms = steps.saturating_mul(self.dwell_ms);
         self.started_at = Some(start + consumed_ms);
     }
@@ -132,55 +144,54 @@ impl Modifier for EmotionCycle {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
+    use crate::Entity;
+
+    fn step(cycle: &mut EmotionCycle, entity: &mut Entity, ms: u64) {
+        entity.tick.now = Instant::from_millis(ms);
+        cycle.update(entity);
+    }
 
     #[test]
     fn first_tick_applies_head_of_sequence() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Surprised; // something other than the head
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Surprised;
         let mut cycle = EmotionCycle::new();
-
-        cycle.update(&mut avatar, Instant::from_millis(0));
+        step(&mut cycle, &mut entity, 0);
         assert_eq!(
-            avatar.emotion,
+            entity.mind.affect.emotion,
             EmotionCycle::DEFAULT_SEQUENCE[0],
-            "first tick should snap to the head of the sequence"
         );
     }
 
     #[test]
     fn advances_on_dwell_boundary() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut cycle =
             EmotionCycle::with_params(&[Emotion::Neutral, Emotion::Happy, Emotion::Sad], 1_000);
 
-        cycle.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
-
-        cycle.update(&mut avatar, Instant::from_millis(999));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
-
-        cycle.update(&mut avatar, Instant::from_millis(1_000));
-        assert_eq!(avatar.emotion, Emotion::Happy);
-
-        cycle.update(&mut avatar, Instant::from_millis(2_000));
-        assert_eq!(avatar.emotion, Emotion::Sad);
+        step(&mut cycle, &mut entity, 0);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
+        step(&mut cycle, &mut entity, 999);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
+        step(&mut cycle, &mut entity, 1_000);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        step(&mut cycle, &mut entity, 2_000);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sad);
     }
 
     #[test]
     fn wraps_back_to_head() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut cycle = EmotionCycle::with_params(&[Emotion::Neutral, Emotion::Happy], 500);
-
-        for step in 0..=6 {
-            cycle.update(&mut avatar, Instant::from_millis(step * 500));
+        for s in 0..=6 {
+            step(&mut cycle, &mut entity, s * 500);
         }
-        // 6 windows over 2 emotions = back to index 0.
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
     }
 
     #[test]
     fn skipped_ticks_advance_correct_number_of_steps() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut cycle = EmotionCycle::with_params(
             &[
                 Emotion::Neutral,
@@ -190,79 +201,55 @@ mod tests {
             ],
             1_000,
         );
-
-        cycle.update(&mut avatar, Instant::from_millis(0));
-        // Jump forward 2.5 s -- should land on index 2 (Sad), not index 1.
-        cycle.update(&mut avatar, Instant::from_millis(2_500));
-        assert_eq!(avatar.emotion, Emotion::Sad);
+        step(&mut cycle, &mut entity, 0);
+        step(&mut cycle, &mut entity, 2_500);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sad);
     }
 
     #[test]
     fn manual_until_suppresses_advancement() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut cycle =
             EmotionCycle::with_params(&[Emotion::Neutral, Emotion::Happy, Emotion::Sad], 1_000);
 
-        // Establish the baseline.
-        cycle.update(&mut avatar, Instant::from_millis(0));
-        assert_eq!(avatar.emotion, Emotion::Neutral);
+        step(&mut cycle, &mut entity, 0);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
 
-        // User taps at t=500: the touch modifier would set Happy + hold
-        // until t=30_500. Simulate that here.
-        avatar.emotion = Emotion::Happy;
-        avatar.manual_until = Some(Instant::from_millis(30_500));
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.mind.autonomy.manual_until = Some(Instant::from_millis(30_500));
 
-        // 29 s later (still inside the hold): EmotionCycle must NOT
-        // advance, and must not overwrite the manually-set emotion.
-        cycle.update(&mut avatar, Instant::from_millis(29_500));
-        assert_eq!(avatar.emotion, Emotion::Happy);
+        step(&mut cycle, &mut entity, 29_500);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
 
     #[test]
     fn cycle_resumes_cleanly_after_manual_hold() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut cycle =
             EmotionCycle::with_params(&[Emotion::Neutral, Emotion::Happy, Emotion::Sad], 1_000);
 
-        cycle.update(&mut avatar, Instant::from_millis(0));
+        step(&mut cycle, &mut entity, 0);
 
-        // Manual hold from t=500 to t=30_500.
-        avatar.emotion = Emotion::Happy;
-        avatar.manual_until = Some(Instant::from_millis(30_500));
-        cycle.update(&mut avatar, Instant::from_millis(15_000));
-        cycle.update(&mut avatar, Instant::from_millis(29_000));
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.mind.autonomy.manual_until = Some(Instant::from_millis(30_500));
+        step(&mut cycle, &mut entity, 15_000);
+        step(&mut cycle, &mut entity, 29_000);
 
-        // Hold expires; someone (EmotionTouch in real code) clears it.
-        avatar.manual_until = None;
+        entity.mind.autonomy.manual_until = None;
 
-        // One dwell window after the hold ends the cycle advances by
-        // exactly one step — not by the 30 windows that passed while
-        // paused.
-        cycle.update(&mut avatar, Instant::from_millis(29_000 + 1_000));
-        assert_eq!(
-            avatar.emotion,
-            Emotion::Happy,
-            "first post-hold tick carries the user's emotion forward"
-        );
-        cycle.update(&mut avatar, Instant::from_millis(29_000 + 2_000));
-        assert_eq!(
-            avatar.emotion,
-            Emotion::Sad,
-            "second post-hold dwell advances by exactly one step"
-        );
+        step(&mut cycle, &mut entity, 29_000 + 1_000);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        step(&mut cycle, &mut entity, 29_000 + 2_000);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Sad);
     }
 
     #[test]
     fn empty_sequence_is_noop() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Happy;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy;
         let mut cycle = EmotionCycle::with_params(&[], 1_000);
-        cycle.update(&mut avatar, Instant::from_millis(0));
-        cycle.update(&mut avatar, Instant::from_millis(10_000));
-        assert_eq!(
-            avatar.emotion,
-            Emotion::Happy,
-            "emotion should be unchanged"
-        );
+        step(&mut cycle, &mut entity, 0);
+        step(&mut cycle, &mut entity, 10_000);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
 }

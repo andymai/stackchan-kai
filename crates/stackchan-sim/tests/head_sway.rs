@@ -4,7 +4,7 @@
 //! zero on both axes, and moves smoothly between ticks.
 //!
 //! The test exercises the full shape of the hardware port: the modifier
-//! writes `avatar.head_pose` in core, a consumer pulls the pose out and
+//! writes `avatar.motor.head_pose` in core, a consumer pulls the pose out and
 //! calls [`HeadDriver::set_pose`] on a `RecordingHead` (sim) — the same
 //! code path the firmware will use against a PCA9685.
 
@@ -18,7 +18,7 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 use stackchan_core::modifiers::IdleSway;
-use stackchan_core::{Avatar, Clock, HeadDriver, Modifier};
+use stackchan_core::{Clock, Entity, HeadDriver, Modifier};
 use stackchan_sim::{FakeClock, RecordingHead};
 
 /// Minimal synchronous future driver.
@@ -47,15 +47,16 @@ const TILT_AMPLITUDE: f32 = 2.5;
 #[test]
 fn idle_sway_trajectory_stays_within_amplitude() {
     let clock = FakeClock::new();
-    let mut avatar = Avatar::default();
+    let mut avatar = Entity::default();
     let mut sway = IdleSway::new();
     let mut head = RecordingHead::new();
 
     let mut t_ms = 0;
     while t_ms <= DURATION_MS {
         clock.set(stackchan_core::Instant::from_millis(t_ms));
-        sway.update(&mut avatar, clock.now());
-        block_on(head.set_pose(avatar.head_pose, clock.now()))
+        avatar.tick.now = clock.now();
+        sway.update(&mut avatar);
+        block_on(head.set_pose(avatar.motor.head_pose, clock.now()))
             .expect("RecordingHead is infallible");
         t_ms += TICK_MS;
     }
@@ -86,14 +87,15 @@ fn idle_sway_trajectory_stays_within_amplitude() {
 
 #[test]
 fn idle_sway_crosses_zero_on_both_axes() {
-    let mut avatar = Avatar::default();
+    let mut avatar = Entity::default();
     let mut sway = IdleSway::new();
     let mut head = RecordingHead::new();
 
     for i in 0..1_000 {
         let now = stackchan_core::Instant::from_millis(i * 33);
-        sway.update(&mut avatar, now);
-        block_on(head.set_pose(avatar.head_pose, now)).expect("RecordingHead is infallible");
+        avatar.tick.now = now;
+        sway.update(&mut avatar);
+        block_on(head.set_pose(avatar.motor.head_pose, now)).expect("RecordingHead is infallible");
     }
 
     // Pan is symmetric — must visit both sides of zero. Tilt is

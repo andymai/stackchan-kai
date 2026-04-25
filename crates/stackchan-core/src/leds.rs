@@ -1,16 +1,16 @@
 //! LED-ring output sink.
 //!
-//! The avatar wears a 12-pixel WS2812 ring; this module maps [`Avatar`]
+//! The entity wears a 12-pixel WS2812 ring; this module maps [`Entity`]
 //! state onto a packed [`LedFrame`] of RGB565 pixels that the firmware
 //! pushes to the PY32 IO expander.
 //!
 //! Architectural role: this is the **first** non-[`Modifier`](crate::Modifier) consumer
-//! of [`Avatar`] state. Modifiers mutate the avatar; this is a pure
-//! function over it. The firmware's `render_task` runs the modifier
-//! stack, then calls [`render_leds`] on the resulting avatar and
-//! signals the frame out to a transport task. The sim uses the same
-//! function against a `FakeClock` to golden-test the mapping without
-//! any hardware.
+//! of [`Entity`] state. Modifiers mutate the entity; this is a pure
+//! function over it. The firmware's `render_task` runs the
+//! [`Director`](crate::Director) stack, then calls [`render_leds`] on
+//! the resulting entity and signals the frame out to a transport task.
+//! The sim uses the same function against a `FakeClock` to golden-test
+//! the mapping without any hardware.
 //!
 //! ## Mapping
 //!
@@ -35,7 +35,7 @@
 //! [`Sleepy`]: crate::Emotion::Sleepy
 //! [`Surprised`]: crate::Emotion::Surprised
 
-use crate::{Avatar, Emotion, Instant};
+use crate::{Emotion, Entity, Instant};
 
 /// Number of pixels on the StackChan LED ring.
 pub const LED_COUNT: usize = 12;
@@ -147,14 +147,15 @@ const fn rgb888_to_565(r: u8, g: u8, b: u8) -> u16 {
     r5 | g6 | b5
 }
 
-/// Render the LED ring for the current [`Avatar`] state.
+/// Render the LED ring for the current [`Entity`] state.
 ///
 /// Writes all [`LED_COUNT`] pixels of `out` with a uniform colour
-/// derived from `avatar.emotion`, dimmed by both the global brightness
-/// cap and the current breath-envelope phase at `now`. Deterministic
-/// with respect to `(avatar.emotion, now)` — host-testable.
-pub fn render_leds(avatar: &Avatar, now: Instant, out: &mut LedFrame) {
-    let base = palette(avatar.emotion);
+/// derived from `entity.mind.affect.emotion`, dimmed by both the
+/// global brightness cap and the current breath-envelope phase at
+/// `now`. Deterministic with respect to `(entity.mind.affect.emotion,
+/// now)` — host-testable.
+pub fn render_leds(entity: &Entity, now: Instant, out: &mut LedFrame) {
+    let base = palette(entity.mind.affect.emotion);
     #[allow(
         clippy::cast_possible_truncation,
         reason = "bitmasked to 8 bits before truncation"
@@ -179,7 +180,7 @@ pub fn render_leds(avatar: &Avatar, now: Instant, out: &mut LedFrame) {
 #[allow(clippy::unwrap_used, reason = "test scaffolding")]
 #[allow(
     clippy::field_reassign_with_default,
-    reason = "Avatar has many fields; post-init assignment reads more clearly than struct-update syntax"
+    reason = "Entity has nested fields; post-init assignment reads more clearly than struct-update syntax"
 )]
 mod tests {
     use super::*;
@@ -212,10 +213,10 @@ mod tests {
 
     #[test]
     fn render_leds_fills_every_pixel_with_same_colour() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Happy;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy;
         let mut frame = LedFrame::default();
-        render_leds(&avatar, Instant::from_millis(3_000), &mut frame);
+        render_leds(&entity, Instant::from_millis(3_000), &mut frame);
         let first = frame.0[0];
         assert_ne!(first, 0, "frame should not be black at peak brightness");
         for (i, px) in frame.0.iter().enumerate() {
@@ -225,20 +226,20 @@ mod tests {
 
     #[test]
     fn emotion_changes_colour() {
-        let mut avatar = Avatar::default();
+        let mut entity = Entity::default();
         let mut frame = LedFrame::default();
         let now = Instant::from_millis(3_000); // peak brightness, deterministic
 
-        avatar.emotion = Emotion::Happy;
-        render_leds(&avatar, now, &mut frame);
+        entity.mind.affect.emotion = Emotion::Happy;
+        render_leds(&entity, now, &mut frame);
         let happy = frame.0[0];
 
-        avatar.emotion = Emotion::Sad;
-        render_leds(&avatar, now, &mut frame);
+        entity.mind.affect.emotion = Emotion::Sad;
+        render_leds(&entity, now, &mut frame);
         let sad = frame.0[0];
 
-        avatar.emotion = Emotion::Sleepy;
-        render_leds(&avatar, now, &mut frame);
+        entity.mind.affect.emotion = Emotion::Sleepy;
+        render_leds(&entity, now, &mut frame);
         let sleepy = frame.0[0];
 
         assert_ne!(happy, sad, "happy and sad should produce different pixels");
@@ -254,14 +255,14 @@ mod tests {
 
     #[test]
     fn breath_envelope_modulates_brightness_across_cycle() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Happy; // amber: high R, moderate G, low B
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy; // amber: high R, moderate G, low B
         let mut frame = LedFrame::default();
 
-        render_leds(&avatar, Instant::from_millis(0), &mut frame);
+        render_leds(&entity, Instant::from_millis(0), &mut frame);
         let trough_r = (frame.0[0] >> 11) & 0x1F;
 
-        render_leds(&avatar, Instant::from_millis(3_000), &mut frame);
+        render_leds(&entity, Instant::from_millis(3_000), &mut frame);
         let peak_r = (frame.0[0] >> 11) & 0x1F;
 
         assert!(

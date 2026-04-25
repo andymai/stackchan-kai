@@ -1,7 +1,7 @@
-//! `EmotionStyle`: translate [`Emotion`] into the avatar's style fields.
+//! `EmotionStyle`: translate [`Emotion`] into the entity's style fields.
 //!
 //! This modifier is the single source of truth for how a given emotion
-//! *looks*. It writes absolute target values to `Avatar`'s style fields
+//! *looks*. It writes absolute target values to the entity's style fields
 //! (`eye_curve`, `mouth_curve`, `cheek_blush`, `eye_scale`,
 //! `blink_rate_scale`, `breath_depth_scale`) plus both eyes'
 //! `open_weight`. The renderer and `Blink`/`Breath` read those fields
@@ -17,27 +17,29 @@
 //!
 //! [`Emotion`]: crate::Emotion
 
-use super::Modifier;
-use crate::avatar::{Avatar, SCALE_DEFAULT};
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
+use crate::entity::Entity;
+use crate::face::SCALE_DEFAULT;
+use crate::modifier::Modifier;
 
 /// Per-emotion style target. Every field an emotion can influence lives
 /// here; the per-emotion table in [`targets_for`] is the authoritative
 /// mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StyleTarget {
-    /// Target `Avatar::eye_curve` (-100..=100).
+    /// Target `entity.face.style.eye_curve` (-100..=100).
     eye_curve: i8,
-    /// Target `Avatar::mouth_curve` (-100..=100).
+    /// Target `entity.face.style.mouth_curve` (-100..=100).
     mouth_curve: i8,
-    /// Target `Avatar::cheek_blush` (0..=255).
+    /// Target `entity.face.style.cheek_blush` (0..=255).
     cheek_blush: u8,
-    /// Target `Avatar::eye_scale` (0..=255, 128 = baseline).
+    /// Target `entity.face.style.eye_scale` (0..=255, 128 = baseline).
     eye_scale: u8,
-    /// Target `Avatar::blink_rate_scale` (0..=255, 128 = baseline, 0 = suppressed).
+    /// Target `entity.face.style.blink_rate_scale` (0..=255, 128 = baseline, 0 = suppressed).
     blink_rate_scale: u8,
-    /// Target `Avatar::breath_depth_scale` (0..=255, 128 = baseline).
+    /// Target `entity.face.style.breath_depth_scale` (0..=255, 128 = baseline).
     breath_depth_scale: u8,
     /// Target `Eye::open_weight` applied to both eyes (0..=100).
     open_weight: u8,
@@ -155,7 +157,7 @@ const fn clamp_i8(v: i32) -> i8 {
     }
 }
 
-/// A modifier that translates `Avatar::emotion` into the style fields,
+/// A modifier that translates `entity.mind.affect.emotion` into the style fields,
 /// linearly easing between emotions so transitions feel alive.
 ///
 /// Carries two state slots — the last-seen emotion and the start of the
@@ -169,10 +171,10 @@ pub struct EmotionStyle {
     /// tick (we snap instantly).
     from: Option<StyleTarget>,
     /// Target state we're transitioning *to* — the most recently observed
-    /// `avatar.emotion`.
+    /// `entity.mind.affect.emotion`.
     to: Option<StyleTarget>,
     /// Which emotion the `to` target corresponds to; used to detect
-    /// `avatar.emotion` changes.
+    /// `entity.mind.affect.emotion` changes.
     to_emotion: Option<Emotion>,
     /// Monotonic time the current transition began.
     transition_start: Option<Instant>,
@@ -200,19 +202,19 @@ impl EmotionStyle {
         }
     }
 
-    /// Apply a fully-resolved [`StyleTarget`] to `avatar`. Split out so
+    /// Apply a fully-resolved [`StyleTarget`] to `entity`. Split out so
     /// the "snap-on-first-tick" and "eased-in-progress" paths share one
     /// writer and one definition of which fields emotion owns.
-    const fn apply(avatar: &mut Avatar, s: StyleTarget) {
-        avatar.eye_curve = s.eye_curve;
-        avatar.mouth_curve = s.mouth_curve;
-        avatar.cheek_blush = s.cheek_blush;
-        avatar.eye_scale = s.eye_scale;
-        avatar.blink_rate_scale = s.blink_rate_scale;
-        avatar.breath_depth_scale = s.breath_depth_scale;
-        avatar.left_eye.open_weight = s.open_weight;
-        avatar.right_eye.open_weight = s.open_weight;
-        avatar.mouth.weight = s.mouth_weight;
+    const fn apply(entity: &mut Entity, s: StyleTarget) {
+        entity.face.style.eye_curve = s.eye_curve;
+        entity.face.style.mouth_curve = s.mouth_curve;
+        entity.face.style.cheek_blush = s.cheek_blush;
+        entity.face.style.eye_scale = s.eye_scale;
+        entity.face.style.blink_rate_scale = s.blink_rate_scale;
+        entity.face.style.breath_depth_scale = s.breath_depth_scale;
+        entity.face.left_eye.open_weight = s.open_weight;
+        entity.face.right_eye.open_weight = s.open_weight;
+        entity.face.mouth.weight = s.mouth_weight;
     }
 
     /// Produce the interpolated `StyleTarget` between `from` and `to` at
@@ -302,11 +304,35 @@ impl Default for EmotionStyle {
 }
 
 impl Modifier for EmotionStyle {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
-        let desired = avatar.emotion;
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "EmotionStyle",
+            description: "Translates mind.affect.emotion into face.style fields (curves, scales, \
+                          cheek blush, open_weight) with linear easing over the transition window.",
+            phase: Phase::Expression,
+            priority: -10,
+            reads: &[Field::Emotion],
+            writes: &[
+                Field::EyeCurve,
+                Field::MouthCurve,
+                Field::CheekBlush,
+                Field::EyeScale,
+                Field::BlinkRateScale,
+                Field::BreathDepthScale,
+                Field::LeftEyeOpenWeight,
+                Field::RightEyeOpenWeight,
+                Field::MouthWeight,
+            ],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
+        let desired = entity.mind.affect.emotion;
         let desired_target = targets_for(desired);
 
-        // Detect transitions: first tick, or `avatar.emotion` changed
+        // Detect transitions: first tick, or `entity.mind.affect.emotion` changed
         // since the last tick.
         let emotion_changed = self.to_emotion != Some(desired);
 
@@ -333,13 +359,13 @@ impl Modifier for EmotionStyle {
             // Unreachable in practice -- the branch above always fills
             // all three before we read them. If it ever isn't, apply the
             // target directly rather than leaving the face frozen.
-            Self::apply(avatar, desired_target);
+            Self::apply(entity, desired_target);
             return;
         };
 
         let elapsed = now.saturating_duration_since(start);
         let blended = Self::blend(from, to, elapsed, self.transition_ms);
-        Self::apply(avatar, blended);
+        Self::apply(entity, blended);
     }
 }
 
@@ -350,100 +376,108 @@ mod tests {
 
     #[test]
     fn first_tick_snaps_to_desired_emotion() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Happy;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy;
         let mut style = EmotionStyle::new();
-        style.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
 
         let happy = targets_for(Emotion::Happy);
-        assert_eq!(avatar.eye_curve, happy.eye_curve);
-        assert_eq!(avatar.mouth_curve, happy.mouth_curve);
-        assert_eq!(avatar.cheek_blush, happy.cheek_blush);
+        assert_eq!(entity.face.style.eye_curve, happy.eye_curve);
+        assert_eq!(entity.face.style.mouth_curve, happy.mouth_curve);
+        assert_eq!(entity.face.style.cheek_blush, happy.cheek_blush);
     }
 
     #[test]
     fn easing_interpolates_over_transition_window() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Neutral;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Neutral;
         let mut style = EmotionStyle::with_transition_ms(300);
 
         // Establish Neutral as both from and to.
-        style.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
 
         // Switch to Happy and drive through the transition.
-        avatar.emotion = Emotion::Happy;
-        style.update(&mut avatar, Instant::from_millis(0));
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
 
         // Halfway through: eye_curve should be ~35 (half of 70).
-        style.update(&mut avatar, Instant::from_millis(150));
-        let half = avatar.eye_curve;
+        entity.tick.now = Instant::from_millis(150);
+        style.update(&mut entity);
+        let half = entity.face.style.eye_curve;
         assert!(
             (25..=45).contains(&half),
             "expected eye_curve near 35 at half transition, got {half}"
         );
 
         // At the end: pinned to the full Happy target.
-        style.update(&mut avatar, Instant::from_millis(300));
+        entity.tick.now = Instant::from_millis(300);
+        style.update(&mut entity);
         let happy = targets_for(Emotion::Happy);
-        assert_eq!(avatar.eye_curve, happy.eye_curve);
-        assert_eq!(avatar.cheek_blush, happy.cheek_blush);
+        assert_eq!(entity.face.style.eye_curve, happy.eye_curve);
+        assert_eq!(entity.face.style.cheek_blush, happy.cheek_blush);
     }
 
     #[test]
     fn mid_transition_emotion_change_restarts_cleanly() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Neutral;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Neutral;
         let mut style = EmotionStyle::with_transition_ms(300);
-        style.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
 
         // Start a Happy transition, then interrupt halfway to Sad.
-        avatar.emotion = Emotion::Happy;
-        style.update(&mut avatar, Instant::from_millis(0));
-        style.update(&mut avatar, Instant::from_millis(150));
-        let mid_curve = avatar.eye_curve;
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
+        entity.tick.now = Instant::from_millis(150);
+        style.update(&mut entity);
+        let mid_curve = entity.face.style.eye_curve;
 
-        avatar.emotion = Emotion::Sad;
-        style.update(&mut avatar, Instant::from_millis(150));
+        entity.mind.affect.emotion = Emotion::Sad;
+        entity.tick.now = Instant::from_millis(150);
+        style.update(&mut entity);
         // The blended `from` should be the mid-transition snapshot, not
         // the original Neutral -- so the face never jumps.
-        assert_eq!(avatar.eye_curve, mid_curve);
+        assert_eq!(entity.face.style.eye_curve, mid_curve);
 
         // After the full transition elapses, we're pinned to Sad.
-        style.update(&mut avatar, Instant::from_millis(450));
+        entity.tick.now = Instant::from_millis(450);
+        style.update(&mut entity);
         let sad = targets_for(Emotion::Sad);
-        assert_eq!(avatar.eye_curve, sad.eye_curve);
+        assert_eq!(entity.face.style.eye_curve, sad.eye_curve);
     }
 
     #[test]
     fn surprised_suppresses_blink_rate() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Surprised;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Surprised;
         let mut style = EmotionStyle::new();
 
-        style.update(&mut avatar, Instant::from_millis(0));
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
         // After the transition elapses, Surprised's `blink_rate_scale = 0`
         // fully propagates.
-        style.update(
-            &mut avatar,
-            Instant::from_millis(EmotionStyle::TRANSITION_MS),
-        );
-        assert_eq!(avatar.blink_rate_scale, 0);
-        assert_eq!(avatar.mouth.weight, 100);
+        entity.tick.now = Instant::from_millis(EmotionStyle::TRANSITION_MS);
+        style.update(&mut entity);
+        assert_eq!(entity.face.style.blink_rate_scale, 0);
+        assert_eq!(entity.face.mouth.weight, 100);
     }
 
     #[test]
     fn sleepy_droops_eye_open_weight() {
-        let mut avatar = Avatar::default();
-        avatar.emotion = Emotion::Sleepy;
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Sleepy;
         let mut style = EmotionStyle::new();
-        style.update(&mut avatar, Instant::from_millis(0));
-        style.update(
-            &mut avatar,
-            Instant::from_millis(EmotionStyle::TRANSITION_MS),
-        );
+        entity.tick.now = Instant::from_millis(0);
+        style.update(&mut entity);
+        entity.tick.now = Instant::from_millis(EmotionStyle::TRANSITION_MS);
+        style.update(&mut entity);
         let sleepy = targets_for(Emotion::Sleepy);
-        assert_eq!(avatar.left_eye.open_weight, sleepy.open_weight);
-        assert_eq!(avatar.right_eye.open_weight, sleepy.open_weight);
+        assert_eq!(entity.face.left_eye.open_weight, sleepy.open_weight);
+        assert_eq!(entity.face.right_eye.open_weight, sleepy.open_weight);
     }
 
     #[test]

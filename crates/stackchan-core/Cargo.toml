@@ -23,3 +23,7 @@ embedded-graphics = { workspace = true }
 # envelope math. Already in the transitive tree (esp-hal pulls it), so
 # adding it as a direct dep costs nothing on the firmware side.
 micromath = "2"
+# `heapless::Vec` backs the `App` registry's modifier + skill storage
+# without an allocator. Capacity is fixed at compile time (see
+# `MODIFIER_CAP`/`SKILL_CAP` in `app.rs`); embedded-friendly.
+heapless = "0.8"

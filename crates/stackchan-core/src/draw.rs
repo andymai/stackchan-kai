@@ -1,7 +1,7 @@
-//! Render an [`Avatar`] onto any [`DrawTarget`] whose color is [`Rgb565`].
+//! Render a [`Face`] onto any [`DrawTarget`] whose color is [`Rgb565`].
 //!
 //! The draw code is `no_std`, non-allocating, and hardware-agnostic. The
-//! same `Avatar::draw` call runs against `mipidsi::Display` on the CoreS3
+//! same `Face::draw` call runs against `mipidsi::Display` on the CoreS3
 //! and against a `Vec<Rgb565>`-backed framebuffer in `stackchan-sim`'s
 //! snapshot tests.
 //!
@@ -9,11 +9,11 @@
 //!
 //! - Background: `Rgb565::WHITE`.
 //! - Eyes: `Rgb565::BLACK`, either filled ellipses (when
-//!   [`Avatar::eye_curve`] is 0) or a stroked polyline arc (otherwise).
+//!   [`Style::eye_curve`] is 0) or a stroked polyline arc (otherwise).
 //! - Mouth: pink (`MOUTH_COLOR`), either the v0.1.0 line/ellipse (when
-//!   [`Avatar::mouth_curve`] is 0) or a stroked polyline curve.
+//!   [`Style::mouth_curve`] is 0) or a stroked polyline curve.
 //! - Cheeks: a weight-blended white→pink circle below each eye when
-//!   [`Avatar::cheek_blush`] is non-zero.
+//!   [`Style::cheek_blush`] is non-zero.
 //!
 //! ## Curves
 //!
@@ -32,7 +32,7 @@ use embedded_graphics::{
     },
 };
 
-use crate::avatar::{Avatar, Eye, EyePhase, Mouth, SCALE_DEFAULT};
+use crate::face::{Eye, EyePhase, Face, Mouth, SCALE_DEFAULT};
 
 /// Pink mouth/cheek color — `#F58080` quantized into Rgb565's (5,6,5)-bit channels.
 const MOUTH_COLOR: Rgb565 = Rgb565::new(30, 32, 16);
@@ -55,7 +55,7 @@ const CHEEK_DIAMETER: u32 = 18;
 /// Vertical gap between the bottom of an eye and the top of its cheek.
 const CHEEK_VERTICAL_GAP: i32 = 6;
 
-impl Avatar {
+impl Face {
     /// Render `self` onto `target`, clearing the background first.
     ///
     /// # Errors
@@ -69,13 +69,33 @@ impl Avatar {
         target.clear(Rgb565::WHITE)?;
         // Cheeks first: the eye sits on top of the cheek circle when the
         // two overlap at high `eye_scale` + `cheek_blush`.
-        if self.cheek_blush > 0 {
-            draw_cheek(&self.left_eye, self.cheek_blush, self.eye_scale, target)?;
-            draw_cheek(&self.right_eye, self.cheek_blush, self.eye_scale, target)?;
+        if self.style.cheek_blush > 0 {
+            draw_cheek(
+                &self.left_eye,
+                self.style.cheek_blush,
+                self.style.eye_scale,
+                target,
+            )?;
+            draw_cheek(
+                &self.right_eye,
+                self.style.cheek_blush,
+                self.style.eye_scale,
+                target,
+            )?;
         }
-        draw_eye(&self.left_eye, self.eye_curve, self.eye_scale, target)?;
-        draw_eye(&self.right_eye, self.eye_curve, self.eye_scale, target)?;
-        draw_mouth(&self.mouth, self.mouth_curve, target)?;
+        draw_eye(
+            &self.left_eye,
+            self.style.eye_curve,
+            self.style.eye_scale,
+            target,
+        )?;
+        draw_eye(
+            &self.right_eye,
+            self.style.eye_curve,
+            self.style.eye_scale,
+            target,
+        )?;
+        draw_mouth(&self.mouth, self.style.mouth_curve, target)?;
         Ok(())
     }
 }

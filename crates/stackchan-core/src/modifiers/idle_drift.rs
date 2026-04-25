@@ -5,9 +5,10 @@
 //! construction so sim tests are reproducible. A future release may swap in
 //! a hardware-RNG-backed source for the firmware build.
 
-use super::Modifier;
-use crate::avatar::Avatar;
 use crate::clock::Instant;
+use crate::director::{Field, ModifierMeta, Phase};
+use crate::entity::Entity;
+use crate::modifier::Modifier;
 use core::num::NonZeroU32;
 
 /// Default xorshift32 seed used by [`IdleDrift::new`]. The `.unwrap()`
@@ -105,7 +106,21 @@ impl Default for IdleDrift {
 }
 
 impl Modifier for IdleDrift {
-    fn update(&mut self, avatar: &mut Avatar, now: Instant) {
+    fn meta(&self) -> &'static ModifierMeta {
+        static META: ModifierMeta = ModifierMeta {
+            name: "IdleDrift",
+            description: "Periodically jitters both eye centres a few pixels in random directions \
+                          so a long-idle stare doesn't read as uncanny.",
+            phase: Phase::Expression,
+            priority: 0,
+            reads: &[],
+            writes: &[Field::LeftEyeCenter, Field::RightEyeCenter],
+        };
+        &META
+    }
+
+    fn update(&mut self, entity: &mut Entity) {
+        let now = entity.tick.now;
         let due = match self.next_drift_at {
             None => {
                 // Schedule the first drift `interval_ms` from now.
@@ -120,18 +135,18 @@ impl Modifier for IdleDrift {
 
         // Undo previous offset before applying a new one.
         let (dx, dy) = self.last_offset;
-        avatar.left_eye.center.x -= dx;
-        avatar.left_eye.center.y -= dy;
-        avatar.right_eye.center.x -= dx;
-        avatar.right_eye.center.y -= dy;
+        entity.face.left_eye.center.x -= dx;
+        entity.face.left_eye.center.y -= dy;
+        entity.face.right_eye.center.x -= dx;
+        entity.face.right_eye.center.y -= dy;
 
         // Apply a new drift.
         let nx = self.rand_offset(self.max_x);
         let ny = self.rand_offset(self.max_y);
-        avatar.left_eye.center.x += nx;
-        avatar.left_eye.center.y += ny;
-        avatar.right_eye.center.x += nx;
-        avatar.right_eye.center.y += ny;
+        entity.face.left_eye.center.x += nx;
+        entity.face.left_eye.center.y += ny;
+        entity.face.right_eye.center.x += nx;
+        entity.face.right_eye.center.y += ny;
 
         self.last_offset = (nx, ny);
         self.next_drift_at = Some(now + self.interval_ms);
@@ -145,47 +160,56 @@ impl Modifier for IdleDrift {
 )]
 mod tests {
     use super::*;
-    use crate::avatar::Avatar;
+    use crate::Entity;
+
+    /// Helper: build an entity with a given tick time.
+    fn at(ms: u64) -> Entity {
+        let mut e = Entity::default();
+        e.tick.now = Instant::from_millis(ms);
+        e
+    }
 
     #[test]
     fn first_tick_schedules_first_drift() {
-        let mut avatar = Avatar::default();
-        let baseline_x = avatar.left_eye.center.x;
+        let mut entity = at(0);
+        let baseline_x = entity.face.left_eye.center.x;
         let mut drift = IdleDrift::new();
-        drift.update(&mut avatar, Instant::from_millis(0));
+        drift.update(&mut entity);
         // No drift applied yet on the scheduling tick.
-        assert_eq!(avatar.left_eye.center.x, baseline_x);
+        assert_eq!(entity.face.left_eye.center.x, baseline_x);
     }
 
     #[test]
     fn drift_applies_at_interval() {
-        let mut avatar = Avatar::default();
-        let baseline = (avatar.left_eye.center.x, avatar.left_eye.center.y);
+        let mut entity = at(0);
+        let baseline = (entity.face.left_eye.center.x, entity.face.left_eye.center.y);
         let mut drift = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
 
-        drift.update(&mut avatar, Instant::from_millis(0));
-        drift.update(&mut avatar, Instant::from_millis(DEFAULT_INTERVAL_MS));
+        drift.update(&mut entity);
+        entity.tick.now = Instant::from_millis(DEFAULT_INTERVAL_MS);
+        drift.update(&mut entity);
         // After the interval, the eye position must differ from baseline by
         // at most ±max in each axis.
-        let dx = avatar.left_eye.center.x - baseline.0;
-        let dy = avatar.left_eye.center.y - baseline.1;
+        let dx = entity.face.left_eye.center.x - baseline.0;
+        let dy = entity.face.left_eye.center.y - baseline.1;
         assert!(dx.abs() <= DEFAULT_MAX_X);
         assert!(dy.abs() <= DEFAULT_MAX_Y);
     }
 
     #[test]
     fn drifts_do_not_accumulate() {
-        let mut avatar = Avatar::default();
-        let baseline = (avatar.left_eye.center.x, avatar.left_eye.center.y);
+        let mut entity = at(0);
+        let baseline = (entity.face.left_eye.center.x, entity.face.left_eye.center.y);
         let mut drift = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
 
         for i in 0..10 {
-            drift.update(&mut avatar, Instant::from_millis(i * DEFAULT_INTERVAL_MS));
+            entity.tick.now = Instant::from_millis(i * DEFAULT_INTERVAL_MS);
+            drift.update(&mut entity);
         }
         // After many drifts, eye must still be within ±max of baseline, not
         // walked off-screen.
-        let dx = avatar.left_eye.center.x - baseline.0;
-        let dy = avatar.left_eye.center.y - baseline.1;
+        let dx = entity.face.left_eye.center.x - baseline.0;
+        let dy = entity.face.left_eye.center.y - baseline.1;
         assert!(dx.abs() <= DEFAULT_MAX_X, "dx={dx}");
         assert!(dy.abs() <= DEFAULT_MAX_Y, "dy={dy}");
     }

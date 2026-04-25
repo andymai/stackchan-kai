@@ -15,8 +15,8 @@ This handbook complements the in-repo guides:
 
 ## Pages
 
-- [Architecture overview](architecture) — the firmware's task graph, the modifier stack, and how the host sim mirrors it.
-- [Modifier authoring guide](modifiers) — how to add a new behavior to the avatar without breaking the canonical stack ordering.
+- [Architecture overview](architecture) — the engine (Entity, Director, Phase), the firmware's task graph, and how the host sim mirrors it.
+- [Modifier authoring guide](modifiers) — how to add a new behavior to the engine without breaking phase ordering.
 - [Signal channels](signals) — the typed `Signal<…, T>` pattern that wires sensors to the render task.
 - [Typed-error catalog](errors) — every driver crate's `Error<E>` enum, with what each variant means and what to do about it.
 
@@ -24,7 +24,7 @@ This handbook complements the in-repo guides:
 
 ```
 crates/
-├── stackchan-core   # Pure no_std domain library (Avatar, Modifier, Pose, Clock)
+├── stackchan-core   # Pure no_std engine (Entity, Director, Modifier, Skill, Phase, Clock)
 ├── stackchan-sim    # Host-side simulator (FakeClock, Framebuffer, viz binary)
 ├── stackchan-firmware  # CoreS3 firmware binary (embassy + esp-rtos)
 ├── tracker          # Block-grid motion tracker for the camera path
