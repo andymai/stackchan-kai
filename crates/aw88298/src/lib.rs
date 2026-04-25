@@ -43,6 +43,8 @@
 //! let mut amp = aw88298::Aw88298::new(bus);
 //! amp.init(&mut delay).await?;
 //! amp.set_sample_rate(aw88298::SampleRate::Hz16000).await?;
+//! amp.set_volume_db(-18).await?;       // attenuate to -18 dB
+//! amp.set_boost_enabled(true).await?;  // need louder output → boost
 //! amp.set_muted(false).await?;
 //! # Ok(())
 //! # }
@@ -89,11 +91,30 @@ const SYSCTRL2_MUTED: u16 = SYSCTRL2_RUN | 0x0001;
 /// `I2SCTRL` base value: 16-bit Philips I2S, BCK mode ×16. Combined
 /// with a [`SampleRate`] byte in the low nibble.
 const I2SCTRL_BASE: u16 = 0x3CC0;
-/// `HAGCCFG4` default: volume `0x30` (≈ -24 dB) + AGC preset `0x64`.
-const HAGCCFG4_DEFAULT: u16 = 0x3064;
+/// AGC preset written to the lower byte of `HAGCCFG4`. `0x64` is the
+/// esp-adf reference value for the CoreS3 codec.
+const HAGCCFG4_AGC_PRESET: u8 = 0x64;
+/// Default volume byte written to the upper byte of `HAGCCFG4` at
+/// init: `0x30` LSB ≈ -24 dB attenuation (each LSB = 0.5 dB).
+const HAGCCFG4_DEFAULT_VOLUME_BYTE: u8 = 0x30;
+/// `HAGCCFG4` default register value: default volume + AGC preset.
+const HAGCCFG4_DEFAULT: u16 =
+    ((HAGCCFG4_DEFAULT_VOLUME_BYTE as u16) << 8) | HAGCCFG4_AGC_PRESET as u16;
 /// `BSTCTRL2` value: boost mode disabled. Matches esp-adf's
 /// `0x0673` vs the datasheet default `0x6673`.
 const BSTCTRL2_BOOST_OFF: u16 = 0x0673;
+/// `BSTCTRL2` value: boost mode enabled. `BST_MODE` bits set vs
+/// [`BSTCTRL2_BOOST_OFF`]; matches esp-adf's `0x6673` constant
+/// for the CoreS3 codec.
+const BSTCTRL2_BOOST_ON: u16 = 0x6673;
+
+/// Minimum representable volume, in dB. Anything lower clamps here.
+/// `-127 dB` corresponds to a register byte of `0xFE` (254 LSB at
+/// 0.5 dB / LSB).
+pub const VOLUME_MIN_DB: i8 = -127;
+/// Maximum representable volume, in dB (full-scale, no attenuation).
+/// `0 dB` corresponds to a register byte of `0x00`.
+pub const VOLUME_MAX_DB: i8 = 0;
 
 /// Post-reset settle delay, in milliseconds. Datasheet ≥1 ms.
 const RESET_SETTLE_MS: u32 = 5;
@@ -147,6 +168,30 @@ pub struct Aw88298<B> {
     bus: B,
     /// Resolved 7-bit I²C address.
     address: u8,
+}
+
+/// Convert dB attenuation to the `HAGCCFG4` upper-byte value.
+///
+/// Saturates inputs outside `[VOLUME_MIN_DB, VOLUME_MAX_DB]`. Each
+/// LSB encodes 0.5 dB of attenuation, so the byte is `-db × 2`. After
+/// the clamp, `-db ∈ [0, 127]` and `* 2 ∈ [0, 254]`, fitting `u8`
+/// losslessly.
+const fn db_to_volume_byte(db: i8) -> u8 {
+    let db = if db > VOLUME_MAX_DB {
+        VOLUME_MAX_DB
+    } else if db < VOLUME_MIN_DB {
+        VOLUME_MIN_DB
+    } else {
+        db
+    };
+    // -db ∈ [0, 127]; cast to u8 is exact. Shift-left-1 is the × 2 step.
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "post-clamp -db ∈ [0, 127] fits u8 losslessly"
+    )]
+    let attenuation = (-(db as i16)) as u8;
+    attenuation << 1
 }
 
 impl<B: I2c> Aw88298<B> {
@@ -243,6 +288,39 @@ impl<B: I2c> Aw88298<B> {
     pub async fn set_muted(&mut self, muted: bool) -> Result<(), Error<B::Error>> {
         let value = if muted { SYSCTRL2_MUTED } else { SYSCTRL2_RUN };
         self.write_reg(REG_SYSCTRL2, value).await
+    }
+
+    /// Set output volume, in dB. Saturates outside
+    /// <code>\[[VOLUME_MIN_DB], [VOLUME_MAX_DB]\]</code>.
+    ///
+    /// Writes the upper byte of `HAGCCFG4` (volume) alongside the
+    /// fixed AGC preset in the lower byte. The encoding is
+    /// 0.5 dB / LSB attenuation: `byte = -db × 2`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I²C bus error.
+    pub async fn set_volume_db(&mut self, db: i8) -> Result<(), Error<B::Error>> {
+        let value = (u16::from(db_to_volume_byte(db)) << 8) | u16::from(HAGCCFG4_AGC_PRESET);
+        self.write_reg(REG_HAGCCFG4, value).await
+    }
+
+    /// Enable or disable the integrated 10.25 V smart-boost converter.
+    ///
+    /// `init` leaves the boost off (esp-adf's safe default for the
+    /// CoreS3's 1 W speaker on the 8 V VBAT rail). Enable when louder
+    /// output is needed and the supply can deliver the boosted current.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I²C bus error.
+    pub async fn set_boost_enabled(&mut self, enabled: bool) -> Result<(), Error<B::Error>> {
+        let value = if enabled {
+            BSTCTRL2_BOOST_ON
+        } else {
+            BSTCTRL2_BOOST_OFF
+        };
+        self.write_reg(REG_BSTCTRL2, value).await
     }
 
     /// Single 16-bit-register write. Encodes value big-endian on wire.
@@ -402,5 +480,48 @@ mod tests {
         let mut amp = Aw88298::new(MockI2c::with_chip_id(0x1852));
         let id = block_on(amp.read_chip_id()).unwrap();
         assert_eq!(id, 0x1852);
+    }
+
+    #[test]
+    fn set_volume_db_writes_hagccfg4_with_default_agc() {
+        let mut amp = Aw88298::new(MockI2c::with_chip_id(CHIP_ID));
+        // -12 dB → 24 LSB volume (0x18); AGC preset preserved at 0x64.
+        block_on(amp.set_volume_db(-12)).unwrap();
+        let writes = amp.bus.writes.borrow();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0], [REG_HAGCCFG4, 0x18, 0x64]);
+    }
+
+    #[test]
+    fn set_volume_db_default_matches_init_constant() {
+        // Calling set_volume_db(-24) must produce the same wire bytes
+        // as the init() default. Sanity check that the helper agrees
+        // with HAGCCFG4_DEFAULT_VOLUME_BYTE.
+        let mut amp = Aw88298::new(MockI2c::with_chip_id(CHIP_ID));
+        block_on(amp.set_volume_db(-24)).unwrap();
+        let writes = amp.bus.writes.borrow();
+        assert_eq!(writes[0], [REG_HAGCCFG4, 0x30, 0x64]);
+    }
+
+    #[test]
+    fn set_volume_db_clamps_out_of_range() {
+        let mut amp = Aw88298::new(MockI2c::with_chip_id(CHIP_ID));
+        block_on(amp.set_volume_db(50)).unwrap(); // clamps to 0 dB
+        block_on(amp.set_volume_db(-127)).unwrap(); // -127 dB endpoint
+        let writes = amp.bus.writes.borrow();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0], [REG_HAGCCFG4, 0x00, 0x64]);
+        assert_eq!(writes[1], [REG_HAGCCFG4, 0xFE, 0x64]);
+    }
+
+    #[test]
+    fn set_boost_enabled_toggles_bstctrl2() {
+        let mut amp = Aw88298::new(MockI2c::with_chip_id(CHIP_ID));
+        block_on(amp.set_boost_enabled(true)).unwrap();
+        block_on(amp.set_boost_enabled(false)).unwrap();
+        let writes = amp.bus.writes.borrow();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0], [REG_BSTCTRL2, 0x66, 0x73]);
+        assert_eq!(writes[1], [REG_BSTCTRL2, 0x06, 0x73]);
     }
 }
