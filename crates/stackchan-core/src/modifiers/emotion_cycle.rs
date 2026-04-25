@@ -1,9 +1,9 @@
-//! `EmotionCycle`: a demo modifier that rotates `Avatar::emotion` through
+//! `EmotionCycle`: a demo modifier that rotates `entity.mind.affect.emotion` through
 //! a fixed sequence of emotions on a timer.
 //!
 //! Used by the firmware to exercise the full emotion pipeline on hardware
 //! without needing input (touch, network, serial). It writes *only* to
-//! `Avatar::emotion`; the downstream `EmotionStyle` modifier does the
+//! `entity.mind.affect.emotion`; the downstream `EmotionStyle` modifier does the
 //! actual style-field mutation.
 //!
 //! Cycle order is the default StackChan demo rotation; see
@@ -18,7 +18,7 @@ use crate::modifier::Modifier;
 /// Default dwell time per emotion, in milliseconds.
 const DEFAULT_DWELL_MS: u64 = 4_000;
 
-/// A modifier that rotates `avatar.emotion` through a fixed sequence,
+/// A modifier that rotates `entity.mind.affect.emotion` through a fixed sequence,
 /// dwelling on each emotion for `dwell_ms` milliseconds.
 #[derive(Debug, Clone)]
 pub struct EmotionCycle {
@@ -56,7 +56,7 @@ impl EmotionCycle {
     /// # Panics
     ///
     /// Does not panic, but `sequence` must be non-empty for the cycle to
-    /// advance; an empty slice leaves the avatar's emotion untouched.
+    /// advance; an empty slice leaves the entity's emotion untouched.
     #[must_use]
     pub const fn with_params(sequence: &'static [Emotion], dwell_ms: u64) -> Self {
         Self {

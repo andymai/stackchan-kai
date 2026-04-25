@@ -22,9 +22,9 @@
 //! (a "conversation" skill can override `Source::LowBattery` but not
 //! `Source::Pickup`) without touching the autonomy gate's expiry.
 //!
-//! [`Phase::Affect`]: crate::app::Phase::Affect
-//! [`Phase::Expression`]: crate::app::Phase::Expression
-//! [`Phase::Motion`]: crate::app::Phase::Motion
+//! [`Phase::Affect`]: crate::director::Phase::Affect
+//! [`Phase::Expression`]: crate::director::Phase::Expression
+//! [`Phase::Motion`]: crate::director::Phase::Motion
 
 use crate::clock::Instant;
 use crate::emotion::Emotion;
@@ -98,8 +98,8 @@ pub struct Autonomy {
 /// [`Phase::Speech`] / [`Phase::Motion`] will read it to drive
 /// behaviour.
 ///
-/// [`Phase::Speech`]: crate::app::Phase::Speech
-/// [`Phase::Motion`]: crate::app::Phase::Motion
+/// [`Phase::Speech`]: crate::director::Phase::Speech
+/// [`Phase::Motion`]: crate::director::Phase::Motion
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Intent;
 

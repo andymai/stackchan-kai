@@ -1,19 +1,18 @@
-//! `MouthOpenAudio`: drives `Mouth::mouth_open` from a microphone RMS
-//! signal with a dB-mapped attack/release envelope.
+//! `MouthOpenAudio`: drives `face.mouth.mouth_open` from a microphone
+//! RMS signal with a dB-mapped attack/release envelope.
 //!
 //! The firmware audio task publishes per-render-tick RMS (linear
-//! amplitude normalised against full-scale i16). Consumers call
-//! [`MouthOpenAudio::set_rms`] between render ticks, then the modifier
-//! converts RMS to dB, clamps to a speech-friendly window, maps
-//! linearly to `0.0..=1.0`, and applies a single-pole IIR envelope
-//! (fast attack, slow release) so the mouth doesn't twitch on silence
-//! jitter.
+//! amplitude normalised against full-scale i16) into
+//! `entity.perception.audio_rms`. Each tick this modifier converts
+//! RMS to dB, clamps to a speech-friendly window, maps linearly to
+//! `0.0..=1.0`, and applies a single-pole IIR envelope (fast attack,
+//! slow release) so the mouth doesn't twitch on silence jitter.
 //!
 //! ## Sim-testability
 //!
-//! `set_rms` is an ordinary method (not a signal/channel), so sim tests
-//! drive the modifier the same way firmware does: call
-//! `set_rms(rms)`, then call `update(avatar, now)`.
+//! Sim tests drive the modifier the same way firmware does: write to
+//! `entity.perception.audio_rms = Some(rms)`, then call
+//! `mouth.update(&mut entity)`.
 
 use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
@@ -51,9 +50,6 @@ const INAUDIBLE_RMS: f32 = 1e-5;
 /// Modifier that turns microphone RMS into a mouth-open amplitude.
 #[derive(Debug, Clone, Copy)]
 pub struct MouthOpenAudio {
-    /// Latest RMS value published by the audio task. Updated via
-    /// [`Self::set_rms`]; read + cleared each `update`.
-    latest_rms: f32,
     /// Envelope state — the smoothed `mouth_open` value that actually
     /// gets written to the avatar.
     current: f32,
@@ -74,7 +70,6 @@ impl MouthOpenAudio {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            latest_rms: 0.0,
             current: 0.0,
             silence_db: DEFAULT_SILENCE_DB,
             full_db: DEFAULT_FULL_DB,
@@ -102,14 +97,6 @@ impl MouthOpenAudio {
         self.attack_ms = attack_ms;
         self.release_ms = release_ms;
         self
-    }
-
-    /// Publish a new RMS sample. Called by firmware's audio-signal
-    /// consumer each render tick. RMS values outside `[0.0, ~1.0]` are
-    /// accepted verbatim; the dB conversion + envelope mapping handles
-    /// the range.
-    pub const fn set_rms(&mut self, rms: f32) {
-        self.latest_rms = rms;
     }
 
     /// Target `mouth_open` value for the stored RMS, before envelope
@@ -155,10 +142,9 @@ impl Modifier for MouthOpenAudio {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        // Prefer firmware-published RMS via `perception.audio_rms`;
-        // fall back to the modifier-internal `latest_rms` set by the
-        // legacy `set_rms()` method (kept for sim test ergonomics).
-        let rms = entity.perception.audio_rms.unwrap_or(self.latest_rms);
+        // Pre-publish (audio_rms = None) reads as silent. Once the
+        // firmware audio task starts publishing, it stays Some.
+        let rms = entity.perception.audio_rms.unwrap_or(0.0);
         let target = self.target_from_rms(rms);
 
         let dt_ms = match self.last_tick {
@@ -307,7 +293,7 @@ mod tests {
     const TOL: f32 = 0.05;
 
     fn run(mouth: &mut MouthOpenAudio, entity: &mut Entity, rms: f32, ms: u64) {
-        mouth.set_rms(rms);
+        entity.perception.audio_rms = Some(rms);
         entity.tick.now = Instant::from_millis(ms);
         mouth.update(entity);
     }

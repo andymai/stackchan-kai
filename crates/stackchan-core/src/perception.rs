@@ -16,8 +16,8 @@
 //! (smoothed velocities, sound-source bearing, gaze targets) sits on
 //! top of these raw readings and is what cognition consumes.
 //!
-//! [`Phase::Affect`]: crate::app::Phase::Affect
-//! [`Phase::Audio`]: crate::app::Phase::Audio
+//! [`Phase::Affect`]: crate::director::Phase::Affect
+//! [`Phase::Audio`]: crate::director::Phase::Audio
 
 /// Raw sensor readings that drive reactive modifiers.
 #[derive(Debug, Clone, Copy, PartialEq)]

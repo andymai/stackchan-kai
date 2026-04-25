@@ -19,14 +19,16 @@
 //!
 //! Follows the same "explicit input wins" convention as
 //! [`super::EmotionTouch`] and [`super::PickupReaction`]: if
-//! [`Avatar::manual_until`] is already set by another modifier, the
-//! `RemoteCommand` stands down. Otherwise it sets the emotion from
-//! the table + writes `manual_until = now + MANUAL_HOLD_MS`.
+//! `entity.mind.autonomy.manual_until` is already set by another
+//! modifier, the `RemoteCommand` stands down. Otherwise it sets the
+//! emotion from the table + writes `manual_until = now + MANUAL_HOLD_MS`.
 //!
-//! [`Avatar::manual_until`]: crate::avatar::Avatar::manual_until
+//! Pending input lives on `entity.input.remote_pending`. The firmware's
+//! IR task drains the RMT-RX signal and writes
+//! `entity.input.remote_pending = Some((address, command))`. This
+//! modifier reads + clears the field on each tick.
 
 use super::MANUAL_HOLD_MS;
-use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
 use crate::entity::Entity;
@@ -47,19 +49,17 @@ pub struct RemoteMapping {
     pub emotion: Emotion,
 }
 
-/// Modifier that watches for IR-remote commands queued from the
-/// firmware's RMT-RX task and sets emotion per a lookup table.
+/// Modifier that watches `entity.input.remote_pending` and sets emotion
+/// per a lookup table.
 ///
-/// Like [`super::EmotionTouch`], the modifier is edge-triggered: the
-/// queued command is cleared by the next `update()` call, so a
-/// single `queue()` produces exactly one emotion change.
+/// Stateless apart from the immutable mapping: input lives in
+/// `entity.input.remote_pending`; the modifier reads + clears it on
+/// each tick.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteCommand {
     /// Per-remote mapping table. Empty by default, which means the
     /// modifier is a no-op until populated.
     mapping: &'static [RemoteMapping],
-    /// Most-recently queued `(address, command)` pair, or `None`.
-    pending: Option<(u16, u8)>,
 }
 
 impl RemoteCommand {
@@ -68,26 +68,13 @@ impl RemoteCommand {
     /// discovered, or for sim tests that don't care about IR.
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            mapping: &[],
-            pending: None,
-        }
+        Self { mapping: &[] }
     }
 
     /// Construct with the given mapping table.
     #[must_use]
     pub const fn with_mapping(mapping: &'static [RemoteMapping]) -> Self {
-        Self {
-            mapping,
-            pending: None,
-        }
-    }
-
-    /// Queue an `(address, command)` pair for processing on the next
-    /// `update()`. Idempotent within a render tick: later queues
-    /// overwrite earlier ones, so the most recent code wins.
-    pub const fn queue(&mut self, address: u16, command: u8) {
-        self.pending = Some((address, command));
+        Self { mapping }
     }
 }
 
@@ -101,20 +88,20 @@ impl Modifier for RemoteCommand {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
             name: "RemoteCommand",
-            description: "Maps queued IR-remote (address, command) pairs to emotions via a \
-                          user-supplied table. Stands down when an earlier modifier already \
+            description: "Maps entity.input.remote_pending (address, command) pairs to emotions \
+                          via a user-supplied table. Stands down when an earlier modifier already \
                           set mind.autonomy.manual_until.",
             phase: Phase::Affect,
             priority: -90,
-            reads: &[Field::Autonomy],
-            writes: &[Field::Emotion, Field::Autonomy],
+            reads: &[Field::Autonomy, Field::RemotePending],
+            writes: &[Field::Emotion, Field::Autonomy, Field::RemotePending],
         };
         &META
     }
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let Some((address, command)) = self.pending.take() else {
+        let Some((address, command)) = entity.input.remote_pending.take() else {
             return;
         };
 
@@ -138,6 +125,7 @@ impl Modifier for RemoteCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Instant;
 
     const MAPPING: &[RemoteMapping] = &[
         RemoteMapping {
@@ -156,7 +144,7 @@ mod tests {
     fn mapped_code_sets_emotion_and_hold() {
         let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
-        remote.queue(0xFF00, 0x01);
+        entity.input.remote_pending = Some((0xFF00, 0x01));
         entity.tick.now = Instant::from_millis(1_000);
         remote.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
@@ -164,13 +152,17 @@ mod tests {
             entity.mind.autonomy.manual_until,
             Some(Instant::from_millis(1_000 + MANUAL_HOLD_MS)),
         );
+        assert!(
+            entity.input.remote_pending.is_none(),
+            "modifier must clear input.remote_pending after consuming"
+        );
     }
 
     #[test]
     fn unmapped_code_is_silent_noop() {
         let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
-        remote.queue(0x1234, 0x56);
+        entity.input.remote_pending = Some((0x1234, 0x56));
         entity.tick.now = Instant::from_millis(1_000);
         remote.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
@@ -181,7 +173,7 @@ mod tests {
     fn empty_mapping_is_always_noop() {
         let mut entity = Entity::default();
         let mut remote = RemoteCommand::new();
-        remote.queue(0xFF00, 0x01);
+        entity.input.remote_pending = Some((0xFF00, 0x01));
         entity.tick.now = Instant::from_millis(1_000);
         remote.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
@@ -189,22 +181,10 @@ mod tests {
     }
 
     #[test]
-    fn queued_command_collapses_to_latest() {
-        let mut entity = Entity::default();
-        let mut remote = RemoteCommand::with_mapping(MAPPING);
-        // Queue Happy, then overwrite with Sad before the next update.
-        remote.queue(0xFF00, 0x01);
-        remote.queue(0xFF00, 0x02);
-        entity.tick.now = Instant::from_millis(1_000);
-        remote.update(&mut entity);
-        assert_eq!(entity.mind.affect.emotion, Emotion::Sad);
-    }
-
-    #[test]
     fn update_consumes_queued_command() {
         let mut entity = Entity::default();
         let mut remote = RemoteCommand::with_mapping(MAPPING);
-        remote.queue(0xFF00, 0x01);
+        entity.input.remote_pending = Some((0xFF00, 0x01));
         entity.tick.now = Instant::from_millis(0);
         remote.update(&mut entity);
         // Simulate the hold expiring + being cleared by EmotionTouch.
@@ -225,7 +205,7 @@ mod tests {
             e
         };
         let mut remote = RemoteCommand::with_mapping(MAPPING);
-        remote.queue(0xFF00, 0x01);
+        entity.input.remote_pending = Some((0xFF00, 0x01));
         entity.tick.now = Instant::from_millis(1_000);
         remote.update(&mut entity);
         assert_eq!(
@@ -247,13 +227,13 @@ mod tests {
 
         // Hold set by (say) touch in the recent past.
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(1_000));
-        remote.queue(0xFF00, 0x01);
+        entity.input.remote_pending = Some((0xFF00, 0x01));
         entity.tick.now = Instant::from_millis(500);
         remote.update(&mut entity);
         // Command was consumed but had no effect because the hold was
         // active. Clear and try again.
         entity.mind.autonomy.manual_until = None;
-        remote.queue(0xFF00, 0x01);
+        entity.input.remote_pending = Some((0xFF00, 0x01));
         entity.tick.now = Instant::from_millis(2_000);
         remote.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);

@@ -21,11 +21,11 @@
 //! modifiers publish *what they want* and the firmware decides *what
 //! to do with it* — cleaner separation, mod-friendly.
 //!
-//! [`Phase::Speech`]: crate::app::Phase::Speech
+//! [`Phase::Speech`]: crate::director::Phase::Speech
 
 /// One-shot audio clips the firmware can enqueue. Modifiers set
 /// [`Voice::chirp_request`] to one of these; the render task reads it
-/// after `App::run` returns and forwards to `audio::try_enqueue_*`.
+/// after `Director::run` returns and forwards to `audio::try_enqueue_*`.
 ///
 /// Adding a new variant requires:
 /// 1. A matching enqueue helper in `stackchan-firmware/src/audio.rs`
@@ -55,6 +55,6 @@ pub enum ChirpKind {
 pub struct Voice {
     /// One-shot chirp the firmware should enqueue this frame.
     /// `None` between frames; modifiers set this in their `update`.
-    /// The render task reads + clears it after `App::run` returns.
+    /// The render task reads + clears it after `Director::run` returns.
     pub chirp_request: Option<ChirpKind>,
 }

@@ -66,10 +66,11 @@ use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT,
-        LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand, WakeOnVoice,
+        IdleDrift, IdleSway, LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand,
+        WakeOnVoice,
     },
     render_leds,
+    voice::ChirpKind,
 };
 use static_cell::StaticCell;
 
@@ -112,7 +113,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 const HEAP_SIZE: usize = 72 * 1024;
 
 /// Render cadence. 33 ms ≈ 30 FPS; `Ticker` corrects drift automatically
-/// if a single frame's `Avatar::draw` runs long (e.g. during a blink
+/// if a single frame's `Face::draw` runs long (e.g. during a blink
 /// transition where every pixel changes).
 const FRAME_PERIOD_MS: u64 = 33;
 
@@ -225,13 +226,6 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .add_modifier(&mut mouth_open_audio)
         .expect("registry full");
     let mut led_frame = LedFrame::default();
-    // Hysteresis state for the low-battery alert beep. Mirrors the
-    // emotion-side `LowBatteryEmotion` modifier: the beep fires once
-    // when the battery transitions from healthy to low, and re-arms
-    // only when the percent climbs back above the *exit* threshold.
-    // Starts `false`; the boot reading itself only fires the beep if
-    // we boot already below the enter threshold (and unplugged).
-    let mut alert_armed_for_low: bool = false;
     // Camera-mode state. The button task's long-press handler is the
     // sole producer of `CAMERA_MODE_SIGNAL`; we mirror it locally so
     // every render tick can branch quickly without re-checking the
@@ -321,29 +315,13 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
             entity.perception.ambient_lux = Some(lux);
         }
         // Drain the latest power status from the AXP2101 task.
+        // The `LowBatteryEmotion` modifier owns the arming-edge logic
+        // for the alert chirp now — it sets
+        // `entity.voice.chirp_request = Some(ChirpKind::LowBatteryAlert)`
+        // and the post-`run()` dispatch below enqueues it.
         if let Some(status) = power::POWER_STATUS_SIGNAL.try_take() {
             entity.perception.battery_percent = Some(status.battery_percent);
             entity.perception.usb_power_present = Some(status.usb_power);
-
-            if alert_armed_for_low {
-                if status.battery_percent > LOW_BATTERY_EXIT_PERCENT {
-                    alert_armed_for_low = false;
-                }
-            } else if status.battery_percent < LOW_BATTERY_ENTER_PERCENT && !status.usb_power {
-                alert_armed_for_low = true;
-                if let Err(e) = audio::try_enqueue_low_battery_alert() {
-                    defmt::warn!(
-                        "audio: low-battery alert (partially) dropped ({:?})",
-                        defmt::Debug2Format(&e)
-                    );
-                } else {
-                    defmt::info!(
-                        "audio: low-battery alert enqueued (2 beeps, {=u8}%, enter < {=u8}%)",
-                        status.battery_percent,
-                        LOW_BATTERY_ENTER_PERCENT,
-                    );
-                }
-            }
         }
         // Drain the latest mic-RMS sample. MouthOpenAudio reads
         // entity.perception.audio_rms now (no more .set_rms()).
@@ -356,25 +334,30 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         // modifier — see `crate::director` for the full pipeline.
         director.run(&mut entity, now);
 
-        // React to one-frame fire flags the modifiers raised during
-        // this tick. Director clears `entity.events` at the START of
-        // each frame, so reading them after `run()` is the canonical
-        // post-modifier sample point.
-        if entity.events.pickup_fired
-            && let Err(e) = audio::try_enqueue_pickup_chirp()
-        {
-            defmt::warn!(
-                "audio: pickup chirp (partially) dropped ({:?})",
-                defmt::Debug2Format(&e)
-            );
-        }
-        if entity.events.wake_fired
-            && let Err(e) = audio::try_enqueue_wake_chirp()
-        {
-            defmt::warn!(
-                "audio: wake chirp dropped, queue full ({:?})",
-                defmt::Debug2Format(&e)
-            );
+        // Drain the chirp request modifiers raised this tick. Modifiers
+        // (`PickupReaction`, `WakeOnVoice`, `LowBatteryEmotion`) set
+        // `entity.voice.chirp_request`; we read it once after `run()`,
+        // dispatch on `ChirpKind`, then clear so the next frame starts
+        // fresh.
+        if let Some(kind) = entity.voice.chirp_request.take() {
+            let result = match kind {
+                ChirpKind::Pickup => audio::try_enqueue_pickup_chirp(),
+                ChirpKind::Wake => audio::try_enqueue_wake_chirp(),
+                ChirpKind::LowBatteryAlert => audio::try_enqueue_low_battery_alert(),
+                ChirpKind::CameraModeEnter => audio::try_enqueue_camera_mode_enter(),
+                ChirpKind::CameraModeExit => audio::try_enqueue_camera_mode_exit(),
+                // ChirpKind is `non_exhaustive`, so even though the
+                // arms above cover every variant defined today, future
+                // variants land as a no-op until firmware adds an arm.
+                _ => Ok(()),
+            };
+            if let Err(e) = result {
+                defmt::warn!(
+                    "audio: chirp {:?} (partially) dropped ({:?})",
+                    defmt::Debug2Format(&kind),
+                    defmt::Debug2Format(&e)
+                );
+            }
         }
 
         // Publish the final pose to the head task.
@@ -446,7 +429,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 /// Every `POSITION_POLL_EVERY` ticks (= 1 Hz at 50 Hz command cadence),
 /// the task also reads back each servo's live position and publishes it
 /// via [`head::HEAD_POSE_ACTUAL_SIGNAL`] for the render task to write
-/// onto `avatar.head_pose_actual` + logs a `cmd vs actual` line.
+/// onto `entity.motor.head_pose_actual` + logs a `cmd vs actual` line.
 ///
 /// UART write/read failures log at `warn` and continue: a transient
 /// bus glitch shouldn't blank the face or reboot the binary.

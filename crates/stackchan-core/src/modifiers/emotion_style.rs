@@ -1,7 +1,7 @@
-//! `EmotionStyle`: translate [`Emotion`] into the avatar's style fields.
+//! `EmotionStyle`: translate [`Emotion`] into the entity's style fields.
 //!
 //! This modifier is the single source of truth for how a given emotion
-//! *looks*. It writes absolute target values to `Avatar`'s style fields
+//! *looks*. It writes absolute target values to the entity's style fields
 //! (`eye_curve`, `mouth_curve`, `cheek_blush`, `eye_scale`,
 //! `blink_rate_scale`, `breath_depth_scale`) plus both eyes'
 //! `open_weight`. The renderer and `Blink`/`Breath` read those fields
@@ -29,17 +29,17 @@ use crate::modifier::Modifier;
 /// mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StyleTarget {
-    /// Target `Avatar::eye_curve` (-100..=100).
+    /// Target `entity.face.style.eye_curve` (-100..=100).
     eye_curve: i8,
-    /// Target `Avatar::mouth_curve` (-100..=100).
+    /// Target `entity.face.style.mouth_curve` (-100..=100).
     mouth_curve: i8,
-    /// Target `Avatar::cheek_blush` (0..=255).
+    /// Target `entity.face.style.cheek_blush` (0..=255).
     cheek_blush: u8,
-    /// Target `Avatar::eye_scale` (0..=255, 128 = baseline).
+    /// Target `entity.face.style.eye_scale` (0..=255, 128 = baseline).
     eye_scale: u8,
-    /// Target `Avatar::blink_rate_scale` (0..=255, 128 = baseline, 0 = suppressed).
+    /// Target `entity.face.style.blink_rate_scale` (0..=255, 128 = baseline, 0 = suppressed).
     blink_rate_scale: u8,
-    /// Target `Avatar::breath_depth_scale` (0..=255, 128 = baseline).
+    /// Target `entity.face.style.breath_depth_scale` (0..=255, 128 = baseline).
     breath_depth_scale: u8,
     /// Target `Eye::open_weight` applied to both eyes (0..=100).
     open_weight: u8,
@@ -157,7 +157,7 @@ const fn clamp_i8(v: i32) -> i8 {
     }
 }
 
-/// A modifier that translates `Avatar::emotion` into the style fields,
+/// A modifier that translates `entity.mind.affect.emotion` into the style fields,
 /// linearly easing between emotions so transitions feel alive.
 ///
 /// Carries two state slots — the last-seen emotion and the start of the
@@ -202,7 +202,7 @@ impl EmotionStyle {
         }
     }
 
-    /// Apply a fully-resolved [`StyleTarget`] to `avatar`. Split out so
+    /// Apply a fully-resolved [`StyleTarget`] to `entity`. Split out so
     /// the "snap-on-first-tick" and "eased-in-progress" paths share one
     /// writer and one definition of which fields emotion owns.
     const fn apply(entity: &mut Entity, s: StyleTarget) {

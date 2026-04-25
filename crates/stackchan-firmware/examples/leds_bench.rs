@@ -27,7 +27,7 @@ extern crate alloc;
 
 use embassy_time::{Delay, Duration, Ticker};
 use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
-use stackchan_core::{Avatar, Emotion, Instant as CoreInstant, LED_COUNT, LedFrame, render_leds};
+use stackchan_core::{Emotion, Entity, Instant as CoreInstant, LED_COUNT, LedFrame, render_leds};
 use stackchan_firmware::board;
 
 use esp_println as _;
@@ -115,7 +115,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
 
     let mut ticker = Ticker::every(Duration::from_millis(PUSH_PERIOD_MS));
     let mut frame = LedFrame::default();
-    let mut avatar = Avatar::default();
+    let mut entity = Entity::default();
     let mut emotion_idx: usize = 0;
     let mut hold_counter: u64 = 0;
     let hold_ticks = EMOTION_HOLD_MS.div_ceil(PUSH_PERIOD_MS);
@@ -124,8 +124,8 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         // `now` drives the breath envelope so brightness pulses the
         // same way it does in the real firmware.
         let now = CoreInstant::from_millis(embassy_time::Instant::now().as_millis());
-        avatar.emotion = EMOTIONS[emotion_idx];
-        render_leds(&avatar, now, &mut frame);
+        entity.mind.affect.emotion = EMOTIONS[emotion_idx];
+        render_leds(&entity, now, &mut frame);
 
         if let Err(e) = py.write_led_pixels(frame.as_u16_slice()).await {
             defmt::warn!(
@@ -145,7 +145,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
             emotion_idx = (emotion_idx + 1) % EMOTIONS.len();
             defmt::info!(
                 "leds-bench: emotion={=?} frame[0]=0x{=u16:04X}",
-                defmt::Debug2Format(&avatar.emotion),
+                defmt::Debug2Format(&entity.mind.affect.emotion),
                 frame.0[0],
             );
         }

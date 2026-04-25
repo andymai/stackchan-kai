@@ -1,5 +1,5 @@
 //! `AmbientSleepy`: ambient-light-reactive modifier that flips
-//! `Avatar::emotion` to `Sleepy` when the room gets dark and wakes
+//! `entity.mind.affect.emotion` to `Sleepy` when the room gets dark and wakes
 //! when the light comes back on.
 //!
 //! ## Detection shape
@@ -20,7 +20,7 @@
 //! ## Coordination with the other emotion modifiers
 //!
 //! Like [`super::PickupReaction`], this modifier respects an existing
-//! [`Avatar::manual_until`] hold — if touch, a pickup, or any other
+//! `entity.mind.autonomy.manual_until` hold — if touch, a pickup, or any other
 //! explicit input has already claimed the emotion, we stand down.
 //! Ambient sleep is *background state*: it shouldn't override a user's
 //! deliberate interaction.
@@ -31,7 +31,6 @@
 //! itself re-affirms the hold on every dark tick so Sleepy sticks as
 //! long as the room stays dim.
 
-use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
 use crate::entity::Entity;
@@ -44,7 +43,7 @@ use crate::modifier::Modifier;
 /// lamp.
 pub const SLEEPY_ENTER_LUX: f32 = 20.0;
 
-/// Ambient lux above which the avatar wakes up again.
+/// Ambient lux above which the entity wakes up again.
 ///
 /// 50 lux ≈ "desk lamp on at arm's length." Comfortably above the
 /// noise floor of room lighting variations (shadows, cloud passes)
@@ -59,14 +58,14 @@ pub const SLEEPY_EXIT_LUX: f32 = 50.0;
 /// reason about vs. touch's 30 s explicit hold.
 pub const AMBIENT_HOLD_MS: u64 = 5_000;
 
-/// Modifier that watches [`Avatar::ambient_lux`] and toggles Sleepy
+/// Modifier that watches `entity.perception.ambient_lux` and toggles Sleepy
 /// with hysteresis.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AmbientSleepy {
-    /// `true` while this modifier believes the avatar should currently
+    /// `true` while this modifier believes the entity should currently
     /// be asleep. Driven by the two-threshold hysteresis; a fresh
     /// instance starts `false` regardless of the first ambient
-    /// reading so the avatar wakes visibly at boot even in a dark
+    /// reading so the entity wakes visibly at boot even in a dark
     /// room (the hysteresis flips it to Sleepy a tick later).
     is_asleep: bool,
 }
@@ -79,7 +78,7 @@ impl AmbientSleepy {
     }
 
     /// Exposed for tests: whether this modifier currently believes the
-    /// avatar should be asleep.
+    /// entity should be asleep.
     #[cfg(test)]
     const fn is_asleep(self) -> bool {
         self.is_asleep
@@ -126,6 +125,7 @@ impl Modifier for AmbientSleepy {
 
         if self.is_asleep {
             entity.mind.affect.emotion = Emotion::Sleepy;
+            entity.mind.autonomy.source = Some(crate::mind::OverrideSource::Ambient);
             // Re-affirm the hold every dark tick so Sleepy persists
             // as long as the room stays dim.
             entity.mind.autonomy.manual_until = Some(now + AMBIENT_HOLD_MS);
@@ -141,24 +141,21 @@ impl Modifier for AmbientSleepy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Instant;
 
     /// Helper: make a bright-ambient avatar (well above the exit
     /// threshold).
     fn bright() -> Entity {
-        {
-            let mut e = Entity::default();
-            e.perception.ambient_lux = Some(200.0);
-            e
-        }
+        let mut e = Entity::default();
+        e.perception.ambient_lux = Some(200.0);
+        e
     }
 
     /// Helper: make a dark-ambient avatar (well below enter threshold).
     fn dark() -> Entity {
-        {
-            let mut e = Entity::default();
-            e.perception.ambient_lux = Some(5.0);
-            e
-        }
+        let mut e = Entity::default();
+        e.perception.ambient_lux = Some(5.0);
+        e
     }
 
     #[test]

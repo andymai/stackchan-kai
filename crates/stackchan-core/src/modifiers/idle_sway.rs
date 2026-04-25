@@ -1,7 +1,8 @@
 //! Idle head sway: a slow pan/tilt wander that keeps the head from freezing.
 //!
-//! Produces a [`Pose`] on `avatar.head_pose` using two independent triangle
-//! waves at incommensurable periods — pan at ~11 s, tilt at ~7 s by default.
+//! Produces a [`Pose`] on `entity.motor.head_pose` using two independent
+//! triangle waves at incommensurable periods — pan at ~11 s, tilt at ~7 s
+//! by default.
 //! The mismatched periods make the head trace a non-repeating Lissajous-ish
 //! path that reads as "alive" without looking like a preprogrammed sweep.
 //!
@@ -13,7 +14,7 @@
 //!
 //! ## Composition
 //!
-//! Contributes additively to `avatar.head_pose` using the same
+//! Contributes additively to `entity.motor.head_pose` using the same
 //! diff-and-undo pattern [`Breath`](super::Breath) uses for vertical
 //! offset: each tick subtracts the previous contribution and adds the
 //! new one. That way modifiers running *before* `IdleSway` (e.g. a
@@ -46,7 +47,7 @@ const DEFAULT_PAN_AMPLITUDE_DEG: f32 = 4.0;
 const DEFAULT_TILT_AMPLITUDE_DEG: f32 = 2.5;
 
 /// Modifier that contributes a slow, two-axis triangle sway to
-/// `avatar.head_pose`.
+/// `entity.motor.head_pose`.
 ///
 /// Composition is additive via diff-and-undo: each tick subtracts the
 /// previous contribution before adding the new one, so upstream pose

@@ -4,7 +4,7 @@
 //! sub-components: [`Face`] (visual), [`Motor`] (motion), [`Perception`]
 //! (sensors), [`Voice`] (speech I/O), [`Mind`] (brain), [`Events`]
 //! (one-frame fire flags). A seventh field, [`Tick`], is bookkeeping
-//! that [`crate::app::App`] stamps each frame.
+//! that [`crate::Director`] stamps each frame.
 //!
 //! ## Why "Entity" and not "Avatar"
 //!
@@ -18,11 +18,11 @@
 //!
 //! - **Modifiers** ([`crate::Modifier`]) take `&mut Entity` and can
 //!   touch any sub-component, but conventionally each modifier writes
-//!   only the components matching its [`crate::app::Phase`].
+//!   only the components matching its [`crate::director::Phase`].
 //! - **Skills** ([`crate::Skill`]) take `&mut Entity` but **must
 //!   not** write to `face` or `motor` directly — they write to
 //!   `mind` / `voice` / `events`, and modifiers in
-//!   [`crate::app::Phase::Expression`] / [`crate::app::Phase::Motion`]
+//!   [`crate::director::Phase::Expression`] / [`crate::director::Phase::Motion`]
 //!   translate intent/affect into rendered face + physical motion.
 //!   This is the single most important architectural invariant for
 //!   NPC composition.
@@ -43,7 +43,7 @@ use crate::motor::Motor;
 use crate::perception::Perception;
 use crate::voice::Voice;
 
-/// Per-frame timing stamped on [`Entity`] by [`crate::app::App::run`].
+/// Per-frame timing stamped on [`Entity`] by [`crate::Director::run`].
 ///
 /// Modifiers read `entity.tick.now` instead of taking a `now: Instant`
 /// argument — keeps the `Modifier::update` signature single-arg and

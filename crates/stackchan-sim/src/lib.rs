@@ -152,7 +152,7 @@ impl DrawTarget for Framebuffer {
 /// [`HeadDriver`] that records every `set_pose` call into a `Vec`.
 ///
 /// Pair with [`FakeClock`] to test motion modifiers without a real `SCServo`
-/// bus: drive the modifier pipeline, push `avatar.motor.head_pose` into a
+/// bus: drive the modifier pipeline, push `entity.motor.head_pose` into a
 /// `RecordingHead` each tick, then assert amplitude / period / trajectory
 /// bounds on [`RecordingHead::records`].
 ///
@@ -160,7 +160,7 @@ impl DrawTarget for Framebuffer {
 /// driver shape, but the recorded future is always immediately `Ready` —
 /// tests can drive it with the small `block_on` helper in the
 /// `head_sway.rs` integration test, or skip the trait entirely and inspect
-/// `avatar.motor.head_pose` directly for simple cases.
+/// `entity.motor.head_pose` directly for simple cases.
 #[derive(Debug, Default)]
 pub struct RecordingHead {
     /// Every `(now, pose)` pair passed to `set_pose`, in call order.
@@ -377,10 +377,10 @@ mod integration_tests {
                 Emotion::Happy if avatar.face.style.cheek_blush > 0 => seen_happy_cheeks = true,
                 Emotion::Sad if avatar.face.style.mouth_curve < 0 => seen_sad_frown = true,
                 Emotion::Sleepy if avatar.face.left_eye.open_weight < 100 => {
-                    seen_sleepy_droop = true
+                    seen_sleepy_droop = true;
                 }
                 Emotion::Surprised if avatar.face.style.eye_scale > 128 => {
-                    seen_surprised_wide = true
+                    seen_surprised_wide = true;
                 }
                 _ => {}
             }

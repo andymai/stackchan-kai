@@ -8,7 +8,7 @@
 //! Future v2.x extensions (e.g. arm servos, base motion) live as
 //! additional fields on this struct.
 //!
-//! [`Phase::Motion`]: crate::app::Phase::Motion
+//! [`Phase::Motion`]: crate::director::Phase::Motion
 
 use crate::head::Pose;
 

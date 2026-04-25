@@ -1,9 +1,9 @@
 //! Blink modifier: drives both eyes through an open → closed → open cycle.
 //!
-//! Reads two emotion-driven style fields from the avatar so modifier order
+//! Reads two emotion-driven style fields from the entity so modifier order
 //! stays composable:
 //!
-//! - `Avatar::blink_rate_scale` — scales the open-phase duration.
+//! - `entity.face.style.blink_rate_scale` — scales the open-phase duration.
 //!   `SCALE_DEFAULT` (128) runs at baseline cadence; lower values slow
 //!   blinks (Sleepy); `0` suppresses blinks entirely (Surprised).
 //! - `Eye::open_weight` — upper bound on `weight` when re-opening. Sleepy
@@ -208,7 +208,6 @@ const fn close_both_eyes(entity: &mut Entity) {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::director::{Field, ModifierMeta, Phase};
     use crate::entity::Entity;
     use crate::modifier::Modifier;
 

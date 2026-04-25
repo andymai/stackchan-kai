@@ -2,7 +2,7 @@
 //!
 //! The StackChan's head rotates on two servos: pan (left/right rotation) and
 //! tilt (up/down nod). Core models this as a [`Pose`] carried on the
-//! [`Avatar`](crate::avatar::Avatar), so the same [`Modifier`](crate::Modifier)
+//! [`Entity`](crate::entity::Entity), so the same [`Modifier`](crate::Modifier)
 //! pipeline that animates eyes, mouth, and emotion can also produce motion
 //! trajectories. Firmware consumes the pose by calling [`HeadDriver::set_pose`]
 //! on an async I²C driver (see `crates/pca9685`); the simulator uses a

@@ -18,7 +18,7 @@
 //! a concrete resolution.
 //!
 //! [`Entity`]: crate::entity::Entity
-//! [`Phase::Expression`]: crate::app::Phase::Expression
+//! [`Phase::Expression`]: crate::director::Phase::Expression
 
 /// A 2D integer point in framebuffer space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -126,7 +126,7 @@ pub const SCALE_DEFAULT: u8 = 128;
 /// Defaults are chosen so a `Style::default()` renders exactly like
 /// v0.1.0 pre-emotion.
 ///
-/// [`Phase::Expression`]: crate::app::Phase::Expression
+/// [`Phase::Expression`]: crate::director::Phase::Expression
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
     /// Eye curvature, -100..=100. 0 renders a filled ellipse (the v0.1.0

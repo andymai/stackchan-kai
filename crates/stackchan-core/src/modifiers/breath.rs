@@ -5,7 +5,7 @@
 //! with a 2-pixel peak-to-peak amplitude, which reads as a subtle breathing
 //! animation at 30 FPS.
 //!
-//! The amplitude is scaled per-tick by `Avatar::breath_depth_scale` so
+//! The amplitude is scaled per-tick by `entity.face.style.breath_depth_scale` so
 //! emotion-driven modifiers (Sleepy → deeper, Surprised → near-flat) can
 //! modulate breathing without owning Breath's state.
 

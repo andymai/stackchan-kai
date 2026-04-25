@@ -70,7 +70,9 @@ pub use face::{Eye, EyePhase, Face, Mouth, Point, SCALE_DEFAULT, Style};
 pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
 pub use input::Input;
 pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
-pub use mind::{Affect, Attention, Autonomy, Intent, Memory, Mind, OverrideSource};
+pub use mind::{Affect, Autonomy, Mind, OverrideSource};
+// Intent / Attention / Memory are v2.x stub markers; reach via
+// `crate::mind::*` until they have real shape.
 pub use modifier::Modifier;
 pub use motor::Motor;
 pub use perception::Perception;

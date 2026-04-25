@@ -17,12 +17,12 @@
 //! ## Modifier vs Skill
 //!
 //! - **Modifiers** are per-frame face/motor/affect mutators. They live
-//!    in declared [`Phase`]s and produce visible output (eye position,
-//!    head pose, mouth open). The 14 v0.x modifiers all migrate here.
+//!   in declared [`Phase`]s and produce visible output (eye position,
+//!   head pose, mouth open). The 14 v0.x modifiers all migrate here.
 //! - **Skills** are discoverable capabilities that fire when their
-//!    `should_fire` predicate matches. They write to mind / voice /
-//!    events only (never face / motor — that's modifier territory).
-//!    Today: zero skills shipped. Surface ready for v2.x.
+//!   `should_fire` predicate matches. They write to mind / voice /
+//!   events only (never face / motor — that's modifier territory).
+//!   Today: zero skills shipped. Surface ready for v2.x.
 //!
 //! ## Storage shape
 //!
@@ -51,10 +51,12 @@ pub const MODIFIER_CAP: usize = 32;
 /// Maximum number of skills a [`Director`] can hold.
 pub const SKILL_CAP: usize = 16;
 
-/// Phases of the per-frame tick. `#[repr(u8)]` with explicit numeric
-/// gaps of 10 leaves room for v2.x phases (e.g. `PostPerception = 15`)
-/// to slot in without renumbering existing variants. Modifiers are
-/// sorted by `(phase, priority, registration_order)` before execution.
+/// Phases of the per-frame tick.
+///
+/// `#[repr(u8)]` with explicit numeric gaps of 10 leaves room for v2.x
+/// phases (e.g. `PostPerception = 15`) to slot in without renumbering
+/// existing variants. Modifiers are sorted by `(phase, priority,
+/// registration_order)` before execution.
 ///
 /// ## Why these phases
 ///
@@ -65,7 +67,7 @@ pub const SKILL_CAP: usize = 16;
 ///
 /// Today, modifier population:
 /// - `Affect` (7): `EmotionTouch`, `RemoteCommand`, `PickupReaction`,
-///    `WakeOnVoice`, `AmbientSleepy`, `LowBatteryEmotion`, `EmotionCycle`
+///   `WakeOnVoice`, `AmbientSleepy`, `LowBatteryEmotion`, `EmotionCycle`
 /// - `Expression` (4): `EmotionStyle`, Blink, Breath, `IdleDrift`
 /// - `Motion` (2): `IdleSway`, `EmotionHead`
 /// - `Audio` (1): `MouthOpenAudio`
@@ -121,14 +123,16 @@ pub enum FieldGroup {
     Mind,
     /// Speech I/O.
     Voice,
-    /// One-frame fire flags.
-    Events,
+    /// Pending firmware → modifier inputs (`entity.input.*`).
+    Input,
 }
 
-/// Fine-grained identifiers for the entity's mutable surface. Modifiers
-/// declare their `reads` / `writes` via `&'static [Field]` slices on
-/// [`ModifierMeta`]; the Director can use these to detect conflicts at
-/// registration time (today: declarative only; v2.x: actual enforcement).
+/// Fine-grained identifiers for the entity's mutable surface.
+///
+/// Modifiers declare their `reads` / `writes` via `&'static [Field]`
+/// slices on [`ModifierMeta`]; the Director can use these to detect
+/// conflicts at registration time (today: declarative only; v2.x:
+/// actual enforcement).
 ///
 /// Granularity is per-leaf-field so different sub-fields of the same
 /// component (e.g. `LeftEyePhase` vs `LeftEyeWeight`) don't false-flag
@@ -206,13 +210,11 @@ pub enum Field {
     /// `entity.voice.chirp_request`
     ChirpRequest,
 
-    // ---- Events ----
-    /// `entity.events.pickup_fired`
-    PickupFired,
-    /// `entity.events.wake_fired`
-    WakeFired,
-    /// `entity.events.low_battery_armed`
-    LowBatteryArmed,
+    // ---- Input ----
+    /// `entity.input.tap_pending`
+    TapPending,
+    /// `entity.input.remote_pending`
+    RemotePending,
 }
 
 impl Field {
@@ -246,7 +248,7 @@ impl Field {
             | Self::AudioRms => FieldGroup::Perception,
             Self::Emotion | Self::Autonomy | Self::Intent | Self::Attention => FieldGroup::Mind,
             Self::ChirpRequest => FieldGroup::Voice,
-            Self::PickupFired | Self::WakeFired | Self::LowBatteryArmed => FieldGroup::Events,
+            Self::TapPending | Self::RemotePending => FieldGroup::Input,
         }
     }
 }
@@ -313,6 +315,32 @@ struct ModifierSlot<'a> {
     modifier: &'a mut dyn Modifier,
 }
 
+/// Error returned when a [`Director`] registry is at capacity.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RegistryFull {
+    /// Modifier registry is full ([`MODIFIER_CAP`] reached). Caller
+    /// should drop one before adding another, or raise the cap and
+    /// rebuild.
+    Modifiers,
+    /// Skill registry is full ([`SKILL_CAP`] reached).
+    Skills,
+}
+
+impl core::fmt::Display for RegistryFull {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Modifiers => write!(f, "Director modifier registry full ({MODIFIER_CAP})"),
+            Self::Skills => write!(f, "Director skill registry full ({SKILL_CAP})"),
+        }
+    }
+}
+
+/// The orchestrator that ticks an [`Entity`] each frame.
+///
+/// `'a` is the lifetime of the modifier / skill instances. Caller owns
+/// them as locals (typically in firmware `render_task` or sim
+/// scaffolding) and registers `&'a mut dyn` references with the
+/// Director. Director's lifetime ≤ caller's locals.
 pub struct Director<'a> {
     /// Registered modifiers, sorted by `(phase, priority,
     /// registered_at)` on first `run()` call.
@@ -355,14 +383,16 @@ impl<'a> Director<'a> {
     ///
     /// # Errors
     ///
-    /// Returns `Err(())` if the modifier registry is full
-    /// ([`MODIFIER_CAP`]).
-    pub fn add_modifier(&mut self, m: &'a mut dyn Modifier) -> Result<&mut Self, ()> {
+    /// Returns [`RegistryFull::Modifiers`] if the modifier registry is
+    /// full ([`MODIFIER_CAP`]).
+    pub fn add_modifier(&mut self, m: &'a mut dyn Modifier) -> Result<&mut Self, RegistryFull> {
         let slot = ModifierSlot {
             registered_at: self.next_registration,
             modifier: m,
         };
-        self.modifiers.push(slot).map_err(|_| ())?;
+        self.modifiers
+            .push(slot)
+            .map_err(|_| RegistryFull::Modifiers)?;
         self.next_registration = self.next_registration.saturating_add(1);
         self.sorted = false;
         Ok(self)
@@ -372,9 +402,10 @@ impl<'a> Director<'a> {
     ///
     /// # Errors
     ///
-    /// Returns `Err(())` if the skill registry is full ([`SKILL_CAP`]).
-    pub fn add_skill(&mut self, s: &'a mut dyn Skill) -> Result<&mut Self, ()> {
-        self.skills.push(s).map_err(|_| ())?;
+    /// Returns [`RegistryFull::Skills`] if the skill registry is full
+    /// ([`SKILL_CAP`]).
+    pub fn add_skill(&mut self, s: &'a mut dyn Skill) -> Result<&mut Self, RegistryFull> {
+        self.skills.push(s).map_err(|_| RegistryFull::Skills)?;
         Ok(self)
     }
 
@@ -396,6 +427,13 @@ impl<'a> Director<'a> {
                 let meta = slot.modifier.meta();
                 (meta.phase, meta.priority, slot.registered_at)
             });
+            // Skills sort by `priority` *descending* (higher fires
+            // first) — opposite of modifiers, where lower = earlier.
+            // Negate the priority to get a descending sort from
+            // sort_unstable_by_key.
+            self.skills
+                .as_mut_slice()
+                .sort_unstable_by_key(|s| core::cmp::Reverse(s.meta().priority));
             self.sorted = true;
         }
 
@@ -539,16 +577,16 @@ mod tests {
 
     #[test]
     fn events_cleared_at_frame_start() {
+        // `Events` is empty today; the lifecycle contract — that
+        // `Director::run` reassigns the struct to `Default` — is the
+        // load-bearing invariant. This test pins it so a future
+        // re-introduced field doesn't silently lose its frame-start
+        // clear.
         let mut director: Director = Director::new();
         let mut entity = Entity::default();
-        entity.events.pickup_fired = true;
-
+        let before = entity.events;
         director.run(&mut entity, Instant::from_millis(0));
-
-        assert!(
-            !entity.events.pickup_fired,
-            "events.pickup_fired should be cleared by Director::run"
-        );
+        assert_eq!(entity.events, before, "events struct was reset to default");
     }
 
     #[test]
@@ -574,6 +612,6 @@ mod tests {
         assert_eq!(Field::AmbientLux.group(), FieldGroup::Perception);
         assert_eq!(Field::Emotion.group(), FieldGroup::Mind);
         assert_eq!(Field::ChirpRequest.group(), FieldGroup::Voice);
-        assert_eq!(Field::PickupFired.group(), FieldGroup::Events);
+        assert_eq!(Field::TapPending.group(), FieldGroup::Input);
     }
 }

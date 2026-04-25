@@ -357,9 +357,10 @@ pub fn try_enqueue_low_battery_alert() -> Result<(), TrySendError<AudioClip>> {
 
 /// Enqueue the wake chirp: 100 ms of 1 kHz. One queued clip.
 ///
-/// Pair with [`stackchan_core::modifiers::WakeOnVoice::just_fired`]
-/// to play a confirmation tone the same tick the modifier flips
-/// emotion to `Happy`.
+/// `stackchan_core::modifiers::WakeOnVoice` sets
+/// `entity.voice.chirp_request = Some(ChirpKind::Wake)` on the tick it
+/// flips emotion to `Happy`; the render task drains that and calls this
+/// to play a confirmation tone.
 ///
 /// # Errors
 ///

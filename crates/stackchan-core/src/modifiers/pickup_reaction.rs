@@ -1,5 +1,5 @@
 //! `PickupReaction`: motion-reactive modifier that flips
-//! `Avatar::emotion` to `Surprised` when a pickup / drop is detected
+//! `entity.mind.affect.emotion` to `Surprised` when a pickup / drop is detected
 //! via the accelerometer.
 //!
 //! ## Detection shape
@@ -57,10 +57,10 @@ pub const PICKUP_DEVIATION_G: f32 = 0.5;
 pub const PICKUP_DEBOUNCE_MS: u64 = 50;
 
 /// Emotion set on a pickup event. Hardcoded to `Surprised`: semantically
-/// the clearest "unexpected physical event" reaction for this avatar.
+/// the clearest "unexpected physical event" reaction for this entity.
 const PICKUP_EMOTION: Emotion = Emotion::Surprised;
 
-/// Modifier that watches [`Avatar::accel_g`] for pickup events.
+/// Modifier that watches `entity.perception.accel_g` for pickup events.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PickupReaction {
     /// First time the magnitude-deviation threshold was crossed in
@@ -121,17 +121,12 @@ impl Modifier for PickupReaction {
         static META: ModifierMeta = ModifierMeta {
             name: "PickupReaction",
             description: "Detects pickup edges from perception.accel_g (out-of-rest-band debounced \
-                          for ~PICKUP_DEBOUNCE_MS), flips emotion to Surprised, and emits \
-                          events.pickup_fired + voice.chirp_request = Pickup for firmware audio.",
+                          for ~PICKUP_DEBOUNCE_MS), flips emotion to Surprised, and sets \
+                          voice.chirp_request = Pickup for firmware audio.",
             phase: Phase::Affect,
             priority: -80,
             reads: &[Field::AccelG, Field::Autonomy, Field::Emotion],
-            writes: &[
-                Field::Emotion,
-                Field::Autonomy,
-                Field::PickupFired,
-                Field::ChirpRequest,
-            ],
+            writes: &[Field::Emotion, Field::Autonomy, Field::ChirpRequest],
         };
         &META
     }
@@ -152,12 +147,7 @@ impl Modifier for PickupReaction {
 
         // Above threshold this tick. Anchor the run start if we don't
         // have one yet.
-        let started = if let Some(t) = self.above_since {
-            t
-        } else {
-            self.above_since = Some(now);
-            now
-        };
+        let started = *self.above_since.get_or_insert(now);
 
         // Debounce: must persist ≥ PICKUP_DEBOUNCE_MS.
         if now.saturating_duration_since(started) < PICKUP_DEBOUNCE_MS {
@@ -184,7 +174,6 @@ impl Modifier for PickupReaction {
         entity.mind.affect.emotion = PICKUP_EMOTION;
         entity.mind.autonomy.manual_until = Some(now + MANUAL_HOLD_MS);
         entity.mind.autonomy.source = Some(crate::mind::OverrideSource::Pickup);
-        entity.events.pickup_fired = true;
         entity.voice.chirp_request = Some(crate::voice::ChirpKind::Pickup);
         self.fired_this_run = true;
     }
@@ -397,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn just_fired_set_only_on_trigger_tick() {
+    fn chirp_request_set_only_on_trigger_tick() {
         let mut entity = at_rest();
         let mut pickup = PickupReaction::new();
 
@@ -405,32 +394,35 @@ mod tests {
         set_accel(&mut entity, 1.8);
         entity.tick.now = Instant::from_millis(0);
         pickup.update(&mut entity);
-        assert!(!entity.events.pickup_fired);
+        assert!(entity.voice.chirp_request.is_none());
         entity.tick.now = Instant::from_millis(30);
         pickup.update(&mut entity);
-        assert!(!entity.events.pickup_fired);
+        assert!(entity.voice.chirp_request.is_none());
 
         // Trigger tick (60 ms past the 50 ms debounce).
         entity.tick.now = Instant::from_millis(60);
         pickup.update(&mut entity);
-        assert!(entity.events.pickup_fired, "expected fire on trigger tick");
+        assert_eq!(
+            entity.voice.chirp_request,
+            Some(crate::voice::ChirpKind::Pickup),
+            "expected pickup chirp on trigger tick"
+        );
 
-        // Subsequent above-threshold ticks within the same run do
-        // *not* re-fire. The Director clears events at frame start;
-        // tests must do the same to simulate that.
-        entity.events.pickup_fired = false;
+        // Subsequent above-threshold ticks within the same run do not
+        // re-fire. Firmware drains the request after dispatch; we
+        // simulate that here.
+        entity.voice.chirp_request = None;
         entity.tick.now = Instant::from_millis(100);
         pickup.update(&mut entity);
-        assert!(!entity.events.pickup_fired);
+        assert!(entity.voice.chirp_request.is_none());
     }
 
     #[test]
-    fn just_fired_not_set_when_blocked_by_existing_hold() {
+    fn no_chirp_when_blocked_by_existing_hold() {
         // EmotionTouch has already pinned the avatar with a long hold.
         // PickupReaction sees the threshold cross + debounce + active
-        // hold, marks fired_this_run as handled, but does not write
-        // a new emotion or set just_fired — there's no transition to
-        // chirp about.
+        // hold, marks fired_this_run as handled, but does not write a
+        // new emotion or request a chirp.
         let mut entity = {
             let mut e = at_rest();
             e.mind.affect.emotion = Emotion::Happy;
@@ -446,6 +438,6 @@ mod tests {
         pickup.update(&mut entity);
 
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
-        assert!(!entity.events.pickup_fired);
+        assert!(entity.voice.chirp_request.is_none());
     }
 }
