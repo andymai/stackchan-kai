@@ -25,7 +25,7 @@ modifier pipeline at ~30 FPS.
 - `src/framebuffer.rs` — PSRAM-backed 320×240 RGB565 double-buffer + dirty-check blit
 - `src/clock.rs` — `HalClock` wraps `embassy_time::Instant` to implement `stackchan_core::Clock`
 - `src/head.rs` — embassy task: `stackchan_core::Pose` → SCServo commands
-- `src/imu.rs` / `src/mag.rs` — BMI270 / BMM150 tasks publishing to signal channels for the 9-axis data path
+- `src/imu.rs` — BMI270 task publishing accel/gyro samples on `IMU_SIGNAL`
 - `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` / `src/power.rs` — per-peripheral tasks
 - `src/audio.rs` — I²S0 + codec bring-up, then RX RMS loop (publishing on `AUDIO_RMS_SIGNAL`) + TX feeder (1 kHz boot greeting then silence) running concurrently via `embassy_futures::join`
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
@@ -48,7 +48,6 @@ flowchart TB
     Spawn --> Render[render_task<br/><i>30 FPS Avatar::draw</i>]
     Spawn --> Head[head_task<br/><i>Pose → SCServo</i>]
     Spawn --> Imu[imu_task]
-    Spawn --> Mag[mag_task]
     Spawn --> Touch[touch_task]
     Spawn --> Ir[ir_task]
     Spawn --> Ambient[ambient_task]
@@ -96,7 +95,7 @@ and talk to it through `I2cDevice` handles. Addresses on the bus:
 2. **Panic handler halts; defmt emits the trace over RTT first.** `--catch-hardfault` on the probe-rs side decodes it. For dev, `espflash monitor --log-format defmt` also picks it up
 3. **Render path is dirty-checked.** `framebuffer` only blits when the `Avatar` state changes from the previous frame. Skipping this costs ~20 ms per frame in SPI traffic
 4. **PSRAM is the framebuffer's home.** Internal SRAM is reserved for ISR / real-time paths. The framebuffer at 320×240×2 bytes = 153 KB wouldn't fit in SRAM anyway
-5. **BMI270 + BMM150 share `SharedI2c`.** Both tasks compete for the mutex; running them at ≤50 Hz each keeps contention negligible for the 30 FPS render task that also uses the bus
+5. **Many tasks share `SharedI2c`.** Touch / IMU / ambient / power / button / LED tasks all hold `I2cDevice` handles onto the same I²C0 bus; the `embassy-embedded-hal` mutex serialises access. Running each polling task at ≤50 Hz keeps contention negligible for the 30 FPS render task
 6. **`panic!` IS the error-handling layer.** Firmware `main` can't bubble init failures to a caller, so init errors panic. Library code elsewhere returns typed errors; this rule only applies at the `#[no_main]` boundary
 7. **Log timestamps come from embassy-time.** `defmt::timestamp!` captures `embassy_time::Instant::now().as_millis()`, which starts from esp-rtos boot. No wall-clock alignment unless `wallclock_task` sets the RTC
 
@@ -119,5 +118,5 @@ port is `/dev/ttyACM1`; override with `just PORT=/dev/ttyACM0 flash`.
 ## Integration
 
 - **Consumes `stackchan-core`** for every domain type (`Avatar`, `Modifier`, `Pose`, `Clock`, `HeadDriver`, `LedFrame`)
-- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, bmm150, es7210, ft6336u, ir-nec, ltr553, py32, scservo. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (boot greeting + silence). Scaffolded-only: gc0308, si12t, st25r3916
+- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, es7210, ft6336u, ir-nec, ltr553, py32, scservo. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (boot greeting + silence). bmm150 is bench-only (`examples/mag_bench.rs`) until a real consumer modifier is built. Scaffolded-only: gc0308, si12t, st25r3916
 - **HIL via probe-rs + defmt-test** (planned) — CI runs host tests today; on-device integration tests run on a flash-and-capture rig

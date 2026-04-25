@@ -28,7 +28,6 @@ pub mod head;
 pub mod imu;
 pub mod ir;
 pub mod leds;
-pub mod mag;
 pub mod power;
 pub mod touch;
 pub mod wallclock;
