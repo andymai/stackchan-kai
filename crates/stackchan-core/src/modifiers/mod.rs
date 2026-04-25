@@ -1,11 +1,11 @@
-//! Animation modifiers — the v0.x reactive face/affect/motion behaviors.
+//! Reactive face / affect / motion modifiers.
 //!
-//! Each modifier in this module implements the [`crate::Modifier`]
-//! trait and registers with a [`crate::Director`] in a declared
-//! [`crate::director::Phase`]. The director sorts by `(phase, priority,
-//! registration order)` and ticks each modifier per frame.
+//! Each modifier implements the [`crate::Modifier`] trait and registers
+//! with a [`crate::Director`] in a declared [`crate::director::Phase`].
+//! The director sorts by `(phase, priority, registration_order)` and
+//! ticks each modifier per frame.
 //!
-//! ## Phase population (today's 14 modifiers)
+//! ## Phase population
 //!
 //! - **[`crate::director::Phase::Affect`]** — emotion deciders. 7
 //!   modifiers, registered in this canonical order:

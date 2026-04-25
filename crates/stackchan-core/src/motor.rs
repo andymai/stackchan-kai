@@ -5,9 +5,6 @@
 //! task forwards it to the `SCServo` bus and reads back the actual servo
 //! position into `head_pose_actual` at ~1 Hz.
 //!
-//! Future v2.x extensions (e.g. arm servos, base motion) live as
-//! additional fields on this struct.
-//!
 //! [`Phase::Motion`]: crate::director::Phase::Motion
 
 use crate::head::Pose;

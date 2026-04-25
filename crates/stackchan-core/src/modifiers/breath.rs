@@ -1,13 +1,14 @@
-//! Breath modifier: gently shifts all features up and down on a sine-like cycle.
+//! Breath modifier: gently shifts all features up and down on a
+//! sine-like cycle.
 //!
-//! v0.1.0 uses a coarse triangle-wave approximation to keep the core crate
-//! `no_std` + dependency-free (no `libm`). The wave period defaults to ~6 s
-//! with a 2-pixel peak-to-peak amplitude, which reads as a subtle breathing
-//! animation at 30 FPS.
+//! A triangle-wave approximation keeps the core crate `no_std` and
+//! `libm`-free. The default period is ~6 s with a 2-pixel peak-to-peak
+//! amplitude, which reads as subtle breathing at 30 FPS.
 //!
-//! The amplitude is scaled per-tick by `entity.face.style.breath_depth_scale` so
-//! emotion-driven modifiers (Sleepy → deeper, Surprised → near-flat) can
-//! modulate breathing without owning Breath's state.
+//! The amplitude is scaled per-tick by
+//! `entity.face.style.breath_depth_scale` so emotion-driven modifiers
+//! (Sleepy → deeper, Surprised → near-flat) can modulate breathing
+//! without owning Breath's state.
 
 use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};

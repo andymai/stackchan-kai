@@ -1,20 +1,15 @@
 //! Sensor inputs feeding the entity's world model.
 //!
-//! [`Perception`] owns every reading the firmware's per-peripheral
+//! [`Perception`] holds every reading the firmware's per-peripheral
 //! tasks publish via Signal channels. Modifiers in [`Phase::Affect`]
-//! and [`Phase::Audio`] read these to react; nothing here directly
-//! affects the rendered face — translation to visible state happens
-//! through the emotion model and expression modifiers.
+//! and [`Phase::Audio`] read these; nothing here directly affects the
+//! rendered face — translation to visible state happens through the
+//! emotion model and expression modifiers.
 //!
-//! Sensor freshness: each `Option<…>` field is `None` before the first
-//! successful read and `Some(value)` after; the firmware never clears
-//! these back to `None`. Modifiers that need stale-value detection
-//! must track their own last-read timestamp via the entity's
-//! [`crate::entity::Tick`].
-//!
-//! Future v2.x extensions: a processed `WorldModel` sub-struct
-//! (smoothed velocities, sound-source bearing, gaze targets) sits on
-//! top of these raw readings and is what cognition consumes.
+//! Each `Option<…>` field is `None` before the first successful read
+//! and `Some(value)` after; the firmware never clears these back to
+//! `None`. Modifiers that need stale-value detection must track their
+//! own last-read timestamp via [`crate::entity::Tick`].
 //!
 //! [`Phase::Affect`]: crate::director::Phase::Affect
 //! [`Phase::Audio`]: crate::director::Phase::Audio

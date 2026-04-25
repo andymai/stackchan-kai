@@ -1,9 +1,9 @@
-//! Idle eye drift: periodically shifts both eyes a small random-looking amount
-//! to avoid the uncanny "perfectly centered forever" stare.
+//! Idle eye drift: periodically shifts both eyes a small random-looking
+//! amount to avoid the uncanny "perfectly centered forever" stare.
 //!
-//! v0.1.0 uses a deterministic pseudo-random sequence (xorshift32) seeded at
-//! construction so sim tests are reproducible. A future release may swap in
-//! a hardware-RNG-backed source for the firmware build.
+//! Uses a deterministic xorshift32 PRNG seeded at construction so sim
+//! tests are reproducible; the firmware seeds it from the ESP32-S3
+//! hardware RNG at boot.
 
 use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
