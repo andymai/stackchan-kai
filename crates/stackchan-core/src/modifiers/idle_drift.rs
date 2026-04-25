@@ -113,7 +113,7 @@ impl Modifier for IdleDrift {
                           so a long-idle stare doesn't read as uncanny.",
             phase: Phase::Expression,
             priority: 0,
-            reads: &[],
+            reads: &[Field::LeftEyeCenter, Field::RightEyeCenter],
             writes: &[Field::LeftEyeCenter, Field::RightEyeCenter],
         };
         &META

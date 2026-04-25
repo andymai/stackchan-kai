@@ -125,7 +125,7 @@ impl Modifier for PickupReaction {
                           voice.chirp_request = Pickup for firmware audio.",
             phase: Phase::Affect,
             priority: -80,
-            reads: &[Field::AccelG, Field::Autonomy, Field::Emotion],
+            reads: &[Field::AccelG, Field::Autonomy],
             writes: &[Field::Emotion, Field::Autonomy, Field::ChirpRequest],
         };
         &META

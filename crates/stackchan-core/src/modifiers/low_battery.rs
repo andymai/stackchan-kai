@@ -162,7 +162,6 @@ impl Modifier for LowBatteryEmotion {
                 Field::BatteryPercent,
                 Field::UsbPowerPresent,
                 Field::Autonomy,
-                Field::Emotion,
             ],
             writes: &[Field::Emotion, Field::Autonomy, Field::ChirpRequest],
         };

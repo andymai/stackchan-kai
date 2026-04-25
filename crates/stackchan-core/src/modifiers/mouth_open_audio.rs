@@ -134,7 +134,7 @@ impl Modifier for MouthOpenAudio {
                           attack/release envelope so the mouth lip-syncs roughly to mic input.",
             phase: Phase::Audio,
             priority: 0,
-            reads: &[Field::AudioRms, Field::MouthOpen],
+            reads: &[Field::AudioRms],
             writes: &[Field::MouthOpen],
         };
         &META
