@@ -66,6 +66,7 @@ mod emotion_style;
 mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
+mod intent_style;
 mod listen_head;
 mod low_battery;
 mod mouth_open_audio;
@@ -87,6 +88,7 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
+pub use intent_style::{IntentStyle, PETTING_BLUSH_BUMP};
 pub use listen_head::{LISTEN_HEAD_EASE_MS, LISTEN_HEAD_TILT_DEG, ListenHead};
 pub use low_battery::{
     LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT, LOW_BATTERY_HOLD_MS, LowBatteryEmotion,
