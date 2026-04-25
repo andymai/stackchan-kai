@@ -1,0 +1,16 @@
+# Jekyll config for the stackchan-kai engineering handbook.
+# GitHub Pages serves from `docs/` on `main` (Settings → Pages).
+title: stackchan-kai
+description: Clean-slate Rust firmware for the M5Stack CoreS3 Stack-chan.
+theme: jekyll-theme-cayman
+markdown: kramdown
+kramdown:
+  syntax_highlighter: rouge
+# Show repo + license footer on every page.
+github:
+  repository_nwo: andymai/stackchan-kai
+  source: docs/
+  zip_url: https://github.com/andymai/stackchan-kai/archive/main.zip
+  tar_url: https://github.com/andymai/stackchan-kai/archive/main.tar.gz
+exclude:
+  - README.md
