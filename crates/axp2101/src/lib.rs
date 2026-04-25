@@ -38,6 +38,16 @@ const REG_IRQ_EN_1: u8 = 0x41;
 /// `IRQ_STATUS_1` register address (`0x49`). Flags for power-key
 /// events; write-1-to-clear.
 const REG_IRQ_STATUS_1: u8 = 0x49;
+/// `BAT_GAUGE` register address (`0xA4`). Reads as 0..=100, the
+/// AXP2101's internal coulomb-counter / OCV-blend state-of-charge
+/// estimate. Reads outside that range only happen during transient
+/// chip warm-up and are clamped by [`Axp2101::read_battery_percent`].
+const REG_BAT_GAUGE: u8 = 0xA4;
+
+/// Maximum value the AXP2101 battery-gauge register reports. Anything
+/// higher is read-back noise during ADC settle and is saturated by
+/// [`Axp2101::read_battery_percent`].
+pub const BATTERY_PERCENT_MAX: u8 = 100;
 
 /// Bit for "short-press" in AXP2101's `IRQ_EN_1` / `IRQ_STATUS_1`
 /// registers (release after a brief hold, < 1 s).
@@ -232,6 +242,28 @@ where
             .await?;
         Ok(true)
     }
+
+    /// Read the AXP2101's battery state-of-charge estimate, in percent.
+    ///
+    /// Returns a value in <code>0..=[BATTERY_PERCENT_MAX]</code>. The
+    /// chip's gauge register can transiently report values above 100
+    /// during ADC settling immediately after `init_cores3` enables
+    /// battery detect; this method saturates instead of surfacing the
+    /// physically-meaningless reading.
+    ///
+    /// Note: the `SoC` estimate is only meaningful once the AXP2101
+    /// has observed at least one charge / discharge transition since
+    /// power-up — on a freshly-powered unit it can read 0% for several
+    /// seconds before stabilising. Callers that poll this on a
+    /// schedule should expect the early values to be noisy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::I2c`] on bus errors.
+    pub async fn read_battery_percent(&mut self) -> Result<u8, Error<B::Error>> {
+        let raw = self.read_reg(REG_BAT_GAUGE).await?;
+        Ok(raw.min(BATTERY_PERCENT_MAX))
+    }
 }
 
 #[cfg(test)]
@@ -244,16 +276,26 @@ mod tests {
     use core::cell::RefCell;
     use embedded_hal_async::i2c::{Operation, SevenBitAddress};
 
-    /// Host-side I²C mock that records every transaction payload in order.
+    /// Host-side I²C mock. Records every write payload in order and
+    /// answers reads from a per-register canned-value table. Reads
+    /// against unmapped registers return `0`.
     struct MockI2c {
         transactions: RefCell<Vec<(u8, Vec<u8>)>>,
+        read_responses: RefCell<Vec<(u8, u8)>>,
     }
 
     impl MockI2c {
         fn new() -> Self {
             Self {
                 transactions: RefCell::new(Vec::new()),
+                read_responses: RefCell::new(Vec::new()),
             }
+        }
+
+        /// Stage a value to return when the driver reads `reg`.
+        fn with_register(self, reg: u8, value: u8) -> Self {
+            self.read_responses.borrow_mut().push((reg, value));
+            self
         }
     }
 
@@ -267,11 +309,34 @@ mod tests {
             address: SevenBitAddress,
             operations: &mut [Operation<'_>],
         ) -> Result<(), Self::Error> {
+            // For a `write_read`, the operation list is `[Write(reg),
+            // Read(buf)]`. Track the most-recent write so the read can
+            // look up the canned value for that register.
+            let mut last_write_reg: Option<u8> = None;
             for op in operations {
-                if let Operation::Write(buf) = op {
-                    self.transactions.borrow_mut().push((address, buf.to_vec()));
+                match op {
+                    Operation::Write(buf) => {
+                        self.transactions.borrow_mut().push((address, buf.to_vec()));
+                        if let Some(&reg) = buf.first() {
+                            last_write_reg = Some(reg);
+                        }
+                    }
+                    Operation::Read(buf) => {
+                        let value = last_write_reg
+                            .and_then(|reg| {
+                                self.read_responses
+                                    .borrow()
+                                    .iter()
+                                    .rev()
+                                    .find(|(r, _)| *r == reg)
+                                    .map(|(_, v)| *v)
+                            })
+                            .unwrap_or(0);
+                        if let Some(slot) = buf.first_mut() {
+                            *slot = value;
+                        }
+                    }
                 }
-                // Reads and write-reads never issued by the driver under test.
             }
             Ok(())
         }
@@ -339,5 +404,33 @@ mod tests {
     fn into_inner_releases_bus() {
         let pmic = Axp2101::new(MockI2c::new());
         let _bus: MockI2c = pmic.into_inner();
+    }
+
+    #[test]
+    fn read_battery_percent_returns_register_value() {
+        let bus = MockI2c::new().with_register(REG_BAT_GAUGE, 73);
+        let mut pmic = Axp2101::new(bus);
+        let pct = block_on(pmic.read_battery_percent()).unwrap();
+        assert_eq!(pct, 73);
+    }
+
+    #[test]
+    fn read_battery_percent_saturates_above_max() {
+        // Some chips have been observed reporting 0xFF during ADC settle
+        // immediately after init. The driver clamps to BATTERY_PERCENT_MAX.
+        let bus = MockI2c::new().with_register(REG_BAT_GAUGE, 0xFF);
+        let mut pmic = Axp2101::new(bus);
+        let pct = block_on(pmic.read_battery_percent()).unwrap();
+        assert_eq!(pct, BATTERY_PERCENT_MAX);
+    }
+
+    #[test]
+    fn read_battery_percent_passes_zero_through() {
+        // A genuinely-flat battery reads 0; the driver must not
+        // mis-clamp this up.
+        let bus = MockI2c::new().with_register(REG_BAT_GAUGE, 0);
+        let mut pmic = Axp2101::new(bus);
+        let pct = block_on(pmic.read_battery_percent()).unwrap();
+        assert_eq!(pct, 0);
     }
 }

@@ -240,6 +240,13 @@ pub struct Avatar {
     /// it yet (data-only landing). Excluded from [`Avatar::frame_eq`]
     /// — the raw field never affects pixels directly.
     pub mag_ut: Option<(f32, f32, f32)>,
+    /// Battery state-of-charge in percent (`0..=100`), or `None`
+    /// before the first successful AXP2101 gauge read. Written by
+    /// the firmware power task; consumed by
+    /// [`super::modifiers::LowBatteryEmotion`]. Excluded from
+    /// [`Avatar::frame_eq`] — modifiers translate the percentage into
+    /// visible state via `Avatar::emotion`, never directly into pixels.
+    pub battery_percent: Option<u8>,
 }
 
 impl Avatar {
@@ -316,6 +323,8 @@ impl Default for Avatar {
             ambient_lux: None,
             // No magnetometer reading until the BMM150 task publishes one.
             mag_ut: None,
+            // No battery reading until the AXP2101 task publishes one.
+            battery_percent: None,
         }
     }
 }

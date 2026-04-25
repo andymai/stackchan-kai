@@ -25,7 +25,8 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, audio, board, button, clock, framebuffer, head, imu, ir, leds, mag, touch, wallclock,
+    ambient, audio, board, button, clock, framebuffer, head, imu, ir, leds, mag, power, touch,
+    wallclock,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -61,7 +62,7 @@ use stackchan_core::{
     Avatar, Clock, HeadDriver, LedFrame, Modifier,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, MouthOpenAudio, PickupReaction, RemoteCommand,
+        IdleDrift, IdleSway, LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand,
     },
     render_leds,
 };
@@ -166,6 +167,7 @@ async fn render_task(mut display: LcdDisplay) {
     let mut remote = RemoteCommand::new();
     let mut pickup = PickupReaction::new();
     let mut ambient_sleepy = AmbientSleepy::new();
+    let mut low_battery = LowBatteryEmotion::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
@@ -186,7 +188,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + AmbientSleepy + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + MouthOpenAudio",
+        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + MouthOpenAudio",
         FRAME_PERIOD_MS
     );
 
@@ -227,6 +229,12 @@ async fn render_task(mut display: LcdDisplay) {
         if let Some(ut) = mag::MAG_SIGNAL.try_take() {
             avatar.mag_ut = Some(ut);
         }
+        // Drain the latest battery-percent reading from the AXP2101
+        // power task (1 Hz publish rate). `LowBatteryEmotion` reads
+        // `avatar.battery_percent` to decide whether to force Sleepy.
+        if let Some(percent) = power::BATTERY_PERCENT_SIGNAL.try_take() {
+            avatar.battery_percent = Some(percent);
+        }
         // Drain the latest mic-RMS sample from the audio task — the
         // task publishes a fresh `AudioRms(linear)` per ~33 ms window
         // (one render frame at 30 FPS). `try_take` is non-blocking and
@@ -238,6 +246,7 @@ async fn render_task(mut display: LcdDisplay) {
         remote.update(&mut avatar, now);
         pickup.update(&mut avatar, now);
         ambient_sleepy.update(&mut avatar, now);
+        low_battery.update(&mut avatar, now);
         cycle.update(&mut avatar, now);
         style.update(&mut avatar, now);
         blink.update(&mut avatar, now);
@@ -417,6 +426,14 @@ async fn mag_task(shared_i2c: SharedI2c) -> ! {
     mag::run_mag_loop(shared_i2c).await
 }
 
+/// AXP2101 battery-monitor task. Polls the gauge register at 1 Hz
+/// and publishes the `SoC` percent on [`power::BATTERY_PERCENT_SIGNAL`]
+/// for the render task to drain into `avatar.battery_percent`.
+#[embassy_executor::task]
+async fn power_task(shared_i2c: SharedI2c) -> ! {
+    power::run_power_loop(shared_i2c).await
+}
+
 /// Audio task. Owns the I²S0 peripheral + DMA. Runs full bring-up
 /// (I²S MCLK first so ES7210 can answer I²C, both codecs over I²C,
 /// AW88298 volume + un-mute, then RX + TX DMA), then runs the RX RMS
@@ -536,6 +553,9 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(mag_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn mag_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(power_task(I2cDevice::new(board_io.i2c_bus))) {
+        defmt::panic!("spawn power_task failed: {}", defmt::Debug2Format(&e));
     }
 
     // Audio subsystem. The task owns I²S0 + DMA + audio pins and

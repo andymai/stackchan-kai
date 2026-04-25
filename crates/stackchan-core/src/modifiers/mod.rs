@@ -24,22 +24,27 @@
 //!    (hysteresis 20/50 lux). Runs after `PickupReaction` so a
 //!    pickup-in-the-dark still surfaces as Surprised rather than
 //!    Sleepy.
-//! 5. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
+//! 5. [`LowBatteryEmotion`] — reads `Avatar::battery_percent`, forces
+//!    `Sleepy` (with a short `manual_until` hold) when the `SoC` drops
+//!    below a threshold. Runs alongside `AmbientSleepy` as the
+//!    "environmental override" group; touch / pickup / remote still
+//!    win since this respects an existing `manual_until` hold.
+//! 6. [`EmotionCycle`] (or application code) — sets `Avatar::emotion`
 //!    when `manual_until` is unset or expired.
-//! 6. [`EmotionStyle`] — translates emotion into style fields, with a
+//! 7. [`EmotionStyle`] — translates emotion into style fields, with a
 //!    linear ease over the transition window.
-//! 7. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
+//! 8. [`Blink`] — drives eye open/closed phase, reading `open_weight` and
 //!    `blink_rate_scale` from the avatar.
-//! 8. [`Breath`] — vertical drift on all features, scaled by
+//! 9. [`Breath`] — vertical drift on all features, scaled by
 //!    `breath_depth_scale`.
-//! 9. [`IdleDrift`] — occasional eye-center jitter.
-//! 10. [`IdleSway`] — slow pan/tilt head wander written to
+//! 10. [`IdleDrift`] — occasional eye-center jitter.
+//! 11. [`IdleSway`] — slow pan/tilt head wander written to
 //!     `Avatar::head_pose`. Non-visual; drives the firmware's head-update
 //!     task, not the pixel pipeline.
-//! 11. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
+//! 12. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top of the
 //!     sway. Runs **after** `IdleSway` so bias composes additively rather
 //!     than fighting for absolute control of the pose.
-//! 12. [`MouthOpenAudio`] — reads `Avatar::mouth.weight` preserved by
+//! 13. [`MouthOpenAudio`] — reads `Avatar::mouth.weight` preserved by
 //!     earlier modifiers, writes `Avatar::mouth.mouth_open` from
 //!     microphone RMS via a dB-mapped attack/release envelope. Runs
 //!     last in the visual stack so emotion geometry stays the static
@@ -56,6 +61,7 @@ mod emotion_style;
 mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
+mod low_battery;
 mod mouth_open_audio;
 mod pickup_reaction;
 mod remote_command;
@@ -69,6 +75,7 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
+pub use low_battery::{LOW_BATTERY_HOLD_MS, LOW_BATTERY_THRESHOLD_PERCENT, LowBatteryEmotion};
 pub use mouth_open_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthOpenAudio,
 };
