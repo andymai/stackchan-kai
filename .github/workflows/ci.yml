@@ -27,6 +27,15 @@ permissions:
 jobs:
   host:
     name: Host (core + sim + drivers)
+    # Skip on release-please PRs (machine-generated version bumps —
+    # no code changes to test). Branch-protection treats a SKIPPED
+    # required check as success, so this is safe to gate on. The
+    # `push: main` trigger is unaffected; we still validate the
+    # post-merge state on main.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login != 'release-kun[bot]' ||
+      !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +65,10 @@ jobs:
 
   supply-chain:
     name: Supply chain (cargo-deny)
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login != 'release-kun[bot]' ||
+      !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +79,10 @@ jobs:
 
   firmware:
     name: Firmware cross-check (xtensa-esp32s3-none-elf)
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login != 'release-kun[bot]' ||
+      !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +109,10 @@ jobs:
 
   msrv:
     name: MSRV (host crates)
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login != 'release-kun[bot]' ||
+      !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
