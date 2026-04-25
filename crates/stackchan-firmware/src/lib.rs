@@ -20,6 +20,7 @@ extern crate alloc;
 pub mod ambient;
 pub mod audio;
 pub mod board;
+pub mod body_touch;
 pub mod button;
 pub mod camera;
 pub mod clock;

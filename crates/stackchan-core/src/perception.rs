@@ -14,6 +14,28 @@
 //! [`Phase::Affect`]: crate::director::Phase::Affect
 //! [`Phase::Audio`]: crate::director::Phase::Audio
 
+/// Per-zone body-touch state (back-of-head `Si12T` pads).
+///
+/// Continuous "currently touched" state — modifiers / skills do their
+/// own edge detection if they need tap vs hold vs swipe semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BodyTouch {
+    /// Left zone is currently touched (`Si12T` intensity ≥ 1).
+    pub left: bool,
+    /// Centre zone is currently touched.
+    pub centre: bool,
+    /// Right zone is currently touched.
+    pub right: bool,
+}
+
+impl BodyTouch {
+    /// `true` if any zone is touched.
+    #[must_use]
+    pub const fn any(&self) -> bool {
+        self.left || self.centre || self.right
+    }
+}
+
 /// Raw sensor readings that drive reactive modifiers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Perception {
@@ -37,6 +59,10 @@ pub struct Perception {
     /// i16 (`0.0..=1.0`), or `None` before the audio task publishes
     /// its first window.
     pub audio_rms: Option<f32>,
+    /// Per-zone body-touch state from the back-of-head `Si12T` pads,
+    /// or `None` before the first successful read. Continuous state,
+    /// not an edge — modifiers add their own edge detection if needed.
+    pub body_touch: Option<BodyTouch>,
 }
 
 impl Default for Perception {
@@ -49,6 +75,7 @@ impl Default for Perception {
             battery_percent: None,
             usb_power_present: None,
             audio_rms: None,
+            body_touch: None,
         }
     }
 }

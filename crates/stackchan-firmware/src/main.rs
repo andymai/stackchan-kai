@@ -25,8 +25,8 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, audio, board, button, camera, clock, framebuffer, head, imu, ir, leds, power, touch,
-    wallclock, watchdog,
+    ambient, audio, board, body_touch, button, camera, clock, framebuffer, head, imu, ir, leds,
+    power, touch, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -341,6 +341,10 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
             entity.perception.audio_rms = Some(rms.0);
         }
+        // Drain the latest body-touch (back-of-head Si12T) reading.
+        if let Some(touch) = body_touch::BODY_TOUCH_SIGNAL.try_take() {
+            entity.perception.body_touch = Some(touch);
+        }
 
         // Run the entire modifier graph in one call. The Director sorts
         // by (phase, priority, registration order) and ticks each
@@ -512,6 +516,16 @@ async fn head_task(mut driver: HeadDriverImpl) {
 async fn touch_task(shared_i2c: SharedI2c) -> ! {
     let touch = ft6336u::Ft6336u::new(shared_i2c);
     touch::run_touch_loop(touch).await
+}
+
+/// Si12T body-touch polling task. Drives the back-of-head 3-zone pads
+/// at 50 ms cadence and publishes per-zone state on
+/// [`body_touch::BODY_TOUCH_SIGNAL`]. The render task drains it into
+/// `entity.perception.body_touch`; modifiers / skills do their own
+/// edge detection from there.
+#[embassy_executor::task]
+async fn body_touch_task(shared_i2c: SharedI2c) -> ! {
+    body_touch::run_body_touch_loop(shared_i2c).await
 }
 
 /// BMI270 IMU polling task. Wraps a second shared-bus handle onto the
@@ -693,6 +707,9 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(touch_task(board_io.i2c)) {
         defmt::panic!("spawn touch_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(body_touch_task(I2cDevice::new(board_io.i2c_bus))) {
+        defmt::panic!("spawn body_touch_task failed: {}", defmt::Debug2Format(&e));
     }
     // Three more shared-bus handles onto the same I²C0. The
     // `I2cDevice` wrapper serialises concurrent access so each task
