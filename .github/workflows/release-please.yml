@@ -67,9 +67,17 @@ jobs:
         if: steps.release.outputs.pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+          # Pass the raw release-please-action `pr` JSON through env and
+          # parse with jq inside the shell. Going via
+          # `${{ fromJSON(...).number }}` here renders at template time
+          # — even with `if: steps.release.outputs.pr` skipping the
+          # step, GH still evaluates the env: block, and `fromJSON("")`
+          # errors when no PR was created/updated this run (e.g. a
+          # `docs:` push with nothing releasable).
+          PR_DATA: ${{ steps.release.outputs.pr }}
           REPO: ${{ github.repository }}
         run: |
+          PR_NUMBER=$(jq -r .number <<<"$PR_DATA")
           gh pr review "$PR_NUMBER" \
             --approve \
             --body "Auto-approved by release pipeline." \
@@ -79,9 +87,10 @@ jobs:
         if: steps.release.outputs.pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+          PR_DATA: ${{ steps.release.outputs.pr }}
           REPO: ${{ github.repository }}
         run: |
+          PR_NUMBER=$(jq -r .number <<<"$PR_DATA")
           gh pr merge "$PR_NUMBER" \
             --auto --squash \
             --repo "$REPO"
