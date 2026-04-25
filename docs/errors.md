@@ -1,3 +1,7 @@
+---
+title: Typed-error catalog
+---
+
 # Typed-error catalog
 
 Every driver crate in this workspace exposes a generic `Error<E>` enum.
