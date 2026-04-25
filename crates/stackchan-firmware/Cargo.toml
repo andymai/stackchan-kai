@@ -26,6 +26,7 @@ ir-nec = { path = "../ir-nec" }
 ltr553 = { path = "../ltr553" }
 py32 = { path = "../py32" }
 scservo = { path = "../scservo" }
+si12t = { path = "../si12t" }
 tracker = { path = "../tracker" }
 embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }
