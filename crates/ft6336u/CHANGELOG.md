@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/andymai/stackchan-kai/compare/v0.3.0...v0.4.0) (2026-04-25)
+
+
+### Features
+
+* FT6336U tap-to-cycle emotion + shared I²C0 bus ([#15](https://github.com/andymai/stackchan-kai/issues/15)) ([b3fb8de](https://github.com/andymai/stackchan-kai/commit/b3fb8de289ac45f9c5537516a79c2dd2e3a4e6cb))
+
 ## [0.3.0](https://github.com/andymai/stackchan-kai/compare/v0.2.0...v0.3.0) (2026-04-24)
 
 
