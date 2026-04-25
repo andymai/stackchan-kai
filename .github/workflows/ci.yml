@@ -141,6 +141,9 @@ jobs:
 
   unused-deps:
     name: Unused deps (cargo-machete)
+    # Catches Cargo.toml entries not actually used in source — orthogonal
+    # to CodeQL (which analyzes Rust source patterns, not dep graphs)
+    # and Dependabot (which alerts on advisories, not unused entries).
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.user.login != 'release-kun[bot]' ||
@@ -149,19 +152,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: bnjbvr/cargo-machete@main
-
-  security-advisories:
-    name: Security advisories (cargo-audit)
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.user.login != 'release-kun[bot]' ||
-      !startsWith(github.event.pull_request.title, 'chore: release')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   coverage:
     name: Code coverage (cargo-llvm-cov)

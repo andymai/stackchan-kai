@@ -28,7 +28,6 @@ py32 = { path = "../py32" }
 scservo = { path = "../scservo" }
 tracker = { path = "../tracker" }
 embedded-graphics = { workspace = true }
-embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }
 embedded-io-async = { workspace = true }
 # `ExclusiveDevice` wraps the blocking esp-hal `Spi` + a CS pin into the
@@ -85,7 +84,6 @@ esp-println = { version = "0.17.0", default-features = false, features = [
     "critical-section",
 ] }
 
-critical-section = "1.2.0"
 static_cell = "2.1.1"
 # `f32::sqrt` for the audio-task RMS computation. `stackchan-core`
 # already depends on the same major version for `MouthOpenAudio`'s
