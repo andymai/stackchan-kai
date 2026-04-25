@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/andymai/stackchan-kai/compare/v0.3.0...v0.4.0) (2026-04-25)
+
+
+### Features
+
+* camera-preview mode — GC0308 + LCD_CAM ping-pong DMA, long-press toggle ([#60](https://github.com/andymai/stackchan-kai/issues/60)) ([5cb0b62](https://github.com/andymai/stackchan-kai/commit/5cb0b626823f5b06c8efafc25f2e55f4930dd915))
+
 ## [0.3.0](https://github.com/andymai/stackchan-kai/compare/v0.2.0...v0.3.0) (2026-04-25)
 
 
