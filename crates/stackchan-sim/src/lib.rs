@@ -249,6 +249,52 @@ mod integration_tests {
         }
     }
 
+    /// Two `IdleDrift`s seeded with distinct values must produce
+    /// distinct eye-position sequences. This is the host-side guard
+    /// for the firmware boot path that samples `esp_hal::rng::Rng`
+    /// once per boot — if seed propagation broke (e.g. a future
+    /// refactor of `IdleDrift::with_seed` quietly ignored its arg),
+    /// every boot would produce identical drift sequences and this
+    /// test would fail.
+    #[test]
+    fn distinct_seeds_produce_distinct_drift_sequences() {
+        // 7 ticks × `DEFAULT_INTERVAL_MS` (4 s) = 7 drift events.
+        // Two unrelated seeds — using compile-time non-zero literals
+        // sidesteps the test-only `unwrap` surface.
+        let seed_a = core::num::NonZeroU32::new(0x1234_5678).unwrap();
+        let seed_b = core::num::NonZeroU32::new(0xCAFE_BABE).unwrap();
+        let mut drift_a = IdleDrift::with_seed(seed_a);
+        let mut drift_b = IdleDrift::with_seed(seed_b);
+
+        let mut avatar_a = Avatar::default();
+        let mut avatar_b = Avatar::default();
+        let clock = FakeClock::new();
+
+        let interval_ms = 4_000_u64; // matches IdleDrift::DEFAULT_INTERVAL_MS
+        let mut diverged = false;
+        for i in 0..7 {
+            // Tick exactly at each drift boundary so an offset is
+            // applied on every iteration after the scheduling tick.
+            let now = stackchan_core::Instant::from_millis(i * interval_ms);
+            drift_a.update(&mut avatar_a, now);
+            drift_b.update(&mut avatar_b, now);
+            if avatar_a.left_eye.center != avatar_b.left_eye.center {
+                diverged = true;
+                break;
+            }
+        }
+        // Use clock to keep `FakeClock` import consistent with the
+        // surrounding tests; advancing here is a no-op but keeps the
+        // test shape uniform if a future Modifier consults the clock
+        // outside its `update` arg.
+        clock.advance(interval_ms * 7);
+
+        assert!(
+            diverged,
+            "two distinct IdleDrift seeds produced identical eye sequences over 7 drift ticks"
+        );
+    }
+
     #[test]
     fn blink_frequency_over_one_minute() {
         let clock = FakeClock::new();

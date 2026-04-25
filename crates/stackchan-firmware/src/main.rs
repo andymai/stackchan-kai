@@ -31,6 +31,7 @@ use stackchan_firmware::{
 
 use board::{HeadDriverImpl, SharedI2c};
 use clock::HalClock;
+use core::num::NonZeroU32;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Ticker, Timer};
@@ -46,6 +47,7 @@ use esp_hal::{
     Blocking,
     clock::CpuClock,
     gpio::{Level, Output, OutputConfig},
+    rng::Rng,
     spi::{
         Mode as SpiMode,
         master::{Config as SpiConfig, Spi},
@@ -158,7 +160,7 @@ type LcdDisplay = mipidsi::Display<
     clippy::too_many_lines,
     reason = "tick body composes 12+ modifiers + sensor drains + render — splitting fragments the per-frame ordering invariants"
 )]
-async fn render_task(mut display: LcdDisplay) {
+async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let clock = HalClock;
     let mut fb = Framebuffer::new();
     defmt::info!(
@@ -180,11 +182,11 @@ async fn render_task(mut display: LcdDisplay) {
     let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
-    // Fixed seed keeps boot-to-boot drifts identical; a future RNG-backed
-    // source (e.g. reading a voltage-derived seed from the AXP2101) can
-    // swap in without touching the task shape.
-    let mut drift =
-        IdleDrift::with_seed(const { core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap() });
+    // Seed comes from the ESP32-S3 hardware RNG (`esp_hal::rng::Rng`),
+    // sampled once at boot in `main()` before this task spawns. Each
+    // boot produces a distinct drift sequence — eyes don't fall into
+    // the same micro-pattern after a power cycle.
+    let mut drift = IdleDrift::with_seed(drift_seed);
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
@@ -676,7 +678,18 @@ async fn main(spawner: Spawner) -> ! {
     };
     defmt::info!("ILI9342C ready — spawning render task");
 
-    if let Err(e) = spawner.spawn(render_task(display)) {
+    // Sample the chip's hardware RNG once for IdleDrift's xorshift32
+    // seed. xorshift32 forbids zero, so re-roll on the (1 in 2^32)
+    // chance we hit it — the loop almost always exits first try.
+    let rng = Rng::new();
+    let drift_seed = loop {
+        if let Some(s) = NonZeroU32::new(rng.random()) {
+            break s;
+        }
+    };
+    defmt::info!("idle drift seed: {=u32:#010x}", drift_seed.get());
+
+    if let Err(e) = spawner.spawn(render_task(display, drift_seed)) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
     if let Err(e) = spawner.spawn(head_task(board_io.head)) {
