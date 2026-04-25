@@ -66,8 +66,8 @@ use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
         AmbientSleepy, Blink, BodyGesture, Breath, EmotionCycle, EmotionHead, EmotionStyle,
-        EmotionTouch, IdleDrift, IdleSway, ListenHead, LowBatteryEmotion, MouthOpenAudio,
-        PickupReaction, RemoteCommand, WakeOnVoice,
+        EmotionTouch, IdleDrift, IdleSway, IntentStyle, ListenHead, LowBatteryEmotion,
+        MouthOpenAudio, PickupReaction, RemoteCommand, WakeOnVoice,
     },
     render_leds,
     skills::{LookAtSound, Petting},
@@ -185,6 +185,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut wake_on_voice = WakeOnVoice::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
+    let mut intent_style = IntentStyle::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
     // Seed comes from the ESP32-S3 hardware RNG (`esp_hal::rng::Rng`),
@@ -227,6 +228,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .expect("registry full");
     director.add_modifier(&mut cycle).expect("registry full");
     director.add_modifier(&mut style).expect("registry full");
+    director
+        .add_modifier(&mut intent_style)
+        .expect("registry full");
     director.add_modifier(&mut blink).expect("registry full");
     director.add_modifier(&mut breath).expect("registry full");
     director.add_modifier(&mut drift).expect("registry full");
