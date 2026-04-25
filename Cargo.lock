@@ -1565,6 +1565,7 @@ dependencies = [
  "scservo",
  "stackchan-core",
  "static_cell",
+ "tracker",
 ]
 
 [[package]]
@@ -1703,6 +1704,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "tracker"
+version = "0.1.0"
+dependencies = [
+ "stackchan-core",
 ]
 
 [[package]]

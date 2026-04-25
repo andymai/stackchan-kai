@@ -14,5 +14,6 @@
   "crates/es7210": "0.3.0",
   "crates/gc0308": "0.5.0",
   "crates/si12t": "0.3.0",
-  "crates/st25r3916": "0.3.0"
+  "crates/st25r3916": "0.3.0",
+  "crates/tracker": "0.1.0"
 }
