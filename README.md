@@ -4,7 +4,7 @@
 
 **Clean-slate Rust firmware for the M5Stack CoreS3 Stack-chan — `no_std`, embassy, no cloud.**
 
-No AI. No upstream cloud. No C blobs. Just a desk toy that animates a face.
+No vendor cloud. No telemetry. No C blobs. Just a desk toy that animates a face.
 
 [![CI](https://github.com/andymai/stackchan-kai/actions/workflows/ci.yml/badge.svg)](https://github.com/andymai/stackchan-kai/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/andymai/stackchan-kai)](https://github.com/andymai/stackchan-kai/releases)
@@ -16,7 +16,7 @@ No AI. No upstream cloud. No C blobs. Just a desk toy that animates a face.
 
 </div>
 
-> **Status:** v0.1.0 shipped 2026-04-23. Public items are currently
+> **Status:** v0.1.0 shipped 2026-04-23. Public items are
 > [Experimental](STABILITY.md#experimental); the v0.x series will iterate the
 > avatar domain model before anything graduates to Stable.
 
@@ -65,8 +65,8 @@ without touching the hardware.
 ## Roadmap
 
 - **RON-configurable appearance** — eye / mouth geometry, palette, per-emotion style
-- **Input-bound behavior** — tap the face to change emotion, point an IR remote to trigger reactions
-- **Other Stack-chan variants** — expand beyond the CoreS3 SKU once v0.1.x stabilizes
+- **Calibration tooling** — host-side bench writes servo + sensor calibration into versioned config
+- **Crash recovery** — panic handler renders an error face and watchdog-reboots cleanly
 
 ## License
 

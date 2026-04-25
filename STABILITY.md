@@ -44,24 +44,31 @@ Experimental APIs graduate to stable by explicit CHANGELOG entry.
 Internal items are `pub(crate)` or `#[doc(hidden)]`. Not part of the supported
 surface.
 
-## Day-one classification (v0.1.0)
+## Day-one classification (v0.1.0 through v1.0)
 
 At v0.1.0, **everything is experimental**. The initial release exists to prove
 the flash + render pipeline end to end; the API surface will churn rapidly
 through v0.2–v0.x as the avatar domain model settles.
 
-Graduations to stable will be called out in dedicated `feat(stabilize):`
-commits, first appearing in a post-v0.x release.
+v1.0 is a **polish milestone** — RON-configurable appearance, host-side
+calibration tooling, crash recovery, codebase TODO sweep — and still ships
+*everything Experimental*. Stabilization is intentionally deferred so the
+API can survive the architectural work planned for v2.x.
+
+Graduations to Stable will be called out in dedicated `feat(stabilize):`
+commits, first appearing at **v2.x** or later.
 
 ## Wrapper crates
 
-`stackchan-firmware` is a binary crate, not a library surface. `axp2101` is a
-standalone driver crate that may publish to crates.io independently; its
-stability is governed by this same policy once v1.0.0 ships.
+`stackchan-firmware` is a binary crate, not a library surface. Standalone
+driver crates (`axp2101`, `aw9523`, `scservo`, `bm8563`, and others) may
+publish to crates.io independently and are governed by this policy under
+their own versioning. Their graduations from Experimental to Stable happen
+on each crate's own cadence, not gated on the workspace version.
 
 ## Cadence commitment
 
-Going forward, once v1.0.0 is reached:
+Once any item graduates to Stable (planned for v2.x or later):
 
 - **Stable surface**: at most one breaking change per 60 days.
 - **Experimental surface**: no such bound.
