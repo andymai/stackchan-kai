@@ -47,8 +47,18 @@ default-members = [
 # Cargo.toml — not via `version.workspace = true` — because
 # release-please's `cargo-workspace` plugin at v4 can't parse
 # workspace-inherited version fields and errors with
-# `has an invalid [package.version]`. All six crates stay in
-# lockstep; release-please bumps them together.
+# `has an invalid [package.version]`.
+#
+# Versions are independent per crate. release-please tracks each
+# package's commit history by path and only bumps the ones whose
+# files actually changed in a given release window. The
+# `cargo-workspace` plugin (`merge: true` in
+# release-please-config.json) batches whatever bumped into a single
+# release PR + single git tag (e.g. `v0.9.0`), but per-crate
+# version numbers stay honest semver against each crate's own API
+# surface. As of v0.9.0 the workspace spans 17 crates ranging from
+# `aw88298 0.3.0` (untouched since the audio bring-up) to
+# `stackchan-firmware 0.9.x` (bumped on most cycles).
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/andymai/stackchan-kai"
