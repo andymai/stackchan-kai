@@ -75,7 +75,12 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
-          arg: --workspace
+          # Default features only — the action's default `arguments`
+          # ('--all-features') would override deny.toml's
+          # `[graph] all-features = false` and pull every opt-in dev
+          # feature (e.g. stackchan-sim's `viz` with the eframe/egui
+          # GUI stack) into the supply-chain scan.
+          arguments: --workspace
 
   firmware:
     name: Firmware cross-check (xtensa-esp32s3-none-elf)
@@ -119,8 +124,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
 
+      # Default features only. Optional dev-tooling features (e.g.
+      # `stackchan-sim`'s `viz` feature pulling in eframe/egui/winit)
+      # are not gated on MSRV — they're opt-in tools, not runtime deps.
       - name: Build on MSRV
-        run: cargo build --workspace --exclude stackchan-firmware --all-features
+        run: cargo build --workspace --exclude stackchan-firmware
 
   doc-drift:
     name: Doc drift (READMEs vs src/)

@@ -16,3 +16,22 @@ stackchan-core = { path = "../stackchan-core" }
 # Used by `Framebuffer` — the Vec<Rgb565>-backed `DrawTarget` that lets
 # render-regression tests assert against `Avatar::draw` without hardware.
 embedded-graphics = { workspace = true }
+
+# Optional: the host visualiser binary depends on `eframe` (egui +
+# winit). Only pulled in when the `viz` feature is on, so the default
+# library build (and CI host tests) stay dep-light. We keep eframe's
+# default features enabled — they include the Linux window-system
+# backends (wayland + x11) winit needs to compile, plus `glow` for
+# OpenGL rendering and the bundled default fonts.
+eframe = { version = "0.34", optional = true }
+
+[features]
+# Default: lib-only, no GUI dep tree.
+default = []
+# Enable the `viz` binary (`cargo run -p stackchan-sim --bin viz --features viz`).
+viz = ["dep:eframe"]
+
+[[bin]]
+name = "viz"
+path = "src/bin/viz.rs"
+required-features = ["viz"]

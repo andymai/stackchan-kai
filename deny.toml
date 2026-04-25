@@ -2,7 +2,14 @@
 # See https://embarkstudios.github.io/cargo-deny/ for schema documentation.
 
 [graph]
-all-features = true
+# Default features only. Optional dev-tooling features (e.g. the `viz`
+# feature on `stackchan-sim` that pulls in the eframe/egui/winit GUI
+# stack) are excluded from supply-chain checks because they ship as
+# opt-in tools rather than runtime dependencies. The
+# `*-bench`/`*-tools`/`viz` feature gates exist precisely so license
+# constraints, MSRV, and binary-size budgets apply only to shipped
+# code.
+all-features = false
 
 [advisories]
 version = 2
