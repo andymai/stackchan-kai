@@ -27,7 +27,7 @@ modifier pipeline at ~30 FPS.
 - `src/head.rs` — embassy task: `stackchan_core::Pose` → SCServo commands
 - `src/imu.rs` / `src/mag.rs` — BMI270 / BMM150 tasks publishing to signal channels for the 9-axis data path
 - `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` — per-peripheral tasks
-- `src/audio.rs` — I²S0 + codec (AW88298 + ES7210) bring-up, then per-window RMS loop publishing on `AUDIO_RMS_SIGNAL`. Speaker-side (AW88298 TX) still pending
+- `src/audio.rs` — I²S0 + codec bring-up, then RX RMS loop (publishing on `AUDIO_RMS_SIGNAL`) + TX feeder (1 kHz boot greeting then silence) running concurrently via `embassy_futures::join`
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
 - `examples/{aw88298,es7210,imu,mag,leds,ambient,touch,ir}_bench.rs` — per-driver control-path benches (chip-ID probe + init + heartbeat; the streaming I²S path runs only inside `src/audio.rs` in the main firmware)
 
@@ -82,7 +82,7 @@ and talk to it through `I2cDevice` handles. Addresses on the bus:
 | `0x10/11` | BMM150 magnetometer |
 | `0x23`  | LTR-553 ambient / prox |
 | `0x34`  | AXP2101 PMIC         |
-| `0x36`  | AW88298 amp (control-path only; I²S pending) |
+| `0x36`  | AW88298 amp (I²S TX streaming live; speaker output) |
 | `0x38`  | FT6336U touch        |
 | `0x40`  | ES7210 ADC (control-path only; I²S pending)  |
 | `0x51`  | BM8563 RTC           |
@@ -119,5 +119,5 @@ port is `/dev/ttyACM1`; override with `just PORT=/dev/ttyACM0 flash`.
 ## Integration
 
 - **Consumes `stackchan-core`** for every domain type (`Avatar`, `Modifier`, `Pose`, `Clock`, `HeadDriver`, `LedFrame`)
-- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, bmm150, es7210, ft6336u, ir-nec, ltr553, py32, scservo. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 is control-path only for now (TX speaker output still pending). Scaffolded-only: gc0308, si12t, st25r3916
+- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, bmm150, es7210, ft6336u, ir-nec, ltr553, py32, scservo. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (boot greeting + silence). Scaffolded-only: gc0308, si12t, st25r3916
 - **HIL via probe-rs + defmt-test** (planned) — CI runs host tests today; on-device integration tests run on a flash-and-capture rig

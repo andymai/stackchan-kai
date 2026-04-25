@@ -417,10 +417,11 @@ async fn mag_task(shared_i2c: SharedI2c) -> ! {
     mag::run_mag_loop(shared_i2c).await
 }
 
-/// Audio task. Owns the I²S0 peripheral + DMA, runs the full bring-up
-/// sequence (I²S MCLK first so ES7210 can answer I²C, then both
-/// codecs), then computes mic RMS per ~33 ms window and publishes on
-/// [`audio::AUDIO_RMS_SIGNAL`].
+/// Audio task. Owns the I²S0 peripheral + DMA. Runs full bring-up
+/// (I²S MCLK first so ES7210 can answer I²C, both codecs over I²C,
+/// AW88298 volume + un-mute, then RX + TX DMA), then runs the RX RMS
+/// loop (publishing on [`audio::AUDIO_RMS_SIGNAL`]) and TX feeder
+/// (boot greeting + silence) concurrently inside this single task.
 #[embassy_executor::task]
 async fn audio_task(peripherals: audio::AudioPeripherals) -> ! {
     audio::run_audio_task(peripherals).await
