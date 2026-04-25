@@ -25,8 +25,8 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, audio, board, button, camera, clock, framebuffer, head, imu, ir, leds, mag, power,
-    touch, wallclock,
+    ambient, audio, board, button, camera, clock, framebuffer, head, imu, ir, leds, power, touch,
+    wallclock,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -290,13 +290,6 @@ async fn render_task(mut display: LcdDisplay) {
         if let Some(lux) = ambient::AMBIENT_LUX_SIGNAL.try_take() {
             avatar.ambient_lux = Some(lux);
         }
-        // Drain the latest magnetometer reading. 10 Hz publish rate;
-        // no modifier consumes it yet (data-only landing), but the
-        // value propagates so future compass / heading modifiers can
-        // pick it up without touching the render task.
-        if let Some(ut) = mag::MAG_SIGNAL.try_take() {
-            avatar.mag_ut = Some(ut);
-        }
         // Drain the latest power status from the AXP2101 task (1 Hz).
         // `LowBatteryEmotion` reads `avatar.battery_percent` and
         // `avatar.usb_power_present` for hysteresis + USB suppression.
@@ -559,13 +552,6 @@ async fn led_task(shared_i2c: SharedI2c) -> ! {
     leds::run_led_loop(shared_i2c).await
 }
 
-/// BMM150 magnetometer polling task. Fifth (now sixth with LEDs) shared-I²C
-/// consumer. Publishes compensated µT tuples on [`mag::MAG_SIGNAL`].
-#[embassy_executor::task]
-async fn mag_task(shared_i2c: SharedI2c) -> ! {
-    mag::run_mag_loop(shared_i2c).await
-}
-
 /// AXP2101 battery-monitor task. Polls the gauge register at 1 Hz
 /// and publishes the `SoC` percent on [`power::BATTERY_PERCENT_SIGNAL`]
 /// for the render task to drain into `avatar.battery_percent`.
@@ -702,9 +688,6 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(led_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn led_task failed: {}", defmt::Debug2Format(&e));
-    }
-    if let Err(e) = spawner.spawn(mag_task(I2cDevice::new(board_io.i2c_bus))) {
-        defmt::panic!("spawn mag_task failed: {}", defmt::Debug2Format(&e));
     }
     if let Err(e) = spawner.spawn(power_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn power_task failed: {}", defmt::Debug2Format(&e));
