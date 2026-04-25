@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.9.7"
+version = "0.10.0"
 dependencies = [
  "aw88298",
  "aw9523",

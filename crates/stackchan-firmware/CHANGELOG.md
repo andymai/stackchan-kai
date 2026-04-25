@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-25)
+
+
+### Features
+
+* **firmware:** embassy task watchdog supervisor ([#85](https://github.com/andymai/stackchan-kai/issues/85)) ([57dc280](https://github.com/andymai/stackchan-kai/commit/57dc2800bd40d7d01d7b28135d2a1474cf89abf1))
+
 ## [0.9.7](https://github.com/andymai/stackchan-kai/compare/v0.9.6...v0.9.7) (2026-04-25)
 
 ## [0.9.6](https://github.com/andymai/stackchan-kai/compare/v0.9.5...v0.9.6) (2026-04-25)
