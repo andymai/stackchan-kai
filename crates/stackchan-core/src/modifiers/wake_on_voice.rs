@@ -60,9 +60,9 @@ pub const WAKE_HOLD_MS: u64 = 5_000;
 /// Modifier that watches [`Avatar::audio_rms`] and writes `Happy`
 /// when sustained voice is detected.
 ///
-/// State is a single u8 counter; the modifier holds no allocation
-/// and is `Copy` so callers can stash it on the stack alongside the
-/// other modifier instances.
+/// State is a small struct (counter + edge flag); the modifier holds
+/// no allocation and is `Copy` so callers can stash it on the stack
+/// alongside the other modifier instances.
 #[derive(Debug, Clone, Copy)]
 pub struct WakeOnVoice {
     /// Linear-RMS threshold above which a tick counts as loud.
@@ -73,6 +73,11 @@ pub struct WakeOnVoice {
     /// Running counter of consecutive loud ticks. Reset on any quiet
     /// tick or after the wake fires.
     consecutive_loud: u8,
+    /// Set to `true` on the tick the wake transitions from
+    /// not-firing → firing; cleared on the next `update` call.
+    /// Callers (e.g. firmware enqueueing a wake chirp) read this
+    /// once per tick after `update`.
+    just_fired: bool,
 }
 
 impl WakeOnVoice {
@@ -84,6 +89,7 @@ impl WakeOnVoice {
             threshold: WAKE_RMS_THRESHOLD,
             sustain_ticks: WAKE_SUSTAIN_TICKS,
             consecutive_loud: 0,
+            just_fired: false,
         }
     }
 
@@ -94,7 +100,20 @@ impl WakeOnVoice {
             threshold,
             sustain_ticks,
             consecutive_loud: 0,
+            just_fired: false,
         }
+    }
+
+    /// `true` on the tick this modifier just transitioned from
+    /// not-firing → firing. Cleared at the start of every `update`
+    /// call, so consumers should check it once per render tick after
+    /// `update` runs.
+    ///
+    /// Use this to drive one-shot side effects (e.g. enqueueing an
+    /// audio chirp) that should accompany the emotional change.
+    #[must_use]
+    pub const fn just_fired(self) -> bool {
+        self.just_fired
     }
 
     /// Exposed for tests: current loud-tick counter.
@@ -112,6 +131,10 @@ impl Default for WakeOnVoice {
 
 impl Modifier for WakeOnVoice {
     fn update(&mut self, avatar: &mut Avatar, now: Instant) {
+        // Clear the edge flag at the start of every tick — it only
+        // ever signals the *current* tick's transition.
+        self.just_fired = false;
+
         let Some(rms) = avatar.audio_rms else {
             // No reading yet — treat as silent, reset counter.
             self.consecutive_loud = 0;
@@ -146,6 +169,7 @@ impl Modifier for WakeOnVoice {
         // Reset so the next wake requires a fresh sustained period
         // rather than firing every tick within a single loud burst.
         self.consecutive_loud = 0;
+        self.just_fired = true;
     }
 }
 
@@ -323,6 +347,62 @@ mod tests {
             wake.update(&mut avatar, Instant::from_millis(t * 33));
         }
         assert_eq!(avatar.emotion, Emotion::Happy);
+    }
+
+    #[test]
+    fn just_fired_set_on_trigger_tick_only() {
+        // Sustained loudness fires on the Nth tick. just_fired is
+        // true on that tick, false on the (N+1)th.
+        let mut wake = WakeOnVoice::new();
+        let mut avatar = loud_avatar();
+        for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
+            wake.update(&mut avatar, Instant::from_millis(t * 33));
+            assert!(!wake.just_fired(), "fired early on tick {t}");
+        }
+        // Trigger tick.
+        wake.update(
+            &mut avatar,
+            Instant::from_millis((u64::from(WAKE_SUSTAIN_TICKS) - 1) * 33),
+        );
+        assert!(wake.just_fired(), "did not fire on threshold tick");
+        // Next tick: still loud, but inside hold window — not a fresh
+        // fire, so just_fired clears.
+        wake.update(
+            &mut avatar,
+            Instant::from_millis(u64::from(WAKE_SUSTAIN_TICKS) * 33),
+        );
+        assert!(!wake.just_fired(), "stuck-fired across consecutive ticks");
+    }
+
+    #[test]
+    fn just_fired_clears_when_quiet_tick_resets_counter() {
+        // A quiet tick mid-burst resets the counter and zeroes
+        // just_fired (which was already false).
+        let mut wake = WakeOnVoice::new();
+        let mut avatar = loud_avatar();
+        wake.update(&mut avatar, Instant::from_millis(0));
+        avatar.audio_rms = Some(0.001);
+        wake.update(&mut avatar, Instant::from_millis(33));
+        assert!(!wake.just_fired());
+        assert_eq!(wake.consecutive_loud(), 0);
+    }
+
+    #[test]
+    fn just_fired_not_set_when_blocked_by_manual_hold() {
+        // Sustained loud audio under an existing manual hold should
+        // *not* set just_fired — emotion / hold are unchanged so
+        // there's no transition to chirp about.
+        let mut wake = WakeOnVoice::new();
+        let mut avatar = Avatar {
+            emotion: Emotion::Surprised,
+            manual_until: Some(Instant::from_millis(30_000)),
+            ..loud_avatar()
+        };
+        for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) + 5) {
+            wake.update(&mut avatar, Instant::from_millis(t * 33));
+        }
+        assert!(!wake.just_fired());
+        assert_eq!(avatar.emotion, Emotion::Surprised);
     }
 
     #[test]

@@ -71,6 +71,10 @@ pub struct PickupReaction {
     /// pickup is still in progress; cleared when the reading returns
     /// below threshold.
     fired_this_run: bool,
+    /// Set to `true` on the tick the modifier just transitioned from
+    /// not-firing → firing (i.e. wrote `Surprised` and pinned
+    /// `manual_until`). Cleared on the next `update` call.
+    just_fired: bool,
 }
 
 impl PickupReaction {
@@ -80,7 +84,23 @@ impl PickupReaction {
         Self {
             above_since: None,
             fired_this_run: false,
+            just_fired: false,
         }
+    }
+
+    /// `true` on the tick this modifier just transitioned from
+    /// not-firing → firing. Cleared at the start of every `update`,
+    /// so consumers should check it once per render tick after
+    /// `update` runs.
+    ///
+    /// Use this to drive one-shot side effects (e.g. enqueueing a
+    /// pickup chirp) that should accompany the emotional change.
+    /// Note that a pickup blocked by an existing `manual_until` from
+    /// touch / remote does *not* set this flag — there's no
+    /// transition to chirp about.
+    #[must_use]
+    pub const fn just_fired(self) -> bool {
+        self.just_fired
     }
 }
 
@@ -116,6 +136,10 @@ const REST_BAND_SQUARED: core::ops::RangeInclusive<f32> = BELOW_SQUARED..=ABOVE_
 
 impl Modifier for PickupReaction {
     fn update(&mut self, avatar: &mut Avatar, now: Instant) {
+        // Clear the edge flag at the start of every tick — it only
+        // ever signals the *current* tick's transition.
+        self.just_fired = false;
+
         let m2 = magnitude_squared(avatar.accel_g);
         // Out-of-rest-band: magnitude outside `(1±k) g` squared.
         let above_threshold = !REST_BAND_SQUARED.contains(&m2);
@@ -161,6 +185,7 @@ impl Modifier for PickupReaction {
         avatar.emotion = PICKUP_EMOTION;
         avatar.manual_until = Some(now + MANUAL_HOLD_MS);
         self.fired_this_run = true;
+        self.just_fired = true;
     }
 }
 
@@ -341,5 +366,49 @@ mod tests {
         pickup.update(&mut avatar, Instant::from_millis(2_000));
         pickup.update(&mut avatar, Instant::from_millis(2_060));
         assert_eq!(avatar.emotion, Emotion::Surprised);
+    }
+
+    #[test]
+    fn just_fired_set_only_on_trigger_tick() {
+        let mut avatar = at_rest();
+        let mut pickup = PickupReaction::new();
+
+        // Pre-trigger: nothing fired yet.
+        set_accel(&mut avatar, 1.8);
+        pickup.update(&mut avatar, Instant::from_millis(0));
+        assert!(!pickup.just_fired());
+        pickup.update(&mut avatar, Instant::from_millis(30));
+        assert!(!pickup.just_fired());
+
+        // Trigger tick (60 ms past the 50 ms debounce).
+        pickup.update(&mut avatar, Instant::from_millis(60));
+        assert!(pickup.just_fired(), "expected fire on trigger tick");
+
+        // Subsequent above-threshold ticks within the same run do
+        // *not* re-fire (fired_this_run is set), so just_fired clears.
+        pickup.update(&mut avatar, Instant::from_millis(100));
+        assert!(!pickup.just_fired());
+    }
+
+    #[test]
+    fn just_fired_not_set_when_blocked_by_existing_hold() {
+        // EmotionTouch has already pinned the avatar with a long hold.
+        // PickupReaction sees the threshold cross + debounce + active
+        // hold, marks fired_this_run as handled, but does not write
+        // a new emotion or set just_fired — there's no transition to
+        // chirp about.
+        let mut avatar = Avatar {
+            emotion: Emotion::Happy,
+            manual_until: Some(Instant::from_millis(30_000)),
+            ..at_rest()
+        };
+        let mut pickup = PickupReaction::new();
+
+        set_accel(&mut avatar, 1.8);
+        pickup.update(&mut avatar, Instant::from_millis(0));
+        pickup.update(&mut avatar, Instant::from_millis(60));
+
+        assert_eq!(avatar.emotion, Emotion::Happy);
+        assert!(!pickup.just_fired());
     }
 }
