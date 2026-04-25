@@ -9,9 +9,28 @@ name: Release Please
 # v0.1.0 was tagged manually to bootstrap the baseline recorded in
 # .release-please-manifest.json; this workflow takes over for v0.1.1+.
 #
-# Only hardcoded string inputs are referenced — no untrusted event
-# payloads (PR titles, commit messages, etc.) reach any run: step, so
-# the workflow-injection class of attacks is not applicable here.
+# ## App identity
+#
+# The release PR is authored by the `release-kun` GitHub App (App ID
+# stored in `RELEASE_KUN_APP_ID`) rather than the default `GITHUB_TOKEN`
+# actor. PRs created via `GITHUB_TOKEN` do NOT trigger downstream
+# workflows (GitHub anti-loop protection), so without the App token
+# the release PR would never see CI / branch-protection checks fire.
+#
+# ## Auto-approve + auto-merge
+#
+# Approval is posted using the default `GITHUB_TOKEN`
+# (`github-actions[bot]` actor), which is a *different* actor from the
+# App that authored the PR — GitHub forbids self-review, so the two
+# actors must differ. The merge call uses the App token so any
+# branch-protection rule requiring the merger to have write access is
+# satisfied. `gh pr merge --auto` waits for required status checks
+# before merging, so this can't bypass CI.
+#
+# Only hardcoded string inputs and integer PR numbers from
+# release-please-action's outputs reach run: steps; PR-number is
+# routed through an env: var as defensive practice even though the
+# value is type-checked by `fromJSON(...).number`.
 
 on:
   push:
@@ -26,7 +45,43 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # Mint the App token first so release-please-action creates its
+      # PR using the App identity. SHA-pinned to the v1 tag so a
+      # compromised tag can't silently swap the action and hijack an
+      # installation token for release-kun.
+      - name: Mint release-kun App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.RELEASE_KUN_APP_ID }}
+          private-key: ${{ secrets.RELEASE_KUN_APP_PRIVATE_KEY }}
+
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Auto-approve release PR
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr review "$PR_NUMBER" \
+            --approve \
+            --body "Auto-approved by release pipeline." \
+            --repo "$REPO"
+
+      - name: Auto-merge release PR
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr merge "$PR_NUMBER" \
+            --auto --squash \
+            --repo "$REPO"

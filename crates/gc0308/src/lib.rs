@@ -58,7 +58,7 @@ pub const CHIP_ID: u8 = 0x9B;
 /// real hardware.
 pub const REG_CHIP_ID: u8 = 0x00;
 
-/// `RESET_RELATED` register. Writing [`SOFT_RESET_PAYLOAD`] issues a
+/// `RESET_RELATED` register. Writing `SOFT_RESET_PAYLOAD` issues a
 /// software reset (clears registers + holds in reset until the table
 /// is reprogrammed).
 pub const REG_RESET: u8 = 0xFE;
@@ -248,12 +248,12 @@ impl<B: I2c> Gc0308<B> {
     /// Full power-on bring-up.
     ///
     /// Steps:
-    /// 1. Wait [`POWER_ON_DELAY_MS`] for the analog rails to settle.
+    /// 1. Wait `POWER_ON_DELAY_MS` for the analog rails to settle.
     /// 2. Read and validate the chip ID.
-    /// 3. Issue a software reset and wait [`SOFT_RESET_DELAY_MS`].
+    /// 3. Issue a software reset and wait `SOFT_RESET_DELAY_MS`.
     /// 4. Apply [`DEFAULT_REGS`] verbatim (sensor analog setup,
     ///    AEC/AGC/AWB defaults, gamma curves).
-    /// 5. Wait [`DEFAULTS_SETTLE_MS`] for the AAA algorithms to latch.
+    /// 5. Wait `DEFAULTS_SETTLE_MS` for the AAA algorithms to latch.
     ///
     /// On exit the chip is producing valid frames at full VGA. Callers
     /// typically follow up with [`Gc0308::set_format`],
