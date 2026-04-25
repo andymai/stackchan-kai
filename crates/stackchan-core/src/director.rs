@@ -109,10 +109,13 @@ pub enum FieldGroup {
 /// Fine-grained identifiers for the entity's mutable surface.
 ///
 /// Modifiers declare their `reads` / `writes` via `&'static [Field]`
-/// slices on [`ModifierMeta`]. Today the slices are documentation;
-/// debug-mode enforcement after each `update` is planned. Per-leaf
-/// granularity (e.g. `LeftEyePhase` vs `LeftEyeWeight`) keeps
-/// sub-fields of the same component from false-flagging as conflicts.
+/// slices on [`ModifierMeta`]. In `cfg(debug_assertions)` builds the
+/// [`Director`] snapshots the entity before each modifier / skill
+/// invocation and panics if a write lands outside the declared slice
+/// — see [`Director::run`]. The slices are checked, not just
+/// documentation. Per-leaf granularity (e.g. `LeftEyePhase` vs
+/// `LeftEyeWeight`) keeps sub-fields of the same component from
+/// false-flagging as conflicts.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Field {
@@ -194,6 +197,44 @@ pub enum Field {
 }
 
 impl Field {
+    /// Every [`Field`] variant. Maintained alongside the enum + the
+    /// [`Self::group`] / [`Self::changed`] match arms — adding a new
+    /// variant requires updating all four sites.
+    pub const ALL: &'static [Self] = &[
+        Self::LeftEyePhase,
+        Self::LeftEyeWeight,
+        Self::LeftEyeOpenWeight,
+        Self::LeftEyeCenter,
+        Self::RightEyePhase,
+        Self::RightEyeWeight,
+        Self::RightEyeOpenWeight,
+        Self::RightEyeCenter,
+        Self::MouthWeight,
+        Self::MouthOpen,
+        Self::MouthCenter,
+        Self::EyeCurve,
+        Self::MouthCurve,
+        Self::CheekBlush,
+        Self::EyeScale,
+        Self::BlinkRateScale,
+        Self::BreathDepthScale,
+        Self::HeadPose,
+        Self::HeadPoseActual,
+        Self::AccelG,
+        Self::GyroDps,
+        Self::AmbientLux,
+        Self::BatteryPercent,
+        Self::UsbPowerPresent,
+        Self::AudioRms,
+        Self::Emotion,
+        Self::Autonomy,
+        Self::Intent,
+        Self::Attention,
+        Self::ChirpRequest,
+        Self::TapPending,
+        Self::RemotePending,
+    ];
+
     /// Coarse grouping for human-readable reports.
     #[must_use]
     pub const fn group(self) -> FieldGroup {
@@ -226,6 +267,115 @@ impl Field {
             Self::ChirpRequest => FieldGroup::Voice,
             Self::TapPending | Self::RemotePending => FieldGroup::Input,
         }
+    }
+
+    /// `true` iff this field's value differs between `before` and
+    /// `after`. Used by the debug-mode write enforcement in
+    /// [`Director::run`] to detect undeclared mutations.
+    #[must_use]
+    pub fn changed(self, before: &Entity, after: &Entity) -> bool {
+        match self {
+            Self::LeftEyePhase => before.face.left_eye.phase != after.face.left_eye.phase,
+            Self::LeftEyeWeight => before.face.left_eye.weight != after.face.left_eye.weight,
+            Self::LeftEyeOpenWeight => {
+                before.face.left_eye.open_weight != after.face.left_eye.open_weight
+            }
+            Self::LeftEyeCenter => before.face.left_eye.center != after.face.left_eye.center,
+            Self::RightEyePhase => before.face.right_eye.phase != after.face.right_eye.phase,
+            Self::RightEyeWeight => before.face.right_eye.weight != after.face.right_eye.weight,
+            Self::RightEyeOpenWeight => {
+                before.face.right_eye.open_weight != after.face.right_eye.open_weight
+            }
+            Self::RightEyeCenter => before.face.right_eye.center != after.face.right_eye.center,
+            Self::MouthWeight => before.face.mouth.weight != after.face.mouth.weight,
+            Self::MouthOpen => {
+                // f32 != f32: bitwise comparison is what we want — any
+                // arithmetic change at all counts as a write, including
+                // NaN→NaN and 0.0→-0.0.
+                before.face.mouth.mouth_open.to_bits() != after.face.mouth.mouth_open.to_bits()
+            }
+            Self::MouthCenter => before.face.mouth.center != after.face.mouth.center,
+            Self::EyeCurve => before.face.style.eye_curve != after.face.style.eye_curve,
+            Self::MouthCurve => before.face.style.mouth_curve != after.face.style.mouth_curve,
+            Self::CheekBlush => before.face.style.cheek_blush != after.face.style.cheek_blush,
+            Self::EyeScale => before.face.style.eye_scale != after.face.style.eye_scale,
+            Self::BlinkRateScale => {
+                before.face.style.blink_rate_scale != after.face.style.blink_rate_scale
+            }
+            Self::BreathDepthScale => {
+                before.face.style.breath_depth_scale != after.face.style.breath_depth_scale
+            }
+            Self::HeadPose => {
+                before.motor.head_pose.pan_deg.to_bits() != after.motor.head_pose.pan_deg.to_bits()
+                    || before.motor.head_pose.tilt_deg.to_bits()
+                        != after.motor.head_pose.tilt_deg.to_bits()
+            }
+            Self::HeadPoseActual => {
+                before.motor.head_pose_actual.pan_deg.to_bits()
+                    != after.motor.head_pose_actual.pan_deg.to_bits()
+                    || before.motor.head_pose_actual.tilt_deg.to_bits()
+                        != after.motor.head_pose_actual.tilt_deg.to_bits()
+            }
+            Self::AccelG => {
+                let (bx, by, bz) = before.perception.accel_g;
+                let (ax, ay, az) = after.perception.accel_g;
+                bx.to_bits() != ax.to_bits()
+                    || by.to_bits() != ay.to_bits()
+                    || bz.to_bits() != az.to_bits()
+            }
+            Self::GyroDps => {
+                let (bx, by, bz) = before.perception.gyro_dps;
+                let (ax, ay, az) = after.perception.gyro_dps;
+                bx.to_bits() != ax.to_bits()
+                    || by.to_bits() != ay.to_bits()
+                    || bz.to_bits() != az.to_bits()
+            }
+            Self::AmbientLux => match (before.perception.ambient_lux, after.perception.ambient_lux)
+            {
+                (Some(b), Some(a)) => b.to_bits() != a.to_bits(),
+                (None, None) => false,
+                _ => true,
+            },
+            Self::BatteryPercent => {
+                before.perception.battery_percent != after.perception.battery_percent
+            }
+            Self::UsbPowerPresent => {
+                before.perception.usb_power_present != after.perception.usb_power_present
+            }
+            Self::AudioRms => match (before.perception.audio_rms, after.perception.audio_rms) {
+                (Some(b), Some(a)) => b.to_bits() != a.to_bits(),
+                (None, None) => false,
+                _ => true,
+            },
+            Self::Emotion => before.mind.affect.emotion != after.mind.affect.emotion,
+            Self::Autonomy => before.mind.autonomy != after.mind.autonomy,
+            Self::Intent => before.mind.intent != after.mind.intent,
+            Self::Attention => before.mind.attention != after.mind.attention,
+            Self::ChirpRequest => before.voice.chirp_request != after.voice.chirp_request,
+            Self::TapPending => before.input.tap_pending != after.input.tap_pending,
+            Self::RemotePending => before.input.remote_pending != after.input.remote_pending,
+        }
+    }
+}
+
+/// Debug-mode assertion: panic if `after` differs from `before` on any
+/// field outside `declared`. Used by [`Director::run`] to enforce that
+/// modifiers and skills only mutate fields they declared in their
+/// `writes:` slice. No-op in release builds (callers gate the
+/// snapshot under `cfg(debug_assertions)` too).
+///
+/// `actor` is the offending modifier / skill name, included in the
+/// panic message for actionable diagnostics.
+#[cfg(debug_assertions)]
+fn assert_only_writes(actor: &str, before: &Entity, after: &Entity, declared: &[Field]) {
+    for field in Field::ALL {
+        assert!(
+            !field.changed(before, after) || declared.contains(field),
+            "ECS contract violation: `{actor}` wrote undeclared field `{field:?}` \
+             (group `{group:?}`). Add it to the modifier's / skill's `writes:` slice, \
+             or stop writing it.",
+            group = field.group(),
+        );
     }
 }
 
@@ -364,7 +514,25 @@ impl<'a> Director<'a> {
     ///
     /// Returns [`RegistryFull::Skills`] if the skill registry is full
     /// ([`SKILL_CAP`]).
+    ///
+    /// # Panics (debug builds only)
+    ///
+    /// Panics if the skill's [`SkillMeta::writes`] slice contains a
+    /// field outside the [`FieldGroup::Mind`] / [`FieldGroup::Voice`]
+    /// groups. Skills are restricted to writing intent / attention /
+    /// chirp by architecture; face / motor are modifier territory.
     pub fn add_skill(&mut self, s: &'a mut dyn Skill) -> Result<&mut Self, RegistryFull> {
+        let meta = s.meta();
+        debug_assert!(
+            meta.writes
+                .iter()
+                .all(|f| matches!(f.group(), FieldGroup::Mind | FieldGroup::Voice)),
+            "Skill `{}` declares a write outside Mind/Voice — skills must only \
+             touch mind / voice / events per architecture; face / motor are \
+             modifier territory. Declared writes: {:?}",
+            meta.name,
+            meta.writes,
+        );
         self.skills.push(s).map_err(|_| RegistryFull::Skills)?;
         Ok(self)
     }
@@ -410,14 +578,27 @@ impl<'a> Director<'a> {
         entity.events = Events::default();
 
         for slot in &mut self.modifiers {
+            #[cfg(debug_assertions)]
+            let before = *entity;
             slot.modifier.update(entity);
+            #[cfg(debug_assertions)]
+            assert_only_writes(
+                slot.modifier.meta().name,
+                &before,
+                entity,
+                slot.modifier.meta().writes,
+            );
         }
 
         for s in &mut self.skills {
             if s.should_fire(entity) {
+                #[cfg(debug_assertions)]
+                let before = *entity;
                 // `should_fire` is the only gate; `SkillStatus::Done`
                 // vs `Continuing` is reserved for skill state-tracking.
                 let _status: SkillStatus = s.invoke(entity);
+                #[cfg(debug_assertions)]
+                assert_only_writes(s.meta().name, &before, entity, s.meta().writes);
             }
         }
 
@@ -456,24 +637,24 @@ mod tests {
         description: "test fixture",
         phase: Phase::Affect,
         priority: -10,
-        reads: &[],
-        writes: &[],
+        reads: &[Field::LeftEyeWeight],
+        writes: &[Field::LeftEyeWeight],
     };
     static M_AFFECT_LOW: ModifierMeta = ModifierMeta {
         name: "AffectLowPriority",
         description: "test fixture",
         phase: Phase::Affect,
         priority: 10,
-        reads: &[],
-        writes: &[],
+        reads: &[Field::LeftEyeWeight],
+        writes: &[Field::LeftEyeWeight],
     };
     static M_EXPRESSION: ModifierMeta = ModifierMeta {
         name: "Expression",
         description: "test fixture",
         phase: Phase::Expression,
         priority: 0,
-        reads: &[],
-        writes: &[],
+        reads: &[Field::LeftEyeWeight],
+        writes: &[Field::LeftEyeWeight],
     };
 
     impl Modifier for OrderRecorder {
@@ -565,5 +746,89 @@ mod tests {
         assert_eq!(Field::Emotion.group(), FieldGroup::Mind);
         assert_eq!(Field::ChirpRequest.group(), FieldGroup::Voice);
         assert_eq!(Field::TapPending.group(), FieldGroup::Input);
+    }
+
+    #[test]
+    fn field_all_covers_every_variant() {
+        // Cheap exhaustiveness pin: every variant in `Field::ALL` must
+        // round-trip through `group()` (which is exhaustive on the
+        // enum). The real risk this catches is forgetting to extend
+        // `Field::ALL` after adding a new variant — the enforcement
+        // would silently miss writes to the new field. If a future
+        // variant is added, this `len` check needs bumping too.
+        for f in Field::ALL {
+            let _ = f.group();
+        }
+        assert_eq!(
+            Field::ALL.len(),
+            32,
+            "update Field::ALL when adding variants"
+        );
+    }
+
+    /// Bad modifier: declares no writes but mutates `face.left_eye.weight`.
+    /// Used to verify the debug-mode enforcement actually fires.
+    struct UndeclaredWriter;
+
+    static M_UNDECLARED: ModifierMeta = ModifierMeta {
+        name: "UndeclaredWriter",
+        description: "test fixture that lies about its writes",
+        phase: Phase::Expression,
+        priority: 0,
+        reads: &[],
+        writes: &[],
+    };
+
+    impl Modifier for UndeclaredWriter {
+        fn meta(&self) -> &'static ModifierMeta {
+            &M_UNDECLARED
+        }
+        fn update(&mut self, entity: &mut Entity) {
+            entity.face.left_eye.weight = 42;
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "ECS contract violation")]
+    #[cfg(debug_assertions)]
+    fn undeclared_modifier_write_panics_in_debug() {
+        let mut bad = UndeclaredWriter;
+        let mut director = Director::new();
+        director.add_modifier(&mut bad).unwrap();
+        let mut entity = Entity::default();
+        director.run(&mut entity, Instant::from_millis(0));
+    }
+
+    /// Bad skill: declares it writes `Field::HeadPose`, which is a
+    /// Motor field — skills aren't allowed there. Caught at
+    /// registration.
+    struct OutOfLaneSkill;
+
+    static S_OUT_OF_LANE: SkillMeta = SkillMeta {
+        name: "OutOfLaneSkill",
+        description: "test fixture that declares a Motor write",
+        priority: 0,
+        writes: &[Field::HeadPose],
+    };
+
+    impl Skill for OutOfLaneSkill {
+        fn meta(&self) -> &'static SkillMeta {
+            &S_OUT_OF_LANE
+        }
+        fn should_fire(&self, _entity: &Entity) -> bool {
+            false
+        }
+        fn invoke(&mut self, _entity: &mut Entity) -> SkillStatus {
+            SkillStatus::Done
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "declares a write outside Mind/Voice")]
+    #[cfg(debug_assertions)]
+    fn skill_writing_motor_field_panics_at_registration() {
+        let mut bad = OutOfLaneSkill;
+        let mut director = Director::new();
+        let _ = director.add_skill(&mut bad);
     }
 }
