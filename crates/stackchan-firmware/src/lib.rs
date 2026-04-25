@@ -21,6 +21,7 @@ pub mod ambient;
 pub mod audio;
 pub mod board;
 pub mod button;
+pub mod camera;
 pub mod clock;
 pub mod framebuffer;
 pub mod head;

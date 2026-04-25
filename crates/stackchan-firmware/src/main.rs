@@ -25,8 +25,8 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, audio, board, button, clock, framebuffer, head, imu, ir, leds, mag, power, touch,
-    wallclock,
+    ambient, audio, board, button, camera, clock, framebuffer, head, imu, ir, leds, mag, power,
+    touch, wallclock,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -37,6 +37,8 @@ use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::{Point as EgPoint, Size},
+    pixelcolor::Rgb565,
+    pixelcolor::raw::RawU16,
     primitives::Rectangle,
 };
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -195,6 +197,17 @@ async fn render_task(mut display: LcdDisplay) {
     // Starts `false`; the boot reading itself only fires the beep if
     // we boot already below the enter threshold (and unplugged).
     let mut alert_armed_for_low: bool = false;
+    // Camera-mode state. The button task's long-press handler is the
+    // sole producer of `CAMERA_MODE_SIGNAL`; we mirror it locally so
+    // every render tick can branch quickly without re-checking the
+    // signal. Starts `false` (avatar mode).
+    let mut camera_mode: bool = false;
+    // Most-recently completed camera frame as a `&'static [u8]`. The
+    // camera task publishes one of these on `CAMERA_FRAME_SIGNAL`
+    // after copying each ping-pong buffer into a scratch slot; we
+    // hold the latest so we keep blitting it until a fresher frame
+    // arrives. `None` until the first capture completes.
+    let mut latest_camera_frame: Option<&'static [u8]> = None;
 
     // Pre-compute the blit rect once; it never changes.
     let canvas = Rectangle::new(EgPoint::zero(), Size::new(FB_WIDTH, FB_HEIGHT));
@@ -208,6 +221,39 @@ async fn render_task(mut display: LcdDisplay) {
     loop {
         let now = clock.now();
 
+        // Drain camera-mode toggle edges from the button task. Each
+        // signal is a fresh "user wants this mode" assertion; we mirror
+        // it locally + fire the appropriate audio chirp on transitions.
+        // The camera task gets the same signal directly and starts /
+        // stops streaming accordingly.
+        if let Some(active) = camera::CAMERA_MODE_SIGNAL.try_take()
+            && active != camera_mode
+        {
+            camera_mode = active;
+            let chirp = if active {
+                audio::try_enqueue_camera_mode_enter()
+            } else {
+                audio::try_enqueue_camera_mode_exit()
+            };
+            if let Err(e) = chirp {
+                defmt::warn!(
+                    "audio: camera-mode chirp dropped ({:?})",
+                    defmt::Debug2Format(&e),
+                );
+            }
+            // Re-publish so the camera task (which may have been
+            // drained between this take and its own try_take) still
+            // sees the latest intent. `Signal::signal` is latest-
+            // wins so a duplicate publish is safe.
+            camera::CAMERA_MODE_SIGNAL.signal(active);
+        }
+        // Drain any newly completed camera frame slice. Latest-wins:
+        // we hold the most recent slice ref until the camera task
+        // publishes a fresher one.
+        if let Some(frame) = camera::CAMERA_FRAME_SIGNAL.try_take() {
+            latest_camera_frame = Some(frame);
+        }
+
         // Drain any tap edges the touch task or power-button task
         // published since last frame. Both sources publish to the
         // same signal so a button press is UX-indistinguishable from
@@ -215,7 +261,16 @@ async fn render_task(mut display: LcdDisplay) {
         // is the common case and means `EmotionTouch::update` only
         // does the expired-hold cleanup work this tick.
         if touch::TAP_SIGNAL.try_take().is_some() {
-            emotion_touch.tap();
+            if camera_mode {
+                // In camera mode a tap means "capture this frame":
+                // ask the camera task to log stats + a thumbnail
+                // strip over RTT next frame, instead of cycling
+                // emotion (which the user can't see anyway).
+                camera::CAMERA_CAPTURE_REQUEST.signal(());
+                defmt::debug!("render: tap in camera mode → capture request");
+            } else {
+                emotion_touch.tap();
+            }
         }
         // Drain IR-remote decoded commands, if any.
         if let Some(cmd) = ir::REMOTE_SIGNAL.try_take() {
@@ -335,16 +390,43 @@ async fn render_task(mut display: LcdDisplay) {
             avatar.head_pose_actual = actual;
         }
 
-        // `frame_eq` intentionally skips `head_pose` — the LCD is mounted
-        // rigidly to the head, so pan/tilt updates never change pixels.
-        // `IdleSway` mutates `avatar.head_pose` every tick; using `==`
-        // here would force a full-frame SPI blit on every sway step.
-        if last_rendered
+        // Pick a blit target based on mode:
+        //  - camera mode: grab the latest completed camera frame and
+        //    blit those QVGA RGB565 bytes directly. The camera frame
+        //    is 320×240 (= the LCD resolution) so it's a 1:1 blit;
+        //    we just unpack the byte stream into `Rgb565` pixels for
+        //    `fill_contiguous`. We zero `last_rendered` so the next
+        //    avatar-mode render does a full redraw rather than
+        //    incorrectly thinking the avatar is already on screen.
+        //  - avatar mode: the existing `frame_eq`-gated avatar blit.
+        if camera_mode {
+            if let Some(frame) = latest_camera_frame {
+                let pixels = frame.chunks_exact(2).map(|chunk| {
+                    Rgb565::from(RawU16::new(
+                        (u16::from(chunk[0]) << 8) | u16::from(chunk[1]),
+                    ))
+                });
+                match display.fill_contiguous(&canvas, pixels) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        defmt::error!("render: camera blit failed: {}", defmt::Debug2Format(&e))
+                    }
+                }
+            }
+            last_rendered = None;
+        } else if last_rendered
             .as_ref()
             .is_none_or(|prev| !prev.frame_eq(&avatar))
         {
-            // Draw is Infallible on `Framebuffer`; the `let _ =` discards
-            // the `Result<(), Infallible>` without triggering unwrap lints.
+            // `frame_eq` intentionally skips `head_pose` — the LCD is
+            // mounted rigidly to the head, so pan/tilt updates never
+            // change pixels. `IdleSway` mutates `avatar.head_pose`
+            // every tick; using `==` here would force a full-frame
+            // SPI blit on every sway step.
+            //
+            // Draw is Infallible on `Framebuffer`; the `let _ =`
+            // discards the `Result<(), Infallible>` without
+            // triggering unwrap lints.
             let _ = avatar.draw(&mut fb);
             match display.fill_contiguous(&canvas, fb.as_slice().iter().copied()) {
                 Ok(()) => last_rendered = Some(avatar),
@@ -502,6 +584,18 @@ async fn audio_task(peripherals: audio::AudioPeripherals) -> ! {
     audio::run_audio_task(peripherals).await
 }
 
+/// Camera task. Owns the `LCD_CAM` peripheral + `DMA_CH1` + 11 DVP pins,
+/// shares the I²C0 bus for SCCB control. Runs the GC0308 register
+/// init at boot, then mode-gates streaming on
+/// [`camera::CAMERA_MODE_SIGNAL`]: when active, alternates ping-pong
+/// DMA captures and copies each completed frame into a PSRAM scratch
+/// slot, publishing the slice via [`camera::CAMERA_FRAME_SIGNAL`] for
+/// the render task to blit.
+#[embassy_executor::task]
+async fn camera_task(peripherals: camera::CameraPeripherals) -> ! {
+    camera::run_camera_task(peripherals).await
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -634,6 +728,32 @@ async fn main(spawner: Spawner) -> ! {
     };
     if let Err(e) = spawner.spawn(audio_task(audio_periph)) {
         defmt::panic!("spawn audio_task failed: {}", defmt::Debug2Format(&e));
+    }
+
+    // Camera subsystem. The task owns LCD_CAM + DMA_CH1 + the 11 DVP
+    // pins and shares the existing I²C0 bus for SCCB control. It
+    // runs SCCB init + LCD_CAM construction once at boot, then
+    // mode-gates streaming on `CAMERA_MODE_SIGNAL`. Failures inside
+    // the task log-and-park — camera mode silently degrades to "no
+    // preview available" while the rest of the avatar keeps running.
+    let camera_periph = camera::CameraPeripherals {
+        lcd_cam: peripherals.LCD_CAM,
+        dma: peripherals.DMA_CH1,
+        i2c: I2cDevice::new(board_io.i2c_bus),
+        pclk: peripherals.GPIO45,
+        href: peripherals.GPIO38,
+        vsync: peripherals.GPIO46,
+        d0: peripherals.GPIO39,
+        d1: peripherals.GPIO40,
+        d2: peripherals.GPIO41,
+        d3: peripherals.GPIO42,
+        d4: peripherals.GPIO15,
+        d5: peripherals.GPIO16,
+        d6: peripherals.GPIO48,
+        d7: peripherals.GPIO47,
+    };
+    if let Err(e) = spawner.spawn(camera_task(camera_periph)) {
+        defmt::panic!("spawn camera_task failed: {}", defmt::Debug2Format(&e));
     }
 
     // One-shot wall-clock read. Drives both the boot-log timestamp

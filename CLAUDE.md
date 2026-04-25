@@ -23,6 +23,25 @@ source ~/export-esp.sh
 just fmr
 ```
 
+## Flashing from an agent / non-TTY shell
+
+`just fmr` (and any `espflash …--monitor` command) invokes an interactive
+input reader that fails immediately with `× Failed to initialize input
+reader` when stdin is not a TTY — which is the default for any
+agent-spawned bash. Run flash + monitor inside **tmux** so the espflash
+process gets a real PTY:
+
+```bash
+tmux new-session -d -s scfmr 'bash -l'
+tmux send-keys -t scfmr 'source ~/export-esp.sh && just fmr 2>&1 | tee /tmp/scfmr.log' Enter
+# Read /tmp/scfmr.log to follow boot output without attaching to the session.
+```
+
+Reuse the same session for re-flashes: `Ctrl-C` first
+(`tmux send-keys -t scfmr C-c`) to break out of the running monitor,
+then re-issue `just fmr`. To pick up a running device without
+resetting it, use `just reattach` instead of `just fmr`.
+
 ## Pre-commit Hook
 
 `.githooks/pre-commit` runs fmt, clippy (strict), host tests, doctests, workspace check, and a Cargo.lock drift guard. After cloning:

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Scaffold: minimal async I²C control-path driver for the GalaxyCore GC0308 VGA CMOS camera. Parallel/DVP video transport is out of scope."
+description = "Minimal async I²C / SCCB control-path driver for the GalaxyCore GC0308 VGA CMOS camera. Covers chip-ID probe, default-register table, format / window / streaming control. Parallel/DVP video transport is out of scope."
 
 [lints]
 workspace = true

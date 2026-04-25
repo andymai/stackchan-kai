@@ -1556,6 +1556,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "ft6336u",
+ "gc0308",
  "ir-nec",
  "ltr553",
  "micromath",
