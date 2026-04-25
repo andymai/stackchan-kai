@@ -14,25 +14,49 @@
 //! [`Phase::Affect`]: crate::director::Phase::Affect
 //! [`Phase::Audio`]: crate::director::Phase::Audio
 
-/// Per-zone body-touch state (back-of-head `Si12T` pads).
+/// Per-zone body-touch intensity (back-of-head `Si12T` pads).
 ///
-/// Continuous "currently touched" state — modifiers / skills do their
-/// own edge detection if they need tap vs hold vs swipe semantics.
+/// Each zone carries a 0..=3 intensity matching the chip's 2-bit
+/// per-channel encoding (`0` = no touch, `1..=3` = touch with rising
+/// firmness). Modifiers / skills do their own edge / gesture detection.
+///
+/// The intensity (vs a plain `bool`) is what `position()` and the
+/// swipe state machine in [`crate::modifiers::BodyGesture`] need —
+/// reducing to `bool` would lose the centroid math.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BodyTouch {
-    /// Left zone is currently touched (`Si12T` intensity ≥ 1).
-    pub left: bool,
-    /// Centre zone is currently touched.
-    pub centre: bool,
-    /// Right zone is currently touched.
-    pub right: bool,
+    /// Left zone intensity, `0..=3`.
+    pub left: u8,
+    /// Centre zone intensity, `0..=3`.
+    pub centre: u8,
+    /// Right zone intensity, `0..=3`.
+    pub right: u8,
 }
 
 impl BodyTouch {
-    /// `true` if any zone is touched.
+    /// `true` if any zone has non-zero intensity (matches upstream's
+    /// `is_touched` heuristic of `intensity >= 1`).
     #[must_use]
     pub const fn any(&self) -> bool {
-        self.left || self.centre || self.right
+        self.left >= 1 || self.centre >= 1 || self.right >= 1
+    }
+
+    /// Centroid in `-100..=+100` (left-most → -100, centre → 0,
+    /// right-most → +100), weighted by intensity. Returns `0` when
+    /// no zones are touched. Used by gesture detection to recognise
+    /// swipes as the touch centroid moves across the strip.
+    #[must_use]
+    pub const fn position(&self) -> i16 {
+        let total = self.left as i16 + self.centre as i16 + self.right as i16;
+        if total == 0 {
+            return 0;
+        }
+        // Centre contributes 0; left = -100, right = +100. Max
+        // numerator magnitude is 3 × 100 = 300; dividing by total
+        // (≥ 1, ≤ 9) keeps the result in `-100..=+100` — well inside
+        // i16 range.
+        let weighted = (self.right as i16 - self.left as i16) * 100;
+        weighted / total
     }
 }
 

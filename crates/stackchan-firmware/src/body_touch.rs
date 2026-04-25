@@ -12,7 +12,7 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_hal_async::i2c::I2c as AsyncI2c;
-use si12t::Si12t;
+use si12t::{Intensity, Si12t};
 use stackchan_core::BodyTouch;
 
 /// Latest body-touch reading: body-touch task → render task.
@@ -57,13 +57,24 @@ pub async fn run_body_touch_loop<I: AsyncI2c>(bus: I) -> ! {
         match chip.read_touch().await {
             Ok(touch) => {
                 BODY_TOUCH_SIGNAL.signal(BodyTouch {
-                    left: touch.left(),
-                    centre: touch.centre(),
-                    right: touch.right(),
+                    left: intensity_u8(touch.intensity.0),
+                    centre: intensity_u8(touch.intensity.1),
+                    right: intensity_u8(touch.intensity.2),
                 });
             }
             Err(e) => defmt::warn!("Si12T: read_touch failed: {}", defmt::Debug2Format(&e),),
         }
         ticker.next().await;
+    }
+}
+
+/// Convert the driver's `Intensity` enum to the engine's `0..=3`
+/// numeric encoding.
+const fn intensity_u8(i: Intensity) -> u8 {
+    match i {
+        Intensity::None => 0,
+        Intensity::Low => 1,
+        Intensity::Mid => 2,
+        Intensity::High => 3,
     }
 }

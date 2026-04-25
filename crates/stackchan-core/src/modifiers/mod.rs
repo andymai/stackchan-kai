@@ -58,6 +58,7 @@
 
 mod ambient_sleepy;
 mod blink;
+mod body_gesture;
 mod breath;
 mod emotion_cycle;
 mod emotion_head;
@@ -74,6 +75,11 @@ mod wake_on_voice;
 
 pub use ambient_sleepy::{AMBIENT_HOLD_MS, AmbientSleepy, SLEEPY_ENTER_LUX, SLEEPY_EXIT_LUX};
 pub use blink::Blink;
+pub use body_gesture::{
+    BODY_GESTURE_HOLD_MS, BodyGesture, DEFAULT_CENTRE_PRESS, DEFAULT_LEFT_PRESS,
+    DEFAULT_RIGHT_PRESS, DEFAULT_SWIPE_BACKWARD, DEFAULT_SWIPE_FORWARD, GestureMapping,
+    SWIPE_DELTA,
+};
 pub use breath::Breath;
 pub use emotion_cycle::EmotionCycle;
 pub use emotion_head::EmotionHead;
