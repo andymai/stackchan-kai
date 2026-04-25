@@ -38,8 +38,10 @@ pub struct Affect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OverrideSource {
-    /// Touch tap from the user.
+    /// Front-screen tap (FT6336U).
     Touch,
+    /// Back-of-head body-touch tap (`Si12T` 3-zone pads).
+    BodyTouch,
     /// IR-remote button press.
     Remote,
     /// IMU pickup detection.

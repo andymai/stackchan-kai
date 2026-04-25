@@ -65,9 +65,9 @@ use mipidsi::{
 use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
-        AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, ListenHead, LowBatteryEmotion, MouthOpenAudio, PickupReaction,
-        RemoteCommand, WakeOnVoice,
+        AmbientSleepy, Blink, BodyGesture, Breath, EmotionCycle, EmotionHead, EmotionStyle,
+        EmotionTouch, IdleDrift, IdleSway, ListenHead, LowBatteryEmotion, MouthOpenAudio,
+        PickupReaction, RemoteCommand, WakeOnVoice,
     },
     render_leds,
     skills::LookAtSound,
@@ -197,6 +197,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut listen_head = ListenHead::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut look_at_sound = LookAtSound::new();
+    let mut body_gesture = BodyGesture::new();
     let mut last_rendered: Option<Face> = None;
 
     // Build the Director and register the canonical modifier stack
@@ -208,6 +209,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut director = Director::new();
     director
         .add_modifier(&mut emotion_touch)
+        .expect("registry full");
+    director
+        .add_modifier(&mut body_gesture)
         .expect("registry full");
     director.add_modifier(&mut remote).expect("registry full");
     director.add_modifier(&mut pickup).expect("registry full");
@@ -256,7 +260,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + MouthOpenAudio + LookAtSound[skill]",
+        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + PickupReaction + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + MouthOpenAudio + LookAtSound[skill]",
         FRAME_PERIOD_MS
     );
 
