@@ -409,7 +409,7 @@ async fn render_task(mut display: LcdDisplay) {
                 match display.fill_contiguous(&canvas, pixels) {
                     Ok(()) => {}
                     Err(e) => {
-                        defmt::error!("render: camera blit failed: {}", defmt::Debug2Format(&e))
+                        defmt::error!("render: camera blit failed: {}", defmt::Debug2Format(&e));
                     }
                 }
             }
