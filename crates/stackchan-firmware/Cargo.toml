@@ -80,6 +80,10 @@ esp-println = { version = "0.17.0", default-features = false, features = [
 
 critical-section = "1.2.0"
 static_cell = "2.1.1"
+# `f32::sqrt` for the audio-task RMS computation. `stackchan-core`
+# already depends on the same major version for `MouthOpenAudio`'s
+# dB mapping; sharing the dep keeps the workspace libm-free.
+micromath = "2"
 
 [lib]
 name = "stackchan_firmware"

@@ -1557,6 +1557,7 @@ dependencies = [
  "ft6336u",
  "ir-nec",
  "ltr553",
+ "micromath",
  "mipidsi",
  "py32",
  "scservo",
