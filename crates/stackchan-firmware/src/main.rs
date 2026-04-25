@@ -63,7 +63,7 @@ use stackchan_core::{
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
         IdleDrift, IdleSway, LOW_BATTERY_ENTER_PERCENT, LOW_BATTERY_EXIT_PERCENT,
-        LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand,
+        LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand, WakeOnVoice,
     },
     render_leds,
 };
@@ -173,6 +173,7 @@ async fn render_task(mut display: LcdDisplay) {
     let mut pickup = PickupReaction::new();
     let mut ambient_sleepy = AmbientSleepy::new();
     let mut low_battery = LowBatteryEmotion::new();
+    let mut wake_on_voice = WakeOnVoice::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut blink = Blink::new();
@@ -200,7 +201,7 @@ async fn render_task(mut display: LcdDisplay) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + MouthOpenAudio",
+        "render task: {=u64} ms tick, EmotionTouch + RemoteCommand + PickupReaction + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + MouthOpenAudio",
         FRAME_PERIOD_MS
     );
 
@@ -274,13 +275,18 @@ async fn render_task(mut display: LcdDisplay) {
         // Drain the latest mic-RMS sample from the audio task — the
         // task publishes a fresh `AudioRms(linear)` per ~33 ms window
         // (one render frame at 30 FPS). `try_take` is non-blocking and
-        // misses are fine: latest-wins matches mic semantics.
+        // misses are fine: latest-wins matches mic semantics. Both
+        // `MouthOpenAudio` (visual) and `WakeOnVoice` (emotional)
+        // consume this — the former via its internal `set_rms`, the
+        // latter via reading `avatar.audio_rms` in `update`.
         if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
             mouth_open_audio.set_rms(rms.0);
+            avatar.audio_rms = Some(rms.0);
         }
         emotion_touch.update(&mut avatar, now);
         remote.update(&mut avatar, now);
         pickup.update(&mut avatar, now);
+        wake_on_voice.update(&mut avatar, now);
         ambient_sleepy.update(&mut avatar, now);
         low_battery.update(&mut avatar, now);
         cycle.update(&mut avatar, now);
