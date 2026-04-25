@@ -62,7 +62,8 @@ use stackchan_core::{
     Avatar, Clock, HeadDriver, LedFrame, Modifier,
     modifiers::{
         AmbientSleepy, Blink, Breath, EmotionCycle, EmotionHead, EmotionStyle, EmotionTouch,
-        IdleDrift, IdleSway, LowBatteryEmotion, MouthOpenAudio, PickupReaction, RemoteCommand,
+        IdleDrift, IdleSway, LOW_BATTERY_THRESHOLD_PERCENT, LowBatteryEmotion, MouthOpenAudio,
+        PickupReaction, RemoteCommand,
     },
     render_leds,
 };
@@ -151,6 +152,10 @@ type LcdDisplay = mipidsi::Display<
 /// trigger a redundant LCD blit because `head_pose` is excluded from
 /// `frame_eq`.
 #[embassy_executor::task]
+#[allow(
+    clippy::too_many_lines,
+    reason = "tick body composes 12+ modifiers + sensor drains + render — splitting fragments the per-frame ordering invariants"
+)]
 async fn render_task(mut display: LcdDisplay) {
     let clock = HalClock;
     let mut fb = Framebuffer::new();
@@ -182,6 +187,12 @@ async fn render_task(mut display: LcdDisplay) {
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut last_rendered: Option<Avatar> = None;
     let mut led_frame = LedFrame::default();
+    // Tracks the previous battery-percent reading so we can detect a
+    // *downward* crossing of `LOW_BATTERY_THRESHOLD_PERCENT` and fire
+    // the low-battery alert clip exactly once per crossing event.
+    // `None` until the first reading; the boot reading itself never
+    // counts as a crossing.
+    let mut last_battery_percent: Option<u8> = None;
 
     // Pre-compute the blit rect once; it never changes.
     let canvas = Rectangle::new(EgPoint::zero(), Size::new(FB_WIDTH, FB_HEIGHT));
@@ -232,8 +243,30 @@ async fn render_task(mut display: LcdDisplay) {
         // Drain the latest battery-percent reading from the AXP2101
         // power task (1 Hz publish rate). `LowBatteryEmotion` reads
         // `avatar.battery_percent` to decide whether to force Sleepy.
+        // A *downward* crossing of the threshold (e.g. 16% → 14%)
+        // also fires the low-battery alert clip once per crossing —
+        // the audible cue complements the silent emotion change.
         if let Some(percent) = power::BATTERY_PERCENT_SIGNAL.try_take() {
             avatar.battery_percent = Some(percent);
+            if let Some(prev) = last_battery_percent
+                && prev >= LOW_BATTERY_THRESHOLD_PERCENT
+                && percent < LOW_BATTERY_THRESHOLD_PERCENT
+            {
+                if let Err(e) = audio::try_enqueue_clip(audio::LOW_BATTERY_ALERT) {
+                    defmt::warn!(
+                        "audio: low-battery alert dropped, queue full ({:?})",
+                        defmt::Debug2Format(&e)
+                    );
+                } else {
+                    defmt::info!(
+                        "audio: low-battery alert enqueued ({=u8}% → {=u8}%, threshold {=u8}%)",
+                        prev,
+                        percent,
+                        LOW_BATTERY_THRESHOLD_PERCENT,
+                    );
+                }
+            }
+            last_battery_percent = Some(percent);
         }
         // Drain the latest mic-RMS sample from the audio task — the
         // task publishes a fresh `AudioRms(linear)` per ~33 ms window

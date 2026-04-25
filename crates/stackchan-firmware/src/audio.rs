@@ -26,9 +26,12 @@
 //!    - RX (`run_rms_loop`): pop DMA samples, compute linear RMS over
 //!      each [`RMS_WINDOW_SAMPLES`]-sample window, normalise against
 //!      full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
-//!    - TX (`run_tx_loop`): push a 1 kHz sine for the boot greeting
-//!      ([`TONE_DURATION_MS`]), then continuous digital silence so the
-//!      AW88298 stays clock-locked.
+//!    - TX (`run_tx_loop`): play queued [`AudioClip`]s back-to-back,
+//!      filling with digital silence between/after clips so the
+//!      AW88298 stays clock-locked. The bring-up enqueues
+//!      [`BOOT_GREETING`] so the speaker says hello at boot;
+//!      higher-level code (e.g. low-battery alerts) enqueues more
+//!      clips via [`try_enqueue_clip`].
 //!
 //! This matches esp-bsp's ordering in `bsp_audio_codec_microphone_init`:
 //! `bsp_audio_init` (spins up I²S + MCLK) runs *before* `es7210_codec_new`.
@@ -42,7 +45,11 @@
 //!   runs without speaker output).
 
 use aw88298::Aw88298;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex,
+    channel::{Channel, TrySendError},
+    signal::Signal,
+};
 use embassy_time::{Delay, Duration, Timer};
 use es7210::Es7210;
 use esp_hal::{
@@ -116,21 +123,108 @@ const BOOT_VOLUME_DB: i8 = -18;
 /// speaker doesn't pop.
 const TX_SETTLE_MS: u32 = 30;
 
-/// Boot-greeting tone duration. ~½ s is long enough to be unmistakably
-/// audible without becoming annoying on every reboot.
-const TONE_DURATION_MS: u32 = 500;
-
-/// Total samples in the boot-greeting tone burst.
-const TONE_TOTAL_SAMPLES: u32 = SAMPLE_RATE_HZ * TONE_DURATION_MS / 1000;
-
-/// One-cycle sine table, 16 samples = 1 kHz at 16 kHz sample rate.
-/// Amplitude `8192 ≈ -12 dBFS`, picked so the AW88298 output stage
-/// stays well clear of the digital ceiling. Pre-computed at compile
-/// time so the TX feeder is `sin()`-free at runtime (and `libm`-free
-/// in this firmware crate).
-const SINE_TABLE: [i16; 16] = [
+/// One-cycle 1 kHz sine table at 16 kHz sample rate. 16 samples per
+/// cycle. Amplitude `8192 ≈ -12 dBFS`, picked so the AW88298 output
+/// stage stays well clear of the digital ceiling. Pre-computed at
+/// compile time so the TX feeder is `sin()`-free at runtime (and
+/// `libm`-free in this firmware crate).
+const SINE_1KHZ_CYCLE: [i16; 16] = [
     0, 3135, 5793, 7568, 8192, 7568, 5793, 3135, 0, -3135, -5793, -7568, -8192, -7568, -5793, -3135,
 ];
+
+/// One-cycle 2 kHz sine table at 16 kHz sample rate. 8 samples per
+/// cycle. Same -12 dBFS amplitude as [`SINE_1KHZ_CYCLE`]; intended for
+/// alert-style beeps (low-battery, error chirps) where the higher
+/// pitch makes it distinct from the boot greeting.
+const SINE_2KHZ_CYCLE: [i16; 8] = [0, 5793, 8192, 5793, 0, -5793, -8192, -5793];
+
+/// Boot-greeting clip: 500 ms of 1 kHz sine. Plays once at boot via
+/// [`run_audio_task`] enqueueing it into [`AUDIO_TX_QUEUE`].
+///
+/// `500 cycles × 16 samples = 8 000 samples = 500 ms` at the 16 kHz
+/// sample rate. Tweak `cycles` to change duration without touching
+/// the table.
+pub const BOOT_GREETING: AudioClip = AudioClip {
+    samples: &SINE_1KHZ_CYCLE,
+    cycles: 500,
+};
+
+/// Two short 2 kHz beeps separated by silence — the canonical
+/// "low battery" alert. Producers (e.g. main.rs's render loop on a
+/// threshold-crossing detection) enqueue this clip via
+/// [`try_enqueue_clip`].
+///
+/// One full beep = 200 ms = 400 cycles at 8 samples / cycle.
+/// The current encoding is one continuous beep; if hardware listening
+/// suggests two short pulses are clearer, swap the table for
+/// `[beep, gap, beep]` of equivalent total length.
+pub const LOW_BATTERY_ALERT: AudioClip = AudioClip {
+    samples: &SINE_2KHZ_CYCLE,
+    cycles: 400,
+};
+
+/// PCM audio clip queued for TX playback.
+///
+/// Stored as a `&'static [i16]` buffer (one cycle of a tone, or a
+/// pre-baked sample) plus a `cycles` count. The TX feeder plays
+/// through `samples` `cycles` times back-to-back, then transitions
+/// to silence (or the next queued clip).
+///
+/// `cycles = 0` plays nothing — the clip is consumed but produces
+/// zero output samples. Useful for testing the queue without making
+/// noise.
+///
+/// # Examples
+///
+/// ```ignore
+/// // 500 ms of a 1 kHz tone using a 16-sample cycle table.
+/// const TONE: &[i16] = &[/* one 1 kHz cycle at 16 kHz */];
+/// let clip = AudioClip::new(TONE, 500);
+/// audio::AUDIO_TX_QUEUE.try_send(clip).ok();
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct AudioClip {
+    /// Sample buffer. Played through `cycles` times, in order.
+    /// Conventional encoding: 16-bit signed mono at
+    /// [`SAMPLE_RATE_HZ`].
+    pub samples: &'static [i16],
+    /// How many times to loop through `samples`. `1` = one-shot.
+    pub cycles: u32,
+}
+
+impl AudioClip {
+    /// Construct a clip from a sample buffer + cycle count.
+    #[must_use]
+    pub const fn new(samples: &'static [i16], cycles: u32) -> Self {
+        Self { samples, cycles }
+    }
+
+    /// Construct a one-shot clip (plays through `samples` exactly once).
+    #[must_use]
+    pub const fn one_shot(samples: &'static [i16]) -> Self {
+        Self { samples, cycles: 1 }
+    }
+}
+
+/// TX clip queue.
+///
+/// Producers (any task) enqueue [`AudioClip`]s; the audio task plays
+/// them back-to-back, falling back to digital silence when empty.
+/// Capacity 4 fits a few queued alerts without blocking the producer;
+/// when the queue is full, [`try_enqueue_clip`] returns `Err` and the
+/// caller can drop the clip rather than block.
+pub static AUDIO_TX_QUEUE: Channel<CriticalSectionRawMutex, AudioClip, 4> = Channel::new();
+
+/// Enqueue a clip for TX playback. Non-blocking; returns `Err` if the
+/// queue is full so the caller can drop the clip rather than wait.
+///
+/// # Errors
+///
+/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] has 4 clips
+/// already queued.
+pub fn try_enqueue_clip(clip: AudioClip) -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(clip)
+}
 
 /// Microphone RMS sample, published per render tick.
 ///
@@ -359,10 +453,20 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         defmt::info!("audio: AW88298 un-muted — speaker live");
     }
 
+    // Enqueue the boot greeting so the TX feeder has audible content
+    // queued up the moment it starts pushing samples. If somehow the
+    // queue is already full (shouldn't be — this is the first
+    // producer) we drop the clip rather than block bring-up.
+    if let Err(e) = try_enqueue_clip(BOOT_GREETING) {
+        defmt::warn!(
+            "audio: failed to enqueue boot greeting ({:?}); silent boot",
+            defmt::Debug2Format(&e)
+        );
+    }
+
     defmt::info!(
-        "audio: bring-up complete — RX RMS loop ({=u32}-sample windows) + TX feeder (boot tone {=u32} ms)",
+        "audio: bring-up complete — RX RMS loop ({=u32}-sample windows) + TX feeder (clip-queue driven)",
         RMS_WINDOW_SAMPLES,
-        TONE_DURATION_MS,
     );
 
     // Both halves are `-> !`, so `join` itself never resolves; the
@@ -479,37 +583,71 @@ fn accumulate(sum_sq: &mut f32, count: &mut u32, sample: i16) {
     *count += 1;
 }
 
-/// TX feeder. Pushes a 1 kHz boot-greeting sine for [`TONE_DURATION_MS`],
-/// then continuous digital silence (zero samples) so the AW88298's I²S
-/// receiver stays locked to the clock domain even when the firmware
-/// isn't producing audio.
+/// In-flight playback of one [`AudioClip`]. Tracks the cursor inside
+/// `samples` and how many full cycles remain.
+struct ClipPlayback {
+    /// Held by reference; the clip itself lives in `.rodata` (or any
+    /// `'static` location).
+    samples: &'static [i16],
+    /// Index of the next sample to emit on a `next_sample()` call.
+    cursor: usize,
+    /// Cycles left to play through `samples`. Decremented to zero
+    /// when the cursor wraps past the end of the slice; once at zero
+    /// the clip is done and `next_sample()` returns `None`.
+    cycles_remaining: u32,
+}
+
+impl ClipPlayback {
+    /// Construct a fresh playback cursor at the start of `clip`.
+    const fn new(clip: AudioClip) -> Self {
+        Self {
+            samples: clip.samples,
+            cursor: 0,
+            cycles_remaining: clip.cycles,
+        }
+    }
+
+    /// Yield the next sample, or `None` if the clip is done. An empty
+    /// `samples` slice or `cycles = 0` yields `None` immediately.
+    fn next_sample(&mut self) -> Option<i16> {
+        if self.cycles_remaining == 0 || self.samples.is_empty() {
+            return None;
+        }
+        let s = self.samples[self.cursor];
+        self.cursor += 1;
+        if self.cursor >= self.samples.len() {
+            self.cursor = 0;
+            self.cycles_remaining -= 1;
+        }
+        Some(s)
+    }
+}
+
+/// TX feeder. Pulls [`AudioClip`]s off [`AUDIO_TX_QUEUE`] and plays
+/// them back-to-back; emits digital silence when the queue is empty
+/// so the AW88298's I²S receiver stays locked to the clock domain.
 ///
-/// Uses `push_with` so the closure produces exactly as many samples as
-/// the DMA tail accepts in this batch — no partial-acceptance bookkeeping
-/// outside the closure, and the sine phase advances 1:1 with samples
-/// actually played.
+/// Mid-batch transitions: when one clip ends partway through a push
+/// buffer, the feeder immediately checks the queue for the next clip
+/// and continues without an audible gap. If nothing is queued, the
+/// remainder of the buffer is filled with zeros and the loop tries
+/// again on the next push.
+///
+/// Uses `push_with` so the closure produces exactly as many samples
+/// as the DMA tail accepts in this batch — no partial-acceptance
+/// bookkeeping outside the closure.
 async fn run_tx_loop<BUFFER>(
     tx_transfer: &mut esp_hal::i2s::master::asynch::I2sWriteDmaTransferAsync<'_, BUFFER>,
 ) -> ! {
-    // Counts down per sample written. When it hits zero we switch to
-    // silence; checked after each `push_with` for the diagnostic log.
-    let mut tone_remaining: u32 = TONE_TOTAL_SAMPLES;
-    let mut sine_phase: usize = 0;
-    let mut announced_silence = false;
+    // The currently-playing clip, if any. `None` = silence.
+    let mut current: Option<ClipPlayback> = None;
 
     loop {
         let result = tx_transfer
             .push_with(|buf: &mut [u8]| {
                 let pairs = buf.len() / 2;
                 for i in 0..pairs {
-                    let sample = if tone_remaining > 0 {
-                        let s = SINE_TABLE[sine_phase];
-                        sine_phase = (sine_phase + 1) % SINE_TABLE.len();
-                        tone_remaining -= 1;
-                        s
-                    } else {
-                        0
-                    };
+                    let sample = next_sample_with_chaining(&mut current);
                     let bytes = sample.to_le_bytes();
                     buf[i * 2] = bytes[0];
                     buf[i * 2 + 1] = bytes[1];
@@ -524,17 +662,31 @@ async fn run_tx_loop<BUFFER>(
                 defmt::Debug2Format(&e)
             );
             Timer::after(Duration::from_millis(10)).await;
-            continue;
-        }
-
-        if !announced_silence && tone_remaining == 0 {
-            defmt::info!(
-                "audio: boot tone done ({=u32} samples); switching to silence",
-                TONE_TOTAL_SAMPLES,
-            );
-            announced_silence = true;
         }
     }
+}
+
+/// Yield one TX sample. If the current clip is exhausted, transition
+/// straight into the next queued clip (if any) so consecutive clips
+/// play without a silence gap. Returns `0` if no clip is playable.
+fn next_sample_with_chaining(current: &mut Option<ClipPlayback>) -> i16 {
+    // Up to two iterations: first attempt with `current`, second
+    // attempt with whatever was just pulled from the queue. Bounded
+    // because each new clip yields at least one sample (or `None` if
+    // its slice is empty / cycles == 0, in which case we fall
+    // through to silence).
+    for _ in 0..2 {
+        if let Some(s) = current.as_mut().and_then(ClipPlayback::next_sample) {
+            return s;
+        }
+        *current = AUDIO_TX_QUEUE.try_receive().ok().map(ClipPlayback::new);
+        if current.is_none() {
+            return 0;
+        }
+    }
+    // Shouldn't reach here for non-degenerate clips. Treat any
+    // pathological zero-yield clip as silence.
+    0
 }
 
 /// Infinite sleep for tasks that have nothing else to do. `-> !` so
