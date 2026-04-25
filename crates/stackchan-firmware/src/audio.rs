@@ -54,7 +54,7 @@ use embassy_sync::{
 use embassy_time::{Delay, Duration, Timer};
 use es7210::Es7210;
 use esp_hal::{
-    dma_buffers,
+    dma_circular_buffers,
     i2s::master::{Channels, Config as I2sConfig, DataFormat, I2s},
     peripherals::{DMA_CH0, GPIO0, GPIO13, GPIO14, GPIO33, GPIO34, I2S0},
     time::Rate,
@@ -236,6 +236,35 @@ const LOW_BATTERY_BEEP: AudioClip = AudioClip {
     samples: &SINE_2KHZ_CYCLE,
     cycles: 200,
 };
+
+/// First leg of the camera-mode-enter chirp: 50 ms of 1 kHz.
+/// Distinct from the pickup chirp (2 kHz → 4 kHz, brighter sweep) and
+/// from the wake chirp (single 1 kHz tone) by the descending two-tone
+/// pattern formed with [`CAMERA_ENTER_CHIRP_HI`].
+const CAMERA_ENTER_CHIRP_LO: AudioClip = AudioClip {
+    samples: &SINE_1KHZ_CYCLE,
+    cycles: 50,
+};
+/// Second leg of the camera-mode-enter chirp: 80 ms of 2 kHz —
+/// upward two-tone "doot-DEE" that signals "preview is now on
+/// screen." Plays back-to-back with [`CAMERA_ENTER_CHIRP_LO`].
+const CAMERA_ENTER_CHIRP_HI: AudioClip = AudioClip {
+    samples: &SINE_2KHZ_CYCLE,
+    cycles: 160,
+};
+
+/// First leg of the camera-mode-exit chirp: 80 ms of 2 kHz.
+/// Inverted ordering of the enter chirp — descending "DEE-doot" that
+/// signals "back to avatar."
+const CAMERA_EXIT_CHIRP_HI: AudioClip = AudioClip {
+    samples: &SINE_2KHZ_CYCLE,
+    cycles: 160,
+};
+/// Second leg of the camera-mode-exit chirp: 50 ms of 1 kHz.
+const CAMERA_EXIT_CHIRP_LO: AudioClip = AudioClip {
+    samples: &SINE_1KHZ_CYCLE,
+    cycles: 50,
+};
 /// 80 ms gap between the two low-battery beeps. Silence stored as a
 /// short cycle table looped many times — keeps the tx feeder code
 /// uniform (everything goes through clip playback).
@@ -356,6 +385,40 @@ pub fn try_enqueue_pickup_chirp() -> Result<(), TrySendError<AudioClip>> {
     Ok(())
 }
 
+/// Enqueue the camera-mode-enter chirp: 50 ms of 1 kHz then 80 ms of
+/// 2 kHz — an upward two-tone "doot-DEE" signalling that the preview
+/// is now on screen. Two queued clips.
+///
+/// Pair with [`crate::camera::CAMERA_MODE_SIGNAL`] = `true`
+/// transitions in `render_task`. Best-effort, same partial-queue
+/// caveat as [`try_enqueue_pickup_chirp`].
+///
+/// # Errors
+///
+/// Returns the first [`TrySendError::Full`] encountered.
+pub fn try_enqueue_camera_mode_enter() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(CAMERA_ENTER_CHIRP_LO)?;
+    AUDIO_TX_QUEUE.try_send(CAMERA_ENTER_CHIRP_HI)?;
+    Ok(())
+}
+
+/// Enqueue the camera-mode-exit chirp: 80 ms of 2 kHz then 50 ms of
+/// 1 kHz — a descending two-tone "DEE-doot" that mirrors the enter
+/// chirp inverted. Two queued clips.
+///
+/// Pair with [`crate::camera::CAMERA_MODE_SIGNAL`] = `false`
+/// transitions in `render_task`. Best-effort, same partial-queue
+/// caveat as [`try_enqueue_pickup_chirp`].
+///
+/// # Errors
+///
+/// Returns the first [`TrySendError::Full`] encountered.
+pub fn try_enqueue_camera_mode_exit() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(CAMERA_EXIT_CHIRP_HI)?;
+    AUDIO_TX_QUEUE.try_send(CAMERA_EXIT_CHIRP_LO)?;
+    Ok(())
+}
+
 /// Microphone RMS sample, published per render tick.
 ///
 /// Value is the linear-RMS amplitude of the most recent ~33 ms audio
@@ -423,11 +486,16 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         MCLK_HZ,
     );
 
-    // RX + TX DMA buffers live on the task's stack via the `dma_buffers!`
-    // macro. Both buffers outlive their transfers because the task
-    // itself never returns.
+    // RX + TX DMA buffers live on the task's stack via the
+    // `dma_circular_buffers!` macro — must be the *circular* variant
+    // since both halves drive `read_dma_circular_async` /
+    // `write_dma_circular_async`. The non-circular `dma_buffers!`
+    // sized only enough descriptors for a one-shot transfer; circular
+    // mode wraps and consumes more, surfacing as
+    // `DmaError(OutOfDescriptors)` at TX-start with the audible
+    // symptom of a cascade of `DmaError(Late)` retries on the RX side.
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
-        dma_buffers!(RX_DMA_BYTES, TX_DMA_BYTES);
+        dma_circular_buffers!(RX_DMA_BYTES, TX_DMA_BYTES);
 
     let i2s = match I2s::new(
         p.i2s,
@@ -624,14 +692,32 @@ async fn run_rms_loop<BUFFER>(
     // Wrapping window counter; only used to throttle the diagnostic log.
     let mut window_no: u32 = 0;
 
+    // Rate-limit the DMA-pop warning. The `Late` failure mode is
+    // self-perpetuating in `read_dma_circular_async` — once the
+    // descriptor chain wraps past the read pointer, every subsequent
+    // pop also returns `Late` until the transfer is rebuilt. Logging
+    // every retry at `warn` floods the defmt link (~100 lines/s) and
+    // hides every other log. Emit one `warn` per `LOG_EVERY_N_DMA_ERRS`
+    // pops so the symptom stays visible without drowning the channel.
+    let mut consecutive_dma_errs: u32 = 0;
+    /// Log only every Nth consecutive pop error.
+    const LOG_EVERY_N_DMA_ERRS: u32 = 200;
+
     loop {
         let n = match rx_transfer.pop(&mut scratch).await {
-            Ok(n) => n,
+            Ok(n) => {
+                consecutive_dma_errs = 0;
+                n
+            }
             Err(e) => {
-                defmt::warn!(
-                    "audio: DMA pop error ({:?}); publishing silence and resyncing",
-                    defmt::Debug2Format(&e)
-                );
+                if consecutive_dma_errs.is_multiple_of(LOG_EVERY_N_DMA_ERRS) {
+                    defmt::warn!(
+                        "audio: DMA pop error ({:?}); publishing silence and resyncing (next log in {=u32} pops)",
+                        defmt::Debug2Format(&e),
+                        LOG_EVERY_N_DMA_ERRS,
+                    );
+                }
+                consecutive_dma_errs = consecutive_dma_errs.saturating_add(1);
                 AUDIO_RMS_SIGNAL.signal(AudioRms(0.0));
                 sum_sq = 0.0;
                 count = 0;

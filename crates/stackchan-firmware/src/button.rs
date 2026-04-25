@@ -1,60 +1,125 @@
-//! AXP2101 power-button polling task.
+//! AXP2101 power-button polling task — short-tap + long-press routing.
 //!
-//! The AXP2101 latches power-key events into its `IRQ_STATUS_1`
-//! register. This task polls at 50 ms (20 Hz) for the short-press
-//! edge, clears it atomically (write-1-to-clear), and forwards each
-//! edge to [`touch::TAP_SIGNAL`] so the power button becomes a second
-//! tap source — user-facing behavior is identical to a touchscreen
-//! tap (cycle emotion + pin for 30 s).
+//! Polls the AXP2101's `IRQ_STATUS_1` at 50 ms (20 Hz) for the
+//! [`IRQ_PRESS_EDGE_BIT`] / [`IRQ_RELEASE_EDGE_BIT`] flags
+//! ([`axp2101::IRQ_PRESS_EDGE_BIT`] etc), times the gap in software,
+//! and routes the result:
 //!
-//! Why polling and not the AXP2101's IRQ pin? The IRQ line isn't
-//! broken out on CoreS3 in a way that's documented in our memory /
-//! datasheet cheat-sheet, and a 20 Hz polling bus lookup costs
-//! essentially nothing on the shared I²C bus (one register read per
-//! tick, shared across other consumers by the async `I2cDevice`
-//! mutex).
+//! - **Short tap** (< [`LONG_PRESS_MS`]): forwarded to
+//!   [`crate::touch::TAP_SIGNAL`] so the power button behaves as a
+//!   second tap source — UX-identical to a touchscreen tap (cycle
+//!   emotion + 30 s pin).
+//! - **Long press** (≥ [`LONG_PRESS_MS`]): published to
+//!   [`crate::camera::CAMERA_MODE_SIGNAL`] as the inverse of the
+//!   currently-active mode (toggle). Fires *the moment the threshold
+//!   is crossed* while still pressed, so the user gets immediate
+//!   feedback rather than waiting for release.
+//!
+//! Why software timing? The chip's built-in long-press IRQ has a
+//! ≥ 2 s minimum threshold (`SYS_CTL2[3] = 0` → 2 s, `1` → 3 s) — too
+//! slow for a UI toggle. Polling both edges and timing the gap costs
+//! one extra register read per tick and gives us arbitrary granularity.
 //!
 //! ## Error handling
 //!
 //! Init failure (IRQ enable) logs at `error` and parks the task —
-//! behavior silently degrades to "no button input," matching the
-//! pattern used by `ambient` and `imu`. Runtime bus glitches log at
-//! `warn` and skip the tick.
+//! behavior silently degrades to "no button input." Runtime bus
+//! glitches log at `warn` and skip the tick.
 
 use axp2101::Axp2101;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use embedded_hal_async::i2c::I2c as AsyncI2c;
 
+use crate::camera::CAMERA_MODE_SIGNAL;
 use crate::touch;
 
 /// Poll cadence. 50 ms = 20 Hz; responsive enough for a button,
 /// light enough on the bus.
 const POLL_PERIOD_MS: u64 = 50;
 
-/// Enable the short-press IRQ then loop forever forwarding edges to
-/// [`touch::TAP_SIGNAL`].
+/// Long-press threshold.
+///
+/// Holding the power button this long while the task observes a
+/// press-edge fires a camera-mode toggle. 600 ms is the standard
+/// mobile-UX long-press window — well clear of an accidental hold
+/// and well below AXP2101's ~4 s hardware shutdown timer at
+/// `SYS_CTL[2]`.
+pub const LONG_PRESS_MS: u64 = 600;
+
+/// Camera-mode toggle state. The button task is the sole producer
+/// of [`CAMERA_MODE_SIGNAL`] from user input, so it owns the
+/// "currently active" tracking that the toggle gesture inverts.
+/// Starts `false` (avatar mode), matching the firmware's boot state.
+struct ModeState {
+    /// `true` when camera-mode is currently active.
+    camera_active: bool,
+}
+
+/// Enable the press- and release-edge IRQs, then loop forever
+/// classifying each press as either a short tap or a long press.
 pub async fn run_button_loop<I: AsyncI2c>(bus: I) -> ! {
     let mut pmic = Axp2101::new(bus);
-    if let Err(e) = pmic.enable_power_key_short_press_irq().await {
+    if let Err(e) = pmic.enable_power_key_edge_irqs().await {
         defmt::error!(
-            "AXP2101 button: enable short-press IRQ failed ({}); power button disabled",
+            "AXP2101 button: enable edge IRQs failed ({}); power button disabled",
             defmt::Debug2Format(&e),
         );
         park().await;
     }
     defmt::info!(
-        "AXP2101 button: short-press IRQ enabled; polling @ {=u64} ms tick",
+        "AXP2101 button: edge IRQs enabled; polling @ {=u64} ms tick, long-press @ {=u64} ms",
         POLL_PERIOD_MS,
+        LONG_PRESS_MS,
     );
 
+    let mut state = ModeState {
+        camera_active: false,
+    };
+    let mut press_started: Option<Instant> = None;
+    let mut long_press_fired = false;
     let mut ticker = Ticker::every(Duration::from_millis(POLL_PERIOD_MS));
+
     loop {
-        match pmic.check_short_press_edge().await {
-            Ok(true) => {
-                defmt::debug!("AXP2101: power-key short-press edge -> TAP_SIGNAL");
-                touch::TAP_SIGNAL.signal(());
+        match pmic.take_power_key_edges().await {
+            Ok((press, release)) => {
+                if press {
+                    press_started = Some(Instant::now());
+                    long_press_fired = false;
+                }
+
+                // While the button is held: check whether the
+                // long-press threshold has been crossed and we haven't
+                // already fired the toggle for this hold. Firing on
+                // crossing (rather than waiting for release) gives
+                // immediate feedback the moment the user has held
+                // long enough — the existing tap pipeline never sees
+                // this press because release is still in the future.
+                if let Some(started) = press_started
+                    && !long_press_fired
+                    && started.elapsed().as_millis() >= LONG_PRESS_MS
+                {
+                    state.camera_active = !state.camera_active;
+                    defmt::info!(
+                        "AXP2101 button: long-press → camera_mode={=bool}",
+                        state.camera_active,
+                    );
+                    CAMERA_MODE_SIGNAL.signal(state.camera_active);
+                    long_press_fired = true;
+                }
+
+                if release {
+                    let duration_ms = press_started.map_or(0, |t| t.elapsed().as_millis());
+                    if !long_press_fired {
+                        defmt::debug!(
+                            "AXP2101 button: short-press ({=u64} ms) → TAP_SIGNAL",
+                            duration_ms,
+                        );
+                        touch::TAP_SIGNAL.signal(());
+                    }
+                    press_started = None;
+                    long_press_fired = false;
+                }
             }
-            Ok(false) => {}
             Err(e) => defmt::warn!(
                 "AXP2101 button: status read failed: {}",
                 defmt::Debug2Format(&e),

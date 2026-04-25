@@ -66,6 +66,17 @@ pub const BATTERY_PERCENT_MAX: u8 = 100;
 ///   - bit 6: over-press (held > 2 s)
 pub const IRQ_SHORT_PRESS_BIT: u8 = 1 << 4;
 
+/// Bit for the power-key positive edge (button press).
+///
+/// Used together with [`IRQ_RELEASE_EDGE_BIT`] for software-timed
+/// long-press detection — the chip's own long-press IRQ has a ≥2 s
+/// minimum threshold, which is too slow for a UI gesture.
+pub const IRQ_PRESS_EDGE_BIT: u8 = 1 << 1;
+
+/// Bit for the power-key negative edge (button release). Pairs with
+/// [`IRQ_PRESS_EDGE_BIT`] for software duration measurement.
+pub const IRQ_RELEASE_EDGE_BIT: u8 = 1 << 0;
+
 /// Error type for the driver.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -247,6 +258,60 @@ where
         self.write_reg(REG_IRQ_STATUS_1, IRQ_SHORT_PRESS_BIT)
             .await?;
         Ok(true)
+    }
+
+    /// Enable both press-edge and release-edge IRQs.
+    ///
+    /// Pairs with [`Axp2101::take_power_key_edges`] for software-timed
+    /// long-press detection: the caller measures the gap between a
+    /// `press_edge` and the subsequent `release_edge` to differentiate
+    /// taps from holds with sub-second granularity (the chip's built-in
+    /// long-press IRQ has a ≥2 s minimum threshold).
+    ///
+    /// Leaves other `IRQ_EN_1` bits untouched via read-modify-write.
+    /// Safe to call alongside [`Axp2101::enable_power_key_short_press_irq`]
+    /// — both signals are independent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::I2c`] on bus errors.
+    pub async fn enable_power_key_edge_irqs(&mut self) -> Result<(), Error<B::Error>> {
+        let current = self.read_reg(REG_IRQ_EN_1).await?;
+        let bits = IRQ_PRESS_EDGE_BIT | IRQ_RELEASE_EDGE_BIT;
+        self.write_reg(REG_IRQ_EN_1, current | bits).await?;
+        Ok(())
+    }
+
+    /// Drain pending press / release edges atomically.
+    ///
+    /// Returns `(press, release)`: each `true` iff the corresponding
+    /// flag was set in `IRQ_STATUS_1`. Both flags (if set) are cleared
+    /// in a single write so the next call observes only fresh edges.
+    /// In a single press-and-release that arrives between polls, both
+    /// flags will fire together — callers should treat `(true, true)`
+    /// as a tap shorter than the polling period.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::I2c`] on bus errors. A bus failure at *clear*
+    /// can leak edges into the next read; downstream consumers must
+    /// be tolerant of an extra spurious tap (the existing tap pipeline
+    /// is edge-triggered, so this is benign).
+    pub async fn take_power_key_edges(&mut self) -> Result<(bool, bool), Error<B::Error>> {
+        let status = self.read_reg(REG_IRQ_STATUS_1).await?;
+        let press = status & IRQ_PRESS_EDGE_BIT != 0;
+        let release = status & IRQ_RELEASE_EDGE_BIT != 0;
+        if press || release {
+            let mut clear = 0u8;
+            if press {
+                clear |= IRQ_PRESS_EDGE_BIT;
+            }
+            if release {
+                clear |= IRQ_RELEASE_EDGE_BIT;
+            }
+            self.write_reg(REG_IRQ_STATUS_1, clear).await?;
+        }
+        Ok((press, release))
     }
 
     /// Read whether the AXP2101 sees valid VBUS (USB) input voltage.
@@ -481,5 +546,86 @@ mod tests {
         let mut pmic = Axp2101::new(bus);
         let usb_good = block_on(pmic.read_usb_power_good()).unwrap();
         assert!(!usb_good);
+    }
+
+    #[test]
+    fn enable_power_key_edge_irqs_or_in_press_release_bits() {
+        // Mock starts with the short-press bit already enabled (the
+        // existing button task does that); the new method must OR the
+        // edge bits onto the same byte, not overwrite.
+        let bus = MockI2c::new().with_register(REG_IRQ_EN_1, IRQ_SHORT_PRESS_BIT);
+        let mut pmic = Axp2101::new(bus);
+        block_on(pmic.enable_power_key_edge_irqs()).unwrap();
+
+        // Find the actual write to IRQ_EN_1 in the recorded transactions.
+        let writes: Vec<(u8, u8)> = pmic
+            .bus
+            .transactions
+            .borrow()
+            .iter()
+            .filter(|(_, buf)| buf.len() == 2)
+            .map(|(_, buf)| (buf[0], buf[1]))
+            .collect();
+        let (_, value) = writes
+            .iter()
+            .rev()
+            .find(|(reg, _)| *reg == REG_IRQ_EN_1)
+            .copied()
+            .unwrap();
+        assert_eq!(
+            value,
+            IRQ_SHORT_PRESS_BIT | IRQ_PRESS_EDGE_BIT | IRQ_RELEASE_EDGE_BIT
+        );
+    }
+
+    #[test]
+    fn take_power_key_edges_decodes_and_clears_only_set_bits() {
+        // Status reports both edges set + an unrelated bit. The clear
+        // write must target only the press/release bits — leaving the
+        // unrelated flag intact for whichever consumer owns it.
+        let bus = MockI2c::new().with_register(
+            REG_IRQ_STATUS_1,
+            IRQ_PRESS_EDGE_BIT | IRQ_RELEASE_EDGE_BIT | IRQ_SHORT_PRESS_BIT,
+        );
+        let mut pmic = Axp2101::new(bus);
+        let (press, release) = block_on(pmic.take_power_key_edges()).unwrap();
+        assert!(press);
+        assert!(release);
+
+        let writes: Vec<(u8, u8)> = pmic
+            .bus
+            .transactions
+            .borrow()
+            .iter()
+            .filter(|(_, buf)| buf.len() == 2)
+            .map(|(_, buf)| (buf[0], buf[1]))
+            .collect();
+        let (_, clear_value) = writes
+            .iter()
+            .find(|(reg, _)| *reg == REG_IRQ_STATUS_1)
+            .copied()
+            .unwrap();
+        assert_eq!(clear_value, IRQ_PRESS_EDGE_BIT | IRQ_RELEASE_EDGE_BIT);
+    }
+
+    #[test]
+    fn take_power_key_edges_skips_clear_when_no_edge_set() {
+        // Pure-zero status must NOT issue a clearing write — saves bus
+        // bandwidth on the (common) idle case where the button isn't
+        // being touched.
+        let bus = MockI2c::new().with_register(REG_IRQ_STATUS_1, 0);
+        let mut pmic = Axp2101::new(bus);
+        let (press, release) = block_on(pmic.take_power_key_edges()).unwrap();
+        assert!(!press);
+        assert!(!release);
+
+        let status_writes = pmic
+            .bus
+            .transactions
+            .borrow()
+            .iter()
+            .filter(|(_, buf)| buf.len() == 2 && buf[0] == REG_IRQ_STATUS_1)
+            .count();
+        assert_eq!(status_writes, 0);
     }
 }

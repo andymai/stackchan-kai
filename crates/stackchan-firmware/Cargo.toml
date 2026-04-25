@@ -21,6 +21,7 @@ bmi270 = { path = "../bmi270" }
 bmm150 = { path = "../bmm150" }
 es7210 = { path = "../es7210" }
 ft6336u = { path = "../ft6336u" }
+gc0308 = { path = "../gc0308" }
 ir-nec = { path = "../ir-nec" }
 ltr553 = { path = "../ltr553" }
 py32 = { path = "../py32" }
