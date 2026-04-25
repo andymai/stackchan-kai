@@ -146,6 +146,16 @@ es7210-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example es7210_bench
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/es7210_bench{{_serial_suffix}}
 
+# Audio playlist bench: brings up the full audio stack (I²S + AW88298
+# + ES7210) and loops through every clip in the chirp library
+# (BOOT_GREETING, time-of-day variants, WAKE_CHIRP, pickup chirp,
+# low-battery alert) with 800 ms gaps. Use this when tuning clip
+# amplitudes / durations / pitches without rebuilding the full
+# firmware.
+audio-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example audio_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/audio_bench{{_serial_suffix}}
+
 # Tilt extremes calibration: drives the pitch servo through 0° → ±50°
 # in 5° steps (5° past `MAX_TILT_DEG`'s safety bound) and reads back
 # the live encoder, stopping the sweep early once readings plateau.
