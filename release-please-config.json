@@ -50,6 +50,9 @@
     "crates/st25r3916": {
       "package-name": "st25r3916"
     },
+    "crates/tracker": {
+      "package-name": "tracker"
+    },
     "crates/stackchan-firmware": {
       "package-name": "stackchan-firmware"
     }
