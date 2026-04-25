@@ -26,7 +26,7 @@ extern crate alloc;
 
 use stackchan_firmware::{
     ambient, audio, board, button, camera, clock, framebuffer, head, imu, ir, leds, power, touch,
-    wallclock,
+    wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -464,6 +464,7 @@ async fn head_task(mut driver: HeadDriverImpl) {
         HEAD_PERIOD_MS.saturating_mul(u64::from(POSITION_POLL_EVERY)),
     );
     loop {
+        watchdog::HEAD.beat();
         if let Some(next) = head::POSE_SIGNAL.try_take() {
             current = next;
         }
@@ -582,6 +583,14 @@ async fn audio_task(peripherals: audio::AudioPeripherals) -> ! {
 #[embassy_executor::task]
 async fn camera_task(peripherals: camera::CameraPeripherals) -> ! {
     camera::run_camera_task(peripherals).await
+}
+
+/// Watchdog supervisor. Polls per-channel heartbeat counters (audio,
+/// IMU, ambient, power, head) every 5 s and warns when any falls
+/// silent. See `src/watchdog.rs` for the cadence-aware logic.
+#[embassy_executor::task]
+async fn watchdog_task() -> ! {
+    watchdog::run_watchdog_loop().await
 }
 
 #[esp_rtos::main]
@@ -704,6 +713,9 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(power_task(I2cDevice::new(board_io.i2c_bus))) {
         defmt::panic!("spawn power_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(watchdog_task()) {
+        defmt::panic!("spawn watchdog_task failed: {}", defmt::Debug2Format(&e));
     }
 
     // Audio subsystem. The task owns I²S0 + DMA + audio pins and

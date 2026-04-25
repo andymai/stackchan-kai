@@ -705,6 +705,13 @@ async fn run_rms_loop<BUFFER>(
     const LOG_EVERY_N_DMA_ERRS: u32 = 200;
 
     loop {
+        // Watchdog heartbeat fires once per audio-task iteration, not
+        // once per completed RMS window. The DmaError(Late) path
+        // recovers via `continue` without producing an RMS sample, but
+        // the audio task itself is still alive — that's what the
+        // watchdog cares about. Producing-RMS-correctly is a separate
+        // concern that surfaces via the `audio: RMS …` debug logs.
+        crate::watchdog::AUDIO.beat();
         let n = match rx_transfer.pop(&mut scratch).await {
             Ok(n) => {
                 consecutive_dma_errs = 0;

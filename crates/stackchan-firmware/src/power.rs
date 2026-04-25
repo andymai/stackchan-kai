@@ -65,6 +65,7 @@ pub async fn run_power_loop<I: AsyncI2c>(bus: I) -> ! {
     // (otherwise this would log every poll tick).
     let mut last_published: Option<PowerStatus> = None;
     loop {
+        crate::watchdog::POWER.beat();
         let Some(status) = read_status(&mut pmic).await else {
             ticker.next().await;
             continue;

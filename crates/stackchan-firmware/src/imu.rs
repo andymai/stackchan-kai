@@ -101,6 +101,7 @@ pub async fn run_imu_loop<I: AsyncI2c>(bus: I) -> ! {
 
     let mut ticker = Ticker::every(Duration::from_millis(POLL_PERIOD_MS));
     loop {
+        crate::watchdog::IMU.beat();
         match imu.read_measurement().await {
             Ok(m) => IMU_SIGNAL.signal(m),
             Err(e) => defmt::warn!("BMI270: read failed: {}", defmt::Debug2Format(&e)),

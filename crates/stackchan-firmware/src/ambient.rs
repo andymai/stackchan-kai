@@ -49,6 +49,7 @@ pub async fn run_ambient_loop<I: AsyncI2c>(bus: I) -> ! {
 
     let mut ticker = Ticker::every(Duration::from_millis(POLL_PERIOD_MS));
     loop {
+        crate::watchdog::AMBIENT.beat();
         match als.read_ambient().await {
             Ok(reading) => {
                 AMBIENT_LUX_SIGNAL.signal(reading.lux);
