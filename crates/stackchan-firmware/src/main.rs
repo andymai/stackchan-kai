@@ -636,12 +636,26 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn audio_task failed: {}", defmt::Debug2Format(&e));
     }
 
-    // One-shot wall-clock read for the boot log. Single I²C round-trip;
-    // failures are warn-only (logged inside `wallclock::read_and_format`).
-    let mut rtc_buf = [0u8; 19];
+    // One-shot wall-clock read. Drives both the boot-log timestamp
+    // and the time-of-day boot greeting. RTC failures are warn-only
+    // (logged inside `wallclock::read_datetime`); we fall back to
+    // the default daytime greeting when no reading is available.
     let rtc_bus = I2cDevice::new(board_io.i2c_bus);
-    if let Some(stamp) = wallclock::read_and_format(rtc_bus, &mut rtc_buf).await {
-        defmt::info!("boot @ {=str} (RTC)", stamp);
+    let boot_clip = wallclock::read_datetime(rtc_bus)
+        .await
+        .map_or(audio::BOOT_GREETING, |dt| {
+            let mut rtc_buf = [0u8; 19];
+            defmt::info!(
+                "boot @ {=str} (RTC)",
+                bm8563::format_datetime(dt, &mut rtc_buf),
+            );
+            audio::boot_greeting_for_hour(dt.hours)
+        });
+    if let Err(e) = audio::try_enqueue_clip(boot_clip) {
+        defmt::warn!(
+            "audio: boot greeting dropped, queue full ({:?})",
+            defmt::Debug2Format(&e)
+        );
     }
 
     defmt::info!("boot complete — idle heartbeat");
