@@ -51,6 +51,11 @@ esp-alloc = { version = "0.9.0", features = ["defmt"] }
 
 embassy-executor = { version = "0.9.1", features = ["defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt"] }
+# `embassy_futures::join::join` runs the audio task's RX RMS loop and
+# TX feed loop concurrently inside one embassy task, instead of paying
+# for a second task slot. Already in the lock via embassy-executor's
+# transitive deps; declared here because we use it directly.
+embassy-futures = "0.1"
 # `Signal<CriticalSectionRawMutex, Pose>` hands the latest pose from the
 # render task (which runs modifiers, incl. `IdleSway`) to the 50 Hz head
 # task. 0.7 matches the embassy-executor 0.9 / embassy-time 0.5 triple

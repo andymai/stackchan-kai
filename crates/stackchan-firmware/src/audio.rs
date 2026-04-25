@@ -18,17 +18,28 @@
 //! 3. Small settle delay
 //! 4. Bring up AW88298 (doesn't need MCLK but comes up with the pair)
 //! 5. Bring up ES7210 (now responds — MCLK is flowing)
-//! 6. Enter the sample-processing loop: pop DMA samples, compute
-//!    linear RMS over each [`RMS_WINDOW_SAMPLES`]-sample window
-//!    (~33 ms at 16 kHz, one render frame at 30 FPS), normalise
-//!    against full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
+//! 6. Configure AW88298 output: set boot volume via `set_volume_db`,
+//!    start the TX DMA on a silent-zero buffer, settle, lift `HMUTE`.
+//!    Speaker is now live and clocking.
+//! 7. Run RX + TX loops concurrently inside the same embassy task via
+//!    `embassy_futures::join`:
+//!    - RX (`run_rms_loop`): pop DMA samples, compute linear RMS over
+//!      each [`RMS_WINDOW_SAMPLES`]-sample window, normalise against
+//!      full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
+//!    - TX (`run_tx_loop`): push a 1 kHz sine for the boot greeting
+//!      ([`TONE_DURATION_MS`]), then continuous digital silence so the
+//!      AW88298 stays clock-locked.
 //!
 //! This matches esp-bsp's ordering in `bsp_audio_codec_microphone_init`:
 //! `bsp_audio_init` (spins up I²S + MCLK) runs *before* `es7210_codec_new`.
 //!
-//! Failures inside the RMS loop log-and-degrade: a DMA pop error
-//! publishes `AudioRms(0.0)` (silent mic → closed mouth downstream)
-//! and resumes after a short backoff rather than parking the task.
+//! Failures inside the loops log-and-degrade rather than parking:
+//! - RX DMA pop error → publish `AudioRms(0.0)` (closed mouth) and
+//!   resync after a short backoff.
+//! - TX DMA push error → back off briefly and retry. Speaker may
+//!   click but won't fall silent permanently.
+//! - TX DMA start failure → fall through to RX-only mode (RMS loop
+//!   runs without speaker output).
 
 use aw88298::Aw88298;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
@@ -86,6 +97,41 @@ const LOG_EVERY_N_WINDOWS: u32 = 60;
 /// bits, this needs 1).
 const FULL_SCALE_SQ: f32 = 32768.0 * 32768.0;
 
+/// Size of the TX DMA circular buffer, in bytes.
+///
+/// 4 KiB ≈ 128 ms of audio at 16 kHz × 16-bit mono. Smaller than the
+/// RX buffer because the TX feeder runs on a tighter schedule (it's
+/// pushing per-frame samples in close-to-real-time) and 128 ms is
+/// plenty of headroom for the embassy scheduler's worst-case latency.
+const TX_DMA_BYTES: usize = 4 * 1024;
+
+/// AW88298 attenuation, in dB, applied at TX bring-up. -18 dB is
+/// audible-but-not-startling for a 1 W desktop speaker; combined with
+/// a -12 dBFS digital tone the boot greeting plays at ≈ -30 dB.
+const BOOT_VOLUME_DB: i8 = -18;
+
+/// AW88298 settle delay between starting TX DMA (with a buffer of
+/// zeros = digital silence) and lifting `HMUTE`. Lets the codec lock
+/// onto the I²S clock domain before the output stage goes live so the
+/// speaker doesn't pop.
+const TX_SETTLE_MS: u32 = 30;
+
+/// Boot-greeting tone duration. ~½ s is long enough to be unmistakably
+/// audible without becoming annoying on every reboot.
+const TONE_DURATION_MS: u32 = 500;
+
+/// Total samples in the boot-greeting tone burst.
+const TONE_TOTAL_SAMPLES: u32 = SAMPLE_RATE_HZ * TONE_DURATION_MS / 1000;
+
+/// One-cycle sine table, 16 samples = 1 kHz at 16 kHz sample rate.
+/// Amplitude `8192 ≈ -12 dBFS`, picked so the AW88298 output stage
+/// stays well clear of the digital ceiling. Pre-computed at compile
+/// time so the TX feeder is `sin()`-free at runtime (and `libm`-free
+/// in this firmware crate).
+const SINE_TABLE: [i16; 16] = [
+    0, 3135, 5793, 7568, 8192, 7568, 5793, 3135, 0, -3135, -5793, -7568, -8192, -7568, -5793, -3135,
+];
+
 /// Microphone RMS sample, published per render tick.
 ///
 /// Value is the linear-RMS amplitude of the most recent ~33 ms audio
@@ -122,8 +168,7 @@ pub struct AudioPeripherals {
     /// Data-in pin (ES7210 → ESP32-S3). CoreS3 schematic: `GPIO14`.
     pub din: GPIO14<'static>,
     /// Data-out pin (ESP32-S3 → AW88298). CoreS3 schematic: `GPIO13`.
-    /// Held for future TX streaming (speaker output) — wiring it through
-    /// now avoids another plumbing change when that lands.
+    /// Wired into the I²S TX DMA for speaker output.
     pub dout: GPIO13<'static>,
     /// I²C device handle for the AW88298.
     pub amp_bus: SharedI2c,
@@ -133,13 +178,19 @@ pub struct AudioPeripherals {
 
 /// Audio task entry point.
 ///
-/// Runs the full bring-up sequence (I²S + codecs), then enters the
-/// per-window RMS loop that pops DMA samples and publishes
-/// [`AUDIO_RMS_SIGNAL`].
+/// Runs the full bring-up sequence (I²S + codecs + TX un-mute), then
+/// runs the RX RMS loop and TX feeder concurrently via
+/// `embassy_futures::join`. Output: a 1 kHz boot greeting on the
+/// speaker, an `AudioRms` stream on `AUDIO_RMS_SIGNAL`.
 ///
-/// Failures during bring-up park the task — audio goes silent
-/// (`AudioRms(0.0)`) but the rest of the avatar keeps running.
-/// Failures inside the loop log-and-resync rather than parking.
+/// Failures during bring-up that take out the I²S itself park the
+/// task. Failures that take out only TX fall through to RX-only mode.
+/// Failures inside either loop log-and-resync rather than parking.
+#[allow(
+    clippy::too_many_lines,
+    reason = "single bring-up sequence — splitting into helpers fragments \
+              the I²S → codec → TX ordering invariants for negligible benefit"
+)]
 pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
     defmt::info!(
         "audio: I²S0 bring-up — {=u32} Hz / {=u8}-bit mono, MCLK {=u32} Hz",
@@ -148,10 +199,11 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         MCLK_HZ,
     );
 
-    // RX DMA buffers live on the task's stack via the `dma_buffers!`
-    // macro. The buffer outlives the transfer because the task itself
-    // never returns.
-    let (rx_buffer, rx_descriptors, _tx_buffer, _tx_descriptors) = dma_buffers!(RX_DMA_BYTES, 0);
+    // RX + TX DMA buffers live on the task's stack via the `dma_buffers!`
+    // macro. Both buffers outlive their transfers because the task
+    // itself never returns.
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
+        dma_buffers!(RX_DMA_BYTES, TX_DMA_BYTES);
 
     let i2s = match I2s::new(
         p.i2s,
@@ -175,15 +227,16 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
     // so we start RX below.
     let i2s = i2s.with_mclk(p.mclk);
 
+    // Split the I²S into its RX + TX halves. RX claims the BCLK and
+    // WS pins (the master peripheral generates both clocks; routing
+    // them once is enough — TX shares the same physical pads).
     let i2s_rx = i2s
         .i2s_rx
         .with_bclk(p.bclk)
         .with_ws(p.ws)
         .with_din(p.din)
         .build(rx_descriptors);
-    // `p.dout` is held for future TX streaming (PR 2C / 3); suppress
-    // the unused warning without dropping the pin.
-    let _ = p.dout;
+    let i2s_tx = i2s.i2s_tx.with_dout(p.dout).build(tx_descriptors);
 
     // Start the RX DMA circular transfer. From this point MCLK / BCLK
     // / LRCK are all clocking on their pins; ES7210 can now answer
@@ -263,12 +316,64 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         }
     }
 
+    // AW88298 output-stage bring-up. With TX DMA not yet started, the
+    // TX line carries no clocked data — the codec is on standby. We
+    // pre-configure volume so the un-mute step doesn't go straight to
+    // the chip's reset default, then start TX (silent zeros from the
+    // freshly-allocated DMA buffer), settle, and finally lift HMUTE.
+    if let Err(e) = amp.set_volume_db(BOOT_VOLUME_DB).await {
+        defmt::warn!(
+            "audio: AW88298 set_volume_db({=i8}) failed ({:?}); continuing at init default",
+            BOOT_VOLUME_DB,
+            defmt::Debug2Format(&e)
+        );
+    } else {
+        defmt::info!(
+            "audio: AW88298 volume set to {=i8} dB (boot default)",
+            BOOT_VOLUME_DB
+        );
+    }
+
+    let mut tx_transfer = match i2s_tx.write_dma_circular_async(tx_buffer) {
+        Ok(t) => t,
+        Err(e) => {
+            defmt::error!(
+                "audio: TX DMA start failed ({:?}); continuing without speaker output",
+                defmt::Debug2Format(&e)
+            );
+            // RX still works — run the RMS loop without TX. Diverges
+            // (`-> !`), so control flow doesn't fall through.
+            run_rms_loop(&mut rx_transfer).await
+        }
+    };
+    defmt::info!("audio: I²S TX DMA running — feeding silence");
+
+    Timer::after(Duration::from_millis(u64::from(TX_SETTLE_MS))).await;
+
+    if let Err(e) = amp.set_muted(false).await {
+        defmt::warn!(
+            "audio: AW88298 un-mute failed ({:?}); speaker stays muted",
+            defmt::Debug2Format(&e)
+        );
+    } else {
+        defmt::info!("audio: AW88298 un-muted — speaker live");
+    }
+
     defmt::info!(
-        "audio: bring-up complete — entering RMS loop ({=u32}-sample / ~33 ms windows)",
+        "audio: bring-up complete — RX RMS loop ({=u32}-sample windows) + TX feeder (boot tone {=u32} ms)",
         RMS_WINDOW_SAMPLES,
+        TONE_DURATION_MS,
     );
 
-    run_rms_loop(&mut rx_transfer).await
+    // Both halves are `-> !`, so `join` itself never resolves; the
+    // trailing `park_forever` is unreachable but keeps the function
+    // body trivially `-> !` without leaning on never-type coercion.
+    embassy_futures::join::join(
+        run_rms_loop(&mut rx_transfer),
+        run_tx_loop(&mut tx_transfer),
+    )
+    .await;
+    park_forever().await
 }
 
 /// Per-window RMS computation loop. Pops samples off the running
@@ -372,6 +477,64 @@ fn accumulate(sum_sq: &mut f32, count: &mut u32, sample: i16) {
     let s = f32::from(sample);
     *sum_sq += s * s;
     *count += 1;
+}
+
+/// TX feeder. Pushes a 1 kHz boot-greeting sine for [`TONE_DURATION_MS`],
+/// then continuous digital silence (zero samples) so the AW88298's I²S
+/// receiver stays locked to the clock domain even when the firmware
+/// isn't producing audio.
+///
+/// Uses `push_with` so the closure produces exactly as many samples as
+/// the DMA tail accepts in this batch — no partial-acceptance bookkeeping
+/// outside the closure, and the sine phase advances 1:1 with samples
+/// actually played.
+async fn run_tx_loop<BUFFER>(
+    tx_transfer: &mut esp_hal::i2s::master::asynch::I2sWriteDmaTransferAsync<'_, BUFFER>,
+) -> ! {
+    // Counts down per sample written. When it hits zero we switch to
+    // silence; checked after each `push_with` for the diagnostic log.
+    let mut tone_remaining: u32 = TONE_TOTAL_SAMPLES;
+    let mut sine_phase: usize = 0;
+    let mut announced_silence = false;
+
+    loop {
+        let result = tx_transfer
+            .push_with(|buf: &mut [u8]| {
+                let pairs = buf.len() / 2;
+                for i in 0..pairs {
+                    let sample = if tone_remaining > 0 {
+                        let s = SINE_TABLE[sine_phase];
+                        sine_phase = (sine_phase + 1) % SINE_TABLE.len();
+                        tone_remaining -= 1;
+                        s
+                    } else {
+                        0
+                    };
+                    let bytes = sample.to_le_bytes();
+                    buf[i * 2] = bytes[0];
+                    buf[i * 2 + 1] = bytes[1];
+                }
+                pairs * 2
+            })
+            .await;
+
+        if let Err(e) = result {
+            defmt::warn!(
+                "audio: TX DMA push error ({:?}); backing off",
+                defmt::Debug2Format(&e)
+            );
+            Timer::after(Duration::from_millis(10)).await;
+            continue;
+        }
+
+        if !announced_silence && tone_remaining == 0 {
+            defmt::info!(
+                "audio: boot tone done ({=u32} samples); switching to silence",
+                TONE_TOTAL_SAMPLES,
+            );
+            announced_silence = true;
+        }
+    }
 }
 
 /// Infinite sleep for tasks that have nothing else to do. `-> !` so
