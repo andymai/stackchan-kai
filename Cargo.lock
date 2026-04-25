@@ -23,14 +23,14 @@ dependencies = [
 
 [[package]]
 name = "aw9523"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "axp2101"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -81,14 +81,14 @@ checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "bm8563"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "bmi270"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -981,7 +981,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "ft6336u"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "gc0308"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "ir-nec"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "itoa"
@@ -1187,7 +1187,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "ltr553"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1436,7 +1436,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "scservo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "embedded-io-async 0.7.0",
 ]
@@ -1521,7 +1521,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stackchan-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "embedded-graphics",
  "micromath",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -1569,7 +1569,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-graphics",
  "stackchan-core",
