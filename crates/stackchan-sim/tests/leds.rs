@@ -12,38 +12,34 @@
     clippy::field_reassign_with_default,
     reason = "Entity has many fields; post-init assignment is clearer than ..Default::default() here"
 )]
+#![allow(
+    clippy::unwrap_used,
+    reason = "test-only: Director registry capacity is a compile-time constant in this fixture, the unwraps can't fire"
+)]
 
 use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
-use stackchan_core::{BRIGHTNESS_PEAK, Clock, Emotion, Entity, LED_COUNT, LedFrame, Modifier};
+use stackchan_core::{BRIGHTNESS_PEAK, Director, Emotion, Entity, LED_COUNT, LedFrame};
 use stackchan_core::{Instant, render_leds};
-use stackchan_sim::FakeClock;
 
-/// Run the default v0.1.0 modifier stack for `ms` milliseconds of
-/// simulated time (no clock ticks between; modifiers are sampled at
-/// the end-state only), then render LEDs and return the frame.
+/// Drive the default v0.1.0 modifier stack via the `Director` up to
+/// `modifiers_at` ms (33 ms steps so stateful modifiers see
+/// intermediate times), then render LEDs and return the frame.
 fn render_at(avatar: &mut Entity, modifiers_at: u64) -> LedFrame {
-    let clock = FakeClock::new();
     let mut emotion_cycle = EmotionCycle::new();
     let mut emotion_style = EmotionStyle::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
     let mut drift = IdleDrift::new();
+    let mut director = Director::new();
+    director.add_modifier(&mut emotion_cycle).unwrap();
+    director.add_modifier(&mut emotion_style).unwrap();
+    director.add_modifier(&mut blink).unwrap();
+    director.add_modifier(&mut breath).unwrap();
+    director.add_modifier(&mut drift).unwrap();
 
-    // Drive the stack in small steps so stateful modifiers (EmotionCycle
-    // cadence, Breath delta accumulation) see intermediate times.
     let mut t = 0u64;
     while t <= modifiers_at {
-        clock.set(Instant::from_millis(t));
-        avatar.tick.now = clock.now();
-        emotion_cycle.update(avatar);
-        avatar.tick.now = clock.now();
-        emotion_style.update(avatar);
-        avatar.tick.now = clock.now();
-        blink.update(avatar);
-        avatar.tick.now = clock.now();
-        breath.update(avatar);
-        avatar.tick.now = clock.now();
-        drift.update(avatar);
+        director.run(avatar, Instant::from_millis(t));
         t += 33;
     }
 
