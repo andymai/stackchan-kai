@@ -26,7 +26,7 @@ modifier pipeline at ~30 FPS.
 - `src/clock.rs` — `HalClock` wraps `embassy_time::Instant` to implement `stackchan_core::Clock`
 - `src/head.rs` — embassy task: `stackchan_core::Pose` → SCServo commands
 - `src/imu.rs` / `src/mag.rs` — BMI270 / BMM150 tasks publishing to signal channels for the 9-axis data path
-- `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` — per-peripheral tasks
+- `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` / `src/power.rs` — per-peripheral tasks
 - `src/audio.rs` — I²S0 + codec bring-up, then RX RMS loop (publishing on `AUDIO_RMS_SIGNAL`) + TX feeder (1 kHz boot greeting then silence) running concurrently via `embassy_futures::join`
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
 - `examples/{aw88298,es7210,imu,mag,leds,ambient,touch,ir}_bench.rs` — per-driver control-path benches (chip-ID probe + init + heartbeat; the streaming I²S path runs only inside `src/audio.rs` in the main firmware)
