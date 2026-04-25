@@ -17,7 +17,9 @@
 //!   for a cocked-head listening posture.
 
 mod look_at_sound;
+mod petting;
 
 pub use look_at_sound::{
     LISTEN_RELEASE_MS, LISTEN_RMS_THRESHOLD, LISTEN_SUSTAIN_TICKS, LookAtSound,
 };
+pub use petting::{PETTING_SUSTAIN_TICKS, Petting};

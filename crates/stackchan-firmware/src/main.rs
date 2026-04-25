@@ -70,7 +70,7 @@ use stackchan_core::{
         PickupReaction, RemoteCommand, WakeOnVoice,
     },
     render_leds,
-    skills::LookAtSound,
+    skills::{LookAtSound, Petting},
     voice::ChirpKind,
 };
 use static_cell::StaticCell;
@@ -197,6 +197,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut listen_head = ListenHead::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut look_at_sound = LookAtSound::new();
+    let mut petting = Petting::new();
     let mut body_gesture = BodyGesture::new();
     let mut last_rendered: Option<Face> = None;
 
@@ -241,6 +242,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .expect("registry full");
     director
         .add_skill(&mut look_at_sound)
+        .expect("skill registry full");
+    director
+        .add_skill(&mut petting)
         .expect("skill registry full");
     let mut led_frame = LedFrame::default();
     // Camera-mode state. The button task's long-press handler is the

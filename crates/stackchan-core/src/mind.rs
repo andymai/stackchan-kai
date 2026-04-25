@@ -82,6 +82,10 @@ pub enum Intent {
     /// Listening to ambient sound. Set by
     /// [`crate::skills::LookAtSound`]; cleared on release.
     Listen,
+    /// Being pet on the back-of-head strip. Set by
+    /// [`crate::skills::Petting`] after sustained any-zone contact;
+    /// cleared on release.
+    BeingPet,
 }
 
 /// What the entity is currently focused on.
