@@ -121,3 +121,20 @@ jobs:
 
       - name: Build on MSRV
         run: cargo build --workspace --exclude stackchan-firmware --all-features
+
+  doc-drift:
+    name: Doc drift (READMEs vs src/)
+    # Warn-only — informational, not a merge gate. Skipped on
+    # release-please PRs (their version-bump churn would always trigger
+    # drift warnings). Full git history needed for the `rev-list` count.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login != 'release-kun[bot]' ||
+      !startsWith(github.event.pull_request.title, 'chore: release')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check per-crate README drift
+        run: bash scripts/check-doc-drift.sh

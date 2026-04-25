@@ -4,6 +4,11 @@
 #
 # Firmware-side (esp) checks are expensive and require the espup toolchain
 # to be sourced; they run in CI, not on every commit.
+#
+# Fast mode: set `STACKCHAN_FAST=1` to skip clippy + tests + doctests +
+# workspace-check. Keeps fmt + Cargo.lock drift guard + the README
+# review reminder. Use during inner-loop iteration; CI catches anything
+# the fast pre-commit misses on push.
 set -euo pipefail
 
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
@@ -28,17 +33,22 @@ if [ "$has_rust" = true ]; then
     echo "pre-commit: checking formatting..."
     cargo fmt --check
 
-    echo "pre-commit: running clippy on host crates (incl. tests)..."
-    cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
+    if [ "${STACKCHAN_FAST:-0}" = "1" ]; then
+        echo "pre-commit: STACKCHAN_FAST=1 — skipping clippy + tests + doctests + workspace-check"
+        echo "pre-commit: (CI will run the full gate set on push)"
+    else
+        echo "pre-commit: running clippy on host crates (incl. tests)..."
+        cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
 
-    echo "pre-commit: running host tests..."
-    cargo test --workspace --exclude stackchan-firmware --all-features --quiet
+        echo "pre-commit: running host tests..."
+        cargo test --workspace --exclude stackchan-firmware --all-features --quiet
 
-    echo "pre-commit: running doc tests..."
-    cargo test --workspace --exclude stackchan-firmware --all-features --doc --quiet
+        echo "pre-commit: running doc tests..."
+        cargo test --workspace --exclude stackchan-firmware --all-features --doc --quiet
 
-    echo "pre-commit: checking workspace (host)..."
-    cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
+        echo "pre-commit: checking workspace (host)..."
+        cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
+    fi
 fi
 
 # Non-blocking: if source changes but the nearest README.md isn't

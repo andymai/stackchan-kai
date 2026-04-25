@@ -28,13 +28,34 @@ _serial_suffix := if os() == "macos" { "" } else { "'" }
 default:
     @just --list
 
+# ----- Session-start sanity check ------------------------------------------
+
+# Print toolchain availability, device enumeration, working-tree state,
+# and recent CI status. Read-only; no side effects. Useful at session
+# start (human or AI) before reaching for code.
+dev:
+    @bash scripts/dev-status.sh
+
 # ----- Host-side -----------------------------------------------------------
+
+# Fast inner-loop check — fmt + cargo check, no clippy or tests.
+# Sub-second feedback for "did my edit compile?" iteration. Use this
+# while iterating on a single file; run `just check` before committing.
+check-fast:
+    cargo fmt --check
+    cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
 
 # Fast host checks — the same gates the pre-commit hook runs.
 check:
     cargo fmt --check
     cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
     cargo test --workspace --exclude stackchan-firmware --all-features
+
+# Doc-drift guard — flag crates whose src/ has diverged > N commits from
+# their README.md. Warn-only by default. Pass `STRICT=1` for non-zero
+# exit on drift (CI uses this).
+doc-drift:
+    @bash scripts/check-doc-drift.sh {{ if env_var_or_default("STRICT", "") == "1" { "--strict" } else { "" } }}
 
 # Everything the CI host job runs (adds doc-lint + cargo-deny).
 ci: check
@@ -102,6 +123,15 @@ reattach:
 # One port-open, one reset — preferred over split `flash; monitor`.
 fmr: build-firmware
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}{{_serial_suffix}}
+
+# Agent-friendly fmr: kicks `just fmr` off inside a tmux session, tees
+# the output to /tmp/scfmr.log, and polls until "boot complete" appears
+# (with a 90 s timeout). Returns 0 on clean boot, 2 on panic, 3 on
+# timeout. Designed for AI agents and other non-TTY shells where
+# espflash's interactive monitor would otherwise fail to start. See
+# CLAUDE.md "Flashing from an agent / non-TTY shell".
+fmr-agent:
+    @bash scripts/fmr-agent.sh
 
 # Path prefix for release bench example ELFs.
 example_elf_dir := "target/xtensa-esp32s3-none-elf/release/examples"
@@ -174,3 +204,38 @@ tilt-extremes:
 tilt-freewheel:
     cd crates/stackchan-firmware && cargo +esp build --release --example tilt_freewheel
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/tilt_freewheel{{_serial_suffix}}
+
+# Ambient light sensor bench: streams LTR-553 lux readings at 2 Hz +
+# proximity counts. Verifies init sequence + driver presence.
+ambient-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example ambient_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/ambient_bench{{_serial_suffix}}
+
+# IR-NEC bench: decodes incoming NEC frames from the IR receiver on
+# GPIO21 (RMT channel 7) and prints `(address, command)` tuples. Use to
+# discover your remote's codes for the `RemoteCommand` modifier mapping.
+ir-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example ir_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/ir_bench{{_serial_suffix}}
+
+# FT6336U touch bench: streams raw touch events (point count, x, y,
+# pressure) so calibration drift or wiring issues surface as obviously-
+# wrong coordinates.
+touch-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example touch_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/touch_bench{{_serial_suffix}}
+
+# BMI270 IMU bench: streams accel + gyro at 100 Hz with magnitude
+# computed. Use to characterize gravity vector + bias on a static unit
+# before hand-tuning PickupReaction thresholds.
+imu-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example imu_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/imu_bench{{_serial_suffix}}
+
+# Block-grid motion tracker bench: brings up the camera path and runs
+# the `tracker` crate over each frame, logging motion centroids and
+# proposed pan/tilt deltas. No servos commanded — algorithm validation
+# only.
+tracker-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example tracker_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/tracker_bench{{_serial_suffix}}
