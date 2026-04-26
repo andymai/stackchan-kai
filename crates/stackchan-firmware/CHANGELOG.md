@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.17.0...stackchan-firmware-v0.17.1) (2026-04-26)
+
+
+### Bug Fixes
+
+* **firmware:** drop unused stackchan-net dep until SD I/O lands ([#138](https://github.com/andymai/stackchan-kai/issues/138)) ([8bd2d92](https://github.com/andymai/stackchan-kai/commit/8bd2d9234dedb414d1c79504c6f59052decd7c7b))
+
 ## [0.17.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.16.0...stackchan-firmware-v0.17.0) (2026-04-26)
 
 
