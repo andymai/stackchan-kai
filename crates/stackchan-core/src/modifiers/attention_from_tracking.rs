@@ -137,10 +137,34 @@ impl Modifier for AttentionFromTracking {
             return;
         };
 
-        let active = matches!(obs.motion, TrackingMotion::Tracking);
-        if active {
+        // The tracker reports `Tracking` only on *change* frames
+        // (frame-differencing), so a hand held still after a wave
+        // produces `Holding` frames — same target still tracked, but
+        // no current motion. Counting Holding as lock-eligible lets
+        // the avatar stay engaged through stationary moments after a
+        // wave or step.
+        //
+        // Gate Holding on having seen at least one fresh `Tracking`
+        // since the last release. Otherwise the tracker emits
+        // Holding for the first ~3 s after boot (idle_timeout_ms)
+        // even on a still scene, and the avatar would false-lock at
+        // the neutral pose with no real target.
+        //
+        // Only fresh `Tracking` advances `last_tracking_at` so the
+        // release window still gates on real motion having stopped.
+        let fresh = matches!(obs.motion, TrackingMotion::Tracking);
+        let lock_eligible = match obs.motion {
+            TrackingMotion::Tracking => true,
+            TrackingMotion::Holding => self.last_tracking_at.is_some(),
+            TrackingMotion::Warmup | TrackingMotion::Returning | TrackingMotion::GlobalEvent => {
+                false
+            }
+        };
+        if lock_eligible {
             self.consecutive_tracking = self.consecutive_tracking.saturating_add(1);
-            self.last_tracking_at = Some(now);
+            if fresh {
+                self.last_tracking_at = Some(now);
+            }
         } else {
             self.consecutive_tracking = 0;
         }
@@ -333,44 +357,64 @@ mod tests {
     }
 
     #[test]
-    fn single_frame_motion_below_threshold_does_not_lock() {
+    fn single_motion_frame_followed_by_holding_locks() {
+        // The tracker reports Tracking only on *change* frames. A
+        // single motion (e.g. wave-and-stop) followed by Holding
+        // frames must be enough to engage attention — Holding counts
+        // as lock-eligible because the tracker still believes the
+        // target is present.
         let mut m = AttentionFromTracking::new();
         let mut entity = at(0);
-        // One frame of Tracking, then immediately quiet.
-        entity.perception.tracking =
-            Some(observation(TrackingMotion::Tracking, Pose::new(10.0, 5.0)));
+        let target = Pose::new(10.0, 5.0);
+        entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
         m.update(&mut entity);
-        entity.perception.tracking =
-            Some(observation(TrackingMotion::Holding, Pose::new(10.0, 5.0)));
+        entity.perception.tracking = Some(observation(TrackingMotion::Holding, target));
         for t in 1..10 {
             entity.tick.now = Instant::from_millis(t * 33);
             m.update(&mut entity);
         }
-        assert_eq!(entity.mind.attention, Attention::None);
+        assert!(
+            matches!(entity.mind.attention, Attention::Tracking { .. }),
+            "single motion + holding should lock",
+        );
     }
 
     #[test]
-    fn quiet_tick_resets_counter_mid_burst() {
-        // LOCK_TICKS - 1 Tracking, one Holding (resets), then more
-        // Tracking — should NOT lock because each run is below the
-        // threshold.
+    fn returning_resets_counter() {
+        // After the tracker enters Returning (its idle-timeout slew
+        // back to neutral), the counter must reset so a subsequent
+        // brief motion needs to re-accumulate before re-locking.
         let mut m = AttentionFromTracking::new();
         let mut entity = at(0);
         let target = Pose::new(10.0, 5.0);
 
-        for t in 0..(u64::from(TRACKING_LOCK_TICKS) - 1) {
+        // Lock via sustained Tracking.
+        entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
+        for t in 0..u64::from(TRACKING_LOCK_TICKS) {
             entity.tick.now = Instant::from_millis(t * 33);
-            entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
             m.update(&mut entity);
         }
-        // Quiet tick.
-        entity.tick.now = Instant::from_millis((u64::from(TRACKING_LOCK_TICKS)) * 33);
-        entity.perception.tracking = Some(observation(TrackingMotion::Holding, target));
+        assert!(matches!(entity.mind.attention, Attention::Tracking { .. }));
+
+        // Returning frame: counter should reset (not lock-eligible).
+        entity.perception.tracking = Some(observation(TrackingMotion::Returning, target));
+        entity.tick.now = Instant::from_millis(u64::from(TRACKING_LOCK_TICKS) * 33);
         m.update(&mut entity);
-        // Another partial run, still below threshold.
-        for t in 0..(u64::from(TRACKING_LOCK_TICKS) - 1) {
-            entity.tick.now = Instant::from_millis((u64::from(TRACKING_LOCK_TICKS) + 1 + t) * 33);
-            entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
+        // Counter is private but its effect is visible: a single
+        // subsequent Holding frame should NOT extend the lock — only
+        // a fresh Tracking frame can.
+    }
+
+    #[test]
+    fn holding_without_prior_tracking_does_not_lock() {
+        // On a still scene from boot, the tracker emits Holding for
+        // ~3 s before transitioning to Returning. Without the gate
+        // these would false-lock attention with a neutral target.
+        let mut m = AttentionFromTracking::new();
+        let mut entity = at(0);
+        entity.perception.tracking = Some(observation(TrackingMotion::Holding, Pose::NEUTRAL));
+        for t in 0..30 {
+            entity.tick.now = Instant::from_millis(t * 33);
             m.update(&mut entity);
         }
         assert_eq!(entity.mind.attention, Attention::None);
