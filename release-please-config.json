@@ -3,7 +3,7 @@
   "release-type": "rust",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
-  "include-component-in-tag": false,
+  "include-component-in-tag": true,
   "packages": {
     "crates/stackchan-core": {
       "package-name": "stackchan-core"
