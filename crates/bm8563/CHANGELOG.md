@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/andymai/stackchan-kai/compare/bm8563-v0.7.0...bm8563-v0.8.0) (2026-04-26)
+
+
+### Features
+
+* BM8563 wall-clock + LTR-553 AmbientSleepy modifier ([#18](https://github.com/andymai/stackchan-kai/issues/18)) ([8405d0d](https://github.com/andymai/stackchan-kai/commit/8405d0d0f1619d400ff2bd1691995135f9c25316))
+
 ## [0.7.0](https://github.com/andymai/stackchan-kai/compare/v0.6.0...v0.7.0) (2026-04-25)
 
 

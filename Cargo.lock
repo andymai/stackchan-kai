@@ -405,21 +405,21 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aw88298"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "aw9523"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "axp2101"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -516,14 +516,14 @@ dependencies = [
 
 [[package]]
 name = "bm8563"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "bmi270"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1550,7 +1550,7 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
 name = "es7210"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "ft6336u"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -2127,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "gc0308"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -2541,7 +2541,7 @@ dependencies = [
 
 [[package]]
 name = "ir-nec"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "itoa"
@@ -2768,7 +2768,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "ltr553"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -3866,7 +3866,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scservo"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embedded-io-async 0.7.0",
 ]
@@ -4145,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "aw88298",
  "aw9523",
