@@ -12,6 +12,7 @@ host simulator and 14 driver crates.
 
 - [Architecture overview](architecture) — the engine, the firmware's task graph, and how the host sim mirrors it.
 - [Modifier authoring guide](modifiers) — adding a new behavior to the engine.
+- [Naming conventions](naming) — rules for `Intent` / `Modifier` / `Skill` / `ChirpKind` / `OverrideSource` names, with citations.
 - [Signal channels](signals) — the typed `Signal<…, T>` pattern that wires sensors to the render task.
 - [Typed-error catalog](errors) — every driver crate's `Error<E>` enum.
 
