@@ -50,9 +50,11 @@ pub struct Tick {
 ///
 /// `Eq` is not derived because [`Face`] contains `f32` fields
 /// (`Mouth::mouth_open`) and [`Motor`] contains `Pose`s with `f32`
-/// fields. Use `PartialEq` for tests; the renderer uses
-/// [`Entity::frame_eq`] for its dirty-check (visual fields only).
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+/// fields. `Copy` is not derived either: [`Perception`] holds a
+/// `heapless::Vec` of tracker candidates which can't be `Copy`.
+/// Use `PartialEq` for tests; the renderer uses [`Entity::frame_eq`]
+/// for its dirty-check (visual fields only).
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Entity {
     /// Visual surface. Read by the renderer.
     pub face: Face,

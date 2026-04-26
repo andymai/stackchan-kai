@@ -72,7 +72,7 @@ use esp_hal::{
     },
     time::Rate,
 };
-use stackchan_core::{TrackingMotion, TrackingObservation};
+use stackchan_core::{TargetCandidate, TrackingMotion, TrackingObservation};
 use tracker::{Motion, Tracker, TrackerConfig};
 
 use crate::board::SharedI2c;
@@ -429,10 +429,21 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
                 u32::try_from(now.duration_since(last_step_at).as_millis()).unwrap_or(u32::MAX);
             last_step_at = now;
             let outcome = tracker.step(view, dt_ms);
+            // Translate the firmware-side per-blob list into the
+            // engine-side mirror type. Both are heapless::Vec with
+            // the same cap so this can never overflow.
+            let mut candidates = heapless::Vec::new();
+            for c in &outcome.candidates {
+                let _ = candidates.push(TargetCandidate {
+                    centroid: c.centroid,
+                    cell_count: c.cell_count,
+                });
+            }
             CAMERA_TRACKING_SIGNAL.signal(TrackingObservation {
                 target_pose: outcome.target,
                 fired_cells: outcome.fired_cells,
                 motion: motion_to_engine(outcome.motion),
+                candidates,
             });
 
             // Honour any pending capture request — log frame stats +

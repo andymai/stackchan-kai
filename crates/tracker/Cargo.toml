@@ -16,3 +16,6 @@ workspace = true
 # directly into the firmware's existing `POSE_SIGNAL` plumbing without
 # a marshalling layer.
 stackchan-core = { path = "../stackchan-core" }
+# `heapless::Vec` for the multi-target candidate list emitted per
+# `step` — fixed cap (`MAX_CANDIDATES`) so no `alloc` needed.
+heapless = "0.8"

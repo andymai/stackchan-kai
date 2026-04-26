@@ -92,6 +92,7 @@ mod idle_drift;
 mod idle_sway;
 mod intent_from_body_touch;
 mod intent_from_loud;
+mod microsaccade_from_attention;
 mod mouth_from_audio;
 mod style_from_emotion;
 mod style_from_intent;
@@ -129,6 +130,10 @@ pub use intent_from_body_touch::{
     SWIPE_DELTA,
 };
 pub use intent_from_loud::{IntentFromLoud, STARTLE_HOLD_MS, STARTLE_RMS_THRESHOLD};
+pub use microsaccade_from_attention::{
+    MICROSACCADE_AMPLITUDE_PX, MICROSACCADE_DURATION_MS, MICROSACCADE_INTERVAL_MAX_MS,
+    MICROSACCADE_INTERVAL_MIN_MS, MicrosaccadeFromAttention,
+};
 pub use mouth_from_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthFromAudio,
 };

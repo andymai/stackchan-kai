@@ -74,6 +74,22 @@ pub struct TrackerConfig {
     /// If more than this fraction of cells fire on a single frame the
     /// event is treated as a global lighting change and ignored.
     pub max_fired_fraction: f32,
+    /// Length of the per-cell temporal window used to suppress
+    /// single-frame noise. A cell only counts as fired if it crossed
+    /// `block_threshold` on at least [`Self::temporal_required`] of
+    /// the most recent `temporal_window` frames. `1` disables the
+    /// filter (every frame stands alone). Capped at `8`.
+    pub temporal_window: u8,
+    /// Number of fires required within [`Self::temporal_window`] to
+    /// count a cell as fired this step. Must satisfy
+    /// `1 <= temporal_required <= temporal_window`.
+    pub temporal_required: u8,
+    /// Minimum cell count of a connected blob. After temporal
+    /// filtering, fired cells are grouped into 4-connected blobs;
+    /// blobs smaller than this are dropped (treated as scatter
+    /// noise). `1` disables the filter (every fired cell is its own
+    /// candidate).
+    pub min_blob_cells: u16,
     /// Proportional gain on centroid-offset error in `[0.0, 1.0]`.
     /// `1.0` jumps the head all the way to centre the target on every
     /// frame; `0.4` damps the loop pleasantly given typical servo lag.
@@ -104,9 +120,21 @@ pub struct TrackerConfig {
 impl TrackerConfig {
     /// Defaults tuned for QVGA GC0308 → `SCServo` head on a CoreS3.
     ///
-    /// 8×6 grid (40×40 pixel blocks), 5 % per-block luma threshold,
-    /// 70 % global-event ceiling, P=0.4, ±10 % dead zone, 4 °/frame
-    /// slew, 3 s idle timeout, 1 °/step return-to-centre.
+    /// 8×6 grid (40×40 pixel blocks), 12 % per-block luma threshold,
+    /// 50 % global-event ceiling, ≥3 cells required, ≥2-cell blob
+    /// filter, P=0.4, ±10 % dead zone, 4 °/frame slew, 3 s idle
+    /// timeout, 1 °/step return-to-centre.
+    ///
+    /// `block_threshold` + `max_fired_fraction` were retuned from
+    /// the original 5 % / 70 % values to suppress monitor flicker
+    /// and shadow drift; `min_blob_cells` rejects scatter noise that
+    /// passes the per-cell threshold but isn't a coherent target.
+    ///
+    /// The temporal filter is **off** by default
+    /// (`temporal_window: 1` collapses the per-cell history to "this
+    /// frame only"). Frame-differencing only fires once when a new
+    /// object appears and stays still, so a 3-of-5-frames temporal
+    /// filter would block stationary-presence detection.
     pub const DEFAULT: Self = Self {
         frame_width: 320,
         frame_height: 240,
@@ -115,9 +143,12 @@ impl TrackerConfig {
         subsample_step: 2,
         fov_h_deg: 62.0,
         fov_v_deg: 49.0,
-        block_threshold: 0.05,
-        min_fired_cells: 2,
-        max_fired_fraction: 0.70,
+        block_threshold: 0.12,
+        min_fired_cells: 3,
+        max_fired_fraction: 0.50,
+        temporal_window: 1,
+        temporal_required: 1,
+        min_blob_cells: 2,
         p_gain: 0.4,
         dead_zone: 0.10,
         max_step_deg: 4.0,
@@ -128,24 +159,53 @@ impl TrackerConfig {
     };
 }
 
+/// Maximum number of distinct connected-blob candidates emitted per
+/// [`Tracker::step`]. Excess blobs are dropped (largest-first).
+pub const MAX_CANDIDATES: usize = 4;
+
+/// Maximum value of [`TrackerConfig::temporal_window`]. Bounds the
+/// per-cell history buffer baked into the [`Tracker`].
+pub const MAX_TEMPORAL_WINDOW: usize = 8;
+
+/// One detected motion blob, after temporal filtering + connected-
+/// component grouping. Engine cognition layer arbitrates among these
+/// to pick the focus target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetCandidate {
+    /// Normalised centroid in `[-1.0, 1.0]` per axis. `(0, 0)` is
+    /// frame centre.
+    pub centroid: (f32, f32),
+    /// Number of grid cells in this connected blob.
+    pub cell_count: u16,
+}
+
 /// Outcome of one [`Tracker::step`] call.
 ///
 /// Returned for diagnostic logging in the bench example and for unit
 /// tests. The new target pose is always available as [`Outcome::target`];
 /// [`Outcome::motion`] distinguishes the *why*.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Outcome {
-    /// Number of grid cells whose per-block delta exceeded the threshold.
-    /// Capped at `blocks_x * blocks_y`.
+    /// Total number of grid cells that survived per-cell temporal
+    /// filtering this step (i.e. fired on at least
+    /// `TrackerConfig::temporal_required` of the last
+    /// `temporal_window` frames). Capped at `blocks_x * blocks_y`.
     pub fired_cells: u16,
     /// Normalised centroid in `[-1.0, 1.0]` per axis when motion was
-    /// detected, else `None`. `(0, 0)` means the centre of the frame.
+    /// detected, else `None`. Centroid of all fired cells across all
+    /// blobs (the legacy single-target mode); engine cognition can
+    /// instead arbitrate over [`Self::candidates`] for richer picks.
     pub centroid: Option<(f32, f32)>,
     /// Classification of this step.
     pub motion: Motion,
     /// New target pose after this step. Always within
     /// [`Pose::clamped`]'s safe range.
     pub target: Pose,
+    /// Per-blob detections after connected-component labelling on the
+    /// temporally-filtered fired-cell grid. Sorted by `cell_count`
+    /// descending. Capped at [`MAX_CANDIDATES`]; smaller blobs are
+    /// dropped. Empty on `Warmup` / `GlobalEvent` / no-motion.
+    pub candidates: heapless::Vec<TargetCandidate, MAX_CANDIDATES>,
 }
 
 /// Why the tracker chose this pose.
@@ -181,6 +241,12 @@ pub struct Tracker {
     /// Whether [`Self::prev_grid`] holds a real previous frame.
     /// `false` until the first [`Self::step`].
     have_prev: bool,
+    /// Per-cell ring buffer of fire decisions over the last
+    /// `MAX_TEMPORAL_WINDOW` frames. Each `u8` is a bitfield where
+    /// bit `i` is `1` iff the cell crossed `block_threshold` `i`
+    /// frames ago. The temporal filter is `popcount(bits & mask) >=
+    /// temporal_required` where `mask = (1 << temporal_window) - 1`.
+    fire_history: [u8; MAX_BLOCKS],
     /// Running commanded target pose. Always inside the [`Pose::clamped`]
     /// safe range.
     target_pose: Pose,
@@ -203,6 +269,7 @@ impl Tracker {
             config,
             prev_grid: [0; MAX_BLOCKS],
             have_prev: false,
+            fire_history: [0; MAX_BLOCKS],
             target_pose: Pose::NEUTRAL,
             idle_ms: 0,
         }
@@ -226,6 +293,13 @@ impl Tracker {
         self.have_prev = false;
         self.target_pose = Pose::NEUTRAL;
         self.idle_ms = 0;
+        // Reset the per-cell history so a re-entry starts fresh
+        // (matches "the next step reports Warmup" contract).
+        let mut i = 0;
+        while i < MAX_BLOCKS {
+            self.fire_history[i] = 0;
+            i += 1;
+        }
     }
 
     /// Process one frame.
@@ -244,11 +318,15 @@ impl Tracker {
         clippy::cast_precision_loss,
         clippy::cast_sign_loss,
         clippy::similar_names,
+        clippy::too_many_lines,
         reason = "block-grid arithmetic: cell counts ≤ MAX_BLOCKS (256) so \
                   usize→u32 / u32→f32 casts cannot lose information; the \
                   f32→u16 casts are bounded by inputs that have already been \
                   clamped to [0, 255] / [0, total_cells]; per-axis \
-                  `nx`/`ny`/`*_eff` pairs are the algorithm's natural names"
+                  `nx`/`ny`/`*_eff` pairs are the algorithm's natural names; \
+                  step composes 7 sequential pipeline stages (luma fill → \
+                  raw fire → temporal → CCL → blob filter → centroid → pose) \
+                  that are clearer inline than fragmented across helpers"
     )]
     pub fn step(&mut self, frame: &[u8], dt_ms: u32) -> Outcome {
         let cfg = &self.config;
@@ -263,6 +341,7 @@ impl Tracker {
                 centroid: None,
                 motion: Motion::Warmup,
                 target: self.target_pose,
+                candidates: heapless::Vec::new(),
             };
         }
 
@@ -285,24 +364,44 @@ impl Tracker {
                 centroid: None,
                 motion: Motion::Warmup,
                 target: self.target_pose,
+                candidates: heapless::Vec::new(),
             };
         }
 
         let threshold_u = ((cfg.block_threshold.clamp(0.0, 1.0)) * 255.0) as u16;
         let max_fired = ((cfg.max_fired_fraction.clamp(0.0, 1.0)) * total as f32) as u16;
+
+        // Temporal filter parameters. Clamp the window to
+        // MAX_TEMPORAL_WINDOW (8) so the bitfield fits in a u8; clamp
+        // `required` to at least 1 and at most `window` so the
+        // popcount comparison can fire.
+        let temporal_window = cfg.temporal_window.clamp(1, MAX_TEMPORAL_WINDOW as u8);
+        let temporal_required = cfg.temporal_required.clamp(1, temporal_window);
+        let history_mask: u8 = if temporal_window >= 8 {
+            0xFF
+        } else {
+            (1u8 << temporal_window) - 1
+        };
+
+        // Compute raw per-cell fire bits, advance the per-cell
+        // history bitfield, and apply the temporal filter.
+        let mut filtered: [bool; MAX_BLOCKS] = [false; MAX_BLOCKS];
         let mut fired_cells: u16 = 0;
-        let mut sum_x: u32 = 0;
-        let mut sum_y: u32 = 0;
         for iy in 0..usize::from(by) {
             for ix in 0..usize::from(bx) {
                 let idx = iy * usize::from(bx) + ix;
                 let curr = u16::from(curr_grid[idx]);
                 let prev = u16::from(self.prev_grid[idx]);
                 let delta = curr.abs_diff(prev);
-                if delta > threshold_u {
+                let raw_fired = delta > threshold_u;
+                // Shift the history left by 1, drop bits beyond the
+                // window, OR in the new fire bit.
+                let shifted = (self.fire_history[idx] << 1) & history_mask;
+                let new_history = shifted | u8::from(raw_fired);
+                self.fire_history[idx] = new_history;
+                if new_history.count_ones() >= u32::from(temporal_required) {
+                    filtered[idx] = true;
                     fired_cells += 1;
-                    sum_x += ix as u32;
-                    sum_y += iy as u32;
                 }
             }
         }
@@ -321,17 +420,41 @@ impl Tracker {
                 centroid: None,
                 motion: Motion::GlobalEvent,
                 target: self.target_pose,
+                candidates: heapless::Vec::new(),
             };
         }
 
-        if fired_cells < cfg.min_fired_cells {
-            return self.no_motion_outcome(dt_ms, fired_cells);
+        // Connected-component labelling on the filtered grid. Each
+        // blob below `min_blob_cells` is dropped (treated as scatter
+        // noise that the temporal filter happened to let through).
+        let mut blobs = label_blobs(&filtered, bx, by);
+        blobs.retain(|b| b.cell_count >= cfg.min_blob_cells);
+
+        // Aggregate centroid + cell count over surviving blobs only;
+        // this is the legacy single-pose-target signal that tracker's
+        // pose math uses. Engine cognition can instead arbitrate over
+        // `candidates` for richer focus selection.
+        let mut sum_x: u32 = 0;
+        let mut sum_y: u32 = 0;
+        let mut valid_cells: u16 = 0;
+        for blob in &blobs {
+            sum_x += u32::from(blob.sum_x);
+            sum_y += u32::from(blob.sum_y);
+            valid_cells += blob.cell_count;
         }
+
+        if valid_cells < cfg.min_fired_cells {
+            return self.no_motion_outcome(dt_ms, valid_cells);
+        }
+
+        // Build the candidates list: blobs sorted by cell_count
+        // descending, capped at MAX_CANDIDATES, normalised centroids.
+        let candidates = build_candidates(&mut blobs, bx, by, cfg.flip_x, cfg.flip_y);
 
         // Centroid in block-index space, then normalised to [-1, 1].
         let (cell_cx, cell_cy) = (
-            (sum_x as f32) / f32::from(fired_cells),
-            (sum_y as f32) / f32::from(fired_cells),
+            (sum_x as f32) / f32::from(valid_cells),
+            (sum_y as f32) / f32::from(valid_cells),
         );
         // Centre of a block-index axis of length N is at (N-1)/2;
         // dividing by that maps the index-space centroid to [-1, 1].
@@ -371,10 +494,11 @@ impl Tracker {
         self.idle_ms = 0;
 
         Outcome {
-            fired_cells,
+            fired_cells: valid_cells,
             centroid: Some((nx, ny)),
             motion: Motion::Tracking,
             target: self.target_pose,
+            candidates,
         }
     }
 
@@ -389,6 +513,7 @@ impl Tracker {
                 centroid: None,
                 motion: Motion::Holding,
                 target: self.target_pose,
+                candidates: heapless::Vec::new(),
             };
         }
         let step = self.config.idle_step_deg.max(0.0);
@@ -402,8 +527,119 @@ impl Tracker {
             centroid: None,
             motion: Motion::Returning,
             target: self.target_pose,
+            candidates: heapless::Vec::new(),
         }
     }
+}
+
+/// One blob from connected-component labelling. Internal to the
+/// step's bookkeeping; a final pass converts surviving blobs into
+/// public [`TargetCandidate`]s with normalised centroids.
+#[derive(Debug, Clone, Copy)]
+struct Blob {
+    /// Sum of x-indices of cells in this blob.
+    sum_x: u16,
+    /// Sum of y-indices of cells in this blob.
+    sum_y: u16,
+    /// Number of cells in this blob.
+    cell_count: u16,
+}
+
+/// Run 4-connected CCL on the filtered fired-cell grid via iterative
+/// flood-fill. Visits each fired cell exactly once. Stack capacity
+/// equals [`MAX_BLOCKS`] — sufficient because the worst-case blob
+/// fills the entire grid.
+fn label_blobs(filtered: &[bool; MAX_BLOCKS], bx: u16, by: u16) -> heapless::Vec<Blob, MAX_BLOCKS> {
+    let mut visited = [false; MAX_BLOCKS];
+    let mut blobs: heapless::Vec<Blob, MAX_BLOCKS> = heapless::Vec::new();
+    let cols = usize::from(bx);
+    let rows = usize::from(by);
+    for sy in 0..rows {
+        for sx in 0..cols {
+            let seed_idx = sy * cols + sx;
+            if !filtered[seed_idx] || visited[seed_idx] {
+                continue;
+            }
+            // Iterative flood-fill from (sx, sy).
+            let mut stack: heapless::Vec<(u8, u8), MAX_BLOCKS> = heapless::Vec::new();
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "bx/by ≤ MAX_BLOCKS_X/Y ≤ 16, fits in u8 trivially"
+            )]
+            let _ = stack.push((sx as u8, sy as u8));
+            visited[seed_idx] = true;
+            let mut blob = Blob {
+                sum_x: 0,
+                sum_y: 0,
+                cell_count: 0,
+            };
+            while let Some((cx, cy)) = stack.pop() {
+                blob.sum_x += u16::from(cx);
+                blob.sum_y += u16::from(cy);
+                blob.cell_count += 1;
+                // 4-neighbours.
+                let neighbours = [
+                    (cx.wrapping_sub(1), cy, cx > 0),
+                    (cx + 1, cy, usize::from(cx) + 1 < cols),
+                    (cx, cy.wrapping_sub(1), cy > 0),
+                    (cx, cy + 1, usize::from(cy) + 1 < rows),
+                ];
+                for (nx, ny, in_bounds) in neighbours {
+                    if !in_bounds {
+                        continue;
+                    }
+                    let nidx = usize::from(ny) * cols + usize::from(nx);
+                    if filtered[nidx] && !visited[nidx] {
+                        visited[nidx] = true;
+                        let _ = stack.push((nx, ny));
+                    }
+                }
+            }
+            // `blobs` is bounded by MAX_BLOCKS — push always succeeds
+            // because we visit each cell once and a blob owns ≥1 cell.
+            let _ = blobs.push(blob);
+        }
+    }
+    blobs
+}
+
+/// Sort `blobs` by `cell_count` descending and convert the top
+/// [`MAX_CANDIDATES`] into public [`TargetCandidate`]s with
+/// normalised centroids in `[-1, 1]`. Honours `flip_x` / `flip_y` so
+/// engine-side arbitration sees centroids in the same coordinate
+/// frame the tracker's pose math uses.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "cell counts ≤ MAX_BLOCKS = 256 ≪ 2^24, exact in f32"
+)]
+fn build_candidates(
+    blobs: &mut heapless::Vec<Blob, MAX_BLOCKS>,
+    bx: u16,
+    by: u16,
+    flip_x: bool,
+    flip_y: bool,
+) -> heapless::Vec<TargetCandidate, MAX_CANDIDATES> {
+    blobs.sort_unstable_by_key(|b| core::cmp::Reverse(b.cell_count));
+    let half_x = (f32::from(bx) - 1.0) * 0.5;
+    let half_y = (f32::from(by) - 1.0) * 0.5;
+    let mut out: heapless::Vec<TargetCandidate, MAX_CANDIDATES> = heapless::Vec::new();
+    for blob in blobs.iter().take(MAX_CANDIDATES) {
+        let cx = f32::from(blob.sum_x) / f32::from(blob.cell_count);
+        let cy = f32::from(blob.sum_y) / f32::from(blob.cell_count);
+        let mut nx = (cx - half_x) / half_x.max(0.5);
+        let mut ny = (cy - half_y) / half_y.max(0.5);
+        if flip_x {
+            nx = -nx;
+        }
+        if flip_y {
+            ny = -ny;
+        }
+        let _ = out.push(TargetCandidate {
+            centroid: (nx, ny),
+            cell_count: blob.cell_count,
+        });
+    }
+    out
 }
 
 /// Step `value` toward `target` by at most `step` units.

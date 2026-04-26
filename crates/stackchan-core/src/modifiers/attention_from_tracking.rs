@@ -130,7 +130,7 @@ impl Modifier for AttentionFromTracking {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let Some(obs) = entity.perception.tracking else {
+        let Some(obs) = entity.perception.tracking.as_ref() else {
             // No observation yet — leave attention alone, reset
             // counter so the next non-None obs starts fresh.
             self.consecutive_tracking = 0;
@@ -202,6 +202,7 @@ mod tests {
                 0
             },
             motion,
+            candidates: heapless::Vec::new(),
         }
     }
 
