@@ -1,0 +1,19 @@
+[package]
+name = "stackchan-tts"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Speech synthesis backends and audio-source abstractions for the Stack-chan avatar."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+# `Utterance`, `PhraseId`, `Locale`, `SpeechContent`, etc. are domain
+# types defined in core. This crate consumes them; modifiers in core
+# publish them; firmware drains them through a `SpeechBackend`
+# implemented here.
+stackchan-core = { path = "../stackchan-core" }

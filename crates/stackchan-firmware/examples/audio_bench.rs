@@ -1,20 +1,22 @@
 //! Audio bench: brings up the full audio stack (I²S0 + AW88298 + ES7210)
-//! exactly as `main.rs` does, then runs a fixed playlist through the
-//! TX clip queue so every clip in the chirp library can be ear-tested
-//! in isolation.
+//! exactly as `main.rs` does, then walks the non-verbal-SFX phrase
+//! catalog through the speech dispatch path so every chirp can be
+//! ear-tested in isolation.
 //!
 //! Use this bench when iterating on:
-//! - boot-greeting amplitude / duration / pitch
-//! - chirp distinguishability (wake vs pickup vs low-battery)
-//! - any new `AudioClip` you add to `audio.rs`
+//! - chirp distinguishability (wake vs pickup vs startle vs low-battery)
+//! - any new non-verbal `PhraseId` variant
+//! - voice-route bring-up after audio-stack changes
 //!
 //! Expected log after bring-up (one playlist run):
 //!
 //! ```text
-//! audio-bench: playing BOOT_GREETING
-//! audio-bench: playing WAKE_CHIRP
-//! audio-bench: playing pickup chirp (2 clips)
-//! audio-bench: playing low-battery alert (3 clips)
+//! audio-bench: dispatching WakeChirp
+//! audio-bench: dispatching PickupChirp
+//! audio-bench: dispatching StartleChirp
+//! audio-bench: dispatching LowBatteryChirp
+//! audio-bench: dispatching CameraModeEnteredChirp
+//! audio-bench: dispatching CameraModeExitedChirp
 //! audio-bench: playlist done — looping in 5 s
 //! ```
 //!
@@ -32,6 +34,7 @@ use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
+use stackchan_core::voice::{PhraseId, Utterance};
 use stackchan_firmware::{audio, board};
 
 use esp_println as _;
@@ -123,15 +126,16 @@ async fn main(spawner: Spawner) -> ! {
     defmt::info!("audio-bench: audio task spawned, starting playlist");
 
     loop {
-        play_clip("BOOT_GREETING", audio::BOOT_GREETING).await;
-        play_clip("WAKE_CHIRP", audio::WAKE_CHIRP).await;
-
-        play_helper("pickup chirp (2 clips)", audio::try_enqueue_pickup_chirp()).await;
-        play_helper(
-            "low-battery alert (3 clips)",
-            audio::try_enqueue_low_battery_alert(),
-        )
-        .await;
+        for (label, phrase) in [
+            ("WakeChirp", PhraseId::WakeChirp),
+            ("PickupChirp", PhraseId::PickupChirp),
+            ("StartleChirp", PhraseId::StartleChirp),
+            ("LowBatteryChirp", PhraseId::LowBatteryChirp),
+            ("CameraModeEnteredChirp", PhraseId::CameraModeEnteredChirp),
+            ("CameraModeExitedChirp", PhraseId::CameraModeExitedChirp),
+        ] {
+            play_phrase(label, phrase).await;
+        }
 
         defmt::info!(
             "audio-bench: playlist done — looping in {=u64} ms",
@@ -141,34 +145,12 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
-/// Enqueue a single clip with a label log line and post-clip gap.
-async fn play_clip(label: &str, clip: audio::AudioClip) {
-    defmt::info!("audio-bench: playing {=str}", label);
-    if let Err(e) = audio::try_enqueue_clip(clip) {
-        defmt::warn!(
-            "audio-bench: {=str} dropped, queue full ({:?})",
-            label,
-            defmt::Debug2Format(&e),
-        );
-    }
-    Timer::after(Duration::from_millis(INTER_CLIP_GAP_MS)).await;
-}
-
-/// Run a multi-clip helper (e.g. `try_enqueue_pickup_chirp`) and apply
-/// the same labelling + gap as `play_clip`. The helper has already
-/// returned by the time we wait, so the gap measures from the
-/// enqueue, not from playback completion — fine for a tuning bench.
-async fn play_helper(
-    label: &str,
-    result: Result<(), embassy_sync::channel::TrySendError<audio::AudioClip>>,
-) {
-    defmt::info!("audio-bench: playing {=str}", label);
-    if let Err(e) = result {
-        defmt::warn!(
-            "audio-bench: {=str} (partially) dropped ({:?})",
-            label,
-            defmt::Debug2Format(&e),
-        );
+/// Dispatch a phrase utterance through the speech path, log a label,
+/// and pause for the configured inter-clip gap.
+async fn play_phrase(label: &str, phrase: PhraseId) {
+    defmt::info!("audio-bench: dispatching {=str}", label);
+    if let Err(e) = audio::try_dispatch_utterance(&Utterance::phrase(phrase)) {
+        defmt::warn!("audio-bench: {=str} dropped ({:?})", label, e);
     }
     Timer::after(Duration::from_millis(INTER_CLIP_GAP_MS)).await;
 }

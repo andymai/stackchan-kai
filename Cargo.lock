@@ -4186,6 +4186,7 @@ dependencies = [
  "scservo",
  "si12t",
  "stackchan-core",
+ "stackchan-tts",
  "static_cell",
  "tracker",
 ]
@@ -4197,6 +4198,13 @@ dependencies = [
  "eframe",
  "embedded-graphics",
  "heapless 0.8.0",
+ "stackchan-core",
+]
+
+[[package]]
+name = "stackchan-tts"
+version = "0.1.0"
+dependencies = [
  "stackchan-core",
 ]
 

@@ -168,6 +168,8 @@ pub enum Field {
     UsbPowerPresent,
     /// `entity.perception.audio_rms`
     AudioRms,
+    /// `entity.perception.tx_lip_sync`
+    TxLipSync,
     /// `entity.perception.body_touch`
     BodyTouch,
     /// `entity.perception.tracking`
@@ -190,6 +192,10 @@ pub enum Field {
     // ---- Voice ----
     /// `entity.voice.chirp_request`
     ChirpRequest,
+    /// `entity.voice.utterance_request`
+    UtteranceRequest,
+    /// `entity.voice.is_speaking`
+    IsSpeaking,
 
     // ---- Input ----
     /// `entity.input.tap_pending`
@@ -228,6 +234,7 @@ impl Field {
         Self::BatteryPercent,
         Self::UsbPowerPresent,
         Self::AudioRms,
+        Self::TxLipSync,
         Self::BodyTouch,
         Self::Tracking,
         Self::Emotion,
@@ -237,6 +244,8 @@ impl Field {
         Self::Engagement,
         Self::Dormancy,
         Self::ChirpRequest,
+        Self::UtteranceRequest,
+        Self::IsSpeaking,
         Self::TapPending,
         Self::RemotePending,
     ];
@@ -269,6 +278,7 @@ impl Field {
             | Self::BatteryPercent
             | Self::UsbPowerPresent
             | Self::AudioRms
+            | Self::TxLipSync
             | Self::BodyTouch
             | Self::Tracking => FieldGroup::Perception,
             Self::Emotion
@@ -277,7 +287,7 @@ impl Field {
             | Self::Attention
             | Self::Engagement
             | Self::Dormancy => FieldGroup::Mind,
-            Self::ChirpRequest => FieldGroup::Voice,
+            Self::ChirpRequest | Self::UtteranceRequest | Self::IsSpeaking => FieldGroup::Voice,
             Self::TapPending | Self::RemotePending => FieldGroup::Input,
         }
     }
@@ -360,6 +370,15 @@ impl Field {
                 (None, None) => false,
                 _ => true,
             },
+            Self::TxLipSync => {
+                match (before.perception.tx_lip_sync, after.perception.tx_lip_sync) {
+                    (Some(b), Some(a)) => {
+                        b.envelope.to_bits() != a.envelope.to_bits() || b.viseme != a.viseme
+                    }
+                    (None, None) => false,
+                    _ => true,
+                }
+            }
             Self::BodyTouch => before.perception.body_touch != after.perception.body_touch,
             Self::Tracking => before.perception.tracking != after.perception.tracking,
             Self::Emotion => before.mind.affect.emotion != after.mind.affect.emotion,
@@ -369,6 +388,10 @@ impl Field {
             Self::Engagement => before.mind.engagement != after.mind.engagement,
             Self::Dormancy => before.mind.dormancy != after.mind.dormancy,
             Self::ChirpRequest => before.voice.chirp_request != after.voice.chirp_request,
+            Self::UtteranceRequest => {
+                before.voice.utterance_request != after.voice.utterance_request
+            }
+            Self::IsSpeaking => before.voice.is_speaking != after.voice.is_speaking,
             Self::TapPending => before.input.tap_pending != after.input.tap_pending,
             Self::RemotePending => before.input.remote_pending != after.input.remote_pending,
         }
@@ -778,7 +801,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            36,
+            39,
             "update Field::ALL when adding variants"
         );
     }

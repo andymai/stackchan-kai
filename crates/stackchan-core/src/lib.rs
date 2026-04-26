@@ -37,6 +37,7 @@ pub mod face;
 pub mod head;
 pub mod input;
 pub mod leds;
+pub mod lipsync;
 pub mod mind;
 pub mod modifier;
 pub mod modifiers;
@@ -57,6 +58,7 @@ pub use face::{Eye, EyePhase, Face, Mouth, Point, SCALE_DEFAULT, Style};
 pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
 pub use input::Input;
 pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
+pub use lipsync::{LipSync, Viseme};
 pub use mind::{Affect, Attention, Autonomy, Dormancy, Engagement, Intent, Mind, OverrideSource};
 pub use modifier::Modifier;
 pub use motor::Motor;
@@ -65,4 +67,7 @@ pub use perception::{
     TargetCandidate, TrackingMotion, TrackingObservation,
 };
 pub use skill::{Skill, SkillStatus};
-pub use voice::{ChirpKind, Voice};
+pub use voice::{
+    ChirpKind, ContentRef, Locale, PhraseId, Priority, SpeechContent, SpeechStyle, Utterance,
+    VocalStyle, Voice,
+};

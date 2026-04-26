@@ -130,11 +130,12 @@ impl Modifier for MouthFromAudio {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
             name: "MouthFromAudio",
-            description: "Drives face.mouth.mouth_open from perception.audio_rms via a dB-mapped \
-                          attack/release envelope so the mouth lip-syncs roughly to mic input.",
+            description: "Drives face.mouth.mouth_open from either perception.tx_lip_sync \
+                          (during own speech) or perception.audio_rms (mic input) via a dB-mapped \
+                          attack/release envelope.",
             phase: Phase::Audio,
             priority: 0,
-            reads: &[Field::AudioRms],
+            reads: &[Field::AudioRms, Field::TxLipSync],
             writes: &[Field::MouthOpen],
         };
         &META
@@ -142,10 +143,19 @@ impl Modifier for MouthFromAudio {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        // Pre-publish (audio_rms = None) reads as silent. Once the
-        // firmware audio task starts publishing, it stays Some.
-        let rms = entity.perception.audio_rms.unwrap_or(0.0);
-        let target = self.target_from_rms(rms);
+        // TX-side lip-sync takes precedence: when the avatar is
+        // speaking its own audio, the firmware publishes envelope
+        // (and optional viseme) directly. The mic path is gated to
+        // None during playback by the firmware's TX guard, so we'd
+        // otherwise see "silent" mid-speech.
+        let target = if let Some(lip_sync) = entity.perception.tx_lip_sync {
+            clamp_unit(lip_sync.envelope)
+        } else {
+            // Pre-publish (audio_rms = None) reads as silent. Once the
+            // firmware audio task starts publishing, it stays Some.
+            let rms = entity.perception.audio_rms.unwrap_or(0.0);
+            self.target_from_rms(rms)
+        };
 
         let dt_ms = match self.last_tick {
             // First tick: snap to target so the envelope doesn't

@@ -73,7 +73,7 @@ use stackchan_core::{
     },
     render_leds,
     skills::{Handling, Listening, Petting},
-    voice::ChirpKind,
+    voice::{ChirpKind, PhraseId, Utterance},
 };
 use static_cell::StaticCell;
 
@@ -328,16 +328,13 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
             && active != camera_mode
         {
             camera_mode = active;
-            let chirp = if active {
-                audio::try_enqueue_camera_mode_enter()
+            let phrase = if active {
+                PhraseId::CameraModeEnteredChirp
             } else {
-                audio::try_enqueue_camera_mode_exit()
+                PhraseId::CameraModeExitedChirp
             };
-            if let Err(e) = chirp {
-                defmt::warn!(
-                    "audio: camera-mode chirp dropped ({:?})",
-                    defmt::Debug2Format(&e),
-                );
+            if let Err(e) = audio::try_dispatch_utterance(&Utterance::phrase(phrase)) {
+                defmt::warn!("audio: camera-mode chirp dropped ({:?})", e);
             }
         }
         // Drain any newly completed camera frame slice. Latest-wins:
@@ -406,6 +403,21 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         } else if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
             entity.perception.audio_rms = Some(rms.0);
         }
+        // TX-side lip-sync drain. While the audio task is playing
+        // speech, MouthFromAudio reads `tx_lip_sync` in preference to
+        // the (gated) mic. When playback ends, we observe the
+        // AUDIO_TX_PLAYING transition and clear the field so the next
+        // mic-driven path takes over.
+        if tx_playing {
+            if let Some(hint) = audio::TX_LIP_SYNC_SIGNAL.try_take() {
+                entity.perception.tx_lip_sync = Some(hint);
+            }
+        } else {
+            // Drop any in-flight signal value plus the perception
+            // entry so MouthFromAudio falls back to the mic path.
+            let _ = audio::TX_LIP_SYNC_SIGNAL.try_take();
+            entity.perception.tx_lip_sync = None;
+        }
         // Drain the latest body-touch (back-of-head Si12T) reading.
         if let Some(touch) = body_touch::BODY_TOUCH_SIGNAL.try_take() {
             entity.perception.body_touch = Some(touch);
@@ -424,31 +436,52 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         director.run(&mut entity, now);
         tracking_trace.observe(&entity, now);
 
-        // Drain the chirp request modifiers raised this tick. Modifiers
-        // (`EmotionFromIntent`, `EmotionFromVoice`, `EmotionFromBattery`) set
-        // `entity.voice.chirp_request`; we read it once after `run()`,
-        // dispatch on `ChirpKind`, then clear so the next frame starts
-        // fresh.
+        // Drain speech intents raised this tick. Two parallel paths
+        // during the chirp → utterance migration:
+        //
+        // - `entity.voice.chirp_request` (legacy): translated to a
+        //   non-verbal `PhraseId` and dispatched through the same
+        //   speech path. Modifiers that still publish ChirpKind keep
+        //   working without code changes; once they migrate to
+        //   `utterance_request`, this arm goes away with `ChirpKind`.
+        // - `entity.voice.utterance_request` (current): structured
+        //   speech intent. Routed straight through.
         if let Some(kind) = entity.voice.chirp_request.take() {
-            let result = match kind {
-                ChirpKind::Pickup => audio::try_enqueue_pickup_chirp(),
-                ChirpKind::Wake => audio::try_enqueue_wake_chirp(),
-                ChirpKind::Startle => audio::try_enqueue_startle_chirp(),
-                ChirpKind::LowBatteryAlert => audio::try_enqueue_low_battery_alert(),
-                ChirpKind::CameraModeEntered => audio::try_enqueue_camera_mode_enter(),
-                ChirpKind::CameraModeExited => audio::try_enqueue_camera_mode_exit(),
-                // ChirpKind is `non_exhaustive`, so even though the
-                // arms above cover every variant defined today, future
-                // variants land as a no-op until firmware adds an arm.
-                _ => Ok(()),
+            // ChirpKind is `non_exhaustive`; the catch-all `_` arm
+            // is required syntactically and there's no stable way
+            // to force every known variant to appear above it.
+            // Adding a `ChirpKind` variant in core compiles silently
+            // here — but `ChirpKind` is being retired alongside the
+            // `voice.chirp_request` field, so the surface is shrinking
+            // (no new variants expected).
+            let phrase = match kind {
+                ChirpKind::Pickup => Some(PhraseId::PickupChirp),
+                ChirpKind::Wake => Some(PhraseId::WakeChirp),
+                ChirpKind::Startle => Some(PhraseId::StartleChirp),
+                ChirpKind::LowBatteryAlert => Some(PhraseId::LowBatteryChirp),
+                ChirpKind::CameraModeEntered => Some(PhraseId::CameraModeEnteredChirp),
+                ChirpKind::CameraModeExited => Some(PhraseId::CameraModeExitedChirp),
+                _ => None,
             };
-            if let Err(e) = result {
-                defmt::warn!(
-                    "audio: chirp {:?} (partially) dropped ({:?})",
-                    defmt::Debug2Format(&kind),
-                    defmt::Debug2Format(&e)
-                );
+            if let Some(phrase) = phrase {
+                let utterance = Utterance::phrase(phrase);
+                if let Err(e) = audio::try_dispatch_utterance(&utterance) {
+                    defmt::warn!(
+                        "audio: chirp {:?} dropped ({:?})",
+                        defmt::Debug2Format(&kind),
+                        e,
+                    );
+                }
             }
+        }
+        if let Some(utterance) = entity.voice.utterance_request.take()
+            && let Err(e) = audio::try_dispatch_utterance(&utterance)
+        {
+            defmt::warn!(
+                "audio: utterance {:?} dropped ({:?})",
+                defmt::Debug2Format(&utterance),
+                e,
+            );
         }
 
         // Publish the final pose to the head task.

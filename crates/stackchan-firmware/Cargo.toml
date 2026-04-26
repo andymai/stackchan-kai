@@ -28,6 +28,10 @@ py32 = { path = "../py32" }
 scservo = { path = "../scservo" }
 si12t = { path = "../si12t" }
 tracker = { path = "../tracker" }
+# Speech synthesis backends + audio-source abstractions. Provides the
+# `BakedBackend` (sine-cycle SFX + future verbal PCM) and the
+# `AudioSource` trait the audio task's TX feeder pulls samples through.
+stackchan-tts = { path = "../stackchan-tts" }
 # `heapless::Vec` for the per-frame multi-target candidate list
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
