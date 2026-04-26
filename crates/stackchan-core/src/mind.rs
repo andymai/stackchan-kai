@@ -23,6 +23,7 @@
 
 use crate::clock::Instant;
 use crate::emotion::Emotion;
+use crate::head::Pose;
 
 /// The entity's current felt state.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +131,11 @@ pub enum Intent {
 ///
 /// Carries enough state for downstream modifiers to animate the focus
 /// (e.g. ease-in based on `since`). Default: [`Attention::None`].
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+///
+/// Only `PartialEq` (not `Eq`) because [`Attention::Tracking`] carries
+/// a [`Pose`] with f32 fields. Modifier tests still use `assert_eq!`
+/// freely — that needs only `PartialEq`.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum Attention {
     /// Not focused on anything specific.
@@ -143,6 +148,18 @@ pub enum Attention {
         /// When the listening attention began.
         since: Instant,
     },
+    /// Tracking a moving target detected by the camera. `target` is
+    /// the head-pose the engine wants to look at (already in safe
+    /// pan/tilt range — the firmware tracker handles clamping); `since`
+    /// is the instant tracking attention began. Set by
+    /// [`crate::modifiers::AttentionFromTracking`].
+    Tracking {
+        /// Where the head should look. In the same coordinate system
+        /// as `motor.head_pose`.
+        target: Pose,
+        /// When the tracking attention began.
+        since: Instant,
+    },
 }
 
 /// Persistent facts the entity remembers across boots. Placeholder
@@ -153,7 +170,10 @@ pub struct Memory;
 /// The cognitive layer of the entity. Sub-component shape is stable;
 /// new fields land on `Affect` / `Autonomy` / `Intent` / `Attention` /
 /// `Memory` without breaking modifiers that read `Mind`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+///
+/// `PartialEq` only — [`Attention::Tracking`] holds a [`Pose`] with
+/// f32 fields, which leak through here.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Mind {
     /// Current felt state.
     pub affect: Affect,

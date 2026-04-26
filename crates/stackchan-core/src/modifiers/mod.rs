@@ -59,12 +59,18 @@
 //!   1. [`MouthFromAudio`] — reads `perception.audio_rms`, writes
 //!      `face.mouth.mouth_open`.
 //!
+//! - **[`crate::director::Phase::Cognition`]** — synthesis across
+//!   percepts:
+//!   1. [`AttentionFromTracking`] — reads `perception.tracking`,
+//!      writes `mind.attention=Tracking{target}` after sustained
+//!      camera motion; releases after the quiet window.
+//!
 //! Empty phases today (slots reserved for v2.x):
 //! [`crate::director::Phase::Perception`],
-//! [`crate::director::Phase::Cognition`],
 //! [`crate::director::Phase::Speech`],
 //! [`crate::director::Phase::Output`].
 
+mod attention_from_tracking;
 mod blink;
 mod breath;
 mod emotion_cycle;
@@ -85,6 +91,9 @@ mod mouth_from_audio;
 mod style_from_emotion;
 mod style_from_intent;
 
+pub use attention_from_tracking::{
+    AttentionFromTracking, TRACKING_LOCK_TICKS, TRACKING_RELEASE_MS,
+};
 pub use blink::Blink;
 pub use breath::Breath;
 pub use emotion_cycle::EmotionCycle;
