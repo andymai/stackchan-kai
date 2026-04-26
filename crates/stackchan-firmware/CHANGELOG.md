@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.13.1...stackchan-firmware-v0.14.0) (2026-04-26)
+
+
+### Features
+
+* **firmware:** tracking-trace cargo feature for camera-pipeline observability ([#126](https://github.com/andymai/stackchan-kai/issues/126)) ([5797ccd](https://github.com/andymai/stackchan-kai/commit/5797ccd86077406021adb198541122ca1c60e2ec))
+
 ## [0.13.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.13.0...stackchan-firmware-v0.13.1) (2026-04-26)
 
 
