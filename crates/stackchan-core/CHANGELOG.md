@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.11.0...stackchan-core-v0.12.0) (2026-04-26)
+
+
+### Features
+
+* face tracking with engagement-driven gaze and lost-target search ([#121](https://github.com/andymai/stackchan-kai/issues/121)) ([142fc1c](https://github.com/andymai/stackchan-kai/commit/142fc1c9e2bdc161a2d5c36492f0fec85a3dcbfe))
+
 ## [0.11.0](https://github.com/andymai/stackchan-kai/compare/v0.10.0...v0.11.0) (2026-04-26)
 
 
