@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.13.0...stackchan-core-v0.14.0) (2026-04-26)
+
+
+### Features
+
+* speech synthesis framework with baked backend ([#132](https://github.com/andymai/stackchan-kai/issues/132)) ([8c9018f](https://github.com/andymai/stackchan-kai/commit/8c9018f709f80ea4e24d0215ca8e57d7c3a5dd8c))
+
 ## [0.13.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.12.0...stackchan-core-v0.13.0) (2026-04-26)
 
 
