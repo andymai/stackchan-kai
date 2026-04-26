@@ -99,7 +99,8 @@ mod style_from_emotion;
 mod style_from_intent;
 
 pub use attention_from_tracking::{
-    AttentionFromTracking, TRACKING_LOCK_TICKS, TRACKING_RELEASE_MS,
+    AttentionFromTracking, FACE_LOCK_HITS, FACE_RELEASE_MISSES, TRACKING_LOCK_TICKS,
+    TRACKING_RELEASE_MS,
 };
 pub use blink::Blink;
 pub use breath::Breath;
