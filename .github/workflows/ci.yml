@@ -104,7 +104,16 @@ jobs:
       # `core` isn't precompiled for xtensa-esp32s3-none-elf. The
       # previous workspace-root invocation bypassed this config and
       # failed with `error[E0463]: can't find crate for 'core'`.
-      - name: Clippy (firmware)
+      # Lint both feature configurations: default-features (the
+      # production build) and --all-features (every optional
+      # observability / debug feature on). A `#[cfg(feature = "...")]`
+      # module that compiles only in one config would slip past a
+      # single-invocation lint and only fail in the other release
+      # build. No user-controlled inputs in either invocation.
+      - name: Clippy (firmware, default features)
+        working-directory: crates/stackchan-firmware
+        run: cargo clippy -- -D warnings
+      - name: Clippy (firmware, all features)
         working-directory: crates/stackchan-firmware
         run: cargo clippy --all-features -- -D warnings
 

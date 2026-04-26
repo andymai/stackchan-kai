@@ -92,6 +92,13 @@ clippy-firmware:
 build-firmware:
     cd crates/stackchan-firmware && cargo +esp build --release
 
+# Release build with the `tracking-trace` cargo feature on. Emits
+# structured defmt events from the camera-tracking pipeline (attention
+# / engagement transitions, lock-fire latency, observation cadence).
+# Use when measuring face-tracking behavior on the live unit.
+build-firmware-trace:
+    cd crates/stackchan-firmware && cargo +esp build --release --features tracking-trace
+
 # ----- Flash + monitor ----------------------------------------------------
 #
 # These recipes go through espflash over the serial-JTAG port. On Linux
@@ -132,6 +139,13 @@ reattach:
 # default inner-loop verb. Build first, then flash, then stream logs.
 # One port-open, one reset — preferred over split `flash; monitor`.
 fmr: build-firmware
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}{{_serial_suffix}}
+
+# Flash + monitor a `tracking-trace`-feature build in one shot. Emits
+# structured defmt events from the camera-tracking pipeline
+# (attention / engagement transitions, lock-fire latency, observation
+# cadence). Filter the stream with `grep trk:` to isolate them.
+fmr-trace: build-firmware-trace
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{firmware_elf}}{{_serial_suffix}}
 
 # Agent-friendly fmr: kicks `just fmr` off inside a tmux session, tees
