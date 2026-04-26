@@ -19,7 +19,7 @@
 //!
 //! ## Coordination with the other emotion modifiers
 //!
-//! Like [`super::PickupReaction`], this modifier respects an existing
+//! Like [`super::IntentReflex`], this modifier respects an existing
 //! `entity.mind.autonomy.manual_until` hold — if touch, a pickup, or any other
 //! explicit input has already claimed the emotion, we stand down.
 //! Ambient sleep is *background state*: it shouldn't override a user's

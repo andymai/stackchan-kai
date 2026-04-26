@@ -73,6 +73,12 @@ const fn targets_for(emotion: Emotion) -> HeadBias {
             pan_deg: 0.0,
             tilt_deg: 2.0,
         },
+        Emotion::Angry => HeadBias {
+            // Slight chin-down stern lean — confrontational but not
+            // exaggerated. Pan stays neutral.
+            pan_deg: 0.0,
+            tilt_deg: -2.0,
+        },
     }
 }
 

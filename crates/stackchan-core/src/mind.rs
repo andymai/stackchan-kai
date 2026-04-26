@@ -44,8 +44,12 @@ pub enum OverrideSource {
     BodyTouch,
     /// IR-remote button press.
     Remote,
-    /// IMU pickup detection.
+    /// IMU pickup detection — set by `IntentReflex` on a transition
+    /// into [`Intent::PickedUp`].
     Pickup,
+    /// IMU shake detection — set by `IntentReflex` on a transition
+    /// into [`Intent::Shaken`].
+    Shake,
     /// Sustained voice activity.
     Voice,
     /// Ambient-light-driven sleepy override.
@@ -73,6 +77,15 @@ pub struct Autonomy {
 
 /// Current goal or planned action of the entity. Set by skills and
 /// read by modifiers in later phases. Default: [`Intent::Idle`].
+///
+/// ## Priority
+///
+/// Multiple skills may try to write `intent` on the same tick. The
+/// [`crate::skills::Handling`] skill resolves IMU-derived states
+/// against [`crate::skills::Petting`] using the order
+/// `PickedUp > Shaken > BeingPet > Tilted > Listen > Idle` — physical
+/// handling of the whole avatar dominates over local body-touch, and
+/// passive pose (`Tilted`) is lowest because it's not active handling.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Intent {
@@ -86,6 +99,19 @@ pub enum Intent {
     /// [`crate::skills::Petting`] after sustained any-zone contact;
     /// cleared on release.
     BeingPet,
+    /// Held in the air. Set by [`crate::skills::Handling`] after
+    /// sustained `|accel| ≠ 1 g`. Cleared when the avatar settles.
+    /// `IntentReflex` translates the entry edge to `Surprised`.
+    PickedUp,
+    /// Being shaken. Set by [`crate::skills::Handling`] when accel
+    /// oscillates above the shake threshold within a short window.
+    /// `IntentReflex` translates the entry edge to `Angry`.
+    Shaken,
+    /// Lying on its side / face-down. Set by [`crate::skills::Handling`]
+    /// when the gravity vector deviates from face-up for a sustained
+    /// window. Passive — no reflex emotion attached; downstream
+    /// modifiers (e.g. an extended `IntentStyle`) own the visual.
+    Tilted,
 }
 
 /// What the entity is currently focused on.

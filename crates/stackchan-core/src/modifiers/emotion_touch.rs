@@ -86,7 +86,10 @@ const fn next_emotion(current: Emotion) -> Emotion {
         Emotion::Happy => Emotion::Sleepy,
         Emotion::Sleepy => Emotion::Surprised,
         Emotion::Surprised => Emotion::Sad,
-        Emotion::Sad => Emotion::Neutral,
+        // `Sad` wraps the cycle back to `Neutral`. `Angry` is
+        // reactive-only (set by `IntentReflex` on shake) and exits to
+        // `Neutral` rather than threading into the cycle.
+        Emotion::Sad | Emotion::Angry => Emotion::Neutral,
     }
 }
 

@@ -48,16 +48,10 @@ pub const SKILL_CAP: usize = 16;
 /// follows, speech queues, expression renders, motion executes, audio
 /// drives the visual envelope, and output ships the frame.
 ///
-/// Population:
-/// - `Affect` (7): `EmotionTouch`, `RemoteCommand`, `PickupReaction`,
-///   `WakeOnVoice`, `AmbientSleepy`, `LowBatteryEmotion`, `EmotionCycle`
-/// - `Expression` (4): `EmotionStyle`, Blink, Breath, `IdleDrift`
-/// - `Motion` (3): `IdleSway`, `EmotionHead`, `ListenHead`
-/// - `Audio` (1): `MouthOpenAudio`
-/// - `Perception` / `Cognition` / `Speech` / `Output`: empty
-///
-/// Skills (1): `LookAtSound` (sets `mind.attention = Listening` on
-/// sustained `perception.audio_rms`).
+/// Modifiers/skills are listed in [`crate::modifiers`] and
+/// [`crate::skills`] — the canonical catalogs. Phases populated today:
+/// `Affect`, `Expression`, `Motion`, `Audio`. `Perception` /
+/// `Cognition` / `Speech` / `Output` are reserved.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {

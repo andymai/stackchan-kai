@@ -109,6 +109,18 @@ const fn targets_for(emotion: Emotion) -> StyleTarget {
             open_weight: 100,
             mouth_weight: 100,
         },
+        Emotion::Angry => StyleTarget {
+            // Narrowed stern eyes, slight frown, flushed cheeks, deeper
+            // breath. Less drooping than Sad; the frown is firmer.
+            eye_curve: -25,
+            mouth_curve: -50,
+            cheek_blush: 80,
+            eye_scale: 96,
+            blink_rate_scale: 96,
+            breath_depth_scale: 180,
+            open_weight: 80,
+            mouth_weight: 0,
+        },
     }
 }
 

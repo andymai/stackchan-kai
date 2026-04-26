@@ -1,4 +1,4 @@
-//! Si12T body-touch task.
+//! `Si12T` body-touch task.
 //!
 //! Polls the back-of-head 3-zone capacitive controller over the shared
 //! I²C0 bus at the same 50 ms cadence the M5Stack reference firmware
@@ -25,16 +25,16 @@ pub static BODY_TOUCH_SIGNAL: Signal<CriticalSectionRawMutex, BodyTouch> = Signa
 /// Poll cadence — matches the M5Stack reference body-touch task.
 const POLL_PERIOD_MS: u64 = 50;
 
-/// Si12T post-init settle. The reference task waits this long after
+/// `Si12T` post-init settle. The reference task waits this long after
 /// `si12t_setup` before the first read; the chip is in an undefined
 /// state until then and reports `0xFF` / `0x3F`.
 const POST_INIT_SETTLE_MS: u64 = 200;
 
-/// Drive the Si12T body-touch polling loop.
+/// Drive the `Si12T` body-touch polling loop.
 ///
 /// Takes an owned I²C device so the task outlives any stack frame in
 /// `main`. Init failures log at `warn` and the loop continues — bus
-/// errors at poll time also log + skip, never panic. A stuck Si12T
+/// errors at poll time also log + skip, never panic. A stuck `Si12T`
 /// must not blank the face.
 pub async fn run_body_touch_loop<I: AsyncI2c>(bus: I) -> ! {
     let mut chip = Si12t::new(bus);

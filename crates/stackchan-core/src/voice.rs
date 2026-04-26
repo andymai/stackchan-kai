@@ -18,8 +18,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ChirpKind {
-    /// Pickup-detected chirp. Set by `PickupReaction` on an IMU
-    /// pickup edge.
+    /// Pickup-detected chirp. Set by `IntentReflex` on a transition
+    /// into `Intent::PickedUp` (driven by the `Handling` skill).
     Pickup,
     /// Voice-wake chirp. Set by `WakeOnVoice` when sustained audio
     /// wakes the entity.

@@ -106,9 +106,9 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
             Ok(m) => {
                 let (ax, ay, az) = m.accel_g;
                 let (gx, gy, gz) = m.gyro_dps;
-                // |a|² is what PickupReaction actually compares
-                // against; print it so the operator can read pickup
-                // thresholds directly off the log.
+                // |a|² is what the `Handling` skill's pickup detector
+                // actually compares against; print it so the operator
+                // can read thresholds directly off the log.
                 #[allow(
                     clippy::suboptimal_flops,
                     reason = "f32::mul_add needs libm on no_std; keep consistent with stackchan-core"

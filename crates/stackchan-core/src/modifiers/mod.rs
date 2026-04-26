@@ -7,17 +7,18 @@
 //!
 //! ## Phase population
 //!
-//! - **[`crate::director::Phase::Affect`]** — emotion deciders. 7
-//!   modifiers, registered in this canonical order:
+//! - **[`crate::director::Phase::Affect`]** — emotion deciders.
+//!   Registered in this canonical order:
 //!   1. [`EmotionTouch`] — consumes `entity.input.tap_pending`,
 //!      advances `mind.affect.emotion`, sets
 //!      `mind.autonomy.manual_until`.
 //!   2. [`RemoteCommand`] — consumes `entity.input.remote_pending`,
 //!      looks the `(address, command)` pair up in a user-supplied
 //!      mapping table, sets emotion + autonomy.
-//!   3. [`PickupReaction`] — reads `perception.accel_g`, flips
-//!      emotion to `Surprised` on detected lifts/drops. Stands
-//!      down when autonomy is already held.
+//!   3. [`IntentReflex`] — reads `mind.intent`, flips emotion to
+//!      `Surprised` on `* → PickedUp` and to `Angry` on
+//!      `* → Shaken`. Stands down when autonomy is already held.
+//!      Driven by the [`crate::skills::Handling`] skill upstream.
 //!   4. [`WakeOnVoice`] — reads `perception.audio_rms`, flips to
 //!      `Happy` on sustained voice. Wakes from `Sleepy`.
 //!   5. [`AmbientSleepy`] — reads `perception.ambient_lux`, flips to
@@ -66,11 +67,11 @@ mod emotion_style;
 mod emotion_touch;
 mod idle_drift;
 mod idle_sway;
+mod intent_reflex;
 mod intent_style;
 mod listen_head;
 mod low_battery;
 mod mouth_open_audio;
-mod pickup_reaction;
 mod remote_command;
 mod wake_on_voice;
 
@@ -88,6 +89,7 @@ pub use emotion_style::EmotionStyle;
 pub use emotion_touch::{EMOTION_ORDER, EmotionTouch, MANUAL_HOLD_MS};
 pub use idle_drift::IdleDrift;
 pub use idle_sway::IdleSway;
+pub use intent_reflex::IntentReflex;
 pub use intent_style::{IntentStyle, PETTING_BLUSH_BUMP};
 pub use listen_head::{LISTEN_HEAD_EASE_MS, LISTEN_HEAD_TILT_DEG, ListenHead};
 pub use low_battery::{
@@ -96,6 +98,5 @@ pub use low_battery::{
 pub use mouth_open_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthOpenAudio,
 };
-pub use pickup_reaction::{PICKUP_DEBOUNCE_MS, PICKUP_DEVIATION_G, PickupReaction};
 pub use remote_command::{RemoteCommand, RemoteMapping};
 pub use wake_on_voice::{WAKE_HOLD_MS, WAKE_RMS_THRESHOLD, WAKE_SUSTAIN_TICKS, WakeOnVoice};

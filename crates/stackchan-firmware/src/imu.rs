@@ -5,7 +5,10 @@
 //! and publishes each [`Measurement`] on [`IMU_SIGNAL`]. The render
 //! task drains the signal and writes `avatar.accel_g` /
 //! `avatar.gyro_dps` before running the modifier stack, where
-//! [`stackchan_core::modifiers::PickupReaction`] consumes the values.
+//! [`stackchan_core::skills::Handling`] consumes the values to derive
+//! `mind.intent` (`PickedUp` / `Shaken` / `Tilted`), and
+//! [`stackchan_core::modifiers::IntentReflex`] picks up those intent
+//! transitions to drive the visible reaction.
 //!
 //! ## Error handling
 //!
