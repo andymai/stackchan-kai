@@ -62,11 +62,11 @@ flowchart TB
 Main spawns a render task that runs this stack per tick:
 
 ```
-EmotionTouch → BodyGesture → RemoteCommand → IntentReflex →
-WakeOnVoice → IntentFromLoud → AmbientSleepy → LowBatteryEmotion →
-EmotionCycle → EmotionStyle → IntentStyle → Blink → Breath →
-IdleDrift → IdleSway → EmotionHead → ListenHead → HeadFromIntent →
-MouthOpenAudio
+EmotionFromTouch → IntentFromBodyTouch → EmotionFromRemote → EmotionFromIntent →
+EmotionFromVoice → IntentFromLoud → EmotionFromAmbient → EmotionFromBattery →
+EmotionCycle → StyleFromEmotion → StyleFromIntent → Blink → Breath →
+IdleDrift → IdleSway → HeadFromEmotion → HeadFromAttention → HeadFromIntent →
+MouthFromAudio
 ```
 
 Inputs arrive through embassy `Signal` channels from the per-peripheral

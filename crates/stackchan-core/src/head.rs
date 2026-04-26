@@ -36,7 +36,7 @@ pub const MAX_PAN_DEG: f32 = 45.0;
 /// Asymmetric with [`MAX_TILT_DEG`] because Stack-chan's chassis
 /// cutout typically blocks downward head travel — the head's
 /// mechanical rest position already sits at the lower stop.
-/// Modifiers that request negative tilt (e.g. `EmotionHead::Sad`/
+/// Modifiers that request negative tilt (e.g. `HeadFromEmotion::Sad`/
 /// `Sleepy`'s downcast bias) are silently clamped to `MIN_TILT_DEG`
 /// by [`Pose::clamped`]; the emotion's other channels (eyes, mouth,
 /// LEDs) still differentiate.

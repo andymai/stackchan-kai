@@ -5,13 +5,13 @@
 //! the firmware `body_touch` task). Counts consecutive ticks where any
 //! zone has non-zero intensity; once the run reaches
 //! [`PETTING_SUSTAIN_TICKS`] the skill writes
-//! [`Intent::BeingPet`](crate::mind::Intent::BeingPet). On release
+//! [`Intent::Petted`](crate::mind::Intent::Petted). On release
 //! (any-zone-touched goes false) the intent clears back to
 //! [`Intent::Idle`](crate::mind::Intent::Idle).
 //!
-//! ## Coexistence with `BodyGesture`
+//! ## Coexistence with `IntentFromBodyTouch`
 //!
-//! [`crate::modifiers::BodyGesture`] reacts to the SAME perception
+//! [`crate::modifiers::IntentFromBodyTouch`] reacts to the SAME perception
 //! field but writes emotion + autonomy on the no-touch → touch rising
 //! edge (Press), or on swipes. `Petting` writes intent only, after a
 //! sustain. The two are complementary: a deliberate centre pet
@@ -84,7 +84,7 @@ impl Skill for Petting {
             name: "Petting",
             description: "Sustained back-of-head touch (any zone, ≥ PETTING_SUSTAIN_TICKS) sets \
                           mind.intent = BeingPet. Clears to Idle on release. Coexists with \
-                          BodyGesture (which writes emotion on the rising edge / on swipes).",
+                          IntentFromBodyTouch (which writes emotion on the rising edge / on swipes).",
             priority: 50,
             writes: &[Field::Intent],
         };
@@ -103,7 +103,7 @@ impl Skill for Petting {
         if touched {
             self.consecutive = self.consecutive.saturating_add(1);
             if self.consecutive >= self.sustain_ticks {
-                entity.mind.intent = Intent::BeingPet;
+                entity.mind.intent = Intent::Petted;
                 return SkillStatus::Continuing;
             }
             return SkillStatus::Done;
@@ -111,7 +111,7 @@ impl Skill for Petting {
 
         // Released. Clear counter + intent (only if we set it).
         self.consecutive = 0;
-        if matches!(entity.mind.intent, Intent::BeingPet) {
+        if matches!(entity.mind.intent, Intent::Petted) {
             entity.mind.intent = Intent::Idle;
         }
         SkillStatus::Done
@@ -170,7 +170,7 @@ mod tests {
             ..BodyTouch::default()
         });
         step(&mut skill, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
     }
 
     #[test]
@@ -181,7 +181,7 @@ mod tests {
             ..BodyTouch::default()
         });
         step(&mut skill, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
 
         // Release.
         entity.perception.body_touch = Some(BodyTouch::default());
@@ -194,10 +194,10 @@ mod tests {
         let mut skill = Petting::new();
         let mut entity = Entity::default();
         // Some other system set Listen — petting hasn't fired.
-        entity.mind.intent = Intent::Listen;
+        entity.mind.intent = Intent::Listening;
         // Release tick (no body touch).
         let _ = skill.invoke(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::Listen);
+        assert_eq!(entity.mind.intent, Intent::Listening);
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod tests {
             ..BodyTouch::default()
         });
         step(&mut skill, &mut entity, 500); // well past u8::MAX
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
     }
 
     #[test]
@@ -249,6 +249,6 @@ mod tests {
         });
         entity.tick.now = Instant::from_millis(0);
         step(&mut skill, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
     }
 }

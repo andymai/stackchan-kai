@@ -1,4 +1,4 @@
-//! `AmbientSleepy`: ambient-light-reactive modifier that flips
+//! `EmotionFromAmbient`: ambient-light-reactive modifier that flips
 //! `entity.mind.affect.emotion` to `Sleepy` when the room gets dark and wakes
 //! when the light comes back on.
 //!
@@ -19,7 +19,7 @@
 //!
 //! ## Coordination with the other emotion modifiers
 //!
-//! Like [`super::IntentReflex`], this modifier respects an existing
+//! Like [`super::EmotionFromIntent`], this modifier respects an existing
 //! `entity.mind.autonomy.manual_until` hold — if touch, a pickup, or any other
 //! explicit input has already claimed the emotion, we stand down.
 //! Ambient sleep is *background state*: it shouldn't override a user's
@@ -61,7 +61,7 @@ pub const AMBIENT_HOLD_MS: u64 = 5_000;
 /// Modifier that watches `entity.perception.ambient_lux` and toggles Sleepy
 /// with hysteresis.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct AmbientSleepy {
+pub struct EmotionFromAmbient {
     /// `true` while this modifier believes the entity should currently
     /// be asleep. Driven by the two-threshold hysteresis; a fresh
     /// instance starts `false` regardless of the first ambient
@@ -70,7 +70,7 @@ pub struct AmbientSleepy {
     is_asleep: bool,
 }
 
-impl AmbientSleepy {
+impl EmotionFromAmbient {
     /// Construct a modifier in the awake state.
     #[must_use]
     pub const fn new() -> Self {
@@ -85,10 +85,10 @@ impl AmbientSleepy {
     }
 }
 
-impl Modifier for AmbientSleepy {
+impl Modifier for EmotionFromAmbient {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "AmbientSleepy",
+            name: "EmotionFromAmbient",
             description: "Hysteresis on perception.ambient_lux: forces emotion=Sleepy in dark \
                           rooms. Stands down when an earlier modifier already holds \
                           mind.autonomy.manual_until.",
@@ -133,7 +133,7 @@ impl Modifier for AmbientSleepy {
         // When `is_asleep == false` and no hold is active we do
         // nothing — `EmotionCycle` takes over on the next tick and
         // drives autonomy forward. No need to explicitly clear
-        // `manual_until` here; `EmotionTouch::update` handles
+        // `manual_until` here; `EmotionFromTouch::update` handles
         // expiry cleanup on every tick.
     }
 }
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn no_reading_does_nothing() {
         let mut entity = Entity::default(); // ambient_lux = None
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
         for t in (0..1_000).step_by(50) {
             entity.tick.now = Instant::from_millis(t);
             sleepy.update(&mut entity);
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn dark_room_triggers_sleepy() {
         let mut entity = dark();
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
         entity.tick.now = Instant::from_millis(100);
         sleepy.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Sleepy);
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn bright_room_does_not_trigger() {
         let mut entity = bright();
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
         entity.tick.now = Instant::from_millis(100);
         sleepy.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn hysteresis_holds_sleep_between_thresholds() {
         let mut entity = dark();
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
 
         // Enter sleep at 5 lux.
         entity.tick.now = Instant::from_millis(0);
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn bright_room_wakes_from_sleep() {
         let mut entity = dark();
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
         entity.tick.now = Instant::from_millis(0);
         sleepy.update(&mut entity);
 
@@ -226,7 +226,7 @@ mod tests {
         sleepy.update(&mut entity);
         assert!(!sleepy.is_asleep());
         // Prior-frame hold remains (the modifier re-affirms but
-        // doesn't actively clear); EmotionTouch::update clears
+        // doesn't actively clear); EmotionFromTouch::update clears
         // expired holds in the normal pipeline.
     }
 
@@ -237,7 +237,7 @@ mod tests {
         // hysteresis (20 / 50), a hover in the 25–45 band never
         // toggles state.
         let mut entity = dark();
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
         entity.tick.now = Instant::from_millis(0);
         sleepy.update(&mut entity);
         assert!(sleepy.is_asleep());
@@ -259,7 +259,7 @@ mod tests {
         // Touch just set emotion=Happy + 30 s hold.
         entity.mind.affect.emotion = Emotion::Happy;
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(30_000));
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
 
         entity.tick.now = Instant::from_millis(100);
         sleepy.update(&mut entity);
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn ambient_hold_is_renewed_every_dark_tick() {
         let mut entity = dark();
-        let mut sleepy = AmbientSleepy::new();
+        let mut sleepy = EmotionFromAmbient::new();
 
         // First dark tick.
         entity.tick.now = Instant::from_millis(0);
@@ -288,9 +288,9 @@ mod tests {
             Some(Instant::from_millis(AMBIENT_HOLD_MS))
         );
 
-        // Simulate clearing by EmotionTouch::update when the hold
+        // Simulate clearing by EmotionFromTouch::update when the hold
         // expires (3 s later, still dark — modifier stack would see
-        // the clear before AmbientSleepy runs in the same frame).
+        // the clear before EmotionFromAmbient runs in the same frame).
         entity.mind.autonomy.manual_until = None;
 
         entity.tick.now = Instant::from_millis(3_000);

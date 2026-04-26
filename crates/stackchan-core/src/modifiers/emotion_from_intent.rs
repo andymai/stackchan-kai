@@ -1,4 +1,4 @@
-//! `IntentReflex`: translates IMU-derived intent transitions into
+//! `EmotionFromIntent`: translates IMU-derived intent transitions into
 //! `mind.affect.emotion` + `mind.autonomy.manual_until` + a one-shot
 //! `voice.chirp_request`.
 //!
@@ -17,7 +17,7 @@
 //! ## Coordination with explicit user input
 //!
 //! Like the modifier it replaces, this defers when an
-//! [`crate::modifiers::EmotionTouch`]-set hold is active — explicit
+//! [`crate::modifiers::EmotionFromTouch`]-set hold is active — explicit
 //! taps beat reflexive pickup/shake reactions.
 //!
 //! ## Frame-ordering caveat
@@ -39,14 +39,14 @@ use crate::voice::ChirpKind;
 /// Modifier that watches `mind.intent` and reacts to transitions into
 /// IMU-derived states.
 #[derive(Debug, Clone, Copy)]
-pub struct IntentReflex {
+pub struct EmotionFromIntent {
     /// Last-tick intent. Initialised to [`Intent::Idle`] so the first
     /// observed `Idle → X` transition fires correctly without a
     /// startup blip.
     last_intent: Intent,
 }
 
-impl IntentReflex {
+impl EmotionFromIntent {
     /// Construct an unarmed reflex.
     #[must_use]
     pub const fn new() -> Self {
@@ -56,21 +56,21 @@ impl IntentReflex {
     }
 }
 
-impl Default for IntentReflex {
+impl Default for EmotionFromIntent {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for IntentReflex {
+impl Modifier for EmotionFromIntent {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "IntentReflex",
+            name: "EmotionFromIntent",
             description: "Reacts to mind.intent transitions: PickedUp → Surprised + Pickup chirp; \
-                          Shaken → Angry; Tilted → no reflex. Defers to active EmotionTouch \
+                          Shaken → Angry; Tilted → no reflex. Defers to active EmotionFromTouch \
                           holds.",
             phase: Phase::Affect,
-            // After `EmotionTouch` clears expired holds, before
+            // After `EmotionFromTouch` clears expired holds, before
             // `EmotionCycle` advances autonomously.
             priority: -80,
             reads: &[Field::Intent, Field::Autonomy],
@@ -102,7 +102,7 @@ impl Modifier for IntentReflex {
             return;
         };
 
-        // Defer to an active explicit-input hold. `EmotionTouch` clears
+        // Defer to an active explicit-input hold. `EmotionFromTouch` clears
         // expired holds on its tick (which runs before this one), so a
         // `manual_until` still in the future means a real user
         // override is in effect.
@@ -134,9 +134,9 @@ const fn react(intent: Intent) -> Option<(Emotion, OverrideSource, Option<ChirpK
         Intent::Shaken => Some((Emotion::Angry, OverrideSource::Shake, None)),
         // `Startled` reaction is owned by `IntentFromLoud` (single-tick
         // latency: it writes emotion + chirp + hold itself in
-        // `Phase::Affect`). Returning `None` here keeps IntentReflex
+        // `Phase::Affect`). Returning `None` here keeps EmotionFromIntent
         // out of the way so we don't double-emit.
-        Intent::Tilted | Intent::Idle | Intent::Listen | Intent::BeingPet | Intent::Startled => {
+        Intent::Tilted | Intent::Idle | Intent::Listening | Intent::Petted | Intent::Startled => {
             None
         }
     }
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn idle_does_not_fire() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         for t in (0..500).step_by(33) {
             entity.tick.now = Instant::from_millis(t);
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn picked_up_transition_fires_surprised_with_chirp() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         m.update(&mut entity);
 
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn shaken_transition_fires_angry_no_chirp() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         m.update(&mut entity);
 
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn tilted_does_not_fire() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         m.update(&mut entity);
 
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn sustained_picked_up_only_fires_once() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         entity.mind.intent = Intent::PickedUp;
         m.update(&mut entity);
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn touch_hold_blocks_pickup_reflex() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         entity.mind.affect.emotion = Emotion::Happy;
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(MANUAL_HOLD_MS));
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn reflex_fires_after_touch_hold_expires() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         entity.mind.affect.emotion = Emotion::Happy;
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(1_000));
@@ -282,7 +282,7 @@ mod tests {
         m.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
 
-        // Hold expires (in real code, EmotionTouch clears it). Re-arm
+        // Hold expires (in real code, EmotionFromTouch clears it). Re-arm
         // by transitioning back to Idle, then in to PickedUp again so
         // a fresh edge is observed.
         entity.tick.now = Instant::from_millis(1_500);
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn pickup_then_release_then_pickup_re_fires() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         entity.mind.intent = Intent::PickedUp;
         m.update(&mut entity);
@@ -320,12 +320,12 @@ mod tests {
 
     #[test]
     fn picked_up_to_shaken_re_fires_with_angry() {
-        let mut m = IntentReflex::new();
+        let mut m = EmotionFromIntent::new();
         let mut entity = at(0);
         entity.mind.intent = Intent::PickedUp;
         m.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
-        // Clear the hold the way EmotionTouch would after expiry —
+        // Clear the hold the way EmotionFromTouch would after expiry —
         // otherwise the second transition would be blocked.
         entity.mind.autonomy.manual_until = None;
         entity.voice.chirp_request = None;

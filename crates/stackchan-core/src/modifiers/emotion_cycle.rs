@@ -3,7 +3,7 @@
 //!
 //! Used by the firmware to exercise the full emotion pipeline on hardware
 //! without needing input (touch, network, serial). It writes *only* to
-//! `entity.mind.affect.emotion`; the downstream `EmotionStyle` modifier does the
+//! `entity.mind.affect.emotion`; the downstream `StyleFromEmotion` modifier does the
 //! actual style-field mutation.
 //!
 //! Cycle order is the default StackChan demo rotation; see

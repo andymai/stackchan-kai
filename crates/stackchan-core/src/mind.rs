@@ -29,7 +29,7 @@ use crate::emotion::Emotion;
 pub struct Affect {
     /// Current emotional expression. Set by `Phase::Affect` modifiers
     /// (touch, IR, voice, ambient, battery, autonomous cycler);
-    /// consumed by `EmotionStyle` and `EmotionHead`.
+    /// consumed by `StyleFromEmotion` and `HeadFromEmotion`.
     pub emotion: Emotion,
 }
 
@@ -38,16 +38,16 @@ pub struct Affect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OverrideSource {
-    /// Front-screen tap (FT6336U).
-    Touch,
+    /// Front-screen (avatar's face) tap (FT6336U).
+    FaceTouch,
     /// Back-of-head body-touch tap (`Si12T` 3-zone pads).
     BodyTouch,
     /// IR-remote button press.
     Remote,
-    /// IMU pickup detection — set by `IntentReflex` on a transition
+    /// IMU pickup detection — set by `EmotionFromIntent` on a transition
     /// into [`Intent::PickedUp`].
     Pickup,
-    /// IMU shake detection — set by `IntentReflex` on a transition
+    /// IMU shake detection — set by `EmotionFromIntent` on a transition
     /// into [`Intent::Shaken`].
     Shake,
     /// Sustained voice activity.
@@ -87,7 +87,7 @@ pub struct Autonomy {
 /// Multiple skills may try to write `intent` on the same tick. The
 /// [`crate::skills::Handling`] skill resolves IMU-derived states
 /// against [`crate::skills::Petting`] using the order
-/// `Startled > PickedUp > Shaken > BeingPet > Tilted > Listen > Idle`
+/// `Startled > PickedUp > Shaken > Petted > Tilted > Listening > Idle`
 /// — a startle-class transient outranks even physical handling
 /// (the avatar reacts to a loud noise even mid-pickup), passive
 /// pose (`Tilted`) is lowest because it's not active handling.
@@ -98,31 +98,31 @@ pub enum Intent {
     #[default]
     Idle,
     /// Listening to ambient sound. Set by
-    /// [`crate::skills::LookAtSound`]; cleared on release.
-    Listen,
+    /// [`crate::skills::Listening`]; cleared on release.
+    Listening,
     /// Reacting to an acoustic transient (clap, shout, slam). Set by
     /// [`crate::modifiers::IntentFromLoud`] on the rising edge across
     /// the loud-threshold; cleared by the modifier when the hold
-    /// expires. `IntentReflex` does not own the emotion for this
+    /// expires. `EmotionFromIntent` does not own the emotion for this
     /// intent — `IntentFromLoud` writes `Surprised` directly to keep
     /// reaction latency to a single tick.
     Startled,
     /// Being pet on the back-of-head strip. Set by
     /// [`crate::skills::Petting`] after sustained any-zone contact;
     /// cleared on release.
-    BeingPet,
+    Petted,
     /// Held in the air. Set by [`crate::skills::Handling`] after
     /// sustained `|accel| ≠ 1 g`. Cleared when the avatar settles.
-    /// `IntentReflex` translates the entry edge to `Surprised`.
+    /// `EmotionFromIntent` translates the entry edge to `Surprised`.
     PickedUp,
     /// Being shaken. Set by [`crate::skills::Handling`] when accel
     /// oscillates above the shake threshold within a short window.
-    /// `IntentReflex` translates the entry edge to `Angry`.
+    /// `EmotionFromIntent` translates the entry edge to `Angry`.
     Shaken,
     /// Lying on its side / face-down. Set by [`crate::skills::Handling`]
     /// when the gravity vector deviates from face-up for a sustained
     /// window. Passive — no reflex emotion attached; downstream
-    /// modifiers (e.g. an extended `IntentStyle`) own the visual.
+    /// modifiers (e.g. an extended `StyleFromIntent`) own the visual.
     Tilted,
 }
 
@@ -138,7 +138,7 @@ pub enum Attention {
     None,
     /// Listening to a sound source. `since` is the instant the
     /// listening attention began; consumers (e.g.
-    /// [`crate::modifiers::ListenHead`]) use it for ease-in animation.
+    /// [`crate::modifiers::HeadFromAttention`]) use it for ease-in animation.
     Listening {
         /// When the listening attention began.
         since: Instant,

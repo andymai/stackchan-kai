@@ -21,8 +21,8 @@
 //!
 //! ## Composition
 //!
-//! Runs after [`super::IdleSway`] (priority 0), [`super::EmotionHead`]
-//! (priority 10), and [`super::ListenHead`] (priority 20) within
+//! Runs after [`super::IdleSway`] (priority 0), [`super::HeadFromEmotion`]
+//! (priority 10), and [`super::HeadFromAttention`] (priority 20) within
 //! [`Phase::Motion`], so its bias rides on top of all three. Same
 //! diff-and-undo pattern as the other [`Phase::Motion`] modifiers:
 //! subtract the previous applied contribution before adding the new
@@ -40,14 +40,14 @@ use crate::modifier::Modifier;
 ///
 /// `+6°` reads as "alert, head up" without overpowering the other
 /// motion modifiers (combined with `IdleSway`'s ±2.5° tilt and
-/// `EmotionHead`'s up-to-+3° plus `ListenHead`'s +8° upper bound, the
+/// `HeadFromEmotion`'s up-to-+3° plus `HeadFromAttention`'s +8° upper bound, the
 /// worst-case stays inside [`MAX_TILT_DEG`](crate::head::MAX_TILT_DEG)).
 pub const STARTLE_HEAD_TILT_DEG: f32 = 6.0;
 
 /// Peak pan offset during the recoil, in degrees.
 ///
 /// `+5°` (right-ish jerk) is small enough that combined with
-/// `IdleSway` and `EmotionHead`'s pan contributions, the result stays
+/// `IdleSway` and `HeadFromEmotion`'s pan contributions, the result stays
 /// inside [`MAX_PAN_DEG`](crate::head::MAX_PAN_DEG).
 pub const STARTLE_HEAD_PAN_DEG: f32 = 5.0;
 
@@ -73,7 +73,7 @@ pub const STARTLE_HEAD_TOTAL_MS: u64 = STARTLE_HEAD_ATTACK_MS + STARTLE_HEAD_DEC
 #[derive(Debug, Clone, Copy)]
 pub struct HeadFromIntent {
     /// Pan contribution as actually applied last tick (post-clamp).
-    /// Diff-and-undo bookkeeping — see `ListenHead::last_tilt_deg`.
+    /// Diff-and-undo bookkeeping — see `HeadFromAttention::last_tilt_deg`.
     last_pan_deg: f32,
     /// Tilt contribution as actually applied last tick (post-clamp).
     last_tilt_deg: f32,
@@ -137,7 +137,7 @@ impl Modifier for HeadFromIntent {
             description: "On entry to Intent::Startled, applies a brief asymmetric recoil \
                           (fast attack, slower decay) to motor.head_pose pan + tilt. Total \
                           duration STARTLE_HEAD_TOTAL_MS regardless of how long the intent \
-                          holds. Composes additively after IdleSway / EmotionHead / ListenHead \
+                          holds. Composes additively after IdleSway / HeadFromEmotion / HeadFromAttention \
                           via diff-and-undo.",
             phase: Phase::Motion,
             priority: 30,

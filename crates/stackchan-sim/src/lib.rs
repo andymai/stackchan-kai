@@ -208,7 +208,7 @@ impl HeadDriver for RecordingHead {
 )]
 mod integration_tests {
     use super::*;
-    use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
+    use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, IdleDrift, StyleFromEmotion};
     use stackchan_core::{Director, Emotion, Entity, EyePhase, Modifier, SCALE_DEFAULT};
 
     /// End-to-end: drive a Blink + Breath + `IdleDrift` stack via the
@@ -343,7 +343,7 @@ mod integration_tests {
         let clock = FakeClock::new();
         let mut avatar = Entity::default();
         let mut cycle = EmotionCycle::new();
-        let mut style = EmotionStyle::new();
+        let mut style = StyleFromEmotion::new();
         let mut blink = Blink::new();
         let mut breath = Breath::new();
         let mut drift = IdleDrift::with_seed(core::num::NonZeroU32::new(0xDEAD_BEEF).unwrap());
@@ -403,11 +403,11 @@ mod integration_tests {
         );
     }
 
-    /// Regression test for the `EmotionStyle → Blink` ordering contract.
+    /// Regression test for the `StyleFromEmotion → Blink` ordering contract.
     /// The Director sorts modifiers by `(phase, priority,
-    /// registration_order)`; `EmotionStyle` has priority `-10` while
+    /// registration_order)`; `StyleFromEmotion` has priority `-10` while
     /// `Blink` has priority `0`, both in `Phase::Expression`, so
-    /// `EmotionStyle` runs first regardless of registration order.
+    /// `StyleFromEmotion` runs first regardless of registration order.
     /// Blink's effect on `Eye::weight` therefore reflects the *current*
     /// tick's `blink_rate_scale`, not a stale value from a previous tick.
     /// This pin would catch a future priority swap that broke the
@@ -416,7 +416,7 @@ mod integration_tests {
     fn canonical_order_propagates_blink_rate_within_one_tick() {
         let mut avatar = Entity::default();
         avatar.mind.affect.emotion = Emotion::Surprised;
-        let mut style = EmotionStyle::new();
+        let mut style = StyleFromEmotion::new();
         let mut blink = Blink::new();
         let mut director = Director::new();
         // Register in REVERSE of canonical order to prove the Director's
@@ -424,17 +424,17 @@ mod integration_tests {
         director.add_modifier(&mut blink).unwrap();
         director.add_modifier(&mut style).unwrap();
 
-        // First frame: Surprised establishes from + to in EmotionStyle,
+        // First frame: Surprised establishes from + to in StyleFromEmotion,
         // rate = 0 takes effect, Blink suppresses on the same frame.
         director.run(&mut avatar, Instant::from_millis(0));
         assert_eq!(
             avatar.face.style.blink_rate_scale, 0,
-            "EmotionStyle must snap to target on first observation of a new emotion"
+            "StyleFromEmotion must snap to target on first observation of a new emotion"
         );
         assert_eq!(
             avatar.face.left_eye.phase,
             EyePhase::Open,
-            "rate == 0 must force eyes open on the same frame EmotionStyle wrote it"
+            "rate == 0 must force eyes open on the same frame StyleFromEmotion wrote it"
         );
 
         // Baseline sanity: switch to Neutral, advance past the

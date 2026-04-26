@@ -55,7 +55,7 @@ pub struct Eye {
     /// The blink modifier drops this toward zero during a blink.
     pub weight: u8,
     /// Upper bound on `weight` when the eye is open, 0..=100. `Blink` reads
-    /// this on every open transition, so `EmotionStyle` can drop it (e.g.
+    /// this on every open transition, so `StyleFromEmotion` can drop it (e.g.
     /// `Sleepy = 55`) without fighting Blink's state machine. Default 100.
     pub open_weight: u8,
 }
@@ -96,7 +96,7 @@ pub struct Mouth {
     pub weight: u8,
     /// Audio-driven mouth-open amount, 0.0..=1.0.
     ///
-    /// Written by the `MouthOpenAudio` modifier in response to
+    /// Written by the `MouthFromAudio` modifier in response to
     /// microphone input; a value of `0.0` is a closed mouth, `1.0` is
     /// fully open. Additive to [`Self::weight`] / [`Style::mouth_curve`]
     /// at the renderer — emotion keeps its static mouth shape while
@@ -111,7 +111,7 @@ pub const SCALE_DEFAULT: u8 = 128;
 
 /// Emotion-driven appearance modulators.
 ///
-/// Written by the `EmotionStyle` modifier in [`Phase::Expression`];
+/// Written by the `StyleFromEmotion` modifier in [`Phase::Expression`];
 /// consumed by the renderer (`Face::draw`) and the `Blink` / `Breath`
 /// modifiers (which read the *_scale fields to modulate their cadence).
 /// Defaults are chosen so a `Style::default()` renders exactly like

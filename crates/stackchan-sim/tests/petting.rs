@@ -1,6 +1,6 @@
 //! End-to-end sim test for the `Petting` skill.
 //!
-//! Verifies the parallel-driver design: `BodyGesture` (modifier) and
+//! Verifies the parallel-driver design: `IntentFromBodyTouch` (modifier) and
 //! `Petting` (skill) react to the same `perception.body_touch` input
 //! without conflict — modifier writes emotion + autonomy on the
 //! Press edge, skill writes intent after sustained contact.
@@ -10,7 +10,7 @@
     reason = "test-only: registry capacity is a compile-time constant in this fixture"
 )]
 
-use stackchan_core::modifiers::{BodyGesture, DEFAULT_CENTRE_PRESS};
+use stackchan_core::modifiers::{DEFAULT_CENTRE_PRESS, IntentFromBodyTouch};
 use stackchan_core::skills::{PETTING_SUSTAIN_TICKS, Petting};
 use stackchan_core::{BodyTouch, Director, Entity, Instant, Intent};
 
@@ -55,19 +55,19 @@ fn sustained_touch_through_director_fires_being_pet() {
         ..BodyTouch::default()
     });
     run_for(&mut director, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
-    assert_eq!(entity.mind.intent, Intent::BeingPet);
+    assert_eq!(entity.mind.intent, Intent::Petted);
 }
 
 #[test]
 fn body_gesture_and_petting_coexist_on_same_input() {
     let mut entity = Entity::default();
-    let mut gesture = BodyGesture::new();
+    let mut gesture = IntentFromBodyTouch::new();
     let mut petting = Petting::new();
     let mut director = Director::new();
     director.add_modifier(&mut gesture).unwrap();
     director.add_skill(&mut petting).unwrap();
 
-    // First frame: Press → BodyGesture sets emotion.
+    // First frame: Press → IntentFromBodyTouch sets emotion.
     entity.perception.body_touch = Some(BodyTouch {
         centre: 3,
         ..BodyTouch::default()
@@ -80,7 +80,7 @@ fn body_gesture_and_petting_coexist_on_same_input() {
     // change while emotion stays pinned.
     run_for(&mut director, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
     assert_eq!(entity.mind.affect.emotion, DEFAULT_CENTRE_PRESS);
-    assert_eq!(entity.mind.intent, Intent::BeingPet);
+    assert_eq!(entity.mind.intent, Intent::Petted);
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn release_clears_being_pet_through_director() {
         ..BodyTouch::default()
     });
     run_for(&mut director, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
-    assert_eq!(entity.mind.intent, Intent::BeingPet);
+    assert_eq!(entity.mind.intent, Intent::Petted);
 
     entity.perception.body_touch = Some(BodyTouch::default());
     let next = entity.tick.now.as_millis() + TICK_MS;

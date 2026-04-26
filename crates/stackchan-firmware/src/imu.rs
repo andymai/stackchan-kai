@@ -7,7 +7,7 @@
 //! `avatar.gyro_dps` before running the modifier stack, where
 //! [`stackchan_core::skills::Handling`] consumes the values to derive
 //! `mind.intent` (`PickedUp` / `Shaken` / `Tilted`), and
-//! [`stackchan_core::modifiers::IntentReflex`] picks up those intent
+//! [`stackchan_core::modifiers::EmotionFromIntent`] picks up those intent
 //! transitions to drive the visible reaction.
 //!
 //! ## Error handling

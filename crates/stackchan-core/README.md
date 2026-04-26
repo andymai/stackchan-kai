@@ -63,16 +63,16 @@ render tick. Listed roughly in application order:
 
 | Modifier          | Effect                                                         |
 |-------------------|----------------------------------------------------------------|
-| `RemoteCommand`   | IR remote → emotion / pose override                            |
-| `EmotionTouch`    | Touch-panel tap → emotion bump                                 |
-| `AmbientSleepy`   | Dark room (low lux) → sleepy emotion                           |
-| `IntentReflex`    | `mind.intent` transitions → emotion (PickedUp→Surprised, Shaken→Angry) |
-| `WakeOnVoice`     | Sustained `audio_rms` above threshold → `Happy` + `Wake` chirp |
+| `EmotionFromRemote`   | IR remote → emotion / pose override                            |
+| `EmotionFromTouch`    | Touch-panel tap → emotion bump                                 |
+| `EmotionFromAmbient`   | Dark room (low lux) → sleepy emotion                           |
+| `EmotionFromIntent`    | `mind.intent` transitions → emotion (PickedUp→Surprised, Shaken→Angry) |
+| `EmotionFromVoice`     | Sustained `audio_rms` above threshold → `Happy` + `Wake` chirp |
 | `IntentFromLoud`   | Rising-edge `audio_rms` across loud threshold → `Surprised` + `Startled` intent + `Startle` chirp |
 | `EmotionCycle`    | Default sequence: Neutral → Happy → Sleepy → Surprised → Sad   |
-| `EmotionStyle`    | 300 ms ease on style fields (curves, scale, blush) per emotion |
-| `EmotionHead`     | Per-emotion pose bias (neutral center, surprised up, etc.)     |
-| `ListenHead`      | Upward tilt bias while `mind.attention == Listening`           |
+| `StyleFromEmotion`    | 300 ms ease on style fields (curves, scale, blush) per emotion |
+| `HeadFromEmotion`     | Per-emotion pose bias (neutral center, surprised up, etc.)     |
+| `HeadFromAttention`      | Upward tilt bias while `mind.attention == Listening`           |
 | `HeadFromIntent`     | Brief asymmetric pan/tilt recoil on entry to `Startled`     |
 | `IdleDrift`       | Slow randomized gaze drift                                     |
 | `IdleSway`        | Subtle head-pan sway when idle                                 |
@@ -82,7 +82,7 @@ render tick. Listed roughly in application order:
 The full set lives in `src/modifiers/mod.rs` — the table above is
 representative, not exhaustive.
 
-`EmotionCycle → EmotionStyle → Blink → Breath → IdleDrift` is the
+`EmotionCycle → StyleFromEmotion → Blink → Breath → IdleDrift` is the
 minimum stack; the firmware adds the others. The `Clock` argument makes
 time a trait so the simulator can advance deterministically while
 firmware advances from `embassy-time`.
@@ -102,7 +102,7 @@ firmware advances from `embassy-time`.
 1. **No `alloc`.** Modifiers own their state in fixed-size fields. Callers that want N of a modifier build a wrapper; the crate won't `Box` anything
 2. **Time must be monotonic.** `Clock::now()` is trusted — a backward jump breaks modifiers that cache `last_update`. Wall-clock sources need a wrapper
 3. **Draw is pure.** `Avatar::draw` produces pixels into the provided `DrawTarget`; it doesn't mutate the avatar. Run modifiers first, then draw
-4. **Emotion transitions are 300 ms eased by `EmotionStyle`.** Don't snap emotion changes directly on the `Avatar` — go through the modifier so the ease kicks in
+4. **Emotion transitions are 300 ms eased by `StyleFromEmotion`.** Don't snap emotion changes directly on the `Avatar` — go through the modifier so the ease kicks in
 5. **No panic in library code.** Workspace lints deny `unwrap` / `expect` / `panic`. All APIs return values in documented ranges; pathological inputs saturate rather than panic
 
 ## Integration

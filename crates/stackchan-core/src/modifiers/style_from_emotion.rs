@@ -1,4 +1,4 @@
-//! `EmotionStyle`: translate [`Emotion`] into the entity's style fields.
+//! `StyleFromEmotion`: translate [`Emotion`] into the entity's style fields.
 //!
 //! This modifier is the single source of truth for how a given emotion
 //! *looks*. It writes absolute target values to the entity's style fields
@@ -7,7 +7,7 @@
 //! `open_weight`. The renderer and `Blink`/`Breath` read those fields
 //! without knowing about `Emotion` itself.
 //!
-//! Transitions are linearly eased over [`EmotionStyle::TRANSITION_MS`]
+//! Transitions are linearly eased over [`StyleFromEmotion::TRANSITION_MS`]
 //! so an emotion flip doesn't snap the face. The previous target is
 //! captured on every emotion change; interpolation runs per-field.
 //!
@@ -176,7 +176,7 @@ const fn clamp_i8(v: i32) -> i8 {
 /// current transition — so it is idempotent across multiple `update` calls
 /// at the same time.
 #[derive(Debug, Clone, Copy)]
-pub struct EmotionStyle {
+pub struct StyleFromEmotion {
     /// Duration of an emotion transition, in milliseconds.
     transition_ms: u64,
     /// Target state we're transitioning *from*. `None` on the very first
@@ -192,7 +192,7 @@ pub struct EmotionStyle {
     transition_start: Option<Instant>,
 }
 
-impl EmotionStyle {
+impl StyleFromEmotion {
     /// Default transition duration, in milliseconds.
     pub const TRANSITION_MS: u64 = 300;
 
@@ -309,16 +309,16 @@ impl EmotionStyle {
     }
 }
 
-impl Default for EmotionStyle {
+impl Default for StyleFromEmotion {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for EmotionStyle {
+impl Modifier for StyleFromEmotion {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "EmotionStyle",
+            name: "StyleFromEmotion",
             description: "Translates mind.affect.emotion into face.style fields (curves, scales, \
                           cheek blush, open_weight) with linear easing over the transition window.",
             phase: Phase::Expression,
@@ -390,7 +390,7 @@ mod tests {
     fn first_tick_snaps_to_desired_emotion() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Happy;
-        let mut style = EmotionStyle::new();
+        let mut style = StyleFromEmotion::new();
         entity.tick.now = Instant::from_millis(0);
         style.update(&mut entity);
 
@@ -404,7 +404,7 @@ mod tests {
     fn easing_interpolates_over_transition_window() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Neutral;
-        let mut style = EmotionStyle::with_transition_ms(300);
+        let mut style = StyleFromEmotion::with_transition_ms(300);
 
         // Establish Neutral as both from and to.
         entity.tick.now = Instant::from_millis(0);
@@ -436,7 +436,7 @@ mod tests {
     fn mid_transition_emotion_change_restarts_cleanly() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Neutral;
-        let mut style = EmotionStyle::with_transition_ms(300);
+        let mut style = StyleFromEmotion::with_transition_ms(300);
         entity.tick.now = Instant::from_millis(0);
         style.update(&mut entity);
 
@@ -466,13 +466,13 @@ mod tests {
     fn surprised_suppresses_blink_rate() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Surprised;
-        let mut style = EmotionStyle::new();
+        let mut style = StyleFromEmotion::new();
 
         entity.tick.now = Instant::from_millis(0);
         style.update(&mut entity);
         // After the transition elapses, Surprised's `blink_rate_scale = 0`
         // fully propagates.
-        entity.tick.now = Instant::from_millis(EmotionStyle::TRANSITION_MS);
+        entity.tick.now = Instant::from_millis(StyleFromEmotion::TRANSITION_MS);
         style.update(&mut entity);
         assert_eq!(entity.face.style.blink_rate_scale, 0);
         assert_eq!(entity.face.mouth.weight, 100);
@@ -482,10 +482,10 @@ mod tests {
     fn sleepy_droops_eye_open_weight() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Sleepy;
-        let mut style = EmotionStyle::new();
+        let mut style = StyleFromEmotion::new();
         entity.tick.now = Instant::from_millis(0);
         style.update(&mut entity);
-        entity.tick.now = Instant::from_millis(EmotionStyle::TRANSITION_MS);
+        entity.tick.now = Instant::from_millis(StyleFromEmotion::TRANSITION_MS);
         style.update(&mut entity);
         let sleepy = targets_for(Emotion::Sleepy);
         assert_eq!(entity.face.left_eye.open_weight, sleepy.open_weight);

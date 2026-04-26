@@ -165,7 +165,7 @@ pub const BOOT_GREETING: AudioClip = AudioClip {
 
 /// Single-clip "wake" chirp: 100 ms of 1 kHz sine. Audibly soft but
 /// distinct from the boot greeting (which is 5× longer); enqueued
-/// when [`stackchan_core::modifiers::WakeOnVoice`] just fired.
+/// when [`stackchan_core::modifiers::EmotionFromVoice`] just fired.
 ///
 /// `100 cycles × 16 samples = 1 600 samples = 100 ms`.
 pub const WAKE_CHIRP: AudioClip = AudioClip {
@@ -181,7 +181,7 @@ const PICKUP_CHIRP_LO: AudioClip = AudioClip {
 /// Second leg of the pickup chirp: 50 ms of 4 kHz. Played
 /// back-to-back with [`PICKUP_CHIRP_LO`] for an upward sweep that
 /// matches the "Surprised!" emotion fire from
-/// [`stackchan_core::modifiers::IntentReflex`].
+/// [`stackchan_core::modifiers::EmotionFromIntent`].
 const PICKUP_CHIRP_HI: AudioClip = AudioClip {
     samples: &SINE_4KHZ_CYCLE,
     cycles: 200,
@@ -314,7 +314,7 @@ pub fn try_enqueue_low_battery_alert() -> Result<(), TrySendError<AudioClip>> {
 
 /// Enqueue the wake chirp: 100 ms of 1 kHz. One queued clip.
 ///
-/// `stackchan_core::modifiers::WakeOnVoice` sets
+/// `stackchan_core::modifiers::EmotionFromVoice` sets
 /// `entity.voice.chirp_request = Some(ChirpKind::Wake)` on the tick it
 /// flips emotion to `Happy`; the render task drains that and calls this
 /// to play a confirmation tone.
@@ -328,7 +328,7 @@ pub fn try_enqueue_wake_chirp() -> Result<(), TrySendError<AudioClip>> {
 
 /// Enqueue the pickup chirp: 50 ms of 2 kHz then 50 ms of 4 kHz —
 /// an upward sweep that matches the "Surprised!" emotion fire from
-/// [`stackchan_core::modifiers::IntentReflex`]. Two queued clips.
+/// [`stackchan_core::modifiers::EmotionFromIntent`]. Two queued clips.
 ///
 /// Best-effort, same partial-queue caveat as
 /// [`try_enqueue_low_battery_alert`].
@@ -399,7 +399,7 @@ pub fn try_enqueue_camera_mode_exit() -> Result<(), TrySendError<AudioClip>> {
 /// window, normalised to `[0.0, 1.0]` against full-scale i16
 /// (`32768.0`). A value of `0.01` ≈ -40 dBFS, `0.3` ≈ -10 dBFS.
 ///
-/// The downstream `MouthOpenAudio` modifier (PR 3) converts this to
+/// The downstream `MouthFromAudio` modifier (PR 3) converts this to
 /// dB + applies an attack/release envelope before writing to the
 /// avatar's `mouth_open` field.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -419,7 +419,7 @@ pub static AUDIO_RMS_SIGNAL: Signal<CriticalSectionRawMutex, AudioRms> = Signal:
 /// [`run_tx_loop`]. The render task reads this each frame and gates
 /// `entity.perception.audio_rms` to `None` while playing — without
 /// the gate, the speaker output would re-trigger sound-reactive
-/// modifiers (`WakeOnVoice` / `IntentFromLoud`) on its own chirps.
+/// modifiers (`EmotionFromVoice` / `IntentFromLoud`) on its own chirps.
 ///
 /// Pair the read with a [`TX_GATE_TAIL_MS`] tail window so the mic
 /// doesn't pick up the speaker's residual response immediately after

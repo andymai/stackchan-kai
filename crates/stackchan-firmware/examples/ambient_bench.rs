@@ -2,7 +2,7 @@
 //! streams raw channel values + estimated lux at 5 Hz via defmt.
 //!
 //! Used to calibrate the 20 / 50 lux thresholds in
-//! `stackchan_core::modifiers::AmbientSleepy`. Move the device under
+//! `stackchan_core::modifiers::EmotionFromAmbient`. Move the device under
 //! various lighting conditions and grep the log for matching lux
 //! values.
 //!

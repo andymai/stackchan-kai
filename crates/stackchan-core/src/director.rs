@@ -67,13 +67,13 @@ pub enum Phase {
     Affect = 30,
     /// Intent → speech queue. Empty.
     Speech = 40,
-    /// Emotion → face style. `EmotionStyle` picks curve / scale /
+    /// Emotion → face style. `StyleFromEmotion` picks curve / scale /
     /// blush; Blink / Breath / `IdleDrift` add per-frame deltas.
     Expression = 50,
     /// Intent + emotion → pose. `IdleSway` writes a baseline;
-    /// `EmotionHead` adds an emotion-keyed bias on top.
+    /// `HeadFromEmotion` adds an emotion-keyed bias on top.
     Motion = 60,
-    /// Audio-driven visual updates. `MouthOpenAudio` drives
+    /// Audio-driven visual updates. `MouthFromAudio` drives
     /// `mouth.mouth_open` from the mic RMS.
     Audio = 70,
     /// Face → frame, pose → servos. Empty for modifiers; the render

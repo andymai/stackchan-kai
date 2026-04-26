@@ -4,11 +4,11 @@
 //! ~60 Hz (matching the FT6336U's native sample rate), detects the
 //! 0→1 finger-count rising edge, and publishes a pulse on
 //! [`TAP_SIGNAL`]. The render task consumes the signal on each tick
-//! and feeds it into [`stackchan_core::modifiers::EmotionTouch`].
+//! and feeds it into [`stackchan_core::modifiers::EmotionFromTouch`].
 //!
 //! ## Why signal and not a richer event?
 //!
-//! The MVP treats every tap as equivalent: the `EmotionTouch` modifier
+//! The MVP treats every tap as equivalent: the `EmotionFromTouch` modifier
 //! only cares that *a* tap happened, not where on the screen. Sending
 //! `Signal<_, ()>` keeps this decoupling explicit — if we ever want
 //! zone-aware behaviour, growing the signal to `TouchEvent { x, y }`

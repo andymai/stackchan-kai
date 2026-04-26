@@ -4,7 +4,7 @@
 //! presence, publishing both as one [`PowerStatus`] struct on
 //! [`POWER_STATUS_SIGNAL`]. The render task drains it into
 //! `avatar.battery_percent` and `avatar.usb_power_present`, where
-//! [`stackchan_core::modifiers::LowBatteryEmotion`] picks up both:
+//! [`stackchan_core::modifiers::EmotionFromBattery`] picks up both:
 //! the percent drives the hysteresis state machine, and the USB-good
 //! bit suppresses the Sleepy override while the unit is charging.
 //!
@@ -15,7 +15,7 @@
 //! Failure mode: I²C read errors log at `warn` and we keep polling.
 //! A persistently-failing AXP2101 means `POWER_STATUS_SIGNAL` never
 //! publishes, so the avatar fields stay `None` and the
-//! `LowBatteryEmotion` modifier silently no-ops. Other power-related
+//! `EmotionFromBattery` modifier silently no-ops. Other power-related
 //! features (LDO rails) are unaffected — the chip itself is fine,
 //! just the gauge / VBUS readback isn't reaching the avatar.
 

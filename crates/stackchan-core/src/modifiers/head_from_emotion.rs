@@ -1,4 +1,4 @@
-//! `EmotionHead`: translate [`Emotion`] into a head pan/tilt **bias**.
+//! `HeadFromEmotion`: translate [`Emotion`] into a head pan/tilt **bias**.
 //!
 //! Runs after [`IdleSway`](super::IdleSway) in the modifier pipeline and
 //! adds its bias on top of whatever sway has already written — the same
@@ -6,7 +6,7 @@
 //! wanders the head around a *biased* center rather than fighting with
 //! a second absolute-set source.
 //!
-//! Transition timing matches [`EmotionStyle`](super::EmotionStyle): 300 ms
+//! Transition timing matches [`StyleFromEmotion`](super::StyleFromEmotion): 300 ms
 //! linear ease so the face and head both finish their transition at the
 //! same moment, giving the emotion change a single coherent feel rather
 //! than two staggered animations.
@@ -85,12 +85,12 @@ const fn targets_for(emotion: Emotion) -> HeadBias {
 /// A modifier that translates `entity.mind.affect.emotion` into a head-pose bias and
 /// adds it onto `entity.motor.head_pose`.
 ///
-/// Mirrors [`EmotionStyle`](super::EmotionStyle): carries `from` / `to`
+/// Mirrors [`StyleFromEmotion`](super::StyleFromEmotion): carries `from` / `to`
 /// state slots and a transition start instant so transitions ease rather
 /// than snap. The initial tick (before any emotion has been seen) snaps
 /// straight to the current emotion's bias — there's nothing to ease from.
 #[derive(Debug, Clone, Copy)]
-pub struct EmotionHead {
+pub struct HeadFromEmotion {
     /// Duration of an emotion transition, in milliseconds.
     transition_ms: u64,
     /// Bias we're transitioning *from*. `None` on the first tick.
@@ -109,8 +109,8 @@ pub struct EmotionHead {
     last_applied: HeadBias,
 }
 
-impl EmotionHead {
-    /// Default transition duration, matching [`super::EmotionStyle::TRANSITION_MS`].
+impl HeadFromEmotion {
+    /// Default transition duration, matching [`super::StyleFromEmotion::TRANSITION_MS`].
     pub const TRANSITION_MS: u64 = 300;
 
     /// Construct with the default 300 ms linear transition.
@@ -148,16 +148,16 @@ impl EmotionHead {
     }
 }
 
-impl Default for EmotionHead {
+impl Default for HeadFromEmotion {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for EmotionHead {
+impl Modifier for HeadFromEmotion {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "EmotionHead",
+            name: "HeadFromEmotion",
             description: "Adds an emotion-keyed pan/tilt bias on top of motor.head_pose. Composes \
                           additively after IdleSway via diff-and-undo so upstream pose writes \
                           survive.",
@@ -259,7 +259,7 @@ mod tests {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Neutral;
         entity.motor.head_pose = Pose::new(1.0, 2.0); // simulate IdleSway output
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
         // First tick: snap, then hold.
         entity.tick.now = Instant::from_millis(0);
         eh.update(&mut entity);
@@ -273,10 +273,10 @@ mod tests {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Happy;
         entity.motor.head_pose = Pose::new(0.0, 0.0);
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
 
         // Past TRANSITION_MS: the full Happy bias is applied.
-        entity.tick.now = Instant::from_millis(EmotionHead::TRANSITION_MS + 1);
+        entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         assert_eq!(entity.motor.head_pose.tilt_deg, 3.0);
         assert_eq!(entity.motor.head_pose.pan_deg, 0.0);
@@ -286,7 +286,7 @@ mod tests {
     fn transition_eases_halfway() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Neutral;
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
 
         // Start at Neutral (bias 0).
         entity.tick.now = Instant::from_millis(0);
@@ -317,11 +317,11 @@ mod tests {
         // (downward tilts get pinned to MIN_TILT_DEG = 0 — see below).
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Happy;
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
 
         // Advance past transition so the full bias applies.
         entity.motor.head_pose = Pose::new(2.0, 1.5); // sway output
-        entity.tick.now = Instant::from_millis(EmotionHead::TRANSITION_MS + 1);
+        entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         // Happy tilt bias is +3 → final tilt = 1.5 + 3 = 4.5.
         assert_eq!(entity.motor.head_pose.pan_deg, 2.0);
@@ -335,10 +335,10 @@ mod tests {
         use crate::head::MIN_TILT_DEG;
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Sleepy;
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
 
         entity.motor.head_pose = Pose::new(0.0, -1.5);
-        entity.tick.now = Instant::from_millis(EmotionHead::TRANSITION_MS + 1);
+        entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         assert_eq!(entity.motor.head_pose.tilt_deg, MIN_TILT_DEG);
     }
@@ -356,7 +356,7 @@ mod tests {
         // re-anchoring behaviour we're testing.
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Neutral;
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
         entity.tick.now = Instant::from_millis(0);
         eh.update(&mut entity);
         assert_eq!(
@@ -381,7 +381,7 @@ mod tests {
         entity.mind.affect.emotion = Emotion::Happy;
         entity.tick.now = Instant::from_millis(150);
         eh.update(&mut entity);
-        entity.tick.now = Instant::from_millis(150 + EmotionHead::TRANSITION_MS + 1);
+        entity.tick.now = Instant::from_millis(150 + HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         assert_eq!(
             entity.motor.head_pose.tilt_deg, 3.0,
@@ -392,9 +392,9 @@ mod tests {
     #[test]
     fn bias_does_not_accumulate_across_ticks() {
         // Regression for the diff-and-undo refactor: previously
-        // EmotionHead added bias absolutely, which relied on IdleSway
+        // HeadFromEmotion added bias absolutely, which relied on IdleSway
         // clobbering head_pose first. Now that IdleSway also contributes
-        // additively, EmotionHead must subtract the previous tick's bias
+        // additively, HeadFromEmotion must subtract the previous tick's bias
         // before adding the new one — otherwise a steady-state emotion
         // would see its bias compound each tick.
         //
@@ -403,12 +403,12 @@ mod tests {
         // by saturating both the buggy and correct cases at MIN_TILT_DEG.
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Happy; // +3° tilt bias at steady state
-        let mut eh = EmotionHead::new();
+        let mut eh = HeadFromEmotion::new();
 
         // Drive past the transition, then many more ticks. The tilt must
         // stay at +3, not drift to +6, +9, ...
         for i in 0..=50 {
-            entity.tick.now = Instant::from_millis(EmotionHead::TRANSITION_MS + i * 33);
+            entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + i * 33);
             eh.update(&mut entity);
         }
         assert_eq!(entity.motor.head_pose.tilt_deg, 3.0);
@@ -422,8 +422,8 @@ mod tests {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Happy;
         entity.motor.head_pose = Pose::new(0.0, 29.0);
-        let mut eh = EmotionHead::new();
-        entity.tick.now = Instant::from_millis(EmotionHead::TRANSITION_MS + 1);
+        let mut eh = HeadFromEmotion::new();
+        entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         assert_eq!(entity.motor.head_pose.tilt_deg, MAX_TILT_DEG);
 
@@ -432,8 +432,8 @@ mod tests {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Sleepy;
         entity.motor.head_pose = Pose::new(0.0, -29.0);
-        let mut eh = EmotionHead::new();
-        entity.tick.now = Instant::from_millis(EmotionHead::TRANSITION_MS + 1);
+        let mut eh = HeadFromEmotion::new();
+        entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         assert_eq!(entity.motor.head_pose.tilt_deg, MIN_TILT_DEG);
     }

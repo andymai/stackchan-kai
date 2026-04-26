@@ -17,7 +17,7 @@
     reason = "test-only: Director registry capacity is a compile-time constant in this fixture, the unwraps can't fire"
 )]
 
-use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, EmotionStyle, IdleDrift};
+use stackchan_core::modifiers::{Blink, Breath, EmotionCycle, IdleDrift, StyleFromEmotion};
 use stackchan_core::{BRIGHTNESS_PEAK, Director, Emotion, Entity, LED_COUNT, LedFrame};
 use stackchan_core::{Instant, render_leds};
 
@@ -26,13 +26,13 @@ use stackchan_core::{Instant, render_leds};
 /// intermediate times), then render LEDs and return the frame.
 fn render_at(avatar: &mut Entity, modifiers_at: u64) -> LedFrame {
     let mut emotion_cycle = EmotionCycle::new();
-    let mut emotion_style = EmotionStyle::new();
+    let mut style_from_emotion = StyleFromEmotion::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
     let mut drift = IdleDrift::new();
     let mut director = Director::new();
     director.add_modifier(&mut emotion_cycle).unwrap();
-    director.add_modifier(&mut emotion_style).unwrap();
+    director.add_modifier(&mut style_from_emotion).unwrap();
     director.add_modifier(&mut blink).unwrap();
     director.add_modifier(&mut breath).unwrap();
     director.add_modifier(&mut drift).unwrap();

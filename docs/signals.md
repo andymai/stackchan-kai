@@ -48,9 +48,9 @@ task's 33 ms tick virtually never coincides with the signal write.
 
 | Signal | Producer | Consumer | Cadence |
 |---|---|---|---|
-| `audio::AUDIO_RMS_SIGNAL` | audio task RX RMS loop | render → `MouthOpenAudio` + `WakeOnVoice` | ~33 ms |
-| `touch::TAP_SIGNAL` | touch task / button task | render → `EmotionTouch` | event |
-| `ir::REMOTE_SIGNAL` | IR RMT task | render → `RemoteCommand` | event |
+| `audio::AUDIO_RMS_SIGNAL` | audio task RX RMS loop | render → `MouthFromAudio` + `EmotionFromVoice` | ~33 ms |
+| `touch::TAP_SIGNAL` | touch task / button task | render → `EmotionFromTouch` | event |
+| `ir::REMOTE_SIGNAL` | IR RMT task | render → `EmotionFromRemote` | event |
 | `imu::IMU_SIGNAL` | IMU polling | render → `avatar.accel_g`, `gyro_dps` | 10 ms |
 | `ambient::AMBIENT_LUX_SIGNAL` | LTR-553 polling | render → `avatar.ambient_lux` | 500 ms |
 | `power::POWER_STATUS_SIGNAL` | AXP2101 polling | render → `avatar.battery_percent` | 1000 ms |

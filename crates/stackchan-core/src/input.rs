@@ -20,9 +20,9 @@
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Input {
     /// Tap edge from the touch sensor or power button. Consumed by
-    /// [`crate::modifiers::EmotionTouch`].
+    /// [`crate::modifiers::EmotionFromTouch`].
     pub tap_pending: bool,
     /// Most recent decoded IR-remote `(address, command)` pair.
-    /// Consumed by [`crate::modifiers::RemoteCommand`].
+    /// Consumed by [`crate::modifiers::EmotionFromRemote`].
     pub remote_pending: Option<(u16, u8)>,
 }

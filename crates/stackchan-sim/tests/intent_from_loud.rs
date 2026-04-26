@@ -19,10 +19,10 @@
 )]
 
 use stackchan_core::modifiers::{
-    EmotionHead, HeadFromIntent, IdleSway, IntentFromLoud, ListenHead, STARTLE_HEAD_TOTAL_MS,
-    STARTLE_HOLD_MS, WakeOnVoice,
+    EmotionFromVoice, HeadFromAttention, HeadFromEmotion, HeadFromIntent, IdleSway, IntentFromLoud,
+    STARTLE_HEAD_TOTAL_MS, STARTLE_HOLD_MS,
 };
-use stackchan_core::skills::LookAtSound;
+use stackchan_core::skills::Listening;
 use stackchan_core::voice::ChirpKind;
 use stackchan_core::{Director, Emotion, Entity, Instant, LedFrame, mind::Intent, render_leds};
 
@@ -58,14 +58,14 @@ fn quiet_audio_does_not_startle() {
 fn loud_transient_fires_full_reaction_chain() {
     let mut entity = Entity::default();
     let mut sway = IdleSway::new();
-    let mut emo = EmotionHead::new();
-    let mut listen_head = ListenHead::new();
+    let mut emo = HeadFromEmotion::new();
+    let mut head_from_attention = HeadFromAttention::new();
     let mut head_from_intent = HeadFromIntent::new();
     let mut startle = IntentFromLoud::new();
     let mut director = Director::new();
     director.add_modifier(&mut sway).unwrap();
     director.add_modifier(&mut emo).unwrap();
-    director.add_modifier(&mut listen_head).unwrap();
+    director.add_modifier(&mut head_from_attention).unwrap();
     director.add_modifier(&mut head_from_intent).unwrap();
     director.add_modifier(&mut startle).unwrap();
 
@@ -128,14 +128,14 @@ fn loud_transient_fires_full_reaction_chain() {
 fn intent_clears_after_hold_head_returns_to_baseline() {
     let mut entity = Entity::default();
     let mut sway = IdleSway::new();
-    let mut emo = EmotionHead::new();
-    let mut listen_head = ListenHead::new();
+    let mut emo = HeadFromEmotion::new();
+    let mut head_from_attention = HeadFromAttention::new();
     let mut head_from_intent = HeadFromIntent::new();
     let mut startle = IntentFromLoud::new();
     let mut director = Director::new();
     director.add_modifier(&mut sway).unwrap();
     director.add_modifier(&mut emo).unwrap();
-    director.add_modifier(&mut listen_head).unwrap();
+    director.add_modifier(&mut head_from_attention).unwrap();
     director.add_modifier(&mut head_from_intent).unwrap();
     director.add_modifier(&mut startle).unwrap();
 
@@ -174,25 +174,25 @@ fn intent_clears_after_hold_head_returns_to_baseline() {
 #[test]
 fn startle_overrides_in_progress_listen() {
     // Sustained voice puts the avatar into Listen + Happy via
-    // LookAtSound + WakeOnVoice. A loud spike mid-conversation must
+    // Listening + EmotionFromVoice. A loud spike mid-conversation must
     // still flip the intent to Startled (IntentFromLoud overrides
-    // the WakeOnVoice hold).
+    // the EmotionFromVoice hold).
     let mut entity = Entity::default();
-    let mut wake_on_voice = WakeOnVoice::new();
+    let mut emotion_from_voice = EmotionFromVoice::new();
     let mut startle = IntentFromLoud::new();
-    let mut look_at_sound = LookAtSound::new();
+    let mut listening = Listening::new();
     let mut director = Director::new();
-    director.add_modifier(&mut wake_on_voice).unwrap();
+    director.add_modifier(&mut emotion_from_voice).unwrap();
     director.add_modifier(&mut startle).unwrap();
-    director.add_skill(&mut look_at_sound).unwrap();
+    director.add_skill(&mut listening).unwrap();
 
     // Sustained "voice" (above wake threshold, below startle).
     entity.perception.audio_rms = Some(0.1);
     run_for(&mut director, &mut entity, 0, 30);
     assert_eq!(
         entity.mind.intent,
-        Intent::Listen,
-        "sustained voice should enter Listen via LookAtSound",
+        Intent::Listening,
+        "sustained voice should enter Listen via Listening",
     );
     assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
 

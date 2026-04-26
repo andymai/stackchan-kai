@@ -108,16 +108,16 @@ coarse `FieldGroup`s for human-readable conflict reports.
 
 The Affect phase ordering matters:
 
-- `EmotionTouch` runs first (priority `-100`) so a tap takes effect
+- `EmotionFromTouch` runs first (priority `-100`) so a tap takes effect
   before any environmental override.
 - `EmotionCycle` runs last in Affect; the autonomous advancer only
   fires when no input modifier set `mind.autonomy.manual_until`.
-- `EmotionStyle` runs in `Expression` and reads
+- `StyleFromEmotion` runs in `Expression` and reads
   `mind.affect.emotion`; Blink / Breath / IdleDrift then add per-frame
   deltas on top.
-- `IdleSway` (Motion) writes the base `motor.head_pose`; `EmotionHead`
+- `IdleSway` (Motion) writes the base `motor.head_pose`; `HeadFromEmotion`
   (registered later in Motion) adds an emotion-keyed bias on top.
-- `MouthOpenAudio` runs in `Audio` so audio-driven mouth-open isn't
+- `MouthFromAudio` runs in `Audio` so audio-driven mouth-open isn't
   overwritten by a stale earlier write.
 
 When in doubt, mirror the registration order in `render_task` and add

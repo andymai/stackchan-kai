@@ -66,6 +66,6 @@ accessors for the common "is a finger down, and where?" question.
 
 ## Integration
 
-- **Firmware `touch` module** polls via `read_touch()` and feeds results to the avatar's `EmotionTouch` modifier (tap → emotion change)
+- **Firmware `touch` module** polls via `read_touch()` and feeds results to the avatar's `EmotionFromTouch` modifier (tap → emotion change)
 - **Shares the main `SharedI2cBus`** with AXP2101, AW9523, BMI270, BMM150, BM8563, and the upcoming audio codecs
 - **Host-testable** — `decode_touch` is a pure `[u8; 7] → TouchReport` function with coverage for zero-touch, one-touch, two-touch, and reserved-bit edge cases

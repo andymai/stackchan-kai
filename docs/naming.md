@@ -91,7 +91,7 @@ The `*Alert` suffix is acceptable when the chirp announces a
 Matches [`serde_json::Value`][serde-value] (bare nouns) and the
 animation-state-machine `OnEntered` / `OnExited` convention.
 
-Avoid `*Event` suffix — the enum name (`ChirpKind`, `IntentReflex`,
+Avoid `*Event` suffix — the enum name (`ChirpKind`, `EmotionFromIntent`,
 etc.) carries the kind information.
 
 [serde-value]: https://docs.rs/serde_json/latest/serde_json/enum.Value.html
@@ -119,78 +119,35 @@ grammatical forms of the same concept, so the pair reads naturally
 in context (`source = Pickup, intent = PickedUp`) without colliding
 on identifier.
 
-## Current violations
+## Current inventory
 
-Names on `main` today that break a rule, with the proposed rename.
-The rename PR sweeps these in one commit so reviewers can verify the
-mechanical correctness in a single diff.
+All names on `main` conform to the rules above. The inventory below
+is a quick cross-reference; the canonical lists live in the source
+(`crates/stackchan-core/src/{mind,voice,emotion}.rs` and
+`crates/stackchan-core/src/{modifiers,skills}/mod.rs`).
 
-### Intent
-
-| Current     | Renamed     | Rule |
-|-------------|-------------|------|
-| `Listen`    | `Listening` | A — own activity → gerund |
-| `BeingPet`  | `Petted`    | A — externally caused → past participle |
-
-### Skills
-
-| Current       | Renamed     | Rule |
-|---------------|-------------|------|
-| `LookAtSound` | `Listening` | C — recognizer → gerund (collision with `Attention::Listening` resolved by namespace: `skills::Listening` vs `Attention::Listening`) |
-
-### ChirpKind
-
-| Current             | Renamed              | Rule |
-|---------------------|----------------------|------|
-| `CameraModeEnter`   | `CameraModeEntered`  | D — transition → past participle |
-| `CameraModeExit`    | `CameraModeExited`   | D — transition → past participle |
-
-### Modifiers (translators)
-
-| Current             | Renamed              | Rule |
-|---------------------|----------------------|------|
-| `EmotionTouch`      | `EmotionFromTouch`   | B — `<Output>From<Source>` |
-| `RemoteCommand`     | `EmotionFromRemote`  | B (rename revisits if it grows beyond emotion) |
-| `BodyGesture`       | `IntentFromBodyTouch`| B — primary write is `mind.intent` (Petted) |
-| `IntentReflex`      | `EmotionFromIntent`  | B — reads intent transitions, writes emotion |
-| `WakeOnVoice`       | `EmotionFromVoice`   | B |
-| `AmbientSleepy`     | `EmotionFromAmbient` | B |
-| `LowBatteryEmotion` | `EmotionFromBattery` | B |
-| `EmotionStyle`      | `StyleFromEmotion`   | B |
-| `IntentStyle`       | `StyleFromIntent`    | B |
-| `EmotionHead`       | `HeadFromEmotion`    | B |
-| `ListenHead`        | `HeadFromAttention`  | B (specifically `Attention::Listening` — see doc comment) |
-| `MouthOpenAudio`    | `MouthFromAudio`     | B |
-
-### OverrideSource
-
-| Current | Renamed     | Rule |
-|---------|-------------|------|
-| `Touch` | `FaceTouch` | E — symmetric with `BodyTouch`; the screen IS the avatar's face |
-
-### Modifiers (autonomous, no rename)
-
-`Blink`, `Breath`, `IdleSway`, `IdleDrift`, `EmotionCycle` already
-conform to the bare-noun rule.
-
-### Already convention-compliant
-
-- All `Emotion` variants (`Neutral`, `Happy`, `Sad`, `Sleepy`,
-  `Surprised`, `Angry`) — single-word adjectives, matches the
-  [m5stack-avatar `Expression`][m5stack-expression] enum that this
-  project descends from.
-- Skills `Petting` and `Handling`.
-- Intents `PickedUp`, `Shaken`, `Tilted`, `Idle`, plus `Startled`
-  and the `IntentFromLoud` / `HeadFromIntent` modifiers introduced
-  by the [feat/listening-skill][pr-106] PR (which adopted the rules
-  ahead of the rename sweep).
-- `OverrideSource` variants `Pickup`, `Shake`, `Voice`, `Startle`,
-  `Ambient`, `LowBattery`, `BodyTouch`, `Remote`.
-- `ChirpKind` variants `Pickup`, `Wake`, `Startle`,
-  `LowBatteryAlert`.
+- **Intent** (rule A): `Idle`, `Listening`, `Startled`, `Petted`,
+  `PickedUp`, `Shaken`, `Tilted`.
+- **Emotion** (single-word adjectives, matches the
+  [m5stack-avatar `Expression`][m5stack-expression] enum this project
+  descends from): `Neutral`, `Happy`, `Sad`, `Sleepy`, `Surprised`,
+  `Angry`.
+- **Skills** (rule C, all gerund recognizers today): `Listening`,
+  `Petting`, `Handling`.
+- **ChirpKind** (rule D): `Pickup`, `Wake`, `Startle`,
+  `LowBatteryAlert`, `CameraModeEntered`, `CameraModeExited`.
+- **OverrideSource** (rule E): `FaceTouch`, `BodyTouch`, `Remote`,
+  `Pickup`, `Shake`, `Voice`, `Startle`, `Ambient`, `LowBattery`.
+- **Modifiers — autonomous** (rule B, bare noun): `Blink`, `Breath`,
+  `IdleSway`, `IdleDrift`, `EmotionCycle`.
+- **Modifiers — translators** (rule B, `<Output>From<Source>`):
+  `EmotionFromTouch`, `EmotionFromRemote`, `EmotionFromIntent`,
+  `EmotionFromVoice`, `EmotionFromAmbient`, `EmotionFromBattery`,
+  `IntentFromBodyTouch`, `IntentFromLoud`, `StyleFromEmotion`,
+  `StyleFromIntent`, `HeadFromEmotion`, `HeadFromAttention`,
+  `HeadFromIntent`, `MouthFromAudio`.
 
 [m5stack-expression]: https://github.com/stack-chan/m5stack-avatar/blob/master/src/Expression.h
-[pr-106]: https://github.com/andymai/stackchan-kai/pull/106
 
 ## Forward guidance
 
