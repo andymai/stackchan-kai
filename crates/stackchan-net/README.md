@@ -54,16 +54,15 @@ propagates a `ConfigError` up to a panic — it logs and uses defaults.
 - OTA manifests — firmware updates are a separate concern.
 - Captive portal / soft-AP setup flow — first-boot UX deferred.
 - Persona / character data — belongs to the AI tier (deferred).
-- BLE pairing config — companion-app pairing is a later round.
+- BLE pairing config — out of scope.
 
-## Security note for the upcoming HTTP layer
+## Security note
 
 `render_ron` is lossless — `wifi.psk` round-trips verbatim so SD reads
-and writes stay symmetric. The v1 HTTP control plane (PR #5) is
-LAN-scoped and unauthed, so its `GET /settings` handler **must** redact
-the PSK on the read path (separate read/write DTOs or a masked-render
-variant) before the endpoint ships. Don't expose `render_ron`'s output
-to the network as-is.
+and writes stay symmetric. Any caller that returns the rendered output
+over an unauthed network channel must redact the PSK on the read path
+(separate read/write DTOs or a masked-render variant). Don't expose
+`render_ron`'s output to the network as-is.
 
 [`Config`]: src/config.rs
 [`WifiConfig`]: src/config.rs

@@ -3,8 +3,8 @@
 //! Networking domain types for the Stack-chan firmware. Pure data
 //! and parsers — no transport, no I/O, no esp-hal. The firmware does
 //! the I/O wrapping; this crate is what the firmware (and host tests)
-//! agree on as the shape of the on-disk config and the RON file
-//! [`PUT /settings`] round-trips.
+//! agree on as the shape of the on-disk config and the RON over
+//! the wire.
 //!
 //! ## Schema v1
 //!
@@ -42,8 +42,6 @@
 //! `xtensa-esp32s3-none-elf` where `std` is absent. The firmware uses
 //! its own hand-rolled RON parser and reuses [`validate`] from this
 //! crate to enforce the same schema gate the host path runs.
-//!
-//! [`PUT /settings`]: # "see crates/stackchan-firmware/src/net/http.rs once it lands"
 
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]

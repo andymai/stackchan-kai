@@ -26,7 +26,7 @@ extern crate alloc;
 
 use stackchan_firmware::{
     ambient, audio, board, body_touch, button, camera, clock, framebuffer, head, imu, ir, leds,
-    power, touch, tracking_trace, wallclock, watchdog,
+    power, storage, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -43,12 +43,11 @@ use embedded_graphics::{
     pixelcolor::raw::RawU16,
     primitives::Rectangle,
 };
-// `RefCellDevice` shares the SPI2 bus between the LCD (always-on, every
-// render tick) and a future SD-card client (boot-time read + occasional
-// `PUT /settings` write). Single-core embassy + cooperative scheduling
-// means the `RefCell` borrow held during a blocking SPI transaction
-// can't be re-entered — task switches only happen at `.await` points,
-// and SPI transactions are entirely synchronous.
+// `RefCellDevice` shares the SPI2 bus between the LCD and the SD card
+// client. Single-core embassy + cooperative scheduling means the
+// `RefCell` borrow held during a blocking SPI transaction can't be
+// re-entered — task switches only happen at `.await` points, and
+// SPI transactions are entirely synchronous.
 use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::{
     Blocking,
@@ -773,12 +772,11 @@ async fn main(spawner: Spawner) -> ! {
     let cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
     let dc = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
 
-    // SPI2 is shared territory on CoreS3: the LCD owns it today, and the
-    // SD card slot is wired to the same bus (sharing SCK=GPIO36 +
-    // MOSI=GPIO37 with the LCD; SD MISO sits on GPIO35 — the same
-    // physical pin as LCD DC). Park the bus in a `'static RefCell` so
-    // future SD bring-up can register a second `RefCellDevice` against
-    // the same bus without re-plumbing the LCD path.
+    // SPI2 is shared territory on CoreS3: LCD + SD card both sit on
+    // SCK=GPIO36 + MOSI=GPIO37, and SD MISO is wired to GPIO35 — the
+    // same physical pin as LCD DC. Park the bus in a `'static RefCell`
+    // so each peripheral can hold its own `RefCellDevice` against the
+    // same underlying `Spi` without contention.
     #[allow(clippy::items_after_statements)]
     static SPI2_BUS: StaticCell<RefCell<Spi<'static, Blocking>>> = StaticCell::new();
     let spi_bus = SPI2_BUS.init(RefCell::new(spi_bus));
@@ -811,6 +809,35 @@ async fn main(spawner: Spawner) -> ! {
         Err(e) => defmt::panic!("mipidsi init failed: {}", defmt::Debug2Format(&e)),
     };
     defmt::info!("ILI9342C ready — spawning render task");
+
+    // SD-card boot config (offline-first). The SD shares SPI2 with
+    // the LCD and routes its MISO line to GPIO35 — the same pin the
+    // LCD uses as DC — so `SdSpiDevice` flips GPIO35's OE bit per CS
+    // edge (see `sd_spi.rs`). A missing card or unparseable file is
+    // not fatal: the firmware logs a warn and uses `Config::default`.
+    let sd_cs = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
+    let net_config = match storage::Storage::mount(spi_bus, sd_cs) {
+        Ok(mut sd) => match sd.read_config() {
+            Ok(cfg) => {
+                storage::log_config_summary(&cfg);
+                cfg
+            }
+            Err(e) => {
+                defmt::warn!("SD: read /sd/STACKCHAN.RON failed ({}); using defaults", e);
+                stackchan_net::Config::default()
+            }
+        },
+        Err(e) => {
+            defmt::warn!(
+                "SD: mount failed ({}); booting offline-first with defaults",
+                e
+            );
+            stackchan_net::Config::default()
+        }
+    };
+    // No downstream consumer yet; bind to `_` so the unused-result
+    // lint stays quiet without dropping the call.
+    let _ = net_config;
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
     // (eyes), once for IdleHeadDrift (head). Using independent seeds
