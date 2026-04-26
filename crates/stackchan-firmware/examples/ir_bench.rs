@@ -1,5 +1,5 @@
 //! IR bench: log every decoded NEC frame so the operator can populate
-//! `RemoteCommand`'s mapping table for their specific remote.
+//! `EmotionFromRemote`'s mapping table for their specific remote.
 //!
 //! Skips every other peripheral (LCD, servos, IMU, ambient) — just
 //! initialises the RMT RX path and prints each `(address, command)`
@@ -59,7 +59,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         env!("CARGO_PKG_VERSION")
     );
     defmt::info!(
-        "ir-bench: point a remote at the device and press buttons. Lines with `addr=... cmd=...` go in RemoteCommand's mapping table.",
+        "ir-bench: point a remote at the device and press buttons. Lines with `addr=... cmd=...` go in EmotionFromRemote's mapping table.",
     );
 
     // ir::run_ir_loop configures the RMT channel + decodes into

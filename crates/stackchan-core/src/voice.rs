@@ -18,24 +18,24 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ChirpKind {
-    /// Pickup-detected chirp. Set by `IntentReflex` on a transition
+    /// Pickup-detected chirp. Set by `EmotionFromIntent` on a transition
     /// into `Intent::PickedUp` (driven by the `Handling` skill).
     Pickup,
-    /// Voice-wake chirp. Set by `WakeOnVoice` when sustained audio
+    /// Voice-wake chirp. Set by `EmotionFromVoice` when sustained audio
     /// wakes the entity.
     Wake,
     /// Startle chirp. Set by `IntentFromLoud` on a transient acoustic
     /// spike (clap, shout, slam) — distinct from `Wake`, which is
     /// sustained-voice driven.
     Startle,
-    /// Low-battery alert beep. Set by `LowBatteryEmotion` when the
+    /// Low-battery alert beep. Set by `EmotionFromBattery` when the
     /// percent crosses the enter threshold while unplugged.
     LowBatteryAlert,
-    /// Camera-mode-enter tone. Set by the firmware's camera-mode
+    /// Camera-mode-entered tone. Set by the firmware's camera-mode
     /// toggle handler.
-    CameraModeEnter,
-    /// Camera-mode-exit tone. Counterpart to [`Self::CameraModeEnter`].
-    CameraModeExit,
+    CameraModeEntered,
+    /// Camera-mode-exited tone. Counterpart to [`Self::CameraModeEntered`].
+    CameraModeExited,
 }
 
 /// The entity's outbound audio surface.

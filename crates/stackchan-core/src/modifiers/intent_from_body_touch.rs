@@ -1,4 +1,4 @@
-//! `BodyGesture`: state-machine gesture recognition on the back-of-head
+//! `IntentFromBodyTouch`: state-machine gesture recognition on the back-of-head
 //! `Si12T` petting strip.
 //!
 //! Reads `entity.perception.body_touch` (intensity-aware) and emits
@@ -42,7 +42,7 @@ pub const BODY_GESTURE_HOLD_MS: u64 = 5_000;
 /// upstream reference's `swipe_threshold = 40`.
 pub const SWIPE_DELTA: i16 = 40;
 
-/// Per-gesture emotion mapping for [`BodyGesture`].
+/// Per-gesture emotion mapping for [`IntentFromBodyTouch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GestureMapping {
     /// Press of the left zone (no centre).
@@ -87,7 +87,7 @@ enum State {
 
 /// Gesture-detection modifier for the back-of-head `Si12T` petting strip.
 #[derive(Debug, Clone, Copy)]
-pub struct BodyGesture {
+pub struct IntentFromBodyTouch {
     /// Per-gesture emotion targets.
     pub mapping: GestureMapping,
     /// Hold duration written to `mind.autonomy.manual_until`.
@@ -98,7 +98,7 @@ pub struct BodyGesture {
     state: State,
 }
 
-impl BodyGesture {
+impl IntentFromBodyTouch {
     /// Construct with the default mapping + [`BODY_GESTURE_HOLD_MS`] hold + [`SWIPE_DELTA`] threshold.
     #[must_use]
     pub const fn new() -> Self {
@@ -118,16 +118,16 @@ impl BodyGesture {
     }
 }
 
-impl Default for BodyGesture {
+impl Default for IntentFromBodyTouch {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for BodyGesture {
+impl Modifier for IntentFromBodyTouch {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "BodyGesture",
+            name: "IntentFromBodyTouch",
             description: "State-machine gesture recognition on perception.body_touch \
                           (Si12T petting strip): Press emits per-zone emotion, \
                           SwipeForward/Backward emit Happy/Surprised. Mirrors M5Stack's \
@@ -204,14 +204,14 @@ mod tests {
         e
     }
 
-    fn run(m: &mut BodyGesture, entity: &mut Entity, now_ms: u64) {
+    fn run(m: &mut IntentFromBodyTouch, entity: &mut Entity, now_ms: u64) {
         entity.tick.now = Instant::from_millis(now_ms);
         m.update(entity);
     }
 
     #[test]
     fn no_perception_does_nothing() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(None);
         run(&mut m, &mut entity, 100);
         assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn press_left_sets_sleepy() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             left: 3,
             ..BodyTouch::default()
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn press_centre_sets_happy_even_with_other_zones() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             left: 3,
             centre: 3,
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn sustained_touch_does_not_re_extend_hold() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             centre: 3,
             ..BodyTouch::default()
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn release_then_press_fires_again() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             left: 3,
             ..BodyTouch::default()
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn left_to_right_slide_fires_swipe_forward() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         // Press on left.
         let mut entity = entity_with_touch(Some(BodyTouch {
             left: 3,
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn right_to_left_slide_fires_swipe_backward() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             right: 3,
             ..BodyTouch::default()
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn swipe_does_not_re_fire_within_a_run() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             left: 3,
             ..BodyTouch::default()
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn small_centroid_drift_does_not_trigger_swipe() {
-        let mut m = BodyGesture::new();
+        let mut m = IntentFromBodyTouch::new();
         let mut entity = entity_with_touch(Some(BodyTouch {
             centre: 3,
             ..BodyTouch::default()

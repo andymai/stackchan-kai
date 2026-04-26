@@ -1,4 +1,4 @@
-//! `WakeOnVoice`: flips `entity.mind.affect.emotion` to `Happy` when
+//! `EmotionFromVoice`: flips `entity.mind.affect.emotion` to `Happy` when
 //! the microphone observes sustained voice activity.
 //!
 //! ## Detection shape
@@ -21,7 +21,7 @@
 //!
 //! ## Coordination with the other emotion modifiers
 //!
-//! Unlike [`super::AmbientSleepy`] / [`super::LowBatteryEmotion`],
+//! Unlike [`super::EmotionFromAmbient`] / [`super::EmotionFromBattery`],
 //! this modifier is intended to *override* a sleepy state on voice
 //! activity — so it does **not** respect an existing
 //! `entity.mind.autonomy.manual_until` hold. It runs early in the
@@ -64,7 +64,7 @@ pub const WAKE_HOLD_MS: u64 = 5_000;
 /// allocation and is `Copy` so callers can stash it on the stack
 /// alongside the other modifier instances.
 #[derive(Debug, Clone, Copy)]
-pub struct WakeOnVoice {
+pub struct EmotionFromVoice {
     /// Linear-RMS threshold above which a tick counts as loud.
     pub threshold: f32,
     /// Consecutive-loud-ticks required to trigger the wake. Saturates
@@ -75,7 +75,7 @@ pub struct WakeOnVoice {
     consecutive_loud: u8,
 }
 
-impl WakeOnVoice {
+impl EmotionFromVoice {
     /// Construct with the default thresholds ([`WAKE_RMS_THRESHOLD`] /
     /// [`WAKE_SUSTAIN_TICKS`]).
     #[must_use]
@@ -104,16 +104,16 @@ impl WakeOnVoice {
     }
 }
 
-impl Default for WakeOnVoice {
+impl Default for EmotionFromVoice {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for WakeOnVoice {
+impl Modifier for EmotionFromVoice {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "WakeOnVoice",
+            name: "EmotionFromVoice",
             description: "Sustained perception.audio_rms above threshold flips emotion to Happy \
                           (wake from Sleepy). Sets voice.chirp_request = Wake on the rising edge.",
             phase: Phase::Affect,
@@ -147,7 +147,7 @@ impl Modifier for WakeOnVoice {
         }
 
         // Threshold-and-sustain met. If a hold is already active,
-        // don't extend it on every tick (mirrors AmbientSleepy's
+        // don't extend it on every tick (mirrors EmotionFromAmbient's
         // rolling-hold behaviour); once it expires, the next still-
         // loud tick rolls a new one.
         if let Some(until) = entity.mind.autonomy.manual_until
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn no_reading_keeps_counter_zero() {
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = Entity::default(); // audio_rms = None
         for t in 0..20 {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn quiet_keeps_counter_zero() {
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = quiet_avatar();
         for t in 0..20 {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn loud_below_sustain_does_not_fire() {
         // sustain_ticks - 1 loud ticks should NOT trigger.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn sustained_loud_triggers_happy() {
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS)) {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -242,7 +242,7 @@ mod tests {
     fn quiet_tick_resets_counter_mid_burst() {
         // 9 loud ticks, one quiet (resets), then 9 more loud — should
         // not yet fire because each run is below sustain.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -266,7 +266,7 @@ mod tests {
         // loudness within the hold window short-circuits at the
         // manual_until check; only after the hold expires AND a
         // fresh sustain accumulates does it fire again.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         // First fire.
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS)) {
@@ -285,10 +285,10 @@ mod tests {
 
     #[test]
     fn manual_hold_from_other_modifier_blocks_wake() {
-        // IntentReflex has already claimed the avatar with Surprised
-        // and a long hold. WakeOnVoice still sees sustained loud
+        // EmotionFromIntent has already claimed the avatar with Surprised
+        // and a long hold. EmotionFromVoice still sees sustained loud
         // ticks but stands down — explicit input wins.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let pickup_deadline = Instant::from_millis(30_000);
         let mut entity = {
             let mut e = loud_avatar();
@@ -310,10 +310,10 @@ mod tests {
 
     #[test]
     fn voice_overrides_sleepy_when_hold_expired() {
-        // AmbientSleepy set Sleepy + a hold; the hold has expired.
-        // WakeOnVoice should fire on sustained loud audio and write
+        // EmotionFromAmbient set Sleepy + a hold; the hold has expired.
+        // EmotionFromVoice should fire on sustained loud audio and write
         // Happy with a fresh hold.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let expired = Instant::from_millis(0);
         let mut entity = {
             let mut e = loud_avatar();
@@ -334,7 +334,7 @@ mod tests {
     fn counter_saturates_does_not_wrap() {
         // 300 loud ticks (well past u8::MAX) should not panic and
         // should keep the modifier in a consistent state.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         for t in 0..300_u64 {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn custom_config_takes_effect() {
         // Lower sustain count fires faster.
-        let mut wake = WakeOnVoice::with_config(0.05, 3);
+        let mut wake = EmotionFromVoice::with_config(0.05, 3);
         let mut entity = loud_avatar();
         for t in 0..3 {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -363,7 +363,7 @@ mod tests {
         // Sustained loudness fires on the Nth tick. chirp_request is
         // Some on that tick; firmware drains it. On the (N+1)th tick
         // (still-loud, still-held), no fresh request.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         for t in 0..(u64::from(WAKE_SUSTAIN_TICKS) - 1) {
             entity.tick.now = Instant::from_millis(t * 33);
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn quiet_tick_after_fire_resets_counter() {
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = loud_avatar();
         entity.tick.now = Instant::from_millis(0);
         wake.update(&mut entity);
@@ -406,7 +406,7 @@ mod tests {
     fn at_threshold_does_not_count_as_loud() {
         // The check is `rms > threshold`, so exactly-at-threshold is
         // treated as quiet. Pin this so it doesn't drift to `>=`.
-        let mut wake = WakeOnVoice::new();
+        let mut wake = EmotionFromVoice::new();
         let mut entity = {
             let mut e = Entity::default();
             e.perception.audio_rms = Some(WAKE_RMS_THRESHOLD);

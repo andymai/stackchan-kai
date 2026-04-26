@@ -1,4 +1,4 @@
-//! `EmotionTouch`: advances `entity.mind.affect.emotion` on explicit
+//! `EmotionFromTouch`: advances `entity.mind.affect.emotion` on explicit
 //! user input and pins the chosen emotion for a configurable hold
 //! window.
 //!
@@ -37,12 +37,12 @@ use crate::modifier::Modifier;
 /// How long a tap pins the chosen emotion, in milliseconds.
 ///
 /// 30 s feels intentional without being permanent: long enough for the
-/// eased `EmotionStyle` transition to read visually + for the user to
+/// eased `StyleFromEmotion` transition to read visually + for the user to
 /// notice their tap stuck, short enough that Stack-chan resumes its
 /// autonomous cycle before it seems "frozen."
 pub const MANUAL_HOLD_MS: u64 = 30_000;
 
-/// Order in which [`EmotionTouch`] cycles through emotions on each tap.
+/// Order in which [`EmotionFromTouch`] cycles through emotions on each tap.
 ///
 /// Defined independently of [`super::EmotionCycle::DEFAULT_SEQUENCE`] so
 /// touch cycling can use a different ordering from autonomous cycling
@@ -63,9 +63,9 @@ pub const EMOTION_ORDER: [Emotion; 5] = [
 /// Stateless: input lives in `entity.input.tap_pending`; the modifier
 /// reads + clears it on each tick.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmotionTouch;
+pub struct EmotionFromTouch;
 
-impl EmotionTouch {
+impl EmotionFromTouch {
     /// Construct.
     #[must_use]
     pub const fn new() -> Self {
@@ -87,16 +87,16 @@ const fn next_emotion(current: Emotion) -> Emotion {
         Emotion::Sleepy => Emotion::Surprised,
         Emotion::Surprised => Emotion::Sad,
         // `Sad` wraps the cycle back to `Neutral`. `Angry` is
-        // reactive-only (set by `IntentReflex` on shake) and exits to
+        // reactive-only (set by `EmotionFromIntent` on shake) and exits to
         // `Neutral` rather than threading into the cycle.
         Emotion::Sad | Emotion::Angry => Emotion::Neutral,
     }
 }
 
-impl Modifier for EmotionTouch {
+impl Modifier for EmotionFromTouch {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "EmotionTouch",
+            name: "EmotionFromTouch",
             description: "On a pending tap (entity.input.tap_pending), advances emotion to the \
                           next in EMOTION_ORDER and pins it via mind.autonomy.manual_until. \
                           Clears expired holds.",
@@ -116,7 +116,7 @@ impl Modifier for EmotionTouch {
             entity.input.tap_pending = false;
             entity.mind.affect.emotion = next_emotion(entity.mind.affect.emotion);
             entity.mind.autonomy.manual_until = Some(now + MANUAL_HOLD_MS);
-            entity.mind.autonomy.source = Some(crate::mind::OverrideSource::Touch);
+            entity.mind.autonomy.source = Some(crate::mind::OverrideSource::FaceTouch);
             return;
         }
 
@@ -142,7 +142,7 @@ mod tests {
         let mut entity = Entity::default();
         assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
 
-        let mut touch = EmotionTouch::new();
+        let mut touch = EmotionFromTouch::new();
         entity.input.tap_pending = true;
         entity.tick.now = Instant::from_millis(1_000);
         touch.update(&mut entity);
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn repeated_taps_cycle_through_order() {
         let mut entity = Entity::default();
-        let mut touch = EmotionTouch::new();
+        let mut touch = EmotionFromTouch::new();
 
         for (i, expected) in [
             Emotion::Happy,
@@ -188,7 +188,7 @@ mod tests {
             e.mind.affect.emotion = Emotion::Happy;
             e
         };
-        let mut touch = EmotionTouch::new();
+        let mut touch = EmotionFromTouch::new();
 
         for step in 0..10 {
             entity.tick.now = Instant::from_millis(step * 100);
@@ -201,9 +201,9 @@ mod tests {
     #[test]
     fn held_finger_does_not_re_fire() {
         // The firmware task only publishes rising-edge taps, so from
-        // EmotionTouch's perspective a held finger is just one tap.
+        // EmotionFromTouch's perspective a held finger is just one tap.
         let mut entity = Entity::default();
-        let mut touch = EmotionTouch::new();
+        let mut touch = EmotionFromTouch::new();
 
         entity.input.tap_pending = true;
         entity.tick.now = Instant::from_millis(0);
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn expired_hold_is_cleared() {
         let mut entity = Entity::default();
-        let mut touch = EmotionTouch::new();
+        let mut touch = EmotionFromTouch::new();
 
         entity.input.tap_pending = true;
         entity.tick.now = Instant::from_millis(1_000);
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn tap_during_active_hold_extends_it() {
         let mut entity = Entity::default();
-        let mut touch = EmotionTouch::new();
+        let mut touch = EmotionFromTouch::new();
 
         entity.input.tap_pending = true;
         entity.tick.now = Instant::from_millis(0);

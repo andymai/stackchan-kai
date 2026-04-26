@@ -1,4 +1,4 @@
-//! `MouthOpenAudio`: drives `face.mouth.mouth_open` from a microphone
+//! `MouthFromAudio`: drives `face.mouth.mouth_open` from a microphone
 //! RMS signal with a dB-mapped attack/release envelope.
 //!
 //! The firmware audio task publishes per-render-tick RMS (linear
@@ -49,7 +49,7 @@ const INAUDIBLE_RMS: f32 = 1e-5;
 
 /// Modifier that turns microphone RMS into a mouth-open amplitude.
 #[derive(Debug, Clone, Copy)]
-pub struct MouthOpenAudio {
+pub struct MouthFromAudio {
     /// Envelope state — the smoothed `mouth_open` value that actually
     /// gets written to the avatar.
     current: f32,
@@ -65,7 +65,7 @@ pub struct MouthOpenAudio {
     last_tick: Option<Instant>,
 }
 
-impl MouthOpenAudio {
+impl MouthFromAudio {
     /// Construct with default dB window + envelope timings.
     #[must_use]
     pub const fn new() -> Self {
@@ -120,16 +120,16 @@ impl MouthOpenAudio {
     }
 }
 
-impl Default for MouthOpenAudio {
+impl Default for MouthFromAudio {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for MouthOpenAudio {
+impl Modifier for MouthFromAudio {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "MouthOpenAudio",
+            name: "MouthFromAudio",
             description: "Drives face.mouth.mouth_open from perception.audio_rms via a dB-mapped \
                           attack/release envelope so the mouth lip-syncs roughly to mic input.",
             phase: Phase::Audio,
@@ -292,7 +292,7 @@ mod tests {
     /// mouth-open range — well within the modifier's perceptual band.
     const TOL: f32 = 0.05;
 
-    fn run(mouth: &mut MouthOpenAudio, entity: &mut Entity, rms: f32, ms: u64) {
+    fn run(mouth: &mut MouthFromAudio, entity: &mut Entity, rms: f32, ms: u64) {
         entity.perception.audio_rms = Some(rms);
         entity.tick.now = Instant::from_millis(ms);
         mouth.update(entity);
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn inaudible_rms_maps_to_closed() {
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         run(&mut mouth, &mut entity, 0.0, 0);
         assert!(entity.face.mouth.mouth_open.abs() < f32::EPSILON);
         run(&mut mouth, &mut entity, 1e-6, 10);
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn full_scale_rms_opens_mouth_fully() {
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         // First tick snaps to target (no envelope on boot).
         run(&mut mouth, &mut entity, 1.0, 0);
         assert!(
@@ -326,7 +326,7 @@ mod tests {
         // Boot-time behaviour: we don't want the mouth to slew from 0
         // to a live target over the release window.
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         // -30 dBFS ≈ rms 0.0316; with default window that's
         // (−30 − (−50)) / 40 = 0.5.
         run(&mut mouth, &mut entity, 0.031_62, 0);
@@ -343,7 +343,7 @@ mod tests {
         // opening vs closing. Attack τ=20 ms should cover more ground
         // than release τ=100 ms over a 10 ms tick.
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         // Boot at closed.
         run(&mut mouth, &mut entity, 1e-6, 0);
         let before_attack = entity.face.mouth.mouth_open;
@@ -353,7 +353,7 @@ mod tests {
 
         // Reset: boot at full.
         let mut avatar2 = Entity::default();
-        let mut mouth2 = MouthOpenAudio::new();
+        let mut mouth2 = MouthFromAudio::new();
         run(&mut mouth2, &mut avatar2, 1.0, 0);
         let before_release = avatar2.face.mouth.mouth_open;
         // One 10 ms tick with silent target.
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn envelope_settles_to_target_eventually() {
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         // Boot at closed.
         run(&mut mouth, &mut entity, 1e-6, 0);
         // 2 seconds of full-scale audio at 33 ms tick — well past
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn clamp_handles_out_of_range_rms() {
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         run(&mut mouth, &mut entity, 10.0, 0); // 10× full-scale
         assert!(
             entity.face.mouth.mouth_open <= 1.0 + 1e-3,
@@ -401,14 +401,14 @@ mod tests {
     #[test]
     fn clamp_handles_nan_rms() {
         let mut entity = Entity::default();
-        let mut mouth = MouthOpenAudio::new();
+        let mut mouth = MouthFromAudio::new();
         run(&mut mouth, &mut entity, f32::NAN, 0);
         assert!(entity.face.mouth.mouth_open.abs() < f32::EPSILON);
     }
 
     #[test]
     fn target_from_rms_maps_dbfs_linearly() {
-        let mouth = MouthOpenAudio::new();
+        let mouth = MouthFromAudio::new();
         // Midpoint of default window: -30 dBFS = rms 10^(-30/20) ≈ 0.0316
         let t = mouth.target_from_rms(0.031_62);
         assert!((t - 0.5).abs() < TOL, "expected 0.5, got {t}");

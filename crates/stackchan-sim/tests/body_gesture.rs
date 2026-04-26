@@ -1,6 +1,6 @@
-//! End-to-end sim test for the `BodyGesture` modifier.
+//! End-to-end sim test for the `IntentFromBodyTouch` modifier.
 //!
-//! Drives a Director with `BodyGesture` + `EmotionStyle` (so emotion
+//! Drives a Director with `IntentFromBodyTouch` + `StyleFromEmotion` (so emotion
 //! changes propagate into the face style fields), varies
 //! `perception.body_touch` across simulated time, and asserts the
 //! Press / Swipe / Release state machine matches the documented
@@ -17,8 +17,8 @@
 )]
 
 use stackchan_core::modifiers::{
-    BodyGesture, DEFAULT_CENTRE_PRESS, DEFAULT_LEFT_PRESS, DEFAULT_RIGHT_PRESS,
-    DEFAULT_SWIPE_BACKWARD, DEFAULT_SWIPE_FORWARD,
+    DEFAULT_CENTRE_PRESS, DEFAULT_LEFT_PRESS, DEFAULT_RIGHT_PRESS, DEFAULT_SWIPE_BACKWARD,
+    DEFAULT_SWIPE_FORWARD, IntentFromBodyTouch,
 };
 use stackchan_core::{BodyTouch, Director, Emotion, Entity, Instant, OverrideSource};
 
@@ -36,7 +36,7 @@ fn run_for(director: &mut Director<'_>, entity: &mut Entity, start_ms: u64, tick
 #[test]
 fn press_centre_through_director_yields_happy() {
     let mut entity = Entity::default();
-    let mut gesture = BodyGesture::new();
+    let mut gesture = IntentFromBodyTouch::new();
     let mut director = Director::new();
     director.add_modifier(&mut gesture).unwrap();
 
@@ -54,7 +54,7 @@ fn press_centre_through_director_yields_happy() {
 #[test]
 fn left_press_then_release_then_right_press_fires_twice() {
     let mut entity = Entity::default();
-    let mut gesture = BodyGesture::new();
+    let mut gesture = IntentFromBodyTouch::new();
     let mut director = Director::new();
     director.add_modifier(&mut gesture).unwrap();
 
@@ -79,7 +79,7 @@ fn left_press_then_release_then_right_press_fires_twice() {
 #[test]
 fn left_to_right_slide_through_director_fires_swipe_forward() {
     let mut entity = Entity::default();
-    let mut gesture = BodyGesture::new();
+    let mut gesture = IntentFromBodyTouch::new();
     let mut director = Director::new();
     director.add_modifier(&mut gesture).unwrap();
 
@@ -104,7 +104,7 @@ fn left_to_right_slide_through_director_fires_swipe_forward() {
 #[test]
 fn right_to_left_slide_through_director_fires_swipe_backward() {
     let mut entity = Entity::default();
-    let mut gesture = BodyGesture::new();
+    let mut gesture = IntentFromBodyTouch::new();
     let mut director = Director::new();
     director.add_modifier(&mut gesture).unwrap();
 
@@ -126,7 +126,7 @@ fn right_to_left_slide_through_director_fires_swipe_backward() {
 #[test]
 fn no_perception_keeps_neutral() {
     let mut entity = Entity::default();
-    let mut gesture = BodyGesture::new();
+    let mut gesture = IntentFromBodyTouch::new();
     let mut director = Director::new();
     director.add_modifier(&mut gesture).unwrap();
 

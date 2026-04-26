@@ -1,4 +1,4 @@
-//! `LookAtSound`: attention-shifting skill driven by sustained voice
+//! `Listening`: attention-shifting skill driven by sustained voice
 //! activity.
 //!
 //! ## Trigger shape
@@ -7,7 +7,7 @@
 //! Counts consecutive ticks above [`LISTEN_RMS_THRESHOLD`]; once the
 //! run length reaches [`LISTEN_SUSTAIN_TICKS`] the skill fires:
 //!
-//! - `entity.mind.intent` ← [`Intent::Listen`]
+//! - `entity.mind.intent` ← [`Intent::Listening`]
 //! - `entity.mind.attention` ← [`Attention::Listening { since: now }`]
 //!
 //! Once fired, attention persists while loudness continues. After the
@@ -17,12 +17,12 @@
 //! Unknown audio (`audio_rms = None`, before the firmware publishes
 //! its first window) is treated as silence and never triggers.
 //!
-//! ## Relationship to `WakeOnVoice`
+//! ## Relationship to `EmotionFromVoice`
 //!
-//! [`WakeOnVoice`](crate::modifiers::WakeOnVoice) reacts to the same
+//! [`EmotionFromVoice`](crate::modifiers::EmotionFromVoice) reacts to the same
 //! `audio_rms` trigger but writes `mind.affect.emotion = Happy` and
 //! queues `voice.chirp_request = Wake`. The two are complementary: a
-//! sustained voice burst makes the entity *feel* happy (`WakeOnVoice`)
+//! sustained voice burst makes the entity *feel* happy (`EmotionFromVoice`)
 //! and *focus its attention* on the sound (this skill). They share
 //! [`LISTEN_RMS_THRESHOLD`] / [`LISTEN_SUSTAIN_TICKS`] values so both
 //! fire on the same tick.
@@ -32,7 +32,7 @@
 //! The output is *attention*, not face / motor. Skills write
 //! `mind.intent` / `mind.attention` / `voice` / `events` by contract;
 //! modifiers translate that into face + pose. The companion
-//! [`ListenHead`](crate::modifiers::ListenHead) modifier consumes
+//! [`HeadFromAttention`](crate::modifiers::HeadFromAttention) modifier consumes
 //! `mind.attention` and biases head tilt accordingly.
 
 use crate::clock::Instant;
@@ -66,7 +66,7 @@ pub const LISTEN_RELEASE_MS: u64 = 1_500;
 /// Attention-shifting skill driven by sustained voice activity. See
 /// the module docs for trigger shape.
 #[derive(Debug, Clone, Copy)]
-pub struct LookAtSound {
+pub struct Listening {
     /// Linear-RMS threshold above which a tick counts as loud.
     pub threshold: f32,
     /// Consecutive-loud-ticks required to enter Listening.
@@ -82,7 +82,7 @@ pub struct LookAtSound {
     last_loud: Option<Instant>,
 }
 
-impl LookAtSound {
+impl Listening {
     /// Construct with default tuning ([`LISTEN_RMS_THRESHOLD`] /
     /// [`LISTEN_SUSTAIN_TICKS`] / [`LISTEN_RELEASE_MS`]).
     #[must_use]
@@ -97,20 +97,20 @@ impl LookAtSound {
     }
 }
 
-impl Default for LookAtSound {
+impl Default for Listening {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Skill for LookAtSound {
+impl Skill for Listening {
     fn meta(&self) -> &'static SkillMeta {
         static META: SkillMeta = SkillMeta {
-            name: "LookAtSound",
+            name: "Listening",
             description: "Sustained perception.audio_rms above LISTEN_RMS_THRESHOLD sets \
                           mind.intent=Listen and mind.attention=Listening{since}. Attention \
                           clears LISTEN_RELEASE_MS after audio quiets. Pairs with the \
-                          ListenHead motion modifier for a cocked-head listening posture.",
+                          HeadFromAttention motion modifier for a cocked-head listening posture.",
             priority: 50,
             writes: &[Field::Intent, Field::Attention],
         };
@@ -150,7 +150,7 @@ impl Skill for LookAtSound {
             // edge clobbered in the same frame, because skills run
             // after modifiers.
             if !matches!(entity.mind.intent, Intent::Startled) {
-                entity.mind.intent = Intent::Listen;
+                entity.mind.intent = Intent::Listening;
             }
             return SkillStatus::Continuing;
         }
@@ -166,7 +166,7 @@ impl Skill for LookAtSound {
             entity.mind.attention = Attention::None;
             // Same priority guard as the entry path: only clear back
             // to Idle if we're the one who set the current intent.
-            if matches!(entity.mind.intent, Intent::Listen) {
+            if matches!(entity.mind.intent, Intent::Listening) {
                 entity.mind.intent = Intent::Idle;
             }
             self.last_loud = None;
@@ -204,7 +204,7 @@ mod tests {
     /// Drive the skill's state machine for `ticks` frames at 33 ms /
     /// tick, starting at `start_ms`. Mirrors the cadence of the
     /// firmware render loop.
-    fn step(skill: &mut LookAtSound, entity: &mut Entity, start_ms: u64, ticks: u64) {
+    fn step(skill: &mut Listening, entity: &mut Entity, start_ms: u64, ticks: u64) {
         for t in 0..ticks {
             entity.tick.now = Instant::from_millis(start_ms + t * 33);
             let _ = skill.invoke(entity);
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn never_fires_on_silence() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = quiet_avatar();
         step(
             &mut skill,
@@ -229,7 +229,7 @@ mod tests {
     fn unknown_audio_is_silence() {
         // `audio_rms = None` (default) before the audio task
         // publishes. Treated as silent.
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = Entity::default();
         step(
             &mut skill,
@@ -243,16 +243,16 @@ mod tests {
 
     #[test]
     fn sustained_loud_enters_listening() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         step(&mut skill, &mut entity, 0, u64::from(LISTEN_SUSTAIN_TICKS));
         assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
-        assert_eq!(entity.mind.intent, Intent::Listen);
+        assert_eq!(entity.mind.intent, Intent::Listening);
     }
 
     #[test]
     fn loud_below_sustain_does_not_enter() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         step(
             &mut skill,
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn quiet_tick_resets_counter_mid_burst() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         // SUSTAIN_TICKS - 1 loud, then one quiet (resets), then a
         // few more loud — should not trigger because each run is
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn since_timestamp_pins_to_first_listening_frame() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         // Drive past the sustain threshold.
         step(
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn quiet_within_release_window_holds_attention() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         step(&mut skill, &mut entity, 0, u64::from(LISTEN_SUSTAIN_TICKS));
         let last_loud_at = entity.tick.now;
@@ -333,12 +333,12 @@ mod tests {
             matches!(entity.mind.attention, Attention::Listening { .. }),
             "attention must hold within release window"
         );
-        assert_eq!(entity.mind.intent, Intent::Listen);
+        assert_eq!(entity.mind.intent, Intent::Listening);
     }
 
     #[test]
     fn quiet_past_release_window_clears_attention() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         step(&mut skill, &mut entity, 0, u64::from(LISTEN_SUSTAIN_TICKS));
         let last_loud_at = entity.tick.now;
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn re_entry_after_release_pins_new_since() {
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         step(&mut skill, &mut entity, 0, u64::from(LISTEN_SUSTAIN_TICKS));
         let Attention::Listening { since: first } = entity.mind.attention else {
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn at_threshold_does_not_count_as_loud() {
         // Pin: the predicate is `> threshold`, not `>=`.
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = Entity::default();
         entity.perception.audio_rms = Some(LISTEN_RMS_THRESHOLD);
         step(
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn counter_saturates_does_not_wrap() {
         // 300 loud ticks (well past u8::MAX) should not panic.
-        let mut skill = LookAtSound::new();
+        let mut skill = Listening::new();
         let mut entity = loud_avatar();
         step(&mut skill, &mut entity, 0, 300);
         assert!(matches!(entity.mind.attention, Attention::Listening { .. }));

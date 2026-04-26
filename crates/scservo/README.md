@@ -73,6 +73,6 @@ table.
 
 ## Integration
 
-- **Firmware `head` module** drives pan + tilt via `write_position`. Values come from `stackchan_core::Pose` after the `EmotionHead` / `IdleDrift` / `IdleSway` modifier stack resolves
+- **Firmware `head` module** drives pan + tilt via `write_position`. Values come from `stackchan_core::Pose` after the `HeadFromEmotion` / `IdleDrift` / `IdleSway` modifier stack resolves
 - **Calibration bench** (`crates/stackchan-firmware/examples/bench.rs`, invoked via `just bench`) sweeps each servo and reads back `ADDR_PRESENT_POSITION` to find mechanical limits
 - **Host-testable** — packet encoding / decoding and checksum math are pure functions with golden-packet tests; response parsing has "malformed / checksum bad / truncated" coverage

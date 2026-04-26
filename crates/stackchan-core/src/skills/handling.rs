@@ -20,13 +20,13 @@
 //! When multiple detectors fire on the same tick, this skill applies
 //! the project-wide intent priority `PickedUp > Shaken > Tilted` and
 //! writes the highest. It also overrides
-//! [`Intent::BeingPet`](crate::skills::Petting) — physical handling of
+//! [`Intent::Petted`](crate::skills::Petting) — physical handling of
 //! the whole avatar dominates over local back-of-head touch — except
 //! `Tilted`, which is a passive pose and yields to `BeingPet`.
 //!
 //! ## Coexistence
 //!
-//! The reflex layer ([`crate::modifiers::IntentReflex`]) reads `intent`
+//! The reflex layer ([`crate::modifiers::EmotionFromIntent`]) reads `intent`
 //! transitions and supplies the matching emotion + manual-hold + chirp.
 //! This skill writes intent only.
 //!
@@ -62,7 +62,7 @@ const fn magnitude_squared((x, y, z): (f32, f32, f32)) -> f32 {
 /// How far `|accel|` must deviate from the resting 1 g value, in g
 /// units, to count as "in motion" for [`Intent::PickedUp`].
 ///
-/// Matches the existing reflex-layer threshold so `IntentReflex` and
+/// Matches the existing reflex-layer threshold so `EmotionFromIntent` and
 /// `Handling` agree on what "lifted" means; only the sustain durations
 /// differ.
 pub const PICKUP_DEVIATION_G: f32 = 0.5;
@@ -323,7 +323,7 @@ impl Skill for Handling {
                 // Tilted yields to BeingPet (lower priority than touch
                 // per project intent ordering). Don't clobber if the
                 // user is actively petting.
-                if !matches!(entity.mind.intent, Intent::BeingPet) {
+                if !matches!(entity.mind.intent, Intent::Petted) {
                     entity.mind.intent = Intent::Tilted;
                     self.last_set = Some(Intent::Tilted);
                     return SkillStatus::Continuing;
@@ -494,7 +494,7 @@ mod tests {
         let mut skill = Handling::new();
         let mut entity = at_rest();
         // Some other skill set BeingPet earlier this tick.
-        entity.mind.intent = Intent::BeingPet;
+        entity.mind.intent = Intent::Petted;
         set_accel(&mut entity, (0.0, 0.0, 1.8));
         step(&mut skill, &mut entity, PICKUP_SUSTAIN_MS / TICK_MS + 1);
         assert_eq!(entity.mind.intent, Intent::PickedUp);
@@ -504,7 +504,7 @@ mod tests {
     fn tilted_yields_to_being_pet() {
         let mut skill = Handling::new();
         let mut entity = at_rest();
-        entity.mind.intent = Intent::BeingPet;
+        entity.mind.intent = Intent::Petted;
         // Force perception to also indicate active body touch so the
         // semantics match a real concurrent-sustained-pet scenario.
         entity.perception.body_touch = Some(BodyTouch {
@@ -515,7 +515,7 @@ mod tests {
         let ticks = TILT_SUSTAIN_MS.div_ceil(TICK_MS) + 1;
         step(&mut skill, &mut entity, ticks);
         // BeingPet survived; Handling stood down.
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
     }
 
     #[test]
@@ -538,10 +538,10 @@ mod tests {
         let mut entity = at_rest();
         // Some other skill (Petting) set BeingPet; Handling never
         // touched intent.
-        entity.mind.intent = Intent::BeingPet;
+        entity.mind.intent = Intent::Petted;
         // Idle accel for several ticks — Handling should not write.
         step(&mut skill, &mut entity, 10);
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
     }
 
     #[test]
@@ -559,9 +559,9 @@ mod tests {
 
         // Now Petting writes BeingPet — Handling must not clear it
         // back to Idle.
-        entity.mind.intent = Intent::BeingPet;
+        entity.mind.intent = Intent::Petted;
         step(&mut skill, &mut entity, 5);
-        assert_eq!(entity.mind.intent, Intent::BeingPet);
+        assert_eq!(entity.mind.intent, Intent::Petted);
     }
 
     #[test]

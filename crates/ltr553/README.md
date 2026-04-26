@@ -63,6 +63,6 @@ Default ALS config: gain 1×, integration 100 ms, measurement rate 500 ms.
 
 ## Integration
 
-- **Firmware `ambient` module** polls ambient lux + proximity. Lux drives the `AmbientSleepy` avatar modifier (darkroom → sleepy face); proximity will drive a "someone is close" reaction once the integration is done
+- **Firmware `ambient` module** polls ambient lux + proximity. Lux drives the `EmotionFromAmbient` avatar modifier (darkroom → sleepy face); proximity will drive a "someone is close" reaction once the integration is done
 - **Shares the main `SharedI2cBus`**
 - **Host-testable** — the lux formula and byte-order handling are both testable via mock I²C

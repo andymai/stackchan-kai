@@ -17,7 +17,7 @@ pub enum Emotion {
     /// Surprised / wide-eyed.
     Surprised,
     /// Angry / narrowed eyes + frown. Reactive only — set by
-    /// `IntentReflex` on a transition into `Intent::Shaken`. Not part
+    /// `EmotionFromIntent` on a transition into `Intent::Shaken`. Not part
     /// of the autonomous `EmotionCycle` or touch-cycle order.
     Angry,
 }

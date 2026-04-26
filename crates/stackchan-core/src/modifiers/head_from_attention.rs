@@ -1,17 +1,17 @@
-//! `ListenHead`: motion modifier that biases head pose upward when
+//! `HeadFromAttention`: motion modifier that biases head pose upward when
 //! `mind.attention` is `Listening`, producing a cocked-head listening
 //! posture.
 //!
-//! Driven by [`crate::skills::LookAtSound`] (or any other source that
+//! Driven by [`crate::skills::Listening`] (or any other source that
 //! sets `mind.attention = Listening`). Stays at zero bias when
 //! attention is `None`.
 //!
 //! ## Composition
 //!
 //! Runs after [`super::IdleSway`] (priority 0) and
-//! [`super::EmotionHead`] (priority 10) within [`Phase::Motion`], so
+//! [`super::HeadFromEmotion`] (priority 10) within [`Phase::Motion`], so
 //! its bias rides on top of the baseline sway and emotion-keyed bias.
-//! Same diff-and-undo pattern as `EmotionHead` / `IdleSway`: subtract
+//! Same diff-and-undo pattern as `HeadFromEmotion` / `IdleSway`: subtract
 //! the previous *applied* contribution before adding the new one,
 //! storing the post-clamp delta so asymmetric clamping doesn't
 //! accumulate into a permanent offset.
@@ -31,7 +31,7 @@ use crate::modifier::Modifier;
 
 /// Peak upward tilt added when fully attentive, in degrees.
 ///
-/// Combined with `IdleSway`'s ±2.5° tilt and `EmotionHead`'s
+/// Combined with `IdleSway`'s ±2.5° tilt and `HeadFromEmotion`'s
 /// up-to-+3° (Happy) the worst-case tilt stays comfortably inside
 /// [`MAX_TILT_DEG`](crate::head::MAX_TILT_DEG).
 pub const LISTEN_HEAD_TILT_DEG: f32 = 8.0;
@@ -46,7 +46,7 @@ pub const LISTEN_HEAD_EASE_MS: u64 = 200;
 /// Modifier that translates `mind.attention == Listening` into an
 /// additive upward tilt bias on `motor.head_pose`.
 #[derive(Debug, Clone, Copy)]
-pub struct ListenHead {
+pub struct HeadFromAttention {
     /// Tilt contribution as actually applied on the previous tick
     /// (post-clamp). Subtracted before writing the new contribution
     /// — see `IdleSway::last_pan_deg` for the same pattern.
@@ -59,7 +59,7 @@ pub struct ListenHead {
     release_since: Option<Instant>,
 }
 
-impl ListenHead {
+impl HeadFromAttention {
     /// Construct an idle modifier with no in-flight ease state.
     #[must_use]
     pub const fn new() -> Self {
@@ -71,7 +71,7 @@ impl ListenHead {
     }
 }
 
-impl Default for ListenHead {
+impl Default for HeadFromAttention {
     fn default() -> Self {
         Self::new()
     }
@@ -99,14 +99,14 @@ fn ease(start: Instant, now: Instant, window_ms: u64) -> f32 {
     t.clamp(0.0, 1.0)
 }
 
-impl Modifier for ListenHead {
+impl Modifier for HeadFromAttention {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "ListenHead",
+            name: "HeadFromAttention",
             description: "When mind.attention is Listening, adds an upward tilt bias to \
                           motor.head_pose for a cocked-head listening posture. Eases in/out \
                           over LISTEN_HEAD_EASE_MS. Composes additively after IdleSway and \
-                          EmotionHead via diff-and-undo.",
+                          HeadFromEmotion via diff-and-undo.",
             phase: Phase::Motion,
             priority: 20,
             reads: &[Field::Attention, Field::HeadPose],
@@ -152,7 +152,7 @@ impl Modifier for ListenHead {
             (None, None) => 0.0,
         };
 
-        // Diff-and-undo composition. Mirrors `EmotionHead`: subtract
+        // Diff-and-undo composition. Mirrors `HeadFromEmotion`: subtract
         // our previous applied contribution to recover upstream,
         // add the new one, clamp, and store the post-clamp effective
         // delta back into `last_tilt_deg`.
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn no_attention_leaves_pose_alone() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
         // Use an in-range tilt: MIN_TILT_DEG is 0 (asymmetric clamp).
         entity.motor.head_pose = Pose::new(2.0, 1.0);
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn ease_in_starts_at_zero_and_reaches_full_after_window() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
 
         // Tick 0: attention transitions to Listening. Anchor is set
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn ease_in_is_monotonically_non_decreasing_across_window() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
         entity.mind.attention = listening(0);
 
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn ease_out_returns_to_zero_after_window() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
 
         // Tick 1 anchors `listen_since`; bias starts at 0 on the
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn ease_out_is_monotonically_non_increasing_across_window() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
 
         // Get to full attention.
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn additive_composition_with_upstream_tilt() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
         entity.mind.attention = listening(0);
         let upstream_tilt = -2.0;
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn re_enter_during_ease_out_resumes_ease_in() {
-        let mut m = ListenHead::new();
+        let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
 
         // Anchor + reach full attention (entry tick + one window).

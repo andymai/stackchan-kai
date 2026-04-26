@@ -222,7 +222,7 @@ ambient-bench:
 
 # IR-NEC bench: decodes incoming NEC frames from the IR receiver on
 # GPIO21 (RMT channel 7) and prints `(address, command)` tuples. Use to
-# discover your remote's codes for the `RemoteCommand` modifier mapping.
+# discover your remote's codes for the `EmotionFromRemote` modifier mapping.
 ir-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example ir_bench
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/ir_bench{{_serial_suffix}}

@@ -21,7 +21,7 @@
 /// firmness). Modifiers / skills do their own edge / gesture detection.
 ///
 /// The intensity (vs a plain `bool`) is what `position()` and the
-/// swipe state machine in [`crate::modifiers::BodyGesture`] need —
+/// swipe state machine in [`crate::modifiers::IntentFromBodyTouch`] need —
 /// reducing to `bool` would lose the centroid math.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BodyTouch {

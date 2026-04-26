@@ -20,7 +20,7 @@
 //! new one. That way modifiers running *before* `IdleSway` (e.g. a
 //! future head-pose source that sets an absolute target) are not
 //! silently clobbered, and modifiers running *after* (e.g.
-//! [`EmotionHead`](super::EmotionHead), which biases on top) see the
+//! [`HeadFromEmotion`](super::HeadFromEmotion), which biases on top) see the
 //! already-swayed pose without `IdleSway` overwriting their work on the
 //! next tick.
 

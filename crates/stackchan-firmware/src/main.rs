@@ -5,7 +5,7 @@
 //! board-level enables and pulses LCD reset → SPI2 + ILI9342C via mipidsi.
 //! Main then spawns a ~30 FPS
 //! embassy task that runs the full modifier stack
-//! (`EmotionCycle` → `EmotionStyle` → `Blink` → `Breath` → `IdleDrift`)
+//! (`EmotionCycle` → `StyleFromEmotion` → `Blink` → `Breath` → `IdleDrift`)
 //! against an `Avatar`, draws into a PSRAM-backed framebuffer, and
 //! blits the whole frame to the LCD in one `fill_contiguous` call.
 //! Main drops into a heartbeat loop so "render task alive" and "main
@@ -65,12 +65,13 @@ use mipidsi::{
 use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
-        AmbientSleepy, Blink, BodyGesture, Breath, EmotionCycle, EmotionHead, EmotionStyle,
-        EmotionTouch, HeadFromIntent, IdleDrift, IdleSway, IntentFromLoud, IntentReflex,
-        IntentStyle, ListenHead, LowBatteryEmotion, MouthOpenAudio, RemoteCommand, WakeOnVoice,
+        Blink, Breath, EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent,
+        EmotionFromRemote, EmotionFromTouch, EmotionFromVoice, HeadFromAttention, HeadFromEmotion,
+        HeadFromIntent, IdleDrift, IdleSway, IntentFromBodyTouch, IntentFromLoud, MouthFromAudio,
+        StyleFromEmotion, StyleFromIntent,
     },
     render_leds,
-    skills::{Handling, LookAtSound, Petting},
+    skills::{Handling, Listening, Petting},
     voice::ChirpKind,
 };
 use static_cell::StaticCell;
@@ -146,14 +147,14 @@ type LcdDisplay = mipidsi::Display<
 /// complete frame, so the white-clear flicker from direct-draw is gone.
 ///
 /// Modifier order is the canonical stackchan-core stack:
-/// `EmotionTouch` → `EmotionCycle` → `EmotionStyle` → `Blink` →
-/// `Breath` → `IdleDrift` → `IdleSway` → `EmotionHead` →
-/// `ListenHead`. `EmotionTouch` runs first so a tap queued from the
+/// `EmotionFromTouch` → `EmotionCycle` → `StyleFromEmotion` → `Blink` →
+/// `Breath` → `IdleDrift` → `IdleSway` → `HeadFromEmotion` →
+/// `HeadFromAttention`. `EmotionFromTouch` runs first so a tap queued from the
 /// touch task becomes the active emotion before `EmotionCycle` checks
 /// the `manual_until` gate. `IdleSway` writes the base
-/// `entity.motor.head_pose` (slow wander); `EmotionHead` adds an
-/// emotion-keyed bias on top; `ListenHead` adds an upward listening
-/// tilt when the `LookAtSound` skill (registered separately) sets
+/// `entity.motor.head_pose` (slow wander); `HeadFromEmotion` adds an
+/// emotion-keyed bias on top; `HeadFromAttention` adds an upward listening
+/// tilt when the `Listening` skill (registered separately) sets
 /// `mind.attention = Listening`.
 /// The final pose is published to the 50 Hz head task via
 /// [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when no
@@ -174,19 +175,19 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         FB_HEIGHT
     );
     let mut entity = Entity::default();
-    let mut emotion_touch = EmotionTouch::new();
+    let mut emotion_from_touch = EmotionFromTouch::new();
     // Empty remote mapping by default. Populate with your specific
     // NEC `(address, command, emotion)` tuples after running
     // `examples/ir_bench.rs` to discover your remote's codes.
-    let mut remote = RemoteCommand::new();
-    let mut intent_reflex = IntentReflex::new();
-    let mut ambient_sleepy = AmbientSleepy::new();
-    let mut low_battery = LowBatteryEmotion::new();
-    let mut wake_on_voice = WakeOnVoice::new();
+    let mut remote = EmotionFromRemote::new();
+    let mut emotion_from_intent = EmotionFromIntent::new();
+    let mut emotion_from_ambient = EmotionFromAmbient::new();
+    let mut emotion_from_battery = EmotionFromBattery::new();
+    let mut emotion_from_voice = EmotionFromVoice::new();
     let mut intent_from_loud = IntentFromLoud::new();
     let mut cycle = EmotionCycle::new();
-    let mut style = EmotionStyle::new();
-    let mut intent_style = IntentStyle::new();
+    let mut style = StyleFromEmotion::new();
+    let mut style_from_intent = StyleFromIntent::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
     // Seed comes from the ESP32-S3 hardware RNG (`esp_hal::rng::Rng`),
@@ -195,14 +196,14 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     // the same micro-pattern after a power cycle.
     let mut drift = IdleDrift::with_seed(drift_seed);
     let mut sway = IdleSway::new();
-    let mut emotion_head = EmotionHead::new();
-    let mut listen_head = ListenHead::new();
+    let mut head_from_emotion = HeadFromEmotion::new();
+    let mut head_from_attention = HeadFromAttention::new();
     let mut head_from_intent = HeadFromIntent::new();
-    let mut mouth_open_audio = MouthOpenAudio::new();
-    let mut look_at_sound = LookAtSound::new();
+    let mut mouth_from_audio = MouthFromAudio::new();
+    let mut listening = Listening::new();
     let mut petting = Petting::new();
     let mut handling = Handling::new();
-    let mut body_gesture = BodyGesture::new();
+    let mut intent_from_body_touch = IntentFromBodyTouch::new();
     let mut last_rendered: Option<Face> = None;
     // Last instant TX was observed playing. Drives the post-playback
     // tail of the audio_rms gate so the mic doesn't pick up the
@@ -217,50 +218,50 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     // `crates/stackchan-core/src/director.rs` for the rationale.
     let mut director = Director::new();
     director
-        .add_modifier(&mut emotion_touch)
+        .add_modifier(&mut emotion_from_touch)
         .expect("registry full");
     director
-        .add_modifier(&mut body_gesture)
+        .add_modifier(&mut intent_from_body_touch)
         .expect("registry full");
     director.add_modifier(&mut remote).expect("registry full");
     director
-        .add_modifier(&mut intent_reflex)
+        .add_modifier(&mut emotion_from_intent)
         .expect("registry full");
     director
-        .add_modifier(&mut wake_on_voice)
+        .add_modifier(&mut emotion_from_voice)
         .expect("registry full");
     director
         .add_modifier(&mut intent_from_loud)
         .expect("registry full");
     director
-        .add_modifier(&mut ambient_sleepy)
+        .add_modifier(&mut emotion_from_ambient)
         .expect("registry full");
     director
-        .add_modifier(&mut low_battery)
+        .add_modifier(&mut emotion_from_battery)
         .expect("registry full");
     director.add_modifier(&mut cycle).expect("registry full");
     director.add_modifier(&mut style).expect("registry full");
     director
-        .add_modifier(&mut intent_style)
+        .add_modifier(&mut style_from_intent)
         .expect("registry full");
     director.add_modifier(&mut blink).expect("registry full");
     director.add_modifier(&mut breath).expect("registry full");
     director.add_modifier(&mut drift).expect("registry full");
     director.add_modifier(&mut sway).expect("registry full");
     director
-        .add_modifier(&mut emotion_head)
+        .add_modifier(&mut head_from_emotion)
         .expect("registry full");
     director
-        .add_modifier(&mut listen_head)
+        .add_modifier(&mut head_from_attention)
         .expect("registry full");
     director
         .add_modifier(&mut head_from_intent)
         .expect("registry full");
     director
-        .add_modifier(&mut mouth_open_audio)
+        .add_modifier(&mut mouth_from_audio)
         .expect("registry full");
     director
-        .add_skill(&mut look_at_sound)
+        .add_skill(&mut listening)
         .expect("skill registry full");
     director
         .add_skill(&mut petting)
@@ -286,7 +287,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + IntentReflex + WakeOnVoice + IntentFromLoud + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + IntentStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + HeadFromIntent + MouthOpenAudio + LookAtSound[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + EmotionCycle + StyleFromEmotion + StyleFromIntent + Blink + Breath + IdleDrift + IdleSway + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
@@ -330,7 +331,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         // published since last frame. Both sources publish to the
         // same signal so a button press is UX-indistinguishable from
         // a screen tap. `try_take` is non-blocking; a missing signal
-        // is the common case and means `EmotionTouch::update` only
+        // is the common case and means `EmotionFromTouch::update` only
         // does the expired-hold cleanup work this tick.
         if touch::TAP_SIGNAL.try_take().is_some() {
             if camera_mode {
@@ -358,7 +359,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
             entity.perception.ambient_lux = Some(lux);
         }
         // Drain the latest power status from the AXP2101 task.
-        // The `LowBatteryEmotion` modifier owns the arming-edge logic
+        // The `EmotionFromBattery` modifier owns the arming-edge logic
         // for the alert chirp now — it sets
         // `entity.voice.chirp_request = Some(ChirpKind::LowBatteryAlert)`
         // and the post-`run()` dispatch below enqueues it.
@@ -396,7 +397,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         director.run(&mut entity, now);
 
         // Drain the chirp request modifiers raised this tick. Modifiers
-        // (`IntentReflex`, `WakeOnVoice`, `LowBatteryEmotion`) set
+        // (`EmotionFromIntent`, `EmotionFromVoice`, `EmotionFromBattery`) set
         // `entity.voice.chirp_request`; we read it once after `run()`,
         // dispatch on `ChirpKind`, then clear so the next frame starts
         // fresh.
@@ -406,8 +407,8 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
                 ChirpKind::Wake => audio::try_enqueue_wake_chirp(),
                 ChirpKind::Startle => audio::try_enqueue_startle_chirp(),
                 ChirpKind::LowBatteryAlert => audio::try_enqueue_low_battery_alert(),
-                ChirpKind::CameraModeEnter => audio::try_enqueue_camera_mode_enter(),
-                ChirpKind::CameraModeExit => audio::try_enqueue_camera_mode_exit(),
+                ChirpKind::CameraModeEntered => audio::try_enqueue_camera_mode_enter(),
+                ChirpKind::CameraModeExited => audio::try_enqueue_camera_mode_exit(),
                 // ChirpKind is `non_exhaustive`, so even though the
                 // arms above cover every variant defined today, future
                 // variants land as a no-op until firmware adds an arm.
@@ -556,7 +557,7 @@ async fn head_task(mut driver: HeadDriverImpl) {
 /// driver and delegates to [`touch::run_touch_loop`], which reads the
 /// vendor ID once at startup and then publishes rising-edge taps on
 /// [`touch::TAP_SIGNAL`]. The render task drains the signal and feeds
-/// it into the [`EmotionTouch`] modifier.
+/// it into the [`EmotionFromTouch`] modifier.
 #[embassy_executor::task]
 async fn touch_task(shared_i2c: SharedI2c) -> ! {
     let touch = ft6336u::Ft6336u::new(shared_i2c);

@@ -1,14 +1,14 @@
-//! `IntentStyle`: translate `mind.intent` into face-style additions.
+//! `StyleFromIntent`: translate `mind.intent` into face-style additions.
 //!
-//! Mirrors [`super::EmotionStyle`] in shape — `Phase::Expression`,
-//! runs after `EmotionStyle` and before `Blink` so the canonical
-//! `EmotionStyle → Blink` ordering still holds — but reads
+//! Mirrors [`super::StyleFromEmotion`] in shape — `Phase::Expression`,
+//! runs after `StyleFromEmotion` and before `Blink` so the canonical
+//! `StyleFromEmotion → Blink` ordering still holds — but reads
 //! `mind.intent` instead of `mind.affect.emotion`.
 //!
 //! Today it bumps `face.style.cheek_blush` when intent is
-//! [`Intent::BeingPet`](crate::mind::Intent::BeingPet) so a sustained
+//! [`Intent::Petted`](crate::mind::Intent::Petted) so a sustained
 //! pet visibly intensifies the blush regardless of which emotion is
-//! active. Pure addition — `EmotionStyle` writes a fresh
+//! active. Pure addition — `StyleFromEmotion` writes a fresh
 //! `cheek_blush` baseline every tick (no persistent state to undo),
 //! so this modifier just reads-then-writes with `saturating_add`.
 //!
@@ -17,9 +17,9 @@
 //! | Intent        | `cheek_blush` add | Why                                       |
 //! |---------------|-------------------|-------------------------------------------|
 //! | `Idle`        |              `0`  | no override                               |
-//! | `Listen`      |              `0`  | handled separately by `ListenHead`        |
+//! | `Listen`      |              `0`  | handled separately by `HeadFromAttention`        |
 //! | `Startled` |              `0`  | `IntentFromLoud` writes `Surprised`, which |
-//! |               |                   | `EmotionStyle` already renders            |
+//! |               |                   | `StyleFromEmotion` already renders            |
 //! | `BeingPet`    |             `+30` | extra blush on top of any emotion base    |
 
 use crate::director::{Field, ModifierMeta, Phase};
@@ -28,18 +28,18 @@ use crate::mind::Intent;
 use crate::modifier::Modifier;
 
 /// Cheek-blush bump added when `mind.intent` is
-/// [`Intent::BeingPet`](crate::mind::Intent::BeingPet). Bumped on top
-/// of whatever `EmotionStyle` set; saturates at `255`.
+/// [`Intent::Petted`](crate::mind::Intent::Petted). Bumped on top
+/// of whatever `StyleFromEmotion` set; saturates at `255`.
 pub const PETTING_BLUSH_BUMP: u8 = 30;
 
 /// Per-intent face-style additions.
 ///
 /// Stateless — every tick reads the upstream `cheek_blush`
-/// (`EmotionStyle` writes it fresh) and adds the per-intent bump.
+/// (`StyleFromEmotion` writes it fresh) and adds the per-intent bump.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct IntentStyle;
+pub struct StyleFromIntent;
 
-impl IntentStyle {
+impl StyleFromIntent {
     /// Construct.
     #[must_use]
     pub const fn new() -> Self {
@@ -50,13 +50,13 @@ impl IntentStyle {
 /// Look up the per-intent cheek-blush addition.
 ///
 /// `PickedUp` / `Shaken` / `Tilted` get their visible reaction from
-/// [`super::IntentReflex`] (emotion + autonomy hold), which then flows
-/// through `EmotionStyle`. They contribute zero blush themselves.
+/// [`super::EmotionFromIntent`] (emotion + autonomy hold), which then flows
+/// through `StyleFromEmotion`. They contribute zero blush themselves.
 const fn blush_for(intent: Intent) -> u8 {
     match intent {
-        Intent::BeingPet => PETTING_BLUSH_BUMP,
+        Intent::Petted => PETTING_BLUSH_BUMP,
         Intent::Idle
-        | Intent::Listen
+        | Intent::Listening
         | Intent::PickedUp
         | Intent::Shaken
         | Intent::Tilted
@@ -64,16 +64,16 @@ const fn blush_for(intent: Intent) -> u8 {
     }
 }
 
-impl Modifier for IntentStyle {
+impl Modifier for StyleFromIntent {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "IntentStyle",
+            name: "StyleFromIntent",
             description: "Translates mind.intent into additive face.style overrides. \
                           BeingPet adds +PETTING_BLUSH_BUMP to cheek_blush; other intents \
-                          contribute 0. Stateless — relies on EmotionStyle re-writing the \
+                          contribute 0. Stateless — relies on StyleFromEmotion re-writing the \
                           cheek_blush baseline each tick.",
             phase: Phase::Expression,
-            // Runs after `EmotionStyle` (priority -10) but before
+            // Runs after `StyleFromEmotion` (priority -10) but before
             // `Blink` / `Breath` / `IdleDrift` (priority 0). Same
             // bracket the canonical-order test pins.
             priority: -5,
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn idle_intent_does_not_change_blush() {
-        let mut m = IntentStyle::new();
+        let mut m = StyleFromIntent::new();
         let mut entity = entity_with(Intent::Idle, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 100);
@@ -110,8 +110,8 @@ mod tests {
 
     #[test]
     fn listen_intent_does_not_change_blush() {
-        let mut m = IntentStyle::new();
-        let mut entity = entity_with(Intent::Listen, 100);
+        let mut m = StyleFromIntent::new();
+        let mut entity = entity_with(Intent::Listening, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 100);
     }
@@ -120,7 +120,7 @@ mod tests {
     fn hearing_loud_intent_does_not_change_blush() {
         // IntentFromLoud writes Emotion::Surprised which gives the
         // visible reaction; this modifier stays out.
-        let mut m = IntentStyle::new();
+        let mut m = StyleFromIntent::new();
         let mut entity = entity_with(Intent::Startled, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 100);
@@ -128,28 +128,28 @@ mod tests {
 
     #[test]
     fn being_pet_adds_bump_on_top_of_upstream() {
-        let mut m = IntentStyle::new();
-        let mut entity = entity_with(Intent::BeingPet, 100);
+        let mut m = StyleFromIntent::new();
+        let mut entity = entity_with(Intent::Petted, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 100 + PETTING_BLUSH_BUMP);
     }
 
     #[test]
     fn being_pet_saturates_at_max() {
-        let mut m = IntentStyle::new();
-        let mut entity = entity_with(Intent::BeingPet, 250);
+        let mut m = StyleFromIntent::new();
+        let mut entity = entity_with(Intent::Petted, 250);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 255);
     }
 
     #[test]
     fn intent_change_to_idle_returns_to_upstream_after_emotionstyle_rewrites() {
-        let mut m = IntentStyle::new();
-        let mut entity = entity_with(Intent::BeingPet, 100);
+        let mut m = StyleFromIntent::new();
+        let mut entity = entity_with(Intent::Petted, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 130);
 
-        // EmotionStyle re-writes the baseline each tick. Intent
+        // StyleFromEmotion re-writes the baseline each tick. Intent
         // flips to Idle — the bump goes away and we observe upstream.
         entity.face.style.cheek_blush = 70;
         entity.mind.intent = Intent::Idle;
@@ -159,12 +159,12 @@ mod tests {
 
     #[test]
     fn sustained_being_pet_keeps_bump_stable_across_ticks() {
-        let mut m = IntentStyle::new();
-        let mut entity = entity_with(Intent::BeingPet, 100);
+        let mut m = StyleFromIntent::new();
+        let mut entity = entity_with(Intent::Petted, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 130);
 
-        // EmotionStyle re-writes the baseline (the same value, since
+        // StyleFromEmotion re-writes the baseline (the same value, since
         // emotion is unchanged). Bump should add fresh again.
         entity.face.style.cheek_blush = 100;
         m.update(&mut entity);

@@ -1,11 +1,11 @@
-//! `LowBatteryEmotion`: forces `Emotion::Sleepy` when the AXP2101's
+//! `EmotionFromBattery`: forces `Emotion::Sleepy` when the AXP2101's
 //! reported battery state-of-charge drops below a threshold, and
 //! requests a one-shot alert chirp on the arming edge.
 //!
 //! ## Detection shape
 //!
 //! Reads `entity.perception.battery_percent` each tick. Two-threshold
-//! hysteresis mirrors [`super::AmbientSleepy`]:
+//! hysteresis mirrors [`super::EmotionFromAmbient`]:
 //!
 //! - **Enter low:** percent below [`LOW_BATTERY_ENTER_PERCENT`] while
 //!   not already low.
@@ -41,7 +41,7 @@
 //!
 //! ## Coordination with the other emotion modifiers
 //!
-//! Like [`super::IntentReflex`] and [`super::AmbientSleepy`], this
+//! Like [`super::EmotionFromIntent`] and [`super::EmotionFromAmbient`], this
 //! modifier respects an existing `entity.mind.autonomy.manual_until`
 //! hold — if touch, a pickup, or any other explicit input has already
 //! claimed the emotion, we stand down. Low battery is *background
@@ -51,7 +51,7 @@
 //! Subsequent ticks short-circuit on the active hold; once it expires
 //! and the battery is still low (and not on USB), the next tick
 //! re-fires and sets a fresh hold. So Sleepy effectively rolls forward
-//! in [`LOW_BATTERY_HOLD_MS`]-sized chunks, mirroring `AmbientSleepy`.
+//! in [`LOW_BATTERY_HOLD_MS`]-sized chunks, mirroring `EmotionFromAmbient`.
 
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
@@ -91,7 +91,7 @@ pub const LOW_BATTERY_HOLD_MS: u64 = 5_000;
 /// per-instance so apps can dial them up or down without recompiling
 /// the core crate.
 #[derive(Debug, Clone, Copy)]
-pub struct LowBatteryEmotion {
+pub struct EmotionFromBattery {
     /// Lower threshold (`<`): transitions out of healthy into low.
     pub enter_threshold_percent: u8,
     /// Upper threshold (`>`): transitions out of low back into healthy.
@@ -107,7 +107,7 @@ pub struct LowBatteryEmotion {
     alert_armed: bool,
 }
 
-impl LowBatteryEmotion {
+impl EmotionFromBattery {
     /// Construct with the default thresholds
     /// ([`LOW_BATTERY_ENTER_PERCENT`] / [`LOW_BATTERY_EXIT_PERCENT`]).
     #[must_use]
@@ -143,16 +143,16 @@ impl LowBatteryEmotion {
     }
 }
 
-impl Default for LowBatteryEmotion {
+impl Default for EmotionFromBattery {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Modifier for LowBatteryEmotion {
+impl Modifier for EmotionFromBattery {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "LowBatteryEmotion",
+            name: "EmotionFromBattery",
             description: "Hysteresis on perception.battery_percent + usb_power_present: forces \
                           emotion=Sleepy below threshold while unplugged, and sets \
                           voice.chirp_request = LowBatteryAlert on the arming edge.",
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn no_battery_reading_does_nothing() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         // battery_percent = None
         let mut entity = {
             let mut e = Entity::default();
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn healthy_battery_does_nothing() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = {
             let mut e = healthy_avatar();
             e.mind.affect.emotion = Emotion::Happy;
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn low_battery_forces_sleepy() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = {
             let mut e = low_battery_avatar();
             e.mind.affect.emotion = Emotion::Happy;
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn manual_hold_suppresses_low_battery_override() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let hold_deadline = Instant::from_millis(10_000);
         let mut entity = {
             let mut e = low_battery_avatar();
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn expired_manual_hold_lets_low_battery_through() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = low_battery_avatar();
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(1_000));
         let now = Instant::from_millis(2_000);
@@ -324,7 +324,7 @@ mod tests {
     fn enter_threshold_boundary_at_exactly_threshold_does_not_fire() {
         // The check is `percent < enter_threshold`, so
         // exactly-at-threshold is considered healthy.
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = Entity::default();
         entity.perception.battery_percent = Some(LOW_BATTERY_ENTER_PERCENT);
         entity.mind.affect.emotion = Emotion::Happy;
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn enter_threshold_boundary_one_below_fires() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = {
             let mut e = Entity::default();
             e.perception.battery_percent = Some(LOW_BATTERY_ENTER_PERCENT - 1);
@@ -353,7 +353,7 @@ mod tests {
         // Once below the enter threshold, the modifier stays low until
         // the percent crosses *above* the exit threshold — even if it
         // climbs above the enter threshold along the way.
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = {
             let mut e = Entity::default();
             e.perception.battery_percent = Some(10);
@@ -386,7 +386,7 @@ mod tests {
     fn usb_power_suppresses_low_battery_override() {
         // Battery is below threshold but USB is plugged in — modifier
         // tracks "is_low" but does not write Sleepy.
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = Entity::default();
         entity.perception.battery_percent = Some(5);
         entity.perception.usb_power_present = Some(true);
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn unknown_usb_state_lets_override_fire() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = Entity::default();
         entity.perception.battery_percent = Some(5);
         entity.perception.usb_power_present = None;
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn unplugging_usb_releases_suppression() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = Entity::default();
         entity.perception.battery_percent = Some(5);
         entity.perception.usb_power_present = Some(true);
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn custom_thresholds_take_effect() {
-        let mut modifier = LowBatteryEmotion::with_thresholds(50, 60);
+        let mut modifier = EmotionFromBattery::with_thresholds(50, 60);
         let mut entity = {
             let mut e = Entity::default();
             e.perception.battery_percent = Some(40);
@@ -455,11 +455,11 @@ mod tests {
 
     #[test]
     fn second_tick_within_hold_window_does_not_refresh_deadline() {
-        // Mirrors AmbientSleepy: once the modifier sets a hold, it
+        // Mirrors EmotionFromAmbient: once the modifier sets a hold, it
         // short-circuits on subsequent ticks until the hold expires.
         // The hold rolls forward in [LOW_BATTERY_HOLD_MS]-sized
         // chunks, not on every tick.
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = low_battery_avatar();
         entity.tick.now = Instant::from_millis(1_000);
         modifier.update(&mut entity);
@@ -474,7 +474,7 @@ mod tests {
     fn rolls_hold_forward_after_expiry() {
         // After the first hold expires, a still-low battery should
         // re-fire the modifier and set a fresh hold.
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = low_battery_avatar();
         entity.tick.now = Instant::from_millis(1_000);
         modifier.update(&mut entity);
@@ -494,7 +494,7 @@ mod tests {
     fn arming_edge_fires_alert_chirp_once() {
         // Boot already low + unplugged. First tick fires the alert; a
         // continued low-percent tick does NOT re-fire (still armed).
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = low_battery_avatar();
         entity.perception.usb_power_present = Some(false);
         entity.tick.now = Instant::ZERO;
@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn alert_rearms_after_healthy_crossing() {
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = low_battery_avatar();
         entity.perception.usb_power_present = Some(false);
         entity.tick.now = Instant::ZERO;
@@ -539,7 +539,7 @@ mod tests {
         // Boot below threshold but plugged in — alert must not fire,
         // emotion override must not engage. Subsequent unplug while
         // still low fires the alert.
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = low_battery_avatar();
         entity.perception.usb_power_present = Some(true);
         entity.mind.affect.emotion = Emotion::Happy;
@@ -561,7 +561,7 @@ mod tests {
         // emotion thrash. Specifically: enter low, climb into band,
         // dip back below enter, climb again — emotion stays Sleepy
         // throughout (after the initial trigger).
-        let mut modifier = LowBatteryEmotion::new();
+        let mut modifier = EmotionFromBattery::new();
         let mut entity = {
             let mut e = Entity::default();
             e.perception.battery_percent = Some(10);

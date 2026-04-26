@@ -4,7 +4,7 @@
 //! adapt fast enough to care about higher rates) and publishes the
 //! latest lux estimate on [`AMBIENT_LUX_SIGNAL`]. The render task
 //! drains the signal, writes `avatar.ambient_lux`, and runs
-//! [`stackchan_core::modifiers::AmbientSleepy`].
+//! [`stackchan_core::modifiers::EmotionFromAmbient`].
 //!
 //! ## Boot probe
 //!

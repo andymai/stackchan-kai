@@ -18,8 +18,8 @@
 //!   ([`Neutral`]=soft white, [`Happy`]=amber, [`Sad`]=deep blue,
 //!   [`Sleepy`]=dim violet, [`Surprised`]=cyan).
 //! - **Intent overrides emotion colour** for sound-reactive intents:
-//!   [`Intent::Listen`] swaps the palette to a teal "I'm listening"
-//!   hue regardless of the underlying emotion (which `WakeOnVoice`
+//!   [`Intent::Listening`] swaps the palette to a teal "I'm listening"
+//!   hue regardless of the underlying emotion (which `EmotionFromVoice`
 //!   typically pins to `Happy`). [`Intent::Startled`] keeps the
 //!   `Surprised` cyan but pins brightness to peak — the breath dim
 //!   is suppressed so the ring "flashes" for the hold duration.
@@ -35,7 +35,7 @@
 //! The mapping is uniform across all 12 pixels — no per-pixel animation
 //! yet. A gaze-direction arc is an obvious next iteration.
 //!
-//! [`Intent::Listen`]: crate::mind::Intent::Listen
+//! [`Intent::Listening`]: crate::mind::Intent::Listening
 //! [`Intent::Startled`]: crate::mind::Intent::Startled
 //!
 //! [`Neutral`]: crate::Emotion::Neutral
@@ -108,9 +108,9 @@ const fn palette(emotion: Emotion) -> u32 {
 }
 
 /// "Listening" teal — used as a palette override when
-/// [`Intent::Listen`] is held.
+/// [`Intent::Listening`] is held.
 ///
-/// Cool, calm, distinct from both `Happy`'s amber (which `WakeOnVoice`
+/// Cool, calm, distinct from both `Happy`'s amber (which `EmotionFromVoice`
 /// typically pins simultaneously) and `Surprised`'s cyan (used for
 /// [`Intent::Startled`]).
 const LISTEN_PALETTE: u32 = 0x0010_C0A0;
@@ -120,13 +120,13 @@ const LISTEN_PALETTE: u32 = 0x0010_C0A0;
 #[must_use]
 const fn palette_for(intent: Intent, emotion: Emotion) -> u32 {
     match intent {
-        Intent::Listen => LISTEN_PALETTE,
+        Intent::Listening => LISTEN_PALETTE,
         // Startled doesn't override the palette — it relies on the
         // `Surprised` emotion that `IntentFromLoud` writes simultaneously.
         // Idle / BeingPet / PickedUp / Shaken / Tilted / Startled all
         // fall through to the emotion palette.
         Intent::Idle
-        | Intent::BeingPet
+        | Intent::Petted
         | Intent::PickedUp
         | Intent::Shaken
         | Intent::Tilted
@@ -359,12 +359,12 @@ mod tests {
 
     #[test]
     fn listen_intent_overrides_emotion_palette() {
-        // `WakeOnVoice` pins emotion to Happy when sustained voice is
-        // detected. With Intent::Listen also set (by LookAtSound), the
+        // `EmotionFromVoice` pins emotion to Happy when sustained voice is
+        // detected. With Intent::Listening also set (by Listening), the
         // LED palette must shift to teal — not amber.
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Happy;
-        entity.mind.intent = Intent::Listen;
+        entity.mind.intent = Intent::Listening;
         let mut frame = LedFrame::default();
         render_leds(&entity, Instant::from_millis(3_000), &mut frame);
         let listen_px = frame.0[0];
@@ -418,7 +418,7 @@ mod tests {
         let baseline = frame.0[0];
 
         for intent in [
-            Intent::BeingPet,
+            Intent::Petted,
             Intent::PickedUp,
             Intent::Shaken,
             Intent::Tilted,

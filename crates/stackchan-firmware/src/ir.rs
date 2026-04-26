@@ -3,7 +3,7 @@
 //! Wraps an esp-hal RMT async RX channel, decodes the pulse train
 //! via the [`ir_nec`] crate, and publishes [`NecCommand`] values on
 //! [`REMOTE_SIGNAL`]. The render task drains the signal and feeds
-//! each command into the [`stackchan_core::modifiers::RemoteCommand`]
+//! each command into the [`stackchan_core::modifiers::EmotionFromRemote`]
 //! modifier.
 //!
 //! ## CoreS3 pin caveat
@@ -34,7 +34,7 @@ use ir_nec::{NecCommand, Pulse};
 /// Raw NEC commands decoded from the IR receiver: IR task → render task.
 ///
 /// The render task drains via [`Signal::try_take`] each frame and calls
-/// [`stackchan_core::modifiers::RemoteCommand::queue`] with the
+/// [`stackchan_core::modifiers::EmotionFromRemote::queue`] with the
 /// `(address, command)` pair. Signal semantics (latest wins, no backlog)
 /// mean if the user mashes buttons between render ticks, only the most
 /// recent command actually acts — acceptable for an emotion-control UX.

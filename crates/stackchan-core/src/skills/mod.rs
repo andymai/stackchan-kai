@@ -16,14 +16,12 @@
 //! dropping a module here and registering it on the [`crate::Director`].
 
 mod handling;
-mod look_at_sound;
+mod listening;
 mod petting;
 
 pub use handling::{
     Handling, PICKUP_DEVIATION_G, PICKUP_SUSTAIN_MS, SHAKE_DEVIATION_G, SHAKE_REQUIRED_TRANSITIONS,
     SHAKE_WINDOW_MS, TILT_SUSTAIN_MS, TILT_Z_THRESHOLD_G,
 };
-pub use look_at_sound::{
-    LISTEN_RELEASE_MS, LISTEN_RMS_THRESHOLD, LISTEN_SUSTAIN_TICKS, LookAtSound,
-};
+pub use listening::{LISTEN_RELEASE_MS, LISTEN_RMS_THRESHOLD, LISTEN_SUSTAIN_TICKS, Listening};
 pub use petting::{PETTING_SUSTAIN_TICKS, Petting};

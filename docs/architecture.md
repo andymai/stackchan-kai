@@ -105,9 +105,9 @@ registration order:
 | `Cognition`  | 20      | empty                                                 |
 | `Affect`     | 30      | emotion deciders (Touch/Remote/Pickup/Voice/...)      |
 | `Speech`     | 40      | empty                                                 |
-| `Expression` | 50      | visual modifiers (`EmotionStyle`, Blink, Breath, …)   |
-| `Motion`     | 60      | head modifiers (`IdleSway`, `EmotionHead`, …)         |
-| `Audio`      | 70      | audio-driven visual (`MouthOpenAudio`)                |
+| `Expression` | 50      | visual modifiers (`StyleFromEmotion`, Blink, Breath, …)   |
+| `Motion`     | 60      | head modifiers (`IdleSway`, `HeadFromEmotion`, …)         |
+| `Audio`      | 70      | audio-driven visual (`MouthFromAudio`)                |
 | `Output`     | 80      | empty (render task draws after `run()`)               |
 
 Numeric gaps of 10 leave room to insert a phase between existing

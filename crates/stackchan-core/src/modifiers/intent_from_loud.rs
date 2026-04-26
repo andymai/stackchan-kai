@@ -15,7 +15,7 @@
 //! - `voice.chirp_request` ← [`ChirpKind::Startle`]
 //!
 //! There's no sustain requirement (the contrast with
-//! [`super::WakeOnVoice`] / [`super::super::skills::LookAtSound`], both
+//! [`super::EmotionFromVoice`] / [`super::super::skills::Listening`], both
 //! of which want sustained voice). A startle is by definition a single
 //! transient; sustain would defeat the responsiveness.
 //!
@@ -31,9 +31,9 @@
 //!
 //! ## Coordination with explicit input
 //!
-//! Defers to `EmotionTouch` / `RemoteCommand` holds (`OverrideSource::Touch`,
+//! Defers to `EmotionFromTouch` / `EmotionFromRemote` holds (`OverrideSource::FaceTouch`,
 //! `BodyTouch`, `Remote`). Overrides everything else, including
-//! [`super::WakeOnVoice`]'s sustained-voice hold — a sudden loud noise
+//! [`super::EmotionFromVoice`]'s sustained-voice hold — a sudden loud noise
 //! during a conversation should still startle the avatar.
 //!
 //! Self-trigger from the speaker is gated at the firmware boundary:
@@ -117,7 +117,7 @@ impl Default for IntentFromLoud {
 const fn is_explicit_input(source: Option<OverrideSource>) -> bool {
     matches!(
         source,
-        Some(OverrideSource::Touch | OverrideSource::BodyTouch | OverrideSource::Remote)
+        Some(OverrideSource::FaceTouch | OverrideSource::BodyTouch | OverrideSource::Remote)
     )
 }
 
@@ -131,8 +131,8 @@ impl Modifier for IntentFromLoud {
                           overrides Voice / Pickup / Ambient. Holds intent for STARTLE_HOLD_MS \
                           then releases to Idle.",
             phase: Phase::Affect,
-            // After WakeOnVoice (-70) so a startle wins over a
-            // sustained-voice hold; before AmbientSleepy / EmotionCycle.
+            // After EmotionFromVoice (-70) so a startle wins over a
+            // sustained-voice hold; before EmotionFromAmbient / EmotionCycle.
             priority: -65,
             reads: &[Field::AudioRms, Field::Autonomy, Field::Intent],
             writes: &[
@@ -360,10 +360,10 @@ mod tests {
     fn touch_hold_blocks_startle() {
         let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
-        // Pretend EmotionTouch already claimed the avatar.
+        // Pretend EmotionFromTouch already claimed the avatar.
         entity.mind.affect.emotion = Emotion::Happy;
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(10_000));
-        entity.mind.autonomy.source = Some(OverrideSource::Touch);
+        entity.mind.autonomy.source = Some(OverrideSource::FaceTouch);
         m.update(&mut entity);
 
         entity.tick.now = Instant::from_millis(33);
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn voice_hold_does_not_block_startle() {
-        // WakeOnVoice has set Happy + Voice hold. A loud transient
+        // EmotionFromVoice has set Happy + Voice hold. A loud transient
         // mid-conversation must still startle the avatar.
         let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
