@@ -31,20 +31,24 @@ use crate::head::Pose;
 use crate::modifier::Modifier;
 
 /// Default pan wander period, in milliseconds (~11 s).
-const DEFAULT_PAN_PERIOD_MS: u64 = 11_000;
+pub const DEFAULT_PAN_PERIOD_MS: u64 = 11_000;
 /// Default tilt wander period, in milliseconds (~7 s).
 ///
 /// Chosen coprime-ish with the pan period so pan+tilt don't re-align on
 /// a short cycle; the LCM is roughly 77 s, long enough to read as
 /// non-repeating.
-const DEFAULT_TILT_PERIOD_MS: u64 = 7_000;
+pub const DEFAULT_TILT_PERIOD_MS: u64 = 7_000;
 /// Default pan amplitude in degrees.
-const DEFAULT_PAN_AMPLITUDE_DEG: f32 = 4.0;
+///
+/// Tests composing [`IdleSway`] with other head-pose modifiers can
+/// use this to bound combined output honestly instead of hardcoding
+/// the literal.
+pub const DEFAULT_PAN_AMPLITUDE_DEG: f32 = 4.0;
 /// Default tilt amplitude in degrees.
 ///
 /// Smaller than pan because most StackChan bases have tighter mechanical
 /// headroom on the tilt axis (pan servo sits under the tilt linkage).
-const DEFAULT_TILT_AMPLITUDE_DEG: f32 = 2.5;
+pub const DEFAULT_TILT_AMPLITUDE_DEG: f32 = 2.5;
 
 /// Modifier that contributes a slow, two-axis triangle sway to
 /// `entity.motor.head_pose`.

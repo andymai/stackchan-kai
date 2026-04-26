@@ -17,10 +17,11 @@ most of the firmware's behaviour is testable without flashing hardware.
 
 ## Key Files
 
-- `src/lib.rs` — `FakeClock`, `Framebuffer`, `RecordingHead`
+- `src/lib.rs` — `FakeClock`, `Framebuffer`, `RecordingHead`, `TrackingScenario`
 - `tests/head_sway.rs` — golden test for the head-sway trajectory: feed a clock forward in controlled steps, assert that the captured `(Instant, Pose)` sequence matches expectations
 - `tests/leds.rs` — LED-ring rendering regression tests
 - `tests/render_snapshot.rs` — one-minute full-stack cadence test that renders `Avatar::draw` into the framebuffer and compares pixel hashes
+- `tests/tracking_handoff.rs` + per-modifier `tests/{attention,gaze,head,microsaccade,lost_target}_*.rs` — face-tracking modifier coverage driven by `TrackingScenario` through the full Director
 
 ## Architecture
 
@@ -55,6 +56,7 @@ flowchart LR
 - **`FakeClock`** — deterministic `Clock` impl backed by a `Cell<Instant>`. `advance(delta_ms)` and `set(instant)` are the only ways time moves. `now()` is re-entrant safe (takes `&self` via `Cell`)
 - **`Framebuffer`** — `width × height` `Vec<Rgb565>` that implements `embedded_graphics::DrawTarget<Color = Rgb565>` with `Infallible` errors. Out-of-bounds pixels are silently clipped (matches how `embedded-graphics` clips to `OriginDimensions`). `pixel(x, y) → Option<Rgb565>` for read-back
 - **`RecordingHead`** — `HeadDriver` impl that pushes every `(Instant, Pose)` call into a `Vec`, so motion-modifier tests can assert on the full trajectory
+- **`TrackingScenario`** — replayable sequence of `TrackingObservation` values built from `silent` / `tracking` / `tracking_with_face` / `holding` / `returning` blocks. Iterates `(Instant, Option<TrackingObservation>)` per tick at the configured cadence (default 33 ms ≈ 30 FPS), ready for tests to write into `entity.perception.tracking` before each `Director::run`
 
 ## Test Patterns
 
@@ -74,4 +76,3 @@ flowchart LR
 
 - **Runs on every `cargo test`** as part of the host-side default-members. No hardware required
 - **Paired with `stackchan-core`** — the sim consumes the same `Avatar` / `Modifier` / `Clock` / `HeadDriver` types the firmware does. Any behaviour change in core surfaces here first
-- **Future:** add a `Scenario` harness that scripts sensor signals (touch taps, IR commands) against the full modifier pipeline for integration tests

@@ -14,35 +14,14 @@
               not results of accumulated FP arithmetic"
 )]
 
-use core::future::Future;
-use core::pin::pin;
-use core::task::{Context, Poll, Waker};
-use stackchan_core::modifiers::IdleSway;
+use stackchan_core::modifiers::{
+    IDLE_SWAY_PAN_AMPLITUDE_DEG, IDLE_SWAY_TILT_AMPLITUDE_DEG, IdleSway,
+};
 use stackchan_core::{Clock, Entity, HeadDriver, Modifier};
-use stackchan_sim::{FakeClock, RecordingHead};
-
-/// Minimal synchronous future driver.
-///
-/// `RecordingHead::set_pose` returns a future that is always immediately
-/// `Ready`, so a single `poll` is sufficient. Keeps this test free of an
-/// async-executor dependency. If used with a future that actually yields,
-/// this would spin — intentional, the assertion panic surfaces the misuse.
-fn block_on<F: Future>(future: F) -> F::Output {
-    // `Waker::noop()` returns `&'static Waker`; pass it through directly.
-    let waker = Waker::noop();
-    let mut cx = Context::from_waker(waker);
-    let mut fut = pin!(future);
-    loop {
-        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
-            return v;
-        }
-    }
-}
+use stackchan_sim::{FakeClock, RecordingHead, block_on};
 
 const DURATION_MS: u64 = 30_000;
 const TICK_MS: u64 = 33;
-const PAN_AMPLITUDE: f32 = 4.0;
-const TILT_AMPLITUDE: f32 = 2.5;
 
 #[test]
 fn idle_sway_trajectory_stays_within_amplitude() {
@@ -71,13 +50,13 @@ fn idle_sway_trajectory_stays_within_amplitude() {
     // Amplitude bound: Pose::clamped is a no-op at these sizes.
     for (ts, pose) in records {
         assert!(
-            pose.pan_deg.abs() <= PAN_AMPLITUDE + 0.01,
+            pose.pan_deg.abs() <= IDLE_SWAY_PAN_AMPLITUDE_DEG + 0.01,
             "pan {} at {}ms exceeds amplitude",
             pose.pan_deg,
             ts.as_millis()
         );
         assert!(
-            pose.tilt_deg.abs() <= TILT_AMPLITUDE + 0.01,
+            pose.tilt_deg.abs() <= IDLE_SWAY_TILT_AMPLITUDE_DEG + 0.01,
             "tilt {} at {}ms exceeds amplitude",
             pose.tilt_deg,
             ts.as_millis()

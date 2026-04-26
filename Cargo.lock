@@ -4196,6 +4196,7 @@ version = "0.10.2"
 dependencies = [
  "eframe",
  "embedded-graphics",
+ "heapless 0.8.0",
  "stackchan-core",
 ]
 

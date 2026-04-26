@@ -8,9 +8,13 @@
 //!   on hardware.
 //! - [`RecordingHead`]: a [`HeadDriver`] impl that captures the
 //!   `(Instant, Pose)` trajectory, for golden tests of motion modifiers.
+//! - [`TrackingScenario`]: a builder that produces a sequence of
+//!   [`TrackingObservation`] values across simulated time, for tests of
+//!   the camera-tracker → cognition handoff.
 //!
 //! [`Modifier`]: stackchan_core::Modifier
 //! [`DrawTarget`]: embedded_graphics::draw_target::DrawTarget
+//! [`TrackingObservation`]: stackchan_core::TrackingObservation
 
 #![deny(unsafe_code)]
 
@@ -21,7 +25,7 @@ use embedded_graphics::{
     geometry::{OriginDimensions, Size},
     pixelcolor::{Rgb565, RgbColor},
 };
-use stackchan_core::{Clock, HeadDriver, Instant, Pose};
+use stackchan_core::{Clock, HeadDriver, Instant, Pose, TrackingMotion, TrackingObservation};
 
 /// A [`Clock`] whose current time is set explicitly by tests.
 ///
@@ -194,6 +198,252 @@ impl HeadDriver for RecordingHead {
     async fn set_pose(&mut self, pose: Pose, now: Instant) -> Result<(), Self::Error> {
         self.records.push((now, pose));
         Ok(())
+    }
+}
+
+/// Replayable sequence of [`TrackingObservation`] values for sim tests
+/// of the camera-tracker → cognition handoff.
+///
+/// A scenario is built as a chain of "blocks" — each block is a
+/// duration during which a single observation (or the absence of one,
+/// modelling a drain miss) is published every tick. [`Self::iter`]
+/// walks the chain and yields one `(Instant, Option<TrackingObservation>)`
+/// per tick, ready for tests to write into `entity.perception.tracking`
+/// before each `Director::run`.
+///
+/// ## Tick semantics
+///
+/// Tick cadence is fixed at construction (default `33` ms ≈ the
+/// firmware tracker's ~30 Hz rate). Block durations are floored to the
+/// cadence: a `duration_ms` block produces `floor(duration_ms / tick_ms)`
+/// ticks at offsets `0, tick_ms, 2*tick_ms, …, (count-1)*tick_ms`.
+///
+/// In particular:
+///
+/// - The **first** tick of a block sits at the block's start offset.
+/// - The **last** tick sits at `start + (count - 1) * tick_ms` —
+///   *not* at `start + duration_ms`.
+/// - The **next block** starts at `start + count * tick_ms` (any
+///   sub-tick remainder of the previous block is dropped).
+///
+/// To size a block to produce exactly `N` ticks, use
+/// [`Self::duration_for_ticks`] — it returns `N * tick_ms` and avoids
+/// the off-by-one trap of naïve `N * 33`-style arithmetic when the
+/// cadence isn't `33` ms.
+///
+/// ## Example
+///
+/// ```no_run
+/// use stackchan_sim::TrackingScenario;
+/// use stackchan_core::Pose;
+///
+/// let scenario = TrackingScenario::new(33)
+///     .silent(500)
+///     .tracking(Pose::new(10.0, 5.0), 1_000)
+///     .with_face((0.5, 0.0))
+///     .holding(Pose::new(10.0, 5.0), 500)
+///     .silent(2_000);
+/// for (now, obs) in scenario.iter() {
+///     // entity.tick.now = now;
+///     // entity.perception.tracking = obs;
+///     // director.run(&mut entity, now);
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct TrackingScenario {
+    /// Per-tick advance, in ms.
+    tick_ms: u64,
+    /// Time-ordered list of observation blocks.
+    blocks: Vec<Block>,
+}
+
+/// One contiguous span of identical observations within a [`TrackingScenario`].
+#[derive(Debug, Clone)]
+struct Block {
+    /// Block length in ms. Floored to `tick_ms` granularity by [`TrackingScenario::iter`].
+    duration_ms: u64,
+    /// Observation published every tick of this block. `None` models a
+    /// firmware drain miss — `entity.perception.tracking` stays at the
+    /// previous value (or `None` if never set).
+    template: Option<TrackingObservation>,
+}
+
+impl TrackingScenario {
+    /// Construct an empty scenario with the given per-tick cadence.
+    /// `33` ms matches the firmware tracker's ~30 Hz publish rate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tick_ms` is `0` — that would produce an infinite
+    /// observation stream per block.
+    #[must_use]
+    pub fn new(tick_ms: u64) -> Self {
+        assert!(tick_ms > 0, "tick_ms must be > 0");
+        Self {
+            tick_ms,
+            blocks: Vec::new(),
+        }
+    }
+
+    /// Append a block where `perception.tracking` stays `None` for
+    /// `duration_ms` — the firmware drain hasn't published an
+    /// observation this tick (e.g. boot warmup, brief drain miss).
+    #[must_use]
+    pub fn silent(mut self, duration_ms: u64) -> Self {
+        self.blocks.push(Block {
+            duration_ms,
+            template: None,
+        });
+        self
+    }
+
+    /// Append `duration_ms` of [`TrackingMotion::Tracking`] observations
+    /// pointing at `target`. No face component (`face_present = false`).
+    #[must_use]
+    pub fn tracking(mut self, target: Pose, duration_ms: u64) -> Self {
+        self.blocks.push(Block {
+            duration_ms,
+            template: Some(observation(TrackingMotion::Tracking, target)),
+        });
+        self
+    }
+
+    /// Attach `face_present = true` and the supplied normalised
+    /// `centroid` in `[-1, 1]` to the most recently appended block.
+    /// Drives engagement-side cognition for that block. Composes with
+    /// any motion-class block, so face data can ride a `tracking`,
+    /// `holding`, or `returning` block — matching the firmware shape
+    /// where face detection is decoupled from motion class.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no block has been appended yet, or if the most
+    /// recent block is `silent` — drain-miss ticks have no
+    /// observation to mutate.
+    #[must_use]
+    #[allow(
+        clippy::expect_used,
+        reason = "test-helper API: misuse (no prior block / silent block) is a \
+                  programming error in a test, not a runtime condition; the panic \
+                  message names the fix"
+    )]
+    pub fn with_face(mut self, centroid: (f32, f32)) -> Self {
+        let block = self
+            .blocks
+            .last_mut()
+            .expect("with_face called before any observation block was appended");
+        let obs = block.template.as_mut().expect(
+            "with_face cannot attach to a `silent` block; \
+             call `.tracking()`, `.holding()`, or `.returning()` first",
+        );
+        obs.face_present = true;
+        obs.face_centroid = Some(centroid);
+        self
+    }
+
+    /// Append `duration_ms` of [`TrackingMotion::Holding`] observations
+    /// — same target each tick, no fresh motion. Tracker still believes
+    /// the target is meaningful but isn't seeing change frames.
+    #[must_use]
+    pub fn holding(mut self, target: Pose, duration_ms: u64) -> Self {
+        self.blocks.push(Block {
+            duration_ms,
+            template: Some(observation(TrackingMotion::Holding, target)),
+        });
+        self
+    }
+
+    /// Append `duration_ms` of [`TrackingMotion::Returning`] observations
+    /// — tracker is slewing back to neutral after an idle timeout.
+    #[must_use]
+    pub fn returning(mut self, duration_ms: u64) -> Self {
+        self.blocks.push(Block {
+            duration_ms,
+            template: Some(observation(TrackingMotion::Returning, Pose::NEUTRAL)),
+        });
+        self
+    }
+
+    /// Iterate `(Instant, Option<TrackingObservation>)` for each tick
+    /// in the scenario, in time order. The first tick is at
+    /// `Instant::ZERO`; each subsequent tick advances by `tick_ms`.
+    pub fn iter(&self) -> impl Iterator<Item = (Instant, Option<TrackingObservation>)> + '_ {
+        let tick_ms = self.tick_ms;
+        // `scan` carries the running ms offset across blocks; the
+        // inner `flat_map` materialises the per-tick (now, obs)
+        // pairs. Templates clone cheaply (the `candidates` heapless
+        // vec is empty in scenarios constructed via the public API).
+        self.blocks
+            .iter()
+            .scan(0_u64, move |t_ms, block| {
+                let count = block.duration_ms / tick_ms;
+                let start_ms = *t_ms;
+                *t_ms = start_ms.saturating_add(count.saturating_mul(tick_ms));
+                Some((start_ms, count, block.template.clone()))
+            })
+            .flat_map(move |(start_ms, count, template)| {
+                (0..count).map(move |i| {
+                    let now = Instant::from_millis(start_ms + i * tick_ms);
+                    (now, template.clone())
+                })
+            })
+    }
+
+    /// Per-tick advance, in ms. Useful for tests that want to drive
+    /// auxiliary state alongside the scenario at the same cadence.
+    #[must_use]
+    pub const fn tick_ms(&self) -> u64 {
+        self.tick_ms
+    }
+
+    /// Block duration, in ms, that produces exactly `ticks` iterations
+    /// at the configured cadence. Use in test setup instead of
+    /// `N * 33`-style literals so a future cadence change can't
+    /// silently shift tick counts via the floor in [`Self::iter`].
+    #[must_use]
+    pub const fn duration_for_ticks(&self, ticks: u64) -> u64 {
+        ticks * self.tick_ms
+    }
+}
+
+/// Drive an always-Ready future to completion synchronously.
+///
+/// Useful for [`RecordingHead::set_pose`], which returns a future whose
+/// impl is a single immediately-Ready value but typechecks as `async`.
+/// Spins in a tight loop (does NOT yield) if the future ever returns
+/// `Pending`, surfacing misuse — `RecordingHead` is the intended caller.
+pub fn block_on<F: core::future::Future>(future: F) -> F::Output {
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let mut fut = pin!(future);
+    loop {
+        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+            return v;
+        }
+    }
+}
+
+/// Build a baseline [`TrackingObservation`] for the given motion class.
+///
+/// Mirrors the helper inside `attention_from_tracking::tests` so sim
+/// tests can construct observations without re-deriving the `fired_cells`
+/// convention. `Tracking` reports a non-zero `fired_cells` (matches the
+/// real tracker, which emits Tracking only when at least one grid cell
+/// fired); other motion classes report `0`.
+const fn observation(motion: TrackingMotion, target: Pose) -> TrackingObservation {
+    TrackingObservation {
+        target_pose: target,
+        fired_cells: if matches!(motion, TrackingMotion::Tracking) {
+            4
+        } else {
+            0
+        },
+        motion,
+        candidates: heapless::Vec::new(),
+        face_present: false,
+        face_centroid: None,
     }
 }
 
