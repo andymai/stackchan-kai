@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
+
+
+
+### Features
+
+* **si12t:** real driver implementation + bench ([#98](https://github.com/andymai/stackchan-kai/issues/98))
+
 ## [0.3.0](https://github.com/andymai/stackchan-kai/compare/v0.2.0...v0.3.0) (2026-04-25)
 
 

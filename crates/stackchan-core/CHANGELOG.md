@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* engine architecture — Entity + Director + Modifier/Skill ([#90](https://github.com/andymai/stackchan-kai/issues/90))
+
+
+### Features
+
+* **core:** LookAtSound skill + ListenHead motion modifier ([#92](https://github.com/andymai/stackchan-kai/issues/92))
+* **core:** debug-mode enforcement of ModifierMeta + SkillMeta writes ([#95](https://github.com/andymai/stackchan-kai/issues/95))
+* **core:** BodyGesture modifier — Press/Swipe/Release on Si12T strip ([#101](https://github.com/andymai/stackchan-kai/issues/101))
+* **core:** Petting skill — sustained body-touch → mind.intent=Petted ([#102](https://github.com/andymai/stackchan-kai/issues/102))
+* **core:** IntentStyle modifier — visible reaction to mind.intent ([#103](https://github.com/andymai/stackchan-kai/issues/103))
+* **core:** Handling skill — IMU → mind.intent (PickedUp/Shaken/Tilted) ([#105](https://github.com/andymai/stackchan-kai/issues/105))
+* **core:** StartleOnLoud modifier — sound-reactive startle chain ([#106](https://github.com/andymai/stackchan-kai/issues/106))
+* **core:** perception.tracking field + firmware drain ([#110](https://github.com/andymai/stackchan-kai/issues/110))
+* **core:** AttentionFromTracking — Cognition modifier + Attention::Tracking ([#111](https://github.com/andymai/stackchan-kai/issues/111))
+* **core:** head + eye reactions to Attention::Tracking ([#112](https://github.com/andymai/stackchan-kai/issues/112))
+
+
+### Bug Fixes
+
+* **core:** repair Style::* intra-doc links in draw.rs (CI hotfix) ([#93](https://github.com/andymai/stackchan-kai/issues/93))
+
+
+### Refactors
+
+* apply naming convention sweep across the inventory ([#108](https://github.com/andymai/stackchan-kai/issues/108))
+* **core:** align ModifierMeta reads/writes with actual access ([#94](https://github.com/andymai/stackchan-kai/issues/94))
+
 ## [0.9.0](https://github.com/andymai/stackchan-kai/compare/v0.8.0...v0.9.0) (2026-04-25)
 
 
