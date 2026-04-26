@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.0...v0.10.0) (2026-04-26)
+
+
+### Features
+
+* **core:** tracking realism — multi-target detection + microsaccades + eye-leads-head + engagement-aware blink/breath ([#115](https://github.com/andymai/stackchan-kai/issues/115)) ([e667e26](https://github.com/andymai/stackchan-kai/commit/e667e263c351791eb35686910b984485ade47871))
+
 ## [0.9.0](https://github.com/andymai/stackchan-kai/compare/v0.8.0...v0.9.0) (2026-04-25)
 
 

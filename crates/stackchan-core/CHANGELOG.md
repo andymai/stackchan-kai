@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/andymai/stackchan-kai/compare/v0.10.0...v0.11.0) (2026-04-26)
+
+
+### Features
+
+* **core:** tracking realism — multi-target detection + microsaccades + eye-leads-head + engagement-aware blink/breath ([#115](https://github.com/andymai/stackchan-kai/issues/115)) ([e667e26](https://github.com/andymai/stackchan-kai/commit/e667e263c351791eb35686910b984485ade47871))
+
+
+### Bug Fixes
+
+* **core:** smooth head tracking with single-pole low-pass ([#116](https://github.com/andymai/stackchan-kai/issues/116)) ([3d6e2b0](https://github.com/andymai/stackchan-kai/commit/3d6e2b0b5094d14cd6e703edfef6701689504671))
+* **core:** treat Holding as lock-eligible so brief motion engages tracking ([#117](https://github.com/andymai/stackchan-kai/issues/117)) ([75e86c2](https://github.com/andymai/stackchan-kai/commit/75e86c246439817f1ae8c818193dc46845e3ea0f))
+
 ## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
 
 

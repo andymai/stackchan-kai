@@ -1,5 +1,101 @@
 # Changelog
 
+## [0.12.0](https://github.com/andymai/stackchan-kai/compare/v0.11.0...v0.12.0) (2026-04-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* engine architecture — Entity component model + Director registry + Skill surface
+
+### Features
+
+* **audio:** codec bring-up + audio signal plumbing (firmware task scaffold) ([#29](https://github.com/andymai/stackchan-kai/issues/29)) ([0ad42aa](https://github.com/andymai/stackchan-kai/commit/0ad42aa851978c008a9c0684445ece99654ee183))
+* **audio:** I²S0 master + MCLK, codec bring-up inside task ([#30](https://github.com/andymai/stackchan-kai/issues/30)) ([e080ffd](https://github.com/andymai/stackchan-kai/commit/e080ffd82e3e2200e20736e6c35431bb23420535))
+* **audio:** real AW88298 + ES7210 driver impls + control-path benches ([#28](https://github.com/andymai/stackchan-kai/issues/28)) ([bdd9038](https://github.com/andymai/stackchan-kai/commit/bdd9038653198e9df64d315951533ecae5378aae))
+* block-grid motion tracker crate + bench example ([#63](https://github.com/andymai/stackchan-kai/issues/63)) ([9865af5](https://github.com/andymai/stackchan-kai/commit/9865af5f17143f7df73d9e88e91ef2aa8c44ef55))
+* BM8563 wall-clock + LTR-553 AmbientSleepy modifier ([#18](https://github.com/andymai/stackchan-kai/issues/18)) ([8405d0d](https://github.com/andymai/stackchan-kai/commit/8405d0d0f1619d400ff2bd1691995135f9c25316))
+* BMI270 IMU + pickup-reaction modifier ([#17](https://github.com/andymai/stackchan-kai/issues/17)) ([8624ceb](https://github.com/andymai/stackchan-kai/commit/8624ceb92bcb355a28fa3c98ee6499171cb12a2b))
+* BMM150 magnetometer (9-axis data path) ([#22](https://github.com/andymai/stackchan-kai/issues/22)) ([eea9212](https://github.com/andymai/stackchan-kai/commit/eea921233444d2efe68d7ee502e14be390778c20))
+* camera-preview mode — GC0308 + LCD_CAM ping-pong DMA, long-press toggle ([#60](https://github.com/andymai/stackchan-kai/issues/60)) ([5cb0b62](https://github.com/andymai/stackchan-kai/commit/5cb0b626823f5b06c8efafc25f2e55f4930dd915))
+* **core:** AttentionFromTracking — Cognition modifier + Attention::Tracking (3/5) ([af335a4](https://github.com/andymai/stackchan-kai/commit/af335a4bfe2c15f591849c18f3f14259bf8eec5e))
+* **core:** AttentionFromTracking — Cognition-phase modifier + Attention::Tracking variant ([96211dd](https://github.com/andymai/stackchan-kai/commit/96211ddf50e5d206acfa2977c6cf0d370e4c2d74))
+* **core:** BodyGesture modifier — Press/Swipe/Release on Si12T strip ([e3c709e](https://github.com/andymai/stackchan-kai/commit/e3c709ebd507bb43a886626e9b8fc0d746a1fa4d))
+* **core:** BodyGesture modifier — Press/Swipe/Release on Si12T strip ([23c778c](https://github.com/andymai/stackchan-kai/commit/23c778c0ba3f8d353d46c99090aa4d939a094f58))
+* **core:** Handling skill — IMU → mind.intent (PickedUp/Shaken/Tilted) ([02f8d79](https://github.com/andymai/stackchan-kai/commit/02f8d7923669dc99a8db9b0a1377ccff62db8015))
+* **core:** Handling skill — IMU → mind.intent (PickedUp/Shaken/Tilted) ([3603d9b](https://github.com/andymai/stackchan-kai/commit/3603d9b93e0243d2d9acba30d6a31af7f03045e9))
+* **core:** head + eye reactions to Attention::Tracking ([910a965](https://github.com/andymai/stackchan-kai/commit/910a965ffe71efa7e1d5d2e3ccb04f1e908815ce))
+* **core:** head + eye reactions to Attention::Tracking (4/5) ([9e87a57](https://github.com/andymai/stackchan-kai/commit/9e87a5753449876f38cd2f16c731251b1fd0d656))
+* **core:** IntentStyle modifier — visible reaction to mind.intent ([90095ec](https://github.com/andymai/stackchan-kai/commit/90095eccdef6caf1ffe2eb69e22f357a44a74b36))
+* **core:** IntentStyle modifier — visible reaction to mind.intent ([2a5fc58](https://github.com/andymai/stackchan-kai/commit/2a5fc58557cf0f4331bdec83bfd9ec380ab9bd4b))
+* **core:** LookAtSound skill + ListenHead motion modifier ([fcd47ee](https://github.com/andymai/stackchan-kai/commit/fcd47ee788d9c46511343b82a03e9742c843e0d1))
+* **core:** LookAtSound skill + ListenHead motion modifier ([9b1f7e3](https://github.com/andymai/stackchan-kai/commit/9b1f7e3a33bd63ba2a2d6db2a6fa5cd7e6b5b03b))
+* **core:** MouthOpenAudio modifier + Mouth::mouth_open field ([#32](https://github.com/andymai/stackchan-kai/issues/32)) ([79020ed](https://github.com/andymai/stackchan-kai/commit/79020ed266f510b1bd2da1f7ecc01f8465105737))
+* **core:** perception.tracking field + firmware drain ([99939bc](https://github.com/andymai/stackchan-kai/commit/99939bc8bae33df1ee9ebb5f5f219d2bae5cb0de))
+* **core:** perception.tracking field + firmware drain (2/5) ([4057c06](https://github.com/andymai/stackchan-kai/commit/4057c06a94f7a90e1b72f4772d8946a40f501b6d))
+* **core:** Petting skill — sustained body-touch → mind.intent=BeingPet ([82225df](https://github.com/andymai/stackchan-kai/commit/82225df369879f946b4ecf53895fca144a393aff))
+* **core:** Petting skill — sustained body-touch → mind.intent=BeingPet ([2ca154c](https://github.com/andymai/stackchan-kai/commit/2ca154cf6388ee461aeb01ce07786854916eb59d))
+* **core:** StartleOnLoud modifier — RX RMS rising edge → mind.intent=HearingLoud ([9d4ffec](https://github.com/andymai/stackchan-kai/commit/9d4ffec8e7082b7ce7fbf186ebb3f7804608f96d))
+* **core:** StartleOnLoud modifier — sound-reactive startle chain ([07d2bcd](https://github.com/andymai/stackchan-kai/commit/07d2bcd4ab5bb4be3089e3be9905ee5a15329ffc))
+* **core:** tracking realism — multi-target detection + microsaccades + eye-leads-head + engagement-aware blink/breath ([#115](https://github.com/andymai/stackchan-kai/issues/115)) ([e667e26](https://github.com/andymai/stackchan-kai/commit/e667e263c351791eb35686910b984485ade47871))
+* **core:** wire Emotion into a style-field pipeline with eased transitions ([bfd6a3a](https://github.com/andymai/stackchan-kai/commit/bfd6a3a168ad8f6bcece0e5bfc47f01e791ab8ff))
+* **dx:** boot PING health check + boot-nod gesture + justfile ([#6](https://github.com/andymai/stackchan-kai/issues/6)) ([3955354](https://github.com/andymai/stackchan-kai/commit/3955354bcbbf904f5dc88f032dccf1327677399f))
+* emotion-coupled head motion (EmotionHead modifier) ([#4](https://github.com/andymai/stackchan-kai/issues/4)) ([3f197f1](https://github.com/andymai/stackchan-kai/commit/3f197f106527977da99cdd9ac75dab79462290c4))
+* emotion-transition chirps — pickup, wake, low-battery audio cues ([#56](https://github.com/andymai/stackchan-kai/issues/56)) ([f097f8c](https://github.com/andymai/stackchan-kai/commit/f097f8c78f0e8299f088e8aac8180a17b89ad623))
+* **firmware:** 30 FPS render task with Blink + dirty-check ([46d52ed](https://github.com/andymai/stackchan-kai/commit/46d52ed49ad4024a5d5de8c91b8c2db7c340d326))
+* **firmware:** add Breath + IdleDrift to the render stack ([7c1c1af](https://github.com/andymai/stackchan-kai/commit/7c1c1af413a478a2b895c3acc869cb12808516cb))
+* **firmware:** always-on camera capture + tracker wired into engine signal ([264a352](https://github.com/andymai/stackchan-kai/commit/264a352b35d45d8ad01da97a81c57f986ad5edc8))
+* **firmware:** always-on camera capture + tracker wired into engine signal (1/5) ([4ce57ef](https://github.com/andymai/stackchan-kai/commit/4ce57efac08e7cd79e3df17eadef3ca0347386e1))
+* **firmware:** audio TX clip queue + low-battery alert beep ([#53](https://github.com/andymai/stackchan-kai/issues/53)) ([c0ddc3f](https://github.com/andymai/stackchan-kai/commit/c0ddc3fdbc55bfe68f4f26b345a49f34cc158246))
+* **firmware:** audio TX path — speaker bring-up + boot greeting + RX/TX join ([#51](https://github.com/andymai/stackchan-kai/issues/51)) ([b50beae](https://github.com/andymai/stackchan-kai/commit/b50beae5b02f7be69b3347595a66dff58450053d))
+* **firmware:** audio_bench example — playlist of every clip ([#58](https://github.com/andymai/stackchan-kai/issues/58)) ([2d5564f](https://github.com/andymai/stackchan-kai/commit/2d5564f6dc7092b2f63d8852576507ac0f9c6340))
+* **firmware:** double-buffer via PSRAM to eliminate direct-draw flicker ([940551c](https://github.com/andymai/stackchan-kai/commit/940551c5767d1221bbc354f1787e2e903dd83758))
+* **firmware:** embassy task watchdog supervisor ([#85](https://github.com/andymai/stackchan-kai/issues/85)) ([57dc280](https://github.com/andymai/stackchan-kai/commit/57dc2800bd40d7d01d7b28135d2a1474cf89abf1))
+* **firmware:** esp-rtos boot + AXP2101 LCD rails ([212dc5c](https://github.com/andymai/stackchan-kai/commit/212dc5c93a3a179bea956ebf1b7f538d3111f1e4))
+* **firmware:** I²C bus probe bench ([9a39872](https://github.com/andymai/stackchan-kai/commit/9a39872dc32a06d1002099359d50d4454db108f8))
+* **firmware:** I²C bus probe bench ([49e4074](https://github.com/andymai/stackchan-kai/commit/49e40743fa6a6e622bed4bb63be42a554eae4b2a))
+* **firmware:** i2c_probe also reads register 0x00 for chip-ID disambiguation ([fcf34f1](https://github.com/andymai/stackchan-kai/commit/fcf34f17577a6730faa010f09fa0961a0a753262))
+* **firmware:** i2c_probe also reads register 0x00 for chip-ID disambiguation ([63231c2](https://github.com/andymai/stackchan-kai/commit/63231c2d4f40fa0120d6b5c4a6c26c66969dc5d5))
+* **firmware:** ILI9342C via mipidsi — one-shot Avatar render ([9265830](https://github.com/andymai/stackchan-kai/commit/926583005f80c4b4755f196707f7888d36cd5987))
+* **firmware:** RMS sample loop — audio task → mouth pipeline live ([#48](https://github.com/andymai/stackchan-kai/issues/48)) ([c1eb250](https://github.com/andymai/stackchan-kai/commit/c1eb250440db2164588045daf951c5a8109f0338))
+* **firmware:** time-of-day boot greeting via BM8563 RTC ([#57](https://github.com/andymai/stackchan-kai/issues/57)) ([84e7f15](https://github.com/andymai/stackchan-kai/commit/84e7f1575b15daf6814a6ecc5f2a28084ba998fb))
+* **firmware:** wire Si12T body-touch into engine perception ([8d8a50d](https://github.com/andymai/stackchan-kai/commit/8d8a50dff858c0b6234e2a7afe4c399b0c4b597c))
+* **firmware:** wire Si12T body-touch into the engine perception ([fc7f808](https://github.com/andymai/stackchan-kai/commit/fc7f808213a110b76c02407a1099cb8394a6992f))
+* FT6336U tap-to-cycle emotion + shared I²C0 bus ([#15](https://github.com/andymai/stackchan-kai/issues/15)) ([b3fb8de](https://github.com/andymai/stackchan-kai/commit/b3fb8de289ac45f9c5537516a79c2dd2e3a4e6cb))
+* low-battery hysteresis + USB-power aware override ([#54](https://github.com/andymai/stackchan-kai/issues/54)) ([0741a2e](https://github.com/andymai/stackchan-kai/commit/0741a2edcb9478c34e1fdb4e6739393cedfd2019))
+* low-battery sleepy emotion — AXP2101 SoC reader, power task, modifier ([#52](https://github.com/andymai/stackchan-kai/issues/52)) ([d6add63](https://github.com/andymai/stackchan-kai/commit/d6add63fa0a16dc17cb5984c163eab80600f0885))
+* pan/tilt servo head motion (+aw9523 extract, pca9685 driver) ([#2](https://github.com/andymai/stackchan-kai/issues/2)) ([9bc40a1](https://github.com/andymai/stackchan-kai/commit/9bc40a11b76108aad8a58af7a941a28fade5ea0c))
+* power-button taps + IR NEC RemoteCommand modifier ([#19](https://github.com/andymai/stackchan-kai/issues/19)) ([f29c92e](https://github.com/andymai/stackchan-kai/commit/f29c92e7550fa450be0adb8b94a8b57801e18ddf))
+* PY32 WS2812 LED ring + first output-sink path ([#20](https://github.com/andymai/stackchan-kai/issues/20)) ([14dcbd3](https://github.com/andymai/stackchan-kai/commit/14dcbd3be257175f0df973c5cb616c41d92c483b))
+* servo position readback + calibration bench binary ([#11](https://github.com/andymai/stackchan-kai/issues/11)) ([890c8f8](https://github.com/andymai/stackchan-kai/commit/890c8f8232f80f3b6f861ded1ec2b2e386fbc31d))
+* **si12t:** real driver implementation + bench ([af9fd60](https://github.com/andymai/stackchan-kai/commit/af9fd6029fd68f0df2a1ca7067336fb75adf1af8))
+* **si12t:** real driver implementation + bench ([f25c36f](https://github.com/andymai/stackchan-kai/commit/f25c36f4b92f7e81ac0afdf1c4007e2a11eaca57))
+* swap PCA9685 for Feetech SCServo on UART1 (matches real HW) ([#5](https://github.com/andymai/stackchan-kai/issues/5)) ([1ff3376](https://github.com/andymai/stackchan-kai/commit/1ff3376440453924e64cb7497c1e3a8e698fdb48))
+* WakeOnVoice modifier — sustained mic activity wakes to Happy ([#55](https://github.com/andymai/stackchan-kai/issues/55)) ([c8729bf](https://github.com/andymai/stackchan-kai/commit/c8729bfbac9d78de54f20c64875d42e8544d0b8c))
+
+
+### Bug Fixes
+
+* **axp2101:** apply full M5Unified CoreS3 init to stop idle shutdown ([f5bc712](https://github.com/andymai/stackchan-kai/commit/f5bc712073813630f3fe78d1331d918799e55f70))
+* **es7210:** drop invented chip-ID check blocking bring-up ([#31](https://github.com/andymai/stackchan-kai/issues/31)) ([304ef58](https://github.com/andymai/stackchan-kai/commit/304ef582e025713f420ab30970781c9a9d11ae64))
+* **firmware:** boot on CoreS3 hardware end-to-end ([dba4c89](https://github.com/andymai/stackchan-kai/commit/dba4c89b89ad27b8adc07143a8163607410efd69))
+* **firmware:** enable SCServo torque after ping, restore yes-nod gesture ([5398094](https://github.com/andymai/stackchan-kai/commit/5398094e86512d6ff4f928c16471a96f65b0d4e4))
+* **firmware:** enable SCServo torque after ping, restore yes-nod gesture ([daf03b7](https://github.com/andymai/stackchan-kai/commit/daf03b771aa6a72235773c4ee7eefc262901ed06))
+* **firmware:** I²C 400 kHz, justfile `reattach` recipe + reliability notes ([#34](https://github.com/andymai/stackchan-kai/issues/34)) ([82a462a](https://github.com/andymai/stackchan-kai/commit/82a462a3d50c93207ce60a8b8af4ab12693c6615))
+* **firmware:** quiet boot-time warnings, drop SCServo FIFO-overflow spam ([10fd917](https://github.com/andymai/stackchan-kai/commit/10fd917651c66e6c3dcda939654f238e7b0e68ec))
+* **firmware:** quiet boot-time warnings, drop SCServo FIFO-overflow spam ([28015fd](https://github.com/andymai/stackchan-kai/commit/28015fdb76c7523c249b4cbff239de33ba692589))
+* **firmware:** restore LCD backlight + full AW9523 init on CoreS3 ([31ea98e](https://github.com/andymai/stackchan-kai/commit/31ea98e0d49a9329e72bf35357e227301492e23a))
+* **firmware:** retry BMI270 init on I²C timeout, log SCServo angle limits ([0d477e5](https://github.com/andymai/stackchan-kai/commit/0d477e5e2c609e35df8df4279be9083280f56949))
+* **firmware:** retry BMI270 init on I²C timeout, log SCServo angle limits ([fdbdbda](https://github.com/andymai/stackchan-kai/commit/fdbdbdaa41c826188fd4b3b37b85ffec9cff2bc1))
+* **firmware:** revert I²C to 100 kHz, reduce boot-nod tilt amplitude ([f42315c](https://github.com/andymai/stackchan-kai/commit/f42315cd105f24396f3948c14be1b10e3d6d14f9))
+* **firmware:** revert I²C to 100 kHz, reduce boot-nod tilt amplitude ([cb74dca](https://github.com/andymai/stackchan-kai/commit/cb74dcad6caa2c74b7ae1d3434dd9c98f6cd992d))
+* **firmware:** satisfy pedantic clippy lints blocking CI ([0a37661](https://github.com/andymai/stackchan-kai/commit/0a37661ab74f4081f3ce5e4ba015236b5bce76c4))
+* tilt calibration for offset-encoder unit + asymmetric range support ([#47](https://github.com/andymai/stackchan-kai/issues/47)) ([52b8c4d](https://github.com/andymai/stackchan-kai/commit/52b8c4d47477baf776c82446d02431d08d24f941))
+
+
+### Code Refactoring
+
+* engine architecture — Entity component model + Director registry + Skill surface ([f16c7e9](https://github.com/andymai/stackchan-kai/commit/f16c7e97c86be20fe151f41d0366a6edb6ed89ee))
+
 ## [0.11.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
 
 

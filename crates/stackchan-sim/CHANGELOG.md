@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.10.1](https://github.com/andymai/stackchan-kai/compare/v0.10.0...v0.10.1) (2026-04-26)
+
 ## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
 
 
