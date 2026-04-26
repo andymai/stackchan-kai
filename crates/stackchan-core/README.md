@@ -26,8 +26,9 @@ platform-independent heart of the firmware and the simulator.
 - `src/head.rs` — `Pose`, `HeadDriver` trait, pan / tilt range constants
 - `src/leds.rs` — `LedFrame`, `render_leds` — maps avatar state to the 12-pixel ring
 - `src/modifiers/mod.rs` — `Modifier` trait + re-exports
-- `src/modifiers/*.rs` — one file per modifier (blink, breath, emotion-*, idle-*, ambient-sleepy, intent-reflex, intent-style, body-gesture, wake-on-voice, low-battery, listen-head, mouth-open-audio, remote-command)
-- `src/skills/*.rs` — one file per skill (look-at-sound, petting, handling) — long-running NPC capabilities that write `mind.intent` / `mind.attention`
+- `src/modifiers/*.rs` — one file per modifier; names follow the convention in [`docs/naming.md`](../../docs/naming.md) (`<Output>From<Source>` for translators, bare noun for autonomous ones)
+- `src/skills/*.rs` — one file per skill (`listening`, `petting`, `handling`) — long-running NPC capabilities that write `mind.intent` / `mind.attention`
+- `src/perception.rs` — `Perception` struct (sensor inputs feeding modifiers) + `BodyTouch` / `TrackingObservation` / `TrackingMotion` sub-types
 
 ## Architecture
 
@@ -72,8 +73,10 @@ render tick. Listed roughly in application order:
 | `EmotionCycle`    | Default sequence: Neutral → Happy → Sleepy → Surprised → Sad   |
 | `StyleFromEmotion`    | 300 ms ease on style fields (curves, scale, blush) per emotion |
 | `HeadFromEmotion`     | Per-emotion pose bias (neutral center, surprised up, etc.)     |
-| `HeadFromAttention`      | Upward tilt bias while `mind.attention == Listening`           |
+| `HeadFromAttention`      | Upward tilt while `Listening`; snap-to-target while `Tracking`  |
 | `HeadFromIntent`     | Brief asymmetric pan/tilt recoil on entry to `Startled`     |
+| `GazeFromAttention`  | Eye centers shift toward target while `Tracking` (eyes lead head) |
+| `AttentionFromTracking` | Cognition: latches `mind.attention=Tracking{target}` on sustained camera motion |
 | `IdleDrift`       | Slow randomized gaze drift                                     |
 | `IdleSway`        | Subtle head-pan sway when idle                                 |
 | `Blink`           | Lid close / open pulses                                        |
