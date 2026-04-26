@@ -43,10 +43,22 @@ pub const LISTEN_HEAD_TILT_DEG: f32 = 8.0;
 /// reads as deliberate without feeling sluggish.
 pub const LISTEN_HEAD_EASE_MS: u64 = 200;
 
-/// Modifier that translates `mind.attention == Listening` into an
-/// additive upward tilt bias on `motor.head_pose`.
+/// Modifier that translates `mind.attention` variants into a
+/// `motor.head_pose` contribution.
+///
+/// - `Attention::Listening` → eased upward tilt bias (cocked-head
+///   listening posture).
+/// - `Attention::Tracking { target }` → snap pose toward `target`
+///   (the firmware tracker's already-slewed target). No ease — the
+///   tracker handles smoothing via its own slew limit.
+/// - `Attention::None` → no contribution (release ease for
+///   Listening; instant for Tracking).
 #[derive(Debug, Clone, Copy)]
 pub struct HeadFromAttention {
+    /// Pan contribution as actually applied on the previous tick
+    /// (post-clamp). Subtracted before writing the new contribution.
+    /// `0.0` for the Listening case (which only modifies tilt).
+    last_pan_deg: f32,
     /// Tilt contribution as actually applied on the previous tick
     /// (post-clamp). Subtracted before writing the new contribution
     /// — see `IdleSway::last_pan_deg` for the same pattern.
@@ -64,6 +76,7 @@ impl HeadFromAttention {
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            last_pan_deg: 0.0,
             last_tilt_deg: 0.0,
             listen_since: None,
             release_since: None,
@@ -103,10 +116,11 @@ impl Modifier for HeadFromAttention {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
             name: "HeadFromAttention",
-            description: "When mind.attention is Listening, adds an upward tilt bias to \
-                          motor.head_pose for a cocked-head listening posture. Eases in/out \
-                          over LISTEN_HEAD_EASE_MS. Composes additively after IdleSway and \
-                          HeadFromEmotion via diff-and-undo.",
+            description: "When mind.attention is Listening, eases an upward tilt bias on \
+                          motor.head_pose for a cocked-head listening posture. When attention \
+                          is Tracking{target}, snaps pose toward the tracker's slewed target \
+                          (no ease — the tracker handles smoothing). Composes additively after \
+                          IdleSway and HeadFromEmotion via diff-and-undo.",
             phase: Phase::Motion,
             priority: 20,
             reads: &[Field::Attention, Field::HeadPose],
@@ -117,12 +131,11 @@ impl Modifier for HeadFromAttention {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let attending = matches!(entity.mind.attention, Attention::Listening { .. });
 
-        // Edge detection drives the ease anchors. Each transition
-        // resets the opposite anchor so the next ramp uses a fresh
-        // start time.
-        match (attending, self.listen_since.is_some()) {
+        // Edge detection for the Listening ease state machine. Only
+        // observes Listening transitions — Tracking has no ease.
+        let listening = matches!(entity.mind.attention, Attention::Listening { .. });
+        match (listening, self.listen_since.is_some()) {
             (true, false) => {
                 self.listen_since = Some(now);
                 self.release_since = None;
@@ -134,31 +147,51 @@ impl Modifier for HeadFromAttention {
             _ => {}
         }
 
-        // Desired tilt bias for this tick. Ease-in while attending,
-        // ease-out while a release anchor is live, else zero. The
-        // release anchor is cleared once fully decayed so we stop
-        // touching the pose.
-        let target_tilt = match (self.listen_since, self.release_since) {
-            (Some(since), _) => LISTEN_HEAD_TILT_DEG * ease(since, now, LISTEN_HEAD_EASE_MS),
-            (None, Some(rel_at)) => {
-                let t = ease(rel_at, now, LISTEN_HEAD_EASE_MS);
-                if t >= 1.0 {
-                    self.release_since = None;
-                    0.0
-                } else {
-                    LISTEN_HEAD_TILT_DEG * (1.0 - t)
-                }
+        // Recover upstream by subtracting our previous applied
+        // contribution. Same diff-and-undo pattern as `HeadFromEmotion`.
+        let upstream_pan = entity.motor.head_pose.pan_deg - self.last_pan_deg;
+        let upstream_tilt = entity.motor.head_pose.tilt_deg - self.last_tilt_deg;
+
+        // Pick the contribution shape per attention variant.
+        let (target_pan_contrib, target_tilt_contrib) = match entity.mind.attention {
+            Attention::Tracking { target, .. } => {
+                // Snap pose to the tracker's target by contributing
+                // (target - upstream). The result is `combined.pose
+                // == target` (post-clamp), so the tracker's already-
+                // slewed motion shows through directly.
+                (
+                    target.pan_deg - upstream_pan,
+                    target.tilt_deg - upstream_tilt,
+                )
             }
-            (None, None) => 0.0,
+            Attention::Listening { .. } | Attention::None => {
+                // Tilt-only contribution, eased by the listen / release
+                // anchors. Pan stays at zero (no contribution).
+                let target_tilt = match (self.listen_since, self.release_since) {
+                    (Some(since), _) => {
+                        LISTEN_HEAD_TILT_DEG * ease(since, now, LISTEN_HEAD_EASE_MS)
+                    }
+                    (None, Some(rel_at)) => {
+                        let t = ease(rel_at, now, LISTEN_HEAD_EASE_MS);
+                        if t >= 1.0 {
+                            self.release_since = None;
+                            0.0
+                        } else {
+                            LISTEN_HEAD_TILT_DEG * (1.0 - t)
+                        }
+                    }
+                    (None, None) => 0.0,
+                };
+                (0.0, target_tilt)
+            }
         };
 
-        // Diff-and-undo composition. Mirrors `HeadFromEmotion`: subtract
-        // our previous applied contribution to recover upstream,
-        // add the new one, clamp, and store the post-clamp effective
-        // delta back into `last_tilt_deg`.
-        let upstream_tilt = entity.motor.head_pose.tilt_deg - self.last_tilt_deg;
-        let combined =
-            Pose::new(entity.motor.head_pose.pan_deg, upstream_tilt + target_tilt).clamped();
+        let combined = Pose::new(
+            upstream_pan + target_pan_contrib,
+            upstream_tilt + target_tilt_contrib,
+        )
+        .clamped();
+        self.last_pan_deg = combined.pan_deg - upstream_pan;
         self.last_tilt_deg = combined.tilt_deg - upstream_tilt;
         entity.motor.head_pose = combined;
     }
@@ -333,5 +366,82 @@ mod tests {
         entity.tick.now = Instant::from_millis(LISTEN_HEAD_EASE_MS + 100 + LISTEN_HEAD_EASE_MS);
         m.update(&mut entity);
         assert_eq!(entity.motor.head_pose.tilt_deg, LISTEN_HEAD_TILT_DEG);
+    }
+
+    fn tracking(target: Pose) -> Attention {
+        Attention::Tracking {
+            target,
+            since: Instant::from_millis(0),
+        }
+    }
+
+    #[test]
+    fn tracking_snaps_pose_to_target() {
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        let target = Pose::new(15.0, 8.0);
+        entity.mind.attention = tracking(target);
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+
+        // No ease — pose snaps to target on the entry tick.
+        assert_eq!(entity.motor.head_pose, target);
+    }
+
+    #[test]
+    fn tracking_overrides_upstream_pan_and_tilt() {
+        // With a non-zero upstream pose (sway + emotion bias), the
+        // tracking branch contributes (target - upstream) so the
+        // combined pose lands exactly on target.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        let target = Pose::new(20.0, 12.0);
+        entity.mind.attention = tracking(target);
+        entity.motor.head_pose = Pose::new(-3.0, 4.0); // upstream
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+
+        assert_eq!(entity.motor.head_pose, target);
+    }
+
+    #[test]
+    fn tracking_target_updates_per_tick() {
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        let t1 = Pose::new(10.0, 5.0);
+        entity.mind.attention = tracking(t1);
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+        assert_eq!(entity.motor.head_pose, t1);
+
+        let t2 = Pose::new(-5.0, 10.0);
+        entity.mind.attention = tracking(t2);
+        // Simulate upstream wandering on the next tick.
+        entity.motor.head_pose = Pose::new(t1.pan_deg + 1.0, t1.tilt_deg + 1.0);
+        entity.tick.now = Instant::from_millis(33);
+        m.update(&mut entity);
+        assert_eq!(entity.motor.head_pose, t2);
+    }
+
+    #[test]
+    fn tracking_to_none_clears_pan_contribution() {
+        // After dropping attention, the modifier's `last_pan_deg`
+        // should converge back to 0 within a tick (no contribution
+        // when attention is None). Verifies the diff-and-undo state
+        // doesn't get stuck.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+
+        entity.mind.attention = tracking(Pose::new(15.0, 8.0));
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+
+        entity.mind.attention = Attention::None;
+        entity.tick.now = Instant::from_millis(33);
+        m.update(&mut entity);
+
+        // Pan contribution should be zero (no attention, no
+        // listening ease for pan).
+        assert_eq!(m.last_pan_deg, 0.0);
     }
 }
