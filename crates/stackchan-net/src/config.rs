@@ -1,14 +1,18 @@
 //! Schema v1 of the Stack-chan RON config — `wifi`, `mdns`, `time`.
 //!
-//! Held deliberately minimal: avatar geometry and modifier params
-//! stay hardcoded in `stackchan-core` for now. The shape this crate
-//! commits to is the surface that `PUT /settings` round-trips and
-//! that the SD-card boot reader populates.
+//! The data types are always available (`no_std` + `alloc`, no extra
+//! deps). The `serde` derives, [`parse_ron`], and [`render_ron`] are
+//! gated behind the `parse` feature — host builds enable it, the
+//! firmware target does not because `ron 0.10` hard-pins
+//! `serde/std + base64/std` which are broken on
+//! `xtensa-esp32s3-none-elf`. Firmware does its own hand-rolled
+//! RON parsing (and produces these same types).
 
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[cfg(feature = "parse")]
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
@@ -19,7 +23,8 @@ use crate::error::ConfigError;
 /// no-op at the Wi-Fi layer, hostname `"stackchan"` is the canonical
 /// mDNS label, and `time` points at `pool.ntp.org` so SNTP picks up
 /// once Wi-Fi is configured.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct Config {
     /// Wi-Fi station credentials and regulatory country code.
     pub wifi: WifiConfig,
@@ -30,7 +35,8 @@ pub struct Config {
 }
 
 /// Wi-Fi station credentials.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct WifiConfig {
     /// SSID of the access point to join. An empty string disables the
     /// Wi-Fi join attempt entirely (avatar runs offline-first).
@@ -53,7 +59,8 @@ impl Default for WifiConfig {
 }
 
 /// mDNS hostname configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct MdnsConfig {
     /// Hostname advertised on `.local`. Default `"stackchan"` →
     /// device reachable as `stackchan.local`.
@@ -69,7 +76,8 @@ impl Default for MdnsConfig {
 }
 
 /// Time / SNTP configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct TimeConfig {
     /// IANA timezone label (e.g. `"UTC"`, `"America/Los_Angeles"`).
     /// Currently parsed but unused — the BM8563 RTC stores UTC.
@@ -96,6 +104,7 @@ impl Default for TimeConfig {
 /// validation variants ([`ConfigError::EmptySsid`],
 /// [`ConfigError::InvalidCountry`], [`ConfigError::InvalidHostname`],
 /// [`ConfigError::NoSntpServers`]) on out-of-range values.
+#[cfg(feature = "parse")]
 pub fn parse_ron(input: &str) -> Result<Config, ConfigError> {
     let config: Config = ron::from_str(input)?;
     validate(&config)?;
@@ -123,14 +132,25 @@ pub fn parse_ron(input: &str) -> Result<Config, ConfigError> {
 ///
 /// Returns [`ConfigError::Serialize`] on serializer failure. Should
 /// not happen with a well-formed [`Config`].
+#[cfg(feature = "parse")]
 pub fn render_ron(config: &Config) -> Result<String, ConfigError> {
     let pretty = ron::ser::PrettyConfig::new();
     ron::ser::to_string_pretty(config, pretty).map_err(ConfigError::Serialize)
 }
 
-/// Run the v1 schema validators against a parsed [`Config`]. Public
-/// entry is via [`parse_ron`]; this fn is the post-deserialize gate.
-fn validate(config: &Config) -> Result<(), ConfigError> {
+/// Run the v1 schema validators against a [`Config`].
+///
+/// Public so firmware-side parsers can reuse the same gate the
+/// `parse_ron` host path runs. The firmware wraps any failure in
+/// `defmt::Debug2Format` for logging.
+///
+/// # Errors
+///
+/// Returns one of the validation variants
+/// ([`ConfigError::EmptySsid`], [`ConfigError::InvalidCountry`],
+/// [`ConfigError::InvalidHostname`], [`ConfigError::NoSntpServers`],
+/// [`ConfigError::EmptySntpServer`]) on out-of-range values.
+pub fn validate(config: &Config) -> Result<(), ConfigError> {
     // SSID: empty *file value* is rejected. `Config::default()` uses
     // an empty SSID as a sentinel for "no wifi configured" and never
     // routes through this validator.
@@ -170,8 +190,6 @@ fn is_valid_country(s: &str) -> bool {
 /// / hyphens, must start with a letter, must not end with a hyphen,
 /// length 1-63.
 fn is_valid_hostname(s: &str) -> bool {
-    // RFC-952 subset: 1-63 chars; ASCII alphanumerics + hyphen; must
-    // start with a letter; must not end with a hyphen.
     if s.is_empty() || s.len() > 63 {
         return false;
     }
@@ -203,21 +221,14 @@ mod tests {
 
     #[test]
     fn validates_country_length_and_case() {
-        // Canonical ISO-3166 alpha-2.
         assert!(is_valid_country("US"));
         assert!(is_valid_country("JP"));
-        // Length wrong.
         assert!(!is_valid_country("USA"));
         assert!(!is_valid_country("U"));
         assert!(!is_valid_country(""));
-        // Non-letter content.
         assert!(!is_valid_country("U1"));
-        // Lowercase rejected — esp-wifi expects uppercase, and a
-        // case-insensitive validator would silently pass through to
-        // the wrong regulatory mask.
         assert!(!is_valid_country("us"));
         assert!(!is_valid_country("jp"));
-        // Mixed case rejected too.
         assert!(!is_valid_country("Us"));
     }
 
@@ -226,17 +237,11 @@ mod tests {
         assert!(is_valid_hostname("stackchan"));
         assert!(is_valid_hostname("stackchan-01"));
         assert!(is_valid_hostname("a"));
-        // Too long.
         assert!(!is_valid_hostname(&"a".repeat(64)));
-        // Empty.
         assert!(!is_valid_hostname(""));
-        // Starts with digit.
         assert!(!is_valid_hostname("1stackchan"));
-        // Starts with hyphen.
         assert!(!is_valid_hostname("-stackchan"));
-        // Ends with hyphen.
         assert!(!is_valid_hostname("stackchan-"));
-        // Underscore not allowed in RFC-952.
         assert!(!is_valid_hostname("stack_chan"));
     }
 }

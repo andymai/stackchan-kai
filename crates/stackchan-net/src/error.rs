@@ -7,12 +7,19 @@ use alloc::string::String;
 /// Variants carry the offending value where it aids debugging — the
 /// firmware logs these via `defmt::Debug2Format`, and the catalog at
 /// `docs/errors.md` mirrors the same per-variant guidance.
+///
+/// The `Parse` and `Serialize` variants are gated behind the `parse`
+/// feature because they wrap `ron`-side error types — `ron` is only
+/// available on host builds. Firmware-side parsers map their own
+/// failures to whichever validator variant fits, or surface the
+/// underlying error through the firmware's `StorageError`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigError {
     /// RON deserialize failure — syntax error, missing field, or
     /// type mismatch. The wrapped [`ron::error::SpannedError`] carries
     /// `(line, col)` so callers can surface a precise diagnostic.
+    #[cfg(feature = "parse")]
     #[error("RON parse error: {0}")]
     Parse(#[from] ron::error::SpannedError),
 
@@ -24,6 +31,7 @@ pub enum ConfigError {
     /// path), so an automatic `From<ron::Error>` would silently tag
     /// any deserialize-side error as a serialize one. Callers map
     /// explicitly via `Result::map_err`.
+    #[cfg(feature = "parse")]
     #[error("RON serialize error: {0}")]
     Serialize(ron::Error),
 
@@ -62,4 +70,12 @@ pub enum ConfigError {
     /// index in the original list.
     #[error("time.sntp_servers[{0}] is empty or whitespace-only")]
     EmptySntpServer(usize),
+
+    /// Hand-rolled bare parser failure (firmware-side path that
+    /// avoids `serde + ron`). Carries a short reason string in lieu
+    /// of `ron`'s line/col `SpannedError` — the firmware logs this
+    /// via `defmt::Debug2Format` and the operator triages from the
+    /// boot log.
+    #[error("bare RON parse error: {0}")]
+    BareParse(String),
 }

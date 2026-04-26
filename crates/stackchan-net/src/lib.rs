@@ -27,9 +27,21 @@
 //! The avatar must boot fully and animate even with no SD card and
 //! no Wi-Fi. The firmware therefore treats this crate's [`Config`]
 //! as **always available**: missing SD or missing file falls back to
-//! [`Config::default`]. The validators in [`parse_ron`] reject
-//! malformed input, but the firmware never propagates a
-//! [`ConfigError`] up to a panic — it logs and uses defaults.
+//! [`Config::default`]. Validators reject malformed input but the
+//! firmware never propagates a [`ConfigError`] up to a panic — it
+//! logs and uses defaults.
+//!
+//! ## Feature: `parse`
+//!
+//! Default-on for host builds. Adds:
+//! - serde derives on [`Config`] / [`WifiConfig`] / [`MdnsConfig`] / [`TimeConfig`]
+//! - [`parse_ron`] / [`render_ron`] (lossless round trip via `ron 0.10`)
+//!
+//! Disabled for the firmware target because `ron 0.10` hard-pins
+//! `serde/std` + `base64/std` — both broken on
+//! `xtensa-esp32s3-none-elf` where `std` is absent. The firmware uses
+//! its own hand-rolled RON parser and reuses [`validate`] from this
+//! crate to enforce the same schema gate the host path runs.
 //!
 //! [`PUT /settings`]: # "see crates/stackchan-firmware/src/net/http.rs once it lands"
 
@@ -38,8 +50,12 @@
 
 extern crate alloc;
 
+pub mod bare;
 pub mod config;
 pub mod error;
 
-pub use config::{Config, MdnsConfig, TimeConfig, WifiConfig, parse_ron, render_ron};
+pub use bare::{parse_ron_bare, render_ron_bare};
+pub use config::{Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+#[cfg(feature = "parse")]
+pub use config::{parse_ron, render_ron};
 pub use error::ConfigError;
