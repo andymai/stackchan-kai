@@ -76,7 +76,9 @@ render tick. Listed roughly in application order:
 | `HeadFromAttention`      | Upward tilt while `Listening`; snap-to-target while `Tracking`  |
 | `HeadFromIntent`     | Brief asymmetric pan/tilt recoil on entry to `Startled`     |
 | `GazeFromAttention`  | Eye centers shift toward target while `Tracking` (eyes lead head) |
+| `MicrosaccadeFromAttention` | 0.5–1.5 s involuntary eye darts during `Tracking` (Disney IROS realism contributor) |
 | `AttentionFromTracking` | Cognition: latches `mind.attention=Tracking{target}` on sustained camera motion |
+| `Blink` / `Breath`   | Engagement-aware: blink rate halves and breath cycle stretches ×1.67 while attention is non-`None` |
 | `IdleDrift`       | Slow randomized gaze drift                                     |
 | `IdleSway`        | Subtle head-pan sway when idle                                 |
 | `Blink`           | Lid close / open pulses                                        |

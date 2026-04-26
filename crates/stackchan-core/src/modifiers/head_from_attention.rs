@@ -43,6 +43,14 @@ pub const LISTEN_HEAD_TILT_DEG: f32 = 8.0;
 /// reads as deliberate without feeling sluggish.
 pub const LISTEN_HEAD_EASE_MS: u64 = 200;
 
+/// Number of render frames the head's tracking-target lags behind the
+/// instantaneous `Attention::Tracking{target}`. Eyes update without
+/// delay (via `GazeFromAttention` in `Phase::Expression`); the head
+/// reads a frame from this many ticks ago. At 30 FPS this is
+/// ~132 ms — within the 100–150 ms ILM/Disney convention for
+/// eyes-lead-head.
+pub const HEAD_TRACKING_LAG_FRAMES: usize = 4;
+
 /// Modifier that translates `mind.attention` variants into a
 /// `motor.head_pose` contribution.
 ///
@@ -69,6 +77,16 @@ pub struct HeadFromAttention {
     /// Instant attention transitioned `Listening` → `None`. `None`
     /// unless currently easing out.
     release_since: Option<Instant>,
+    /// Ring buffer of recent `Tracking{target}` poses, oldest at
+    /// `lag_idx`. The head consumes the entry at `lag_idx` (oldest)
+    /// before overwriting it with the current target — producing the
+    /// eye-leads-head delay without a separate timing buffer.
+    /// Cleared on transition out of `Tracking`.
+    lag_buf: [Option<Pose>; HEAD_TRACKING_LAG_FRAMES],
+    /// Next write index into [`Self::lag_buf`] (also the read index
+    /// — entries form a circular buffer where the oldest pose is at
+    /// the next-to-overwrite slot).
+    lag_idx: u8,
 }
 
 impl HeadFromAttention {
@@ -80,6 +98,8 @@ impl HeadFromAttention {
             last_tilt_deg: 0.0,
             listen_since: None,
             release_since: None,
+            lag_buf: [None; HEAD_TRACKING_LAG_FRAMES],
+            lag_idx: 0,
         }
     }
 }
@@ -155,16 +175,27 @@ impl Modifier for HeadFromAttention {
         // Pick the contribution shape per attention variant.
         let (target_pan_contrib, target_tilt_contrib) = match entity.mind.attention {
             Attention::Tracking { target, .. } => {
-                // Snap pose to the tracker's target by contributing
-                // (target - upstream). The result is `combined.pose
-                // == target` (post-clamp), so the tracker's already-
-                // slewed motion shows through directly.
+                // Eye-leads-head: the head consumes a target from
+                // ~HEAD_TRACKING_LAG_FRAMES ticks ago; eyes already
+                // moved to the current target via GazeFromAttention
+                // earlier in Phase::Expression. Read the oldest entry
+                // (the slot we're about to overwrite) before pushing
+                // the current target.
+                let idx = usize::from(self.lag_idx);
+                let delayed = self.lag_buf[idx].unwrap_or(target);
+                self.lag_buf[idx] = Some(target);
+                self.lag_idx =
+                    (self.lag_idx + 1) % u8::try_from(HEAD_TRACKING_LAG_FRAMES).unwrap_or(u8::MAX);
                 (
-                    target.pan_deg - upstream_pan,
-                    target.tilt_deg - upstream_tilt,
+                    delayed.pan_deg - upstream_pan,
+                    delayed.tilt_deg - upstream_tilt,
                 )
             }
             Attention::Listening { .. } | Attention::None => {
+                // Clear the lag buffer so a future Tracking run
+                // starts with an empty history (no stale targets).
+                self.lag_buf = [None; HEAD_TRACKING_LAG_FRAMES];
+                self.lag_idx = 0;
                 // Tilt-only contribution, eased by the listen / release
                 // anchors. Pan stays at zero (no contribution).
                 let target_tilt = match (self.listen_since, self.release_since) {

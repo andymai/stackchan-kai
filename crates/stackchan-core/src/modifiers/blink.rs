@@ -14,12 +14,20 @@ use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::entity::Entity;
 use crate::face::{EyePhase, SCALE_DEFAULT};
+use crate::mind::Attention;
 use crate::modifier::Modifier;
 
 /// Default time eyes stay open between blinks, in milliseconds.
 const DEFAULT_OPEN_MS: u64 = 5_200;
 /// Default duration of a blink (eyes closed), in milliseconds.
 const DEFAULT_CLOSED_MS: u64 = 180;
+
+/// Divisor applied to `blink_rate_scale` when `mind.attention` is
+/// non-`None`. Halving the rate doubles the open-phase duration —
+/// blinks happen ~half as often during engagement, matching the
+/// physiological pattern (cognitive load suppresses blink rate;
+/// Nature Sci Rep 2025).
+pub const ENGAGED_BLINK_DIVISOR: u8 = 2;
 
 /// A modifier that periodically closes both eyes for a short duration.
 ///
@@ -125,6 +133,7 @@ impl Modifier for Blink {
             priority: 0,
             reads: &[
                 Field::BlinkRateScale,
+                Field::Attention,
                 Field::LeftEyeOpenWeight,
                 Field::RightEyeOpenWeight,
             ],
@@ -140,7 +149,16 @@ impl Modifier for Blink {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let rate = entity.face.style.blink_rate_scale;
+        // Halve the effective rate when attention is engaged so the
+        // open-phase doubles. Explicit suppression (raw_rate == 0)
+        // always wins; the engagement branch floors at 1 so we don't
+        // accidentally cross into the suppression branch ourselves.
+        let raw_rate = entity.face.style.blink_rate_scale;
+        let rate = if raw_rate == 0 || matches!(entity.mind.attention, Attention::None) {
+            raw_rate
+        } else {
+            (raw_rate / ENGAGED_BLINK_DIVISOR).max(1)
+        };
 
         // Suppression path: scale == 0 forces eyes open. Stored as an
         // explicit state so a later non-zero scale cleanly resumes the

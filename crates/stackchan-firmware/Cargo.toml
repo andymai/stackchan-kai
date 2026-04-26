@@ -28,6 +28,10 @@ py32 = { path = "../py32" }
 scservo = { path = "../scservo" }
 si12t = { path = "../si12t" }
 tracker = { path = "../tracker" }
+# `heapless::Vec` for the per-frame multi-target candidate list
+# translated from `tracker::Outcome.candidates` into the engine's
+# `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
+heapless = "0.8"
 embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }
 embedded-io-async = { workspace = true }

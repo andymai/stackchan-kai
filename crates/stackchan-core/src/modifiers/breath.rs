@@ -14,12 +14,21 @@ use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::entity::Entity;
 use crate::face::SCALE_DEFAULT;
+use crate::mind::Attention;
 use crate::modifier::Modifier;
 
 /// Default full breath cycle (inhale + exhale), in milliseconds.
 const DEFAULT_CYCLE_MS: u64 = 6_000;
 /// Default peak-to-peak vertical amplitude, in pixels.
 const DEFAULT_AMPLITUDE_PX: i32 = 2;
+
+/// Numerator of the cycle-period scale applied while
+/// `mind.attention` is non-`None`. `5/3` ≈ ×1.67 stretch maps to ~0.6×
+/// breath rate during engagement (animation-12-principles intuition;
+/// person-holding-still-while-attentive cue).
+pub const ENGAGED_BREATH_CYCLE_NUM: u64 = 5;
+/// Denominator paired with [`ENGAGED_BREATH_CYCLE_NUM`].
+pub const ENGAGED_BREATH_CYCLE_DEN: u64 = 3;
 
 /// A modifier that applies a slow rise-and-fall vertical offset to every
 /// facial feature (both eyes + mouth), evoking breathing.
@@ -68,14 +77,15 @@ impl Breath {
     }
 
     /// Compute the current offset for time `now` as an integer-pixel triangle
-    /// wave in `[-amplitude/2, +amplitude/2]` at the given scale.
-    fn offset_at(&self, now: Instant, scale: u8) -> i32 {
+    /// wave in `[-amplitude/2, +amplitude/2]` at the given scale, using
+    /// `cycle_ms` for the period.
+    fn offset_at(&self, now: Instant, scale: u8, cycle_ms: u64) -> i32 {
         let amplitude = self.scaled_amplitude(scale);
-        if self.cycle_ms == 0 || amplitude == 0 {
+        if cycle_ms == 0 || amplitude == 0 {
             return 0;
         }
-        let phase = now.as_millis() % self.cycle_ms;
-        let half = self.cycle_ms / 2;
+        let phase = now.as_millis() % cycle_ms;
+        let half = cycle_ms / 2;
         // Ascend in the first half, descend in the second half.
         let ascending = phase < half;
         let within_half = if ascending { phase } else { phase - half };
@@ -110,6 +120,7 @@ impl Modifier for Breath {
             priority: 0,
             reads: &[
                 Field::BreathDepthScale,
+                Field::Attention,
                 Field::LeftEyeCenter,
                 Field::RightEyeCenter,
                 Field::MouthCenter,
@@ -124,7 +135,17 @@ impl Modifier for Breath {
     }
 
     fn update(&mut self, entity: &mut Entity) {
-        let target = self.offset_at(entity.tick.now, entity.face.style.breath_depth_scale);
+        // Slow the breath cycle while attention is engaged.
+        let cycle_ms = if matches!(entity.mind.attention, Attention::None) {
+            self.cycle_ms
+        } else {
+            self.cycle_ms.saturating_mul(ENGAGED_BREATH_CYCLE_NUM) / ENGAGED_BREATH_CYCLE_DEN
+        };
+        let target = self.offset_at(
+            entity.tick.now,
+            entity.face.style.breath_depth_scale,
+            cycle_ms,
+        );
         let delta = target - self.last_offset_px;
         if delta == 0 {
             return;
@@ -159,7 +180,7 @@ mod tests {
         let breath = Breath::with_params(1000, 4);
         // Sample across an entire cycle; offset must never exceed amplitude/2.
         for ms in 0..1000 {
-            let o = breath.offset_at(Instant::from_millis(ms), SCALE_DEFAULT);
+            let o = breath.offset_at(Instant::from_millis(ms), SCALE_DEFAULT, 1000);
             assert!((-2..=2).contains(&o), "offset {o} at ms {ms} out of range");
         }
     }
@@ -184,7 +205,11 @@ mod tests {
         let breath = Breath::with_params(1000, 4);
         let max_at = |scale: u8| {
             (0..1000)
-                .map(|ms| breath.offset_at(Instant::from_millis(ms), scale).abs())
+                .map(|ms| {
+                    breath
+                        .offset_at(Instant::from_millis(ms), scale, 1000)
+                        .abs()
+                })
                 .max()
                 .unwrap_or(0)
         };

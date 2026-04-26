@@ -62,28 +62,57 @@ impl BodyTouch {
     }
 }
 
+/// Maximum tracker candidates surfaced to the engine per frame.
+/// Mirrors `tracker::MAX_CANDIDATES`; kept here so the engine doesn't
+/// import the tracker crate just for the const.
+pub const MAX_TRACKING_CANDIDATES: usize = 4;
+
+/// One detected motion blob from the firmware tracker, after
+/// temporal + connected-component filtering.
+///
+/// Mirrors `tracker::TargetCandidate` — the engine doesn't depend on
+/// `tracker`, so we duplicate the shape. Used by
+/// `AttentionFromTracking` for multi-target arbitration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetCandidate {
+    /// Normalised centroid in `[-1, 1]` per axis. `(0, 0)` is frame
+    /// centre. Already honours `flip_x` / `flip_y` from the tracker
+    /// config.
+    pub centroid: (f32, f32),
+    /// Number of grid cells in this blob. Used as a saliency proxy
+    /// (bigger blob = more interesting target).
+    pub cell_count: u16,
+}
+
 /// One-frame summary of the firmware-side camera tracker's analysis.
 ///
 /// The firmware's `tracker` crate runs the block-grid motion analysis
 /// inside the camera task and publishes one of these per processed
 /// frame. The engine consumes it via `entity.perception.tracking`
-/// (added in the next PR) and decides what to do — see the
-/// `TrackingFromCamera` `Phase::Perception` modifier and the
-/// `AttentionFromTracking` `Phase::Cognition` modifier.
+/// and decides what to do — see the `AttentionFromTracking`
+/// `Phase::Cognition` modifier.
 ///
-/// The shape mirrors `tracker::Outcome` minus the centroid, which is
-/// already baked into `target_pose` by the tracker.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// `target_pose` is the tracker's legacy single-target pose (centroid
+/// of all valid blobs, slewed via dead zone + P-gain + step limit).
+/// `candidates` is the post-CCL per-blob list — engine cognition can
+/// arbitrate among these via saliency / novelty / habituation scoring
+/// instead of trusting the aggregate centroid.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TrackingObservation {
-    /// Where the tracker thinks the head should look — already through
-    /// the tracker's dead zone, P-gain, slew limit, and clamp.
+    /// Where the tracker thinks the head should look — aggregate
+    /// centroid of all surviving blobs, already through the tracker's
+    /// dead zone, P-gain, slew limit, and clamp.
     pub target_pose: Pose,
-    /// Number of grid cells whose per-block luma delta exceeded the
-    /// tracker's threshold this frame. `0` during warmup or genuine
-    /// stillness; saturates at the grid's cell count.
+    /// Total number of grid cells across all surviving blobs. `0`
+    /// during warmup or genuine stillness; saturates at the grid's
+    /// cell count.
     pub fired_cells: u16,
     /// Classification of this analysis step.
     pub motion: TrackingMotion,
+    /// Per-blob detections after temporal filtering + CCL, sorted by
+    /// `cell_count` descending. Cap [`MAX_TRACKING_CANDIDATES`].
+    /// Empty on `Warmup` / `GlobalEvent` / no-motion.
+    pub candidates: heapless::Vec<TargetCandidate, MAX_TRACKING_CANDIDATES>,
 }
 
 /// Why the tracker chose its current target. Mirrors `tracker::Motion`
@@ -107,7 +136,10 @@ pub enum TrackingMotion {
 }
 
 /// Raw sensor readings that drive reactive modifiers.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `Clone` only (not `Copy`) — `tracking` carries a `heapless::Vec`
+/// of multi-target candidates which can't be `Copy`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Perception {
     /// Accelerometer reading in gravitational units `(x, y, z)`.
     /// Resting face-up on a flat surface reads `(0, 0, 1)`. Written by

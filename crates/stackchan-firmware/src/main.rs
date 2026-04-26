@@ -68,7 +68,8 @@ use stackchan_core::{
         AttentionFromTracking, Blink, Breath, EmotionCycle, EmotionFromAmbient, EmotionFromBattery,
         EmotionFromIntent, EmotionFromRemote, EmotionFromTouch, EmotionFromVoice,
         GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent, IdleDrift, IdleSway,
-        IntentFromBodyTouch, IntentFromLoud, MouthFromAudio, StyleFromEmotion, StyleFromIntent,
+        IntentFromBodyTouch, IntentFromLoud, MicrosaccadeFromAttention, MouthFromAudio,
+        StyleFromEmotion, StyleFromIntent,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -190,6 +191,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut style = StyleFromEmotion::new();
     let mut style_from_intent = StyleFromIntent::new();
     let mut gaze_from_attention = GazeFromAttention::new();
+    let mut microsaccade = MicrosaccadeFromAttention::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
     // Seed comes from the ESP32-S3 hardware RNG (`esp_hal::rng::Rng`),
@@ -252,6 +254,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     director
         .add_modifier(&mut gaze_from_attention)
         .expect("registry full");
+    director
+        .add_modifier(&mut microsaccade)
+        .expect("registry full");
     director.add_modifier(&mut blink).expect("registry full");
     director.add_modifier(&mut breath).expect("registry full");
     director.add_modifier(&mut drift).expect("registry full");
@@ -295,7 +300,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + Blink + Breath + IdleDrift + IdleSway + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleSway + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 

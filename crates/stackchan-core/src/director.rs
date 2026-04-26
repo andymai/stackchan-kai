@@ -583,7 +583,7 @@ impl<'a> Director<'a> {
 
         for slot in &mut self.modifiers {
             #[cfg(debug_assertions)]
-            let before = *entity;
+            let before = entity.clone();
             slot.modifier.update(entity);
             #[cfg(debug_assertions)]
             assert_only_writes(
@@ -597,7 +597,7 @@ impl<'a> Director<'a> {
         for s in &mut self.skills {
             if s.should_fire(entity) {
                 #[cfg(debug_assertions)]
-                let before = *entity;
+                let before = entity.clone();
                 // `should_fire` is the only gate; `SkillStatus::Done`
                 // vs `Continuing` is reserved for skill state-tracking.
                 let _status: SkillStatus = s.invoke(entity);
