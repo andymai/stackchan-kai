@@ -106,7 +106,7 @@ registration order:
 | `Affect`     | 30      | emotion deciders (Touch/Remote/Pickup/Voice/...)      |
 | `Speech`     | 40      | empty                                                 |
 | `Expression` | 50      | visual modifiers (`StyleFromEmotion`, Blink, Breath, …)   |
-| `Motion`     | 60      | head modifiers (`IdleSway`, `HeadFromEmotion`, …)         |
+| `Motion`     | 60      | head modifiers (`IdleHeadDrift`, `HeadFromEmotion`, …)    |
 | `Audio`      | 70      | audio-driven visual (`MouthFromAudio`)                |
 | `Output`     | 80      | empty (render task draws after `run()`)               |
 

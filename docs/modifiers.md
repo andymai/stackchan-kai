@@ -115,8 +115,9 @@ The Affect phase ordering matters:
 - `StyleFromEmotion` runs in `Expression` and reads
   `mind.affect.emotion`; Blink / Breath / IdleDrift then add per-frame
   deltas on top.
-- `IdleSway` (Motion) writes the base `motor.head_pose`; `HeadFromEmotion`
-  (registered later in Motion) adds an emotion-keyed bias on top.
+- `IdleHeadDrift` (Motion) contributes occasional brief head glances
+  to `motor.head_pose`; `HeadFromEmotion` (registered later in Motion)
+  adds an emotion-keyed bias on top.
 - `MouthFromAudio` runs in `Audio` so audio-driven mouth-open isn't
   overwritten by a stale earlier write.
 

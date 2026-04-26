@@ -80,7 +80,7 @@ render tick. Listed roughly in application order:
 | `AttentionFromTracking` | Cognition: latches `mind.attention=Tracking{target}` on sustained camera motion |
 | `Blink` / `Breath`   | Engagement-aware: blink rate halves and breath cycle stretches ×1.67 while attention is non-`None` |
 | `IdleDrift`       | Slow randomized gaze drift                                     |
-| `IdleSway`        | Subtle head-pan sway when idle                                 |
+| `IdleHeadDrift`   | Occasional brief head glances at randomized intervals          |
 | `Blink`           | Lid close / open pulses                                        |
 | `Breath`          | Per-cycle eye + mouth scale oscillation                        |
 

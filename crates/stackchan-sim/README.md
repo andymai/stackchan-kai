@@ -18,7 +18,7 @@ most of the firmware's behaviour is testable without flashing hardware.
 ## Key Files
 
 - `src/lib.rs` — `FakeClock`, `Framebuffer`, `RecordingHead`, `TrackingScenario`
-- `tests/head_sway.rs` — golden test for the head-sway trajectory: feed a clock forward in controlled steps, assert that the captured `(Instant, Pose)` sequence matches expectations
+- `tests/idle_head_drift.rs` — golden test for the head-drift trajectory: drive a clock forward in controlled steps, assert that the captured `(Instant, Pose)` sequence respects the per-axis glance amplitude AND that the head spends most of its time at rest
 - `tests/leds.rs` — LED-ring rendering regression tests
 - `tests/render_snapshot.rs` — one-minute full-stack cadence test that renders `Avatar::draw` into the framebuffer and compares pixel hashes
 - `tests/tracking_handoff.rs` + per-modifier `tests/{attention,gaze,head,microsaccade,lost_target}_*.rs` — face-tracking modifier coverage driven by `TrackingScenario` through the full Director

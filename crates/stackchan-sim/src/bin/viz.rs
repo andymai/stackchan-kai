@@ -1,7 +1,7 @@
 //! Host-side avatar visualiser.
 //!
 //! Runs the canonical firmware modifier stack
-//! (`Blink` → `Breath` → `IdleDrift` → `IdleSway`) against a wall-clock
+//! (`Blink` → `Breath` → `IdleDrift` → `IdleHeadDrift`) against a wall-clock
 //! source and renders the resulting `Entity` into a 320×240 window via
 //! `egui` + `winit` at ~30 FPS. Lets behavior changes iterate in
 //! sub-second cycles instead of the 30 s+ build → flash → boot loop.
@@ -39,7 +39,7 @@ use std::time::Instant as StdInstant;
 
 use eframe::egui;
 use embedded_graphics::pixelcolor::RgbColor;
-use stackchan_core::modifiers::{Blink, Breath, IdleDrift, IdleSway};
+use stackchan_core::modifiers::{Blink, Breath, IdleDrift, IdleHeadDrift};
 use stackchan_core::{Clock, Emotion, Entity, Instant, Modifier};
 use stackchan_sim::Framebuffer;
 
@@ -102,7 +102,7 @@ struct VizApp {
     blink: Blink,
     breath: Breath,
     drift: IdleDrift,
-    sway: IdleSway,
+    head_drift: IdleHeadDrift,
     drift_seed: u32,
     emotion_override: Option<Emotion>,
     texture: Option<egui::TextureHandle>,
@@ -122,7 +122,7 @@ impl VizApp {
             blink: Blink::new(),
             breath: Breath::new(),
             drift: IdleDrift::with_seed(core::num::NonZeroU32::new(drift_seed).unwrap()),
-            sway: IdleSway::new(),
+            head_drift: IdleHeadDrift::new(),
             drift_seed,
             emotion_override: None,
             texture: None,
@@ -141,7 +141,7 @@ impl VizApp {
         self.blink.update(&mut self.avatar);
         self.breath.update(&mut self.avatar);
         self.drift.update(&mut self.avatar);
-        self.sway.update(&mut self.avatar);
+        self.head_drift.update(&mut self.avatar);
     }
 
     fn redraw_framebuffer(&mut self) {

@@ -21,7 +21,7 @@
 //!
 //! ## Composition
 //!
-//! Runs after [`super::IdleSway`] (priority 0), [`super::HeadFromEmotion`]
+//! Runs after [`super::IdleHeadDrift`] (priority 0), [`super::HeadFromEmotion`]
 //! (priority 10), and [`super::HeadFromAttention`] (priority 20) within
 //! [`Phase::Motion`], so its bias rides on top of all three. Same
 //! diff-and-undo pattern as the other [`Phase::Motion`] modifiers:
@@ -39,15 +39,16 @@ use crate::modifier::Modifier;
 /// Peak upward tilt added during the recoil, in degrees.
 ///
 /// `+6°` reads as "alert, head up" without overpowering the other
-/// motion modifiers (combined with `IdleSway`'s ±2.5° tilt and
-/// `HeadFromEmotion`'s up-to-+3° plus `HeadFromAttention`'s +8° upper bound, the
-/// worst-case stays inside [`MAX_TILT_DEG`](crate::head::MAX_TILT_DEG)).
+/// motion modifiers (combined with `IdleHeadDrift`'s up-to-±3° tilt
+/// and `HeadFromEmotion`'s up-to-+3° plus `HeadFromAttention`'s +8°
+/// upper bound, the worst-case stays inside
+/// [`MAX_TILT_DEG`](crate::head::MAX_TILT_DEG)).
 pub const STARTLE_HEAD_TILT_DEG: f32 = 6.0;
 
 /// Peak pan offset during the recoil, in degrees.
 ///
 /// `+5°` (right-ish jerk) is small enough that combined with
-/// `IdleSway` and `HeadFromEmotion`'s pan contributions, the result stays
+/// `IdleHeadDrift` and `HeadFromEmotion`'s pan contributions, the result stays
 /// inside [`MAX_PAN_DEG`](crate::head::MAX_PAN_DEG).
 pub const STARTLE_HEAD_PAN_DEG: f32 = 5.0;
 
@@ -137,7 +138,7 @@ impl Modifier for HeadFromIntent {
             description: "On entry to Intent::Startled, applies a brief asymmetric recoil \
                           (fast attack, slower decay) to motor.head_pose pan + tilt. Total \
                           duration STARTLE_HEAD_TOTAL_MS regardless of how long the intent \
-                          holds. Composes additively after IdleSway / HeadFromEmotion / HeadFromAttention \
+                          holds. Composes additively after IdleHeadDrift / HeadFromEmotion / HeadFromAttention \
                           via diff-and-undo.",
             phase: Phase::Motion,
             priority: 30,

@@ -5,12 +5,13 @@
 //!
 //! ## Why
 //!
-//! The avatar's idle background motion ([`crate::modifiers::IdleSway`]'s
-//! triangle wave on `motor.head_pose`) keeps the `SCServo` head
-//! continuously slewing even when no one is in the room — audible
-//! from the next room and a small but real battery drain. Gating the
-//! sway when nothing has happened for a while silences the head
-//! without changing the avatar's behaviour while a person is present.
+//! The avatar's idle background motion
+//! ([`crate::modifiers::IdleHeadDrift`]'s occasional brief glances on
+//! `motor.head_pose`) keeps the `SCServo` head firing every 5–15 s
+//! even when no one is in the room — audible from the next room and
+//! a small but real battery drain. Gating the glance scheduler when
+//! nothing has happened for a while silences the head without
+//! changing the avatar's behaviour while a person is present.
 //!
 //! ## Activity signals
 //!
@@ -36,7 +37,7 @@
 //! [`crate::modifiers::AttentionFromTracking`] (priority `0`) so
 //! `engagement` and `attention` reflect *this* tick's observation
 //! before we read them. Writing happens before [`Phase::Expression`]
-//! and [`Phase::Motion`] so [`crate::modifiers::IdleSway`] sees the
+//! and [`Phase::Motion`] so [`crate::modifiers::IdleHeadDrift`] sees the
 //! fresh dormancy value the same tick.
 //!
 //! ## Boot
@@ -115,7 +116,7 @@ impl Modifier for DormancyFromActivity {
             description: "Watches mind.{intent, attention, engagement}; sets \
                           mind.dormancy = Awake on any non-default activity, \
                           and Asleep after DORMANCY_TIMEOUT_MS of full quiet. \
-                          Lets IdleSway gate its triangle-wave contribution so \
+                          Lets IdleHeadDrift gate its glance scheduler so \
                           the head servos stay still when nothing's happening \
                           in the room.",
             phase: Phase::Cognition,
@@ -136,13 +137,10 @@ impl Modifier for DormancyFromActivity {
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
 
-        // Seed on first tick so boot counts as activity. Without
-        // this, `last_active_at` stays `None` forever in a totally
-        // quiet room and the dormant transition fires immediately
-        // (since `now - 0` is large).
-        if self.last_active_at.is_none() {
-            self.last_active_at = Some(now);
-        }
+        // Seed on first tick so boot counts as activity. Without this,
+        // a totally quiet room would fire the dormant transition
+        // immediately (`now - 0` is large).
+        let last = *self.last_active_at.get_or_insert(now);
 
         if is_active(entity) {
             self.last_active_at = Some(now);
@@ -150,9 +148,6 @@ impl Modifier for DormancyFromActivity {
             return;
         }
 
-        // Quiet tick. Compare elapsed-since-last-active against the
-        // timeout; transition to Asleep on the crossing.
-        let last = self.last_active_at.unwrap_or(now);
         let elapsed = now.saturating_duration_since(last);
         if elapsed >= self.timeout_ms && !entity.mind.dormancy.is_asleep() {
             entity.mind.dormancy = Dormancy::Asleep { since: now };
@@ -163,8 +158,8 @@ impl Modifier for DormancyFromActivity {
 #[cfg(test)]
 #[allow(
     clippy::panic,
-    reason = "let-else with panic is the cleanest pattern for value extraction \
-              on enum variants in tests"
+    reason = "match-with-panic on enum variants is the cleanest pattern for \
+              extracting payloads from non-default Dormancy::Asleep in tests"
 )]
 mod tests {
     use super::*;

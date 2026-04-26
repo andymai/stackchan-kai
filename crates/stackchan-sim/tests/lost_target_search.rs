@@ -17,11 +17,11 @@
 //!   AttentionFromTracking-driven engagement transition, not just
 //!   after a hand-set engagement value.
 //! - **Composition with the Motion stack**: the search beat rides on
-//!   top of `IdleSway` + `HeadFromAttention` without breaking the
+//!   top of `IdleHeadDrift` + `HeadFromAttention` without breaking the
 //!   pose clamps or causing any modifier to leak a stale offset.
 //! - **Beat fully unwinds via diff-and-undo**: after `SEARCH_TOTAL_MS`,
 //!   the modifier's contribution returns to zero — the head pose is
-//!   back to the upstream baseline (sway only).
+//!   back to the upstream baseline (head drift only).
 
 #![allow(
     clippy::doc_markdown,
@@ -36,8 +36,8 @@
 )]
 
 use stackchan_core::modifiers::{
-    AttentionFromTracking, FACE_LOCK_HITS, FACE_RELEASE_MISSES, HeadFromAttention,
-    IDLE_SWAY_PAN_AMPLITUDE_DEG, IdleSway, LostTargetSearch, SEARCH_HOLD_MS, SEARCH_TOTAL_MS,
+    AttentionFromTracking, FACE_LOCK_HITS, FACE_RELEASE_MISSES, GLANCE_PAN_MAX_DEG,
+    HeadFromAttention, IdleHeadDrift, LostTargetSearch, SEARCH_HOLD_MS, SEARCH_TOTAL_MS,
 };
 use stackchan_core::{Director, Engagement, Entity, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
 use stackchan_sim::TrackingScenario;
@@ -102,13 +102,13 @@ fn search_pose_stays_within_clamps_under_extreme_centroid() {
     // per-tick clamp inside the search must keep the head safe.
     // Driven through the FULL pipeline so we cover both the
     // search clamp AND the Director's reclamp on motor.head_pose.
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut head = HeadFromAttention::new();
     let mut search = LostTargetSearch::new();
     let mut afm = AttentionFromTracking::new();
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut head).unwrap();
     director.add_modifier(&mut search).unwrap();
 
@@ -137,18 +137,18 @@ fn search_pose_stays_within_clamps_under_extreme_centroid() {
 }
 
 #[test]
-fn beat_unwinds_to_sway_only_baseline_after_total_window() {
+fn beat_unwinds_to_head_drift_baseline_after_total_window() {
     // After SEARCH_TOTAL_MS past the lock-loss edge, the search
-    // contribution must be fully unwound. Run with IdleSway + the
+    // contribution must be fully unwound. Run with IdleHeadDrift + the
     // search modifier, drive a face → no-face → long quiet
     // sequence, then sample at the end. The pan must be within
-    // IdleSway's amplitude.
-    let mut sway = IdleSway::new();
+    // IdleHeadDrift's amplitude.
+    let mut head_drift = IdleHeadDrift::new();
     let mut search = LostTargetSearch::new();
     let mut afm = AttentionFromTracking::new();
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut search).unwrap();
 
     let mut entity = Entity::default();
@@ -161,10 +161,13 @@ fn beat_unwinds_to_sway_only_baseline_after_total_window() {
         director.run(&mut entity, now);
     }
 
-    let bound = IDLE_SWAY_PAN_AMPLITUDE_DEG + 1.0; // sway amplitude + 1° slack
+    // Post-beat the head should be at the IdleHeadDrift baseline:
+    // either at 0 (between glances) or up to ±GLANCE_PAN_MAX_DEG
+    // (mid-glance). Bound covers both with 1° slack.
+    let bound = GLANCE_PAN_MAX_DEG + 1.0;
     assert!(
         entity.motor.head_pose.pan_deg.abs() <= bound,
-        "post-beat pan {} should be at sway-only baseline (≤±{bound}°)",
+        "post-beat pan {} should be at head-drift baseline (\u{2264}\u{00b1}{bound}\u{00b0})",
         entity.motor.head_pose.pan_deg,
     );
 }

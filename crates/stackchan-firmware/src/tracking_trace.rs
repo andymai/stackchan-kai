@@ -112,12 +112,16 @@ impl TraceState {
 
         let curr_attention = entity.mind.attention;
         let curr_engagement = EngagementKind::from(&entity.mind.engagement);
+        let prev_kind = AttentionKind::from(&self.prev_attention);
+        let curr_kind = AttentionKind::from(&curr_attention);
 
-        // Attention transitions.
-        if !attention_kind_eq(&self.prev_attention, &curr_attention) {
-            let prev = AttentionKind::from(&self.prev_attention);
-            let curr = AttentionKind::from(&curr_attention);
-            defmt::info!("trk: attention {} -> {} @ {}ms", prev, curr, now_ms);
+        if prev_kind != curr_kind {
+            defmt::info!(
+                "trk: attention {} -> {} @ {}ms",
+                prev_kind,
+                curr_kind,
+                now_ms
+            );
             // Lock-fire latency: report the (start_of_burst -> lock) interval
             // the first time attention enters Tracking.
             if matches!(curr_attention, Attention::Tracking { .. })
@@ -125,16 +129,14 @@ impl TraceState {
             {
                 let latency = now_ms.saturating_sub(start.as_millis());
                 defmt::info!("trk: lock_latency_ms={}", latency);
-                self.burst_started_at = None;
             }
-            // Reset latency stopwatch on release so the next burst
-            // starts with a fresh anchor.
-            if matches!(curr_attention, Attention::None) {
+            // Reset on either Tracking (we just emitted latency) or
+            // None (release) so the next burst gets a fresh anchor.
+            if matches!(curr_attention, Attention::Tracking { .. } | Attention::None) {
                 self.burst_started_at = None;
             }
         }
 
-        // Engagement transitions.
         if self.prev_engagement != curr_engagement {
             defmt::info!(
                 "trk: engagement {} -> {} @ {}ms",
@@ -144,10 +146,8 @@ impl TraceState {
             );
         }
 
-        // Periodic cadence gauge.
-        let last = self.last_cadence_at_ms.unwrap_or(now_ms);
+        let last = *self.last_cadence_at_ms.get_or_insert(now_ms);
         if now_ms.saturating_sub(last) >= Self::CADENCE_REPORT_INTERVAL_MS {
-            // Per-second rate over the elapsed window.
             let elapsed_ms = (now_ms - last).max(1);
             let per_sec = (u64::from(self.obs_count).saturating_mul(1_000)) / elapsed_ms;
             defmt::debug!(
@@ -157,8 +157,6 @@ impl TraceState {
                 per_sec
             );
             self.obs_count = 0;
-            self.last_cadence_at_ms = Some(now_ms);
-        } else if self.last_cadence_at_ms.is_none() {
             self.last_cadence_at_ms = Some(now_ms);
         }
 
@@ -235,18 +233,6 @@ impl From<&Engagement> for EngagementKind {
             _ => Self::Unknown,
         }
     }
-}
-
-/// True when two attention values map to the same `AttentionKind`.
-/// Used so the trace fires once on enter / exit, not every tick the
-/// inner pose changes during a Tracking lock.
-#[cfg(feature = "tracking-trace")]
-#[allow(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "matches the From impl signature for symmetry; cheap to ignore"
-)]
-fn attention_kind_eq(a: &Attention, b: &Attention) -> bool {
-    AttentionKind::from(a) == AttentionKind::from(b)
 }
 
 // ---------- No-op variant for production builds ----------

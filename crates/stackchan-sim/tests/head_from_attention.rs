@@ -6,7 +6,7 @@
 //! sim tests here pin the *firmware-shaped* contracts that only show
 //! up when:
 //!
-//! - The full Motion stack runs (`IdleSway` priority 0, `HeadFromEmotion`
+//! - The full Motion stack runs (`IdleHeadDrift` priority 0, `HeadFromEmotion`
 //!   priority 10, `HeadFromAttention` priority 20) — proving the
 //!   diff-and-undo bookkeeping composes with the two earlier
 //!   contributors.
@@ -36,8 +36,8 @@
 )]
 
 use stackchan_core::modifiers::{
-    AttentionFromTracking, HeadFromAttention, HeadFromEmotion, IDLE_SWAY_PAN_AMPLITUDE_DEG,
-    IdleSway, TRACKING_LOCK_TICKS,
+    AttentionFromTracking, GLANCE_PAN_MAX_DEG, HeadFromAttention, HeadFromEmotion, IdleHeadDrift,
+    TRACKING_LOCK_TICKS,
 };
 use stackchan_core::{
     Clock, Director, Entity, HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose,
@@ -47,20 +47,20 @@ use stackchan_sim::{FakeClock, RecordingHead, TrackingScenario, block_on};
 #[test]
 fn full_motion_stack_pose_stays_within_clamps_through_recording_head() {
     // Run a 30 s tracking burst with the full Motion stack
-    // (IdleSway + HeadFromEmotion + HeadFromAttention) plus
+    // (IdleHeadDrift + HeadFromEmotion + HeadFromAttention) plus
     // AttentionFromTracking driving attention. Capture every pose
     // through RecordingHead and assert the trajectory NEVER escapes
     // the asymmetric clamps. The `Pose::clamped` invariant must hold
     // for every one of the ~900 captured frames; even a one-frame
     // violation indicates the diff-and-undo bookkeeping leaked an
     // out-of-range pose past the modifier composition.
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut emo = HeadFromEmotion::new();
     let mut head = HeadFromAttention::new();
     let mut afm = AttentionFromTracking::new();
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut head).unwrap();
 
@@ -108,15 +108,15 @@ fn full_motion_stack_pose_stays_within_clamps_through_recording_head() {
 #[test]
 fn smoother_converges_toward_target_across_realistic_burst() {
     // After enough Tracking ticks at 30 FPS, the head's pan should
-    // be within ~0.5° of the target's pan (modulo IdleSway's ±2.5°
+    // be within ~0.5° of the target's pan (modulo IdleHeadDrift's up-to-±3°
     // baseline). 30 ticks ≈ 1 s — well past the smoother's
     // ~4-frame time constant.
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut head = HeadFromAttention::new();
     let mut afm = AttentionFromTracking::new();
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut head).unwrap();
 
     let mut entity = Entity::default();
@@ -131,9 +131,9 @@ fn smoother_converges_toward_target_across_realistic_burst() {
         director.run(&mut entity, now);
     }
 
-    // Convergence: pan must be within ~3° of target (sway + smoother
+    // Convergence: pan must be within ~3° of target (head drift + smoother
     // residual). Tighter would catch single-pole low-pass alpha
-    // changes, but sway dominates the residual at 1 s.
+    // changes, but head-drift glance dominates the residual at 1 s.
     let pan_err = (entity.motor.head_pose.pan_deg - target.pan_deg).abs();
     assert!(
         pan_err < 3.0,
@@ -148,12 +148,12 @@ fn engagement_lock_drives_head_through_full_pipeline() {
     // HeadFromAttention reads engagement.centroid → head pans toward
     // the FACE direction (which is opposite to the motion target's
     // direction in this scenario).
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut head = HeadFromAttention::new();
     let mut afm = AttentionFromTracking::new();
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut head).unwrap();
 
     let mut entity = Entity::default();
@@ -185,16 +185,16 @@ fn engagement_lock_drives_head_through_full_pipeline() {
 #[test]
 fn pose_returns_to_baseline_after_release() {
     // After a tracking burst ends and attention releases, the head
-    // pose should converge back to a baseline dominated by IdleSway
+    // pose should converge back to a baseline dominated by IdleHeadDrift
     // — the HeadFromAttention contribution must unwind via diff-
-    // and-undo. Bound: pan within IDLE_SWAY_PAN_AMPLITUDE_DEG plus
+    // and-undo. Bound: pan within GLANCE_PAN_MAX_DEG plus
     // 1° slack.
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut head = HeadFromAttention::new();
     let mut afm = AttentionFromTracking::new();
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut head).unwrap();
 
     let mut entity = Entity::default();
@@ -209,10 +209,13 @@ fn pose_returns_to_baseline_after_release() {
         director.run(&mut entity, now);
     }
 
-    let bound = IDLE_SWAY_PAN_AMPLITUDE_DEG + 1.0; // sway amplitude + 1° slack
+    // Post-release the head should be at the IdleHeadDrift baseline:
+    // either at 0 (between glances) or up to ±GLANCE_PAN_MAX_DEG
+    // (mid-glance). Bound covers both with 1° slack.
+    let bound = GLANCE_PAN_MAX_DEG + 1.0;
     assert!(
         entity.motor.head_pose.pan_deg.abs() <= bound,
-        "post-release pan {} should be within ±{bound}° (idle sway baseline)",
+        "post-release pan {} should be within ±{bound}° (head-drift baseline)",
         entity.motor.head_pose.pan_deg,
     );
 }

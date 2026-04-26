@@ -1,7 +1,7 @@
 //! End-to-end sim test for the full camera-tracking pipeline:
 //! AttentionFromTracking + GazeFromAttention + MicrosaccadeFromAttention +
 //! HeadFromAttention + LostTargetSearch composed with the standard
-//! background stack (IdleSway + HeadFromEmotion + IdleDrift) via the
+//! background stack (IdleHeadDrift + HeadFromEmotion + IdleDrift) via the
 //! Director.
 //!
 //! Mirrors the architectural shape of `listening.rs` for the
@@ -42,7 +42,7 @@
 
 use stackchan_core::modifiers::{
     AttentionFromTracking, FACE_LOCK_HITS, FACE_RELEASE_MISSES, GazeFromAttention,
-    HeadFromAttention, HeadFromEmotion, IdleDrift, IdleSway, LostTargetSearch,
+    HeadFromAttention, HeadFromEmotion, IdleDrift, IdleHeadDrift, LostTargetSearch,
     MicrosaccadeFromAttention, SEARCH_TOTAL_MS, TRACKING_RELEASE_MS,
 };
 use stackchan_core::{
@@ -54,7 +54,7 @@ use stackchan_sim::TrackingScenario;
 fn full_pipeline_handles_silence_through_lock_loss_recovery() {
     // Build the canonical Motion + Expression stack the firmware
     // render task runs, with all five tracking modifiers wired in.
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut emo = HeadFromEmotion::new();
     let mut drift = IdleDrift::new();
     let mut afm = AttentionFromTracking::new();
@@ -65,7 +65,7 @@ fn full_pipeline_handles_silence_through_lock_loss_recovery() {
 
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut drift).unwrap();
     director.add_modifier(&mut gaze).unwrap();
@@ -101,8 +101,9 @@ fn full_pipeline_handles_silence_through_lock_loss_recovery() {
     let mut saw_head_steered_right_of_baseline = false;
     // Tracks the FIRST tick at which engagement transitioned to
     // Idle — used to scope the search-beat assertion to the
-    // SEARCH_TOTAL_MS window rather than IdleSway's free-running
-    // left/right wander after the beat ends.
+    // SEARCH_TOTAL_MS window. After that, an unrelated random
+    // IdleHeadDrift glance might pan the head left or right and
+    // noise up the signal.
     let mut engagement_lost_at: Option<Instant> = None;
     let mut search_beat_peak_pan: f32 = 0.0;
     let mut final_attention = Attention::None;
@@ -142,7 +143,7 @@ fn full_pipeline_handles_silence_through_lock_loss_recovery() {
         }
         // Capture the first engagement-lost tick so we can scope the
         // search-beat assertion to its SEARCH_TOTAL_MS window. Beyond
-        // that, IdleSway's natural pan would noise up the signal.
+        // that, IdleHeadDrift's natural pan would noise up the signal.
         if matches!(entity.mind.engagement, Engagement::Idle) && engagement_lost_at.is_none() {
             engagement_lost_at = Some(now);
         }
@@ -175,7 +176,7 @@ fn full_pipeline_handles_silence_through_lock_loss_recovery() {
     );
     // Search beat peak: for a +0.5 centroid the hold pose is ~15.5°
     // and the saccade extends to ~20°. Bound at ≥10° to allow head-
-    // smoothing residual + the worst-case IdleSway swing in the
+    // smoothing residual + the worst-case IdleHeadDrift swing in the
     // opposite direction.
     assert!(
         search_beat_peak_pan >= 10.0,
@@ -203,7 +204,7 @@ fn full_pipeline_handles_silence_through_lock_loss_recovery() {
 /// where face_present has accumulated FACE_LOCK_HITS).
 #[test]
 fn engagement_lock_fires_on_the_face_lock_hits_tick_via_full_pipeline() {
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut emo = HeadFromEmotion::new();
     let mut drift = IdleDrift::new();
     let mut afm = AttentionFromTracking::new();
@@ -214,7 +215,7 @@ fn engagement_lock_fires_on_the_face_lock_hits_tick_via_full_pipeline() {
 
     let mut director = Director::new();
     director.add_modifier(&mut afm).unwrap();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut drift).unwrap();
     director.add_modifier(&mut gaze).unwrap();

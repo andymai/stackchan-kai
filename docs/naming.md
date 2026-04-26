@@ -38,7 +38,7 @@ Two grammatical classes by what the modifier *does to the avatar*:
 
 - **Bare noun** for autonomous behaviors that read time + entity
   state and produce output without an external trigger:
-  `Blink`, `Breath`, `IdleSway`, `IdleDrift`, `EmotionCycle`.
+  `Blink`, `Breath`, `IdleHeadDrift`, `IdleDrift`, `EmotionCycle`.
   Mirrors [Bevy components][bevy-builtins] (no `*Component` suffix).
 
 - **`<Output>From<Source>`** for translators that map an input
@@ -139,7 +139,7 @@ is a quick cross-reference; the canonical lists live in the source
 - **OverrideSource** (rule E): `FaceTouch`, `BodyTouch`, `Remote`,
   `Pickup`, `Shake`, `Voice`, `Startle`, `Ambient`, `LowBattery`.
 - **Modifiers — autonomous** (rule B, bare noun): `Blink`, `Breath`,
-  `IdleSway`, `IdleDrift`, `EmotionCycle`.
+  `IdleHeadDrift`, `IdleDrift`, `EmotionCycle`.
 - **Modifiers — translators** (rule B, `<Output>From<Source>`):
   `EmotionFromTouch`, `EmotionFromRemote`, `EmotionFromIntent`,
   `EmotionFromVoice`, `EmotionFromAmbient`, `EmotionFromBattery`,
