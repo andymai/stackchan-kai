@@ -26,7 +26,8 @@ platform-independent heart of the firmware and the simulator.
 - `src/head.rs` — `Pose`, `HeadDriver` trait, pan / tilt range constants
 - `src/leds.rs` — `LedFrame`, `render_leds` — maps avatar state to the 12-pixel ring
 - `src/modifiers/mod.rs` — `Modifier` trait + re-exports
-- `src/modifiers/*.rs` — one file per modifier (blink, breath, emotion-cycle / style / head / touch, idle drift / sway, ambient-sleepy, pickup-reaction, remote-command)
+- `src/modifiers/*.rs` — one file per modifier (blink, breath, emotion-*, idle-*, ambient-sleepy, intent-reflex, intent-style, body-gesture, wake-on-voice, low-battery, listen-head, mouth-open-audio, remote-command)
+- `src/skills/*.rs` — one file per skill (look-at-sound, petting, handling) — long-running NPC capabilities that write `mind.intent` / `mind.attention`
 
 ## Architecture
 
@@ -65,7 +66,7 @@ render tick. Listed roughly in application order:
 | `RemoteCommand`   | IR remote → emotion / pose override                            |
 | `EmotionTouch`    | Touch-panel tap → emotion bump                                 |
 | `AmbientSleepy`   | Dark room (low lux) → sleepy emotion                           |
-| `PickupReaction`  | IMU motion event → surprised emotion                           |
+| `IntentReflex`    | `mind.intent` transitions → emotion (PickedUp→Surprised, Shaken→Angry) |
 | `EmotionCycle`    | Default sequence: Neutral → Happy → Sleepy → Surprised → Sad   |
 | `EmotionStyle`    | 300 ms ease on style fields (curves, scale, blush) per emotion |
 | `EmotionHead`     | Per-emotion pose bias (neutral center, surprised up, etc.)     |
