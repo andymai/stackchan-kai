@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
+
+
+### Features
+
+* **firmware:** I²C bus probe bench ([#97](https://github.com/andymai/stackchan-kai/issues/97))
+* **firmware:** wire Si12T body-touch into engine perception ([#99](https://github.com/andymai/stackchan-kai/issues/99))
+* **firmware:** i2c_probe also reads register 0x00 for chip-ID disambiguation ([#104](https://github.com/andymai/stackchan-kai/issues/104))
+* **firmware:** drop time-of-day boot greeting + tx-active gating for sound-reactive modifiers ([#106](https://github.com/andymai/stackchan-kai/issues/106))
+* **firmware:** always-on camera capture + tracker wired into engine signal ([#109](https://github.com/andymai/stackchan-kai/issues/109))
+
+
+### Refactors
+
+* apply naming convention sweep across the inventory ([#108](https://github.com/andymai/stackchan-kai/issues/108))
+
 ## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-25)
 
 

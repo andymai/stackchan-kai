@@ -3958,7 +3958,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "si12t"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -4136,7 +4136,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stackchan-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "embedded-graphics",
  "heapless 0.8.0",
@@ -4145,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4185,7 +4185,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "eframe",
  "embedded-graphics",

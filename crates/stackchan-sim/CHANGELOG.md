@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0](https://github.com/andymai/stackchan-kai/compare/v0.9.7...v0.10.0) (2026-04-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* engine architecture — Entity + Director + Modifier/Skill ([#90](https://github.com/andymai/stackchan-kai/issues/90))
+
+
+### Features
+
+* **sim:** end-to-end Director-driven sim tests for new skills + modifiers (LookAtSound #92, BodyGesture #101, Petting #102, Handling #105, StartleOnLoud #106, AttentionFromTracking #111, head + eye reactions #112)
+
+
+### Refactors
+
+* **sim:** route firmware-stack tests through Director ([#96](https://github.com/andymai/stackchan-kai/issues/96))
+* apply naming convention sweep across the inventory ([#108](https://github.com/andymai/stackchan-kai/issues/108))
+
 ## [0.9.0](https://github.com/andymai/stackchan-kai/compare/v0.8.0...v0.9.0) (2026-04-25)
 
 
