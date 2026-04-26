@@ -31,5 +31,6 @@ pub mod ir;
 pub mod leds;
 pub mod power;
 pub mod touch;
+pub mod tracking_trace;
 pub mod wallclock;
 pub mod watchdog;

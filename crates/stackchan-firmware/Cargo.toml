@@ -95,6 +95,18 @@ static_cell = "2.1.1"
 # dB mapping; sharing the dep keeps the workspace libm-free.
 micromath = "2"
 
+[features]
+# Default: zero-overhead production build. The `tracking_trace`
+# module's no-op `TraceState` ZST + empty methods compile to nothing.
+default = []
+# Enable structured `defmt` traces of the camera-tracking pipeline:
+# attention + engagement state transitions, lock-fire latency,
+# observation cadence. Use `just fmr-trace` (or `cargo +esp build
+# --release --features tracking-trace`) to flash a build that emits
+# these. Off in production to keep the JTAG channel quiet and avoid
+# perturbing scheduler timing.
+tracking-trace = []
+
 [lib]
 name = "stackchan_firmware"
 path = "src/lib.rs"

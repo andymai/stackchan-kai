@@ -108,6 +108,7 @@ and talk to it through `I2cDevice` handles. Addresses on the bus:
 source ~/export-esp.sh       # adds the esp Xtensa toolchain to PATH
 just build-firmware          # cargo +esp build --release
 just fmr                     # flash + monitor in one go
+just fmr-trace               # flash + monitor with `tracking-trace` feature on
 just bench                   # flash the calibration-bench example
 just mag-bench               # magnetometer bench
 just leds-bench              # WS2812 LED ring bench
@@ -117,6 +118,14 @@ just es7210-bench            # mic-ADC control-path bench
 
 See the [justfile](../../justfile) for the full recipe set. Default
 port is `/dev/ttyACM1`; override with `just PORT=/dev/ttyACM0 flash`.
+
+### Cargo features
+
+- **`tracking-trace`** — emits structured `defmt` events from the
+  camera-tracking pipeline (attention + engagement transitions, lock-fire
+  latency, observation cadence). Off by default so production builds carry
+  no runtime cost. Filter the live stream with `grep trk:`. See
+  `src/tracking_trace.rs` for the full event catalog.
 
 ## Integration
 

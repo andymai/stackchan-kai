@@ -26,7 +26,7 @@ extern crate alloc;
 
 use stackchan_firmware::{
     ambient, audio, board, body_touch, button, camera, clock, framebuffer, head, imu, ir, leds,
-    power, touch, wallclock, watchdog,
+    power, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -213,6 +213,10 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     // tail of the audio_rms gate so the mic doesn't pick up the
     // speaker's residual response immediately after a chirp ends.
     let mut last_tx_active_at: Option<stackchan_core::Instant> = None;
+    // Camera-tracking observability. Compiles to a ZST + no-op methods
+    // unless the `tracking-trace` cargo feature is on; see
+    // [`tracking_trace`] for what the feature-on path emits.
+    let mut tracking_trace = tracking_trace::TraceState::new();
 
     // Build the Director and register the canonical modifier stack
     // plus skills (via add_skill).
@@ -403,6 +407,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         // modifiers read entity.perception.tracking to decide whether
         // to flip mind.attention to Tracking{target}.
         if let Some(observation) = camera::CAMERA_TRACKING_SIGNAL.try_take() {
+            tracking_trace.note_observation(now);
             entity.perception.tracking = Some(observation);
         }
 
@@ -410,6 +415,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         // by (phase, priority, registration order) and ticks each
         // modifier — see `crate::director` for the full pipeline.
         director.run(&mut entity, now);
+        tracking_trace.observe(&entity, now);
 
         // Drain the chirp request modifiers raised this tick. Modifiers
         // (`EmotionFromIntent`, `EmotionFromVoice`, `EmotionFromBattery`) set
