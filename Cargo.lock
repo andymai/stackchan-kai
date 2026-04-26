@@ -4209,7 +4209,6 @@ dependencies = [
  "scservo",
  "si12t",
  "stackchan-core",
- "stackchan-net",
  "stackchan-tts",
  "static_cell",
  "tracker",

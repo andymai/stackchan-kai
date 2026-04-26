@@ -32,13 +32,6 @@ tracker = { path = "../tracker" }
 # `BakedBackend` (sine-cycle SFX + future verbal PCM) and the
 # `AudioSource` trait the audio task's TX feeder pulls samples through.
 stackchan-tts = { path = "../stackchan-tts" }
-# Networking domain types + RON config schema. Bare data types only:
-# `default-features = false` skips the `parse` feature (which would
-# pull `ron 0.10` + `serde/std` and break the firmware target build,
-# since `xtensa-esp32s3-none-elf` has no std). Firmware does its own
-# hand-rolled RON parsing in `storage.rs`, then runs the same
-# `stackchan_net::validate` gate the host parser uses.
-stackchan-net = { path = "../stackchan-net", default-features = false }
 # `heapless::Vec` for the per-frame multi-target candidate list
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
