@@ -7,17 +7,18 @@
 //! [`SharedI2c`] bus; the [`gc0308`] driver handles register-level
 //! init, format selection, and stream gating.
 //!
-//! ## Mode-gated lifecycle
+//! ## Always-on capture for tracking
 //!
-//! The task does **not** stream continuously. It blocks on
-//! [`CAMERA_MODE_SIGNAL`] and only powers up when the user toggles into
-//! camera mode (long-press of the AXP2101 power button — see
-//! [`crate::button`]). On entry it opens the SCCB stream gate; on exit
-//! it closes the gate before parking. CoreS3 does not expose the
-//! GC0308's PWDN pin, so this SCCB-level gating is the only "stop the
-//! sensor" knob — the chip continues to draw a small idle current
-//! either way, but PCLK / HSYNC / VSYNC / data are tri-stated, so the
-//! DMA peripheral observes no edges.
+//! The task streams continuously from boot. The block-grid `tracker`
+//! runs on every captured frame; the resulting [`TrackingObservation`]
+//! is published on [`CAMERA_TRACKING_SIGNAL`] so the engine's
+//! Perception/Cognition modifiers can drive head + eye motion toward
+//! whatever moved.
+//!
+//! [`CAMERA_MODE_SIGNAL`] is **display-only** — it controls whether
+//! the LCD shows the camera preview vs. the avatar; it does not gate
+//! capture or tracking. Tracking observations flow regardless of
+//! preview state.
 //!
 //! ## DMA strategy
 //!
@@ -37,8 +38,7 @@
 //! [`CAMERA_MODE_SIGNAL`] is `true` it skips the avatar blit and instead
 //! reads the latest camera buffer pointer; when `false` it resumes
 //! avatar rendering. Modifiers keep ticking either way so the avatar's
-//! emotion state evolves in the background and resumes seamlessly on
-//! exit.
+//! emotion state evolves in the background.
 //!
 //! ## Unsafe usage
 //!
@@ -59,7 +59,7 @@
 )]
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     dma::DmaRxBuf,
     lcd_cam::{
@@ -72,6 +72,8 @@ use esp_hal::{
     },
     time::Rate,
 };
+use stackchan_core::{TrackingMotion, TrackingObservation};
+use tracker::{Motion, Tracker, TrackerConfig};
 
 use crate::board::SharedI2c;
 
@@ -101,10 +103,11 @@ const DESCRIPTORS_PER_BUFFER: usize = 40;
 /// peripheral expecting that `PCLK` rate.
 pub const PIXEL_CLOCK_HZ: u32 = 20_000_000;
 
-/// Mode-toggle signal published by [`crate::button`].
+/// LCD preview-mode toggle published by [`crate::button`].
 ///
-/// `true` = camera mode active (camera streaming + LCD shows preview).
-/// `false` = avatar mode (camera SCCB-gated off + LCD shows avatar).
+/// `true` = LCD shows the camera preview. `false` = LCD shows the
+/// avatar. The camera task itself ignores this signal — capture +
+/// tracking are always-on. The render task is the sole consumer.
 /// `Signal` semantics (latest-wins, no backlog) are correct here: a
 /// rapid double-toggle just lands on whichever value the producer
 /// signalled last, matching the user's intent.
@@ -134,6 +137,29 @@ pub static CAMERA_CAPTURE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal:
 /// reads (the DMA peripheral never writes into a slot the render
 /// task is reading).
 pub static CAMERA_FRAME_SIGNAL: Signal<CriticalSectionRawMutex, &'static [u8]> = Signal::new();
+
+/// Latest tracker observation, camera task → engine.
+///
+/// The camera task runs `tracker::Tracker::step` on every captured
+/// frame and publishes the [`TrackingObservation`] result here.
+/// Latest-wins: the engine drains this once per render tick into
+/// `entity.perception.tracking`. Always-on regardless of
+/// [`CAMERA_MODE_SIGNAL`] — preview gating (display) is independent
+/// from tracker analysis (always running).
+pub static CAMERA_TRACKING_SIGNAL: Signal<CriticalSectionRawMutex, TrackingObservation> =
+    Signal::new();
+
+/// Translate the firmware-side `tracker::Motion` into the
+/// engine-side `TrackingMotion` mirror enum. Pure mapping; no logic.
+const fn motion_to_engine(m: Motion) -> TrackingMotion {
+    match m {
+        Motion::Warmup => TrackingMotion::Warmup,
+        Motion::Tracking => TrackingMotion::Tracking,
+        Motion::Holding => TrackingMotion::Holding,
+        Motion::Returning => TrackingMotion::Returning,
+        Motion::GlobalEvent => TrackingMotion::GlobalEvent,
+    }
+}
 
 /// Camera task peripherals, grouped so `main.rs` spawns the task with
 /// a single `Spawner::spawn` call rather than a 14-argument function.
@@ -174,12 +200,17 @@ pub struct CameraPeripherals {
 
 /// Camera task entry point.
 ///
-/// Runs the GC0308 SCCB init + `LCD_CAM` peripheral construction once at
-/// boot, then enters the mode-gated capture loop. On
-/// [`CAMERA_MODE_SIGNAL`] = true: open SCCB stream, alternate
-/// `receive(buf_a) / receive(buf_b)`, publish completed-buffer indices
-/// on [`CAMERA_FRAME_SIGNAL`]. On `CAMERA_MODE_SIGNAL` = false: close
-/// SCCB stream gate and block until the next mode change.
+/// Runs the GC0308 SCCB init + `LCD_CAM` peripheral construction once
+/// at boot, lifts the SCCB stream gate, then enters the always-on
+/// capture loop. Each completed frame is copied to a scratch slot,
+/// published on [`CAMERA_FRAME_SIGNAL`] for the render task's preview
+/// blit, and fed through `tracker::Tracker::step` — the resulting
+/// [`TrackingObservation`] lands on [`CAMERA_TRACKING_SIGNAL`] for the
+/// engine's Perception/Cognition modifiers.
+///
+/// [`CAMERA_MODE_SIGNAL`] is read by the render task only and decides
+/// whether the LCD shows the camera preview vs. the avatar; it does
+/// not gate capture or tracking.
 ///
 /// Init failures (chip-id mismatch, peripheral construction error)
 /// log at `error` and park the task — the avatar continues running
@@ -189,7 +220,7 @@ pub struct CameraPeripherals {
 #[allow(
     clippy::too_many_lines,
     reason = "single bring-up sequence — splitting into helpers fragments \
-              the SCCB init → peripheral construction → mode loop ordering"
+              the SCCB init → peripheral construction → capture loop ordering"
 )]
 pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     use embassy_time::Delay;
@@ -224,16 +255,18 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
         );
         park_forever().await;
     }
-    // Streaming starts gated off. The first CAMERA_MODE_SIGNAL=true
-    // edge will lift the gate.
-    if let Err(e) = sensor.set_streaming(false).await {
-        defmt::warn!(
-            "camera: set_streaming(false) failed ({:?})",
+    // Streaming is always-on for tracking. CAMERA_MODE_SIGNAL no
+    // longer gates capture (it now controls only whether the LCD
+    // shows the camera preview vs the avatar — see render_task).
+    if let Err(e) = sensor.set_streaming(true).await {
+        defmt::error!(
+            "camera: set_streaming(true) failed ({:?}); camera disabled",
             defmt::Debug2Format(&e),
         );
+        park_forever().await;
     }
     defmt::info!(
-        "camera: GC0308 SCCB init complete (chip ID 0x{=u8:02x})",
+        "camera: GC0308 SCCB init complete (chip ID 0x{=u8:02x}) — streaming ON for tracking",
         gc0308::CHIP_ID
     );
 
@@ -301,43 +334,14 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     let mut buf_slot_a: Option<DmaRxBuf> = Some(buf_a);
     let mut buf_slot_b: Option<DmaRxBuf> = Some(buf_b);
     let mut active_idx: usize = 0;
-    let mut streaming_now = false;
+
+    // Tracker: block-grid motion analysis on each captured frame.
+    // Defaults are tuned in the `tracker` crate; tweak via
+    // `TrackerConfig` here if on-device tuning calls for it.
+    let mut tracker = Tracker::new(TrackerConfig::DEFAULT);
+    let mut last_step_at = Instant::now();
+
     loop {
-        // Wait for camera mode to be on; if we're already streaming
-        // this returns immediately because the signal is sticky.
-        let want_streaming = if streaming_now {
-            CAMERA_MODE_SIGNAL.try_take().unwrap_or(true)
-        } else {
-            CAMERA_MODE_SIGNAL.wait().await
-        };
-
-        if !want_streaming {
-            if streaming_now {
-                if let Err(e) = sensor.set_streaming(false).await {
-                    defmt::warn!(
-                        "camera: stream-off SCCB write failed ({:?})",
-                        defmt::Debug2Format(&e),
-                    );
-                }
-                defmt::info!("camera: streaming gated off (avatar mode)");
-                streaming_now = false;
-            }
-            continue;
-        }
-
-        if !streaming_now {
-            if let Err(e) = sensor.set_streaming(true).await {
-                defmt::warn!(
-                    "camera: stream-on SCCB write failed ({:?}); retrying",
-                    defmt::Debug2Format(&e),
-                );
-                Timer::after(Duration::from_millis(50)).await;
-                continue;
-            }
-            defmt::info!("camera: streaming enabled (camera mode)");
-            streaming_now = true;
-        }
-
         // Pick the buffer to fill on this iteration; the OTHER one
         // holds the most-recently-completed frame the render task is
         // (probably) reading. We use `Option::take()` so the slot
@@ -387,13 +391,6 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
             // period and well above the embassy timer tick — accurate
             // enough to catch the EOF without burning CPU.
             Timer::after(Duration::from_millis(1)).await;
-
-            // Bail mid-frame if the user toggles back to avatar mode;
-            // we'd rather drop a half-frame than wait for it.
-            if CAMERA_MODE_SIGNAL.try_take() == Some(false) {
-                CAMERA_MODE_SIGNAL.signal(false);
-                break;
-            }
         }
 
         let (result, returned_camera, completed_buf) = transfer.wait();
@@ -422,6 +419,21 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
             }
             let view: &'static [u8] = unsafe { core::slice::from_raw_parts(dst_ptr, copy_len) };
             CAMERA_FRAME_SIGNAL.signal(view);
+
+            // Run the block-grid tracker on this frame and publish
+            // the observation. `dt_ms` is the wall-clock interval
+            // since the previous step — feeds the tracker's idle /
+            // return-to-centre logic.
+            let now = Instant::now();
+            let dt_ms =
+                u32::try_from(now.duration_since(last_step_at).as_millis()).unwrap_or(u32::MAX);
+            last_step_at = now;
+            let outcome = tracker.step(view, dt_ms);
+            CAMERA_TRACKING_SIGNAL.signal(TrackingObservation {
+                target_pose: outcome.target,
+                fired_cells: outcome.fired_cells,
+                motion: motion_to_engine(outcome.motion),
+            });
 
             // Honour any pending capture request — log frame stats +
             // a 32×24 RGB565 thumbnail strip over RTT.

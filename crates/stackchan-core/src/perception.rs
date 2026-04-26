@@ -14,6 +14,8 @@
 //! [`Phase::Affect`]: crate::director::Phase::Affect
 //! [`Phase::Audio`]: crate::director::Phase::Audio
 
+use crate::head::Pose;
+
 /// Per-zone body-touch intensity (back-of-head `Si12T` pads).
 ///
 /// Each zone carries a 0..=3 intensity matching the chip's 2-bit
@@ -58,6 +60,50 @@ impl BodyTouch {
         let weighted = (self.right as i16 - self.left as i16) * 100;
         weighted / total
     }
+}
+
+/// One-frame summary of the firmware-side camera tracker's analysis.
+///
+/// The firmware's `tracker` crate runs the block-grid motion analysis
+/// inside the camera task and publishes one of these per processed
+/// frame. The engine consumes it via `entity.perception.tracking`
+/// (added in the next PR) and decides what to do — see the
+/// `TrackingFromCamera` `Phase::Perception` modifier and the
+/// `AttentionFromTracking` `Phase::Cognition` modifier.
+///
+/// The shape mirrors `tracker::Outcome` minus the centroid, which is
+/// already baked into `target_pose` by the tracker.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrackingObservation {
+    /// Where the tracker thinks the head should look — already through
+    /// the tracker's dead zone, P-gain, slew limit, and clamp.
+    pub target_pose: Pose,
+    /// Number of grid cells whose per-block luma delta exceeded the
+    /// tracker's threshold this frame. `0` during warmup or genuine
+    /// stillness; saturates at the grid's cell count.
+    pub fired_cells: u16,
+    /// Classification of this analysis step.
+    pub motion: TrackingMotion,
+}
+
+/// Why the tracker chose its current target. Mirrors `tracker::Motion`
+/// without depending on the tracker crate from `stackchan-core`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TrackingMotion {
+    /// First frame after construction or `reset` — no previous frame
+    /// to diff against. Target pose is unchanged from `Pose::NEUTRAL`.
+    Warmup,
+    /// Real motion detected; target pose was nudged toward it.
+    Tracking,
+    /// No motion this step but still inside the idle timeout window;
+    /// target pose held at the last commanded value.
+    Holding,
+    /// Idle long enough to be slewing back toward `Pose::NEUTRAL`.
+    Returning,
+    /// Too many cells fired this frame — the tracker treated it as a
+    /// global lighting change and held the target.
+    GlobalEvent,
 }
 
 /// Raw sensor readings that drive reactive modifiers.
