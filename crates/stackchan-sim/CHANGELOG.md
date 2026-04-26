@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.11.1](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.11.0...stackchan-sim-v0.11.1) (2026-04-26)
+
 ## [0.11.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.10.2...stackchan-sim-v0.11.0) (2026-04-26)
 
 
