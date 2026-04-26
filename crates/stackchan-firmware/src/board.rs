@@ -309,10 +309,21 @@ async fn ping_servo(driver: &mut HeadDriverImpl, id: u8) {
 /// Failure logs at `warn` — the diagnostic isn't load-bearing.
 async fn log_angle_limits(driver: &mut HeadDriverImpl, id: u8) {
     const ADDR_MIN_ANGLE_LIMIT: u8 = 0x09;
+    /// Same budget as `ping_servo`'s `PING_TIMEOUT_MS`. A silent
+    /// servo (e.g. head detached from the bench) would otherwise
+    /// stall boot here forever — `read_memory` itself has no
+    /// internal deadline; the UART RX waits on bytes that never
+    /// arrive.
+    const READ_TIMEOUT_MS: u64 = 10;
     let mut buf = [0u8; 4];
     let bus = driver.bus_mut();
-    match bus.read_memory(id, ADDR_MIN_ANGLE_LIMIT, &mut buf).await {
-        Ok(_err_byte) => {
+    let result = with_timeout(
+        Duration::from_millis(READ_TIMEOUT_MS),
+        bus.read_memory(id, ADDR_MIN_ANGLE_LIMIT, &mut buf),
+    )
+    .await;
+    match result {
+        Ok(Ok(_err_byte)) => {
             let min = (u16::from(buf[0]) << 8) | u16::from(buf[1]);
             let max = (u16::from(buf[2]) << 8) | u16::from(buf[3]);
             defmt::debug!(
@@ -322,10 +333,15 @@ async fn log_angle_limits(driver: &mut HeadDriverImpl, id: u8) {
                 max,
             );
         }
-        Err(e) => defmt::warn!(
+        Ok(Err(e)) => defmt::warn!(
             "SCServo[{=u8}]: read angle-limits failed: {}",
             id,
             defmt::Debug2Format(&e)
+        ),
+        Err(_) => defmt::warn!(
+            "SCServo[{=u8}]: read angle-limits timed out after {=u64} ms (head detached?)",
+            id,
+            READ_TIMEOUT_MS
         ),
     }
 }
