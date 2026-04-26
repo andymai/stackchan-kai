@@ -242,14 +242,20 @@ pub fn try_dispatch_utterance(utterance: &Utterance) -> Result<(), DispatchError
         priority: utterance.priority,
     };
 
+    AUDIO_TX_QUEUE
+        .try_send(slot)
+        .map_err(|_| DispatchError::QueueFull)?;
+
+    // Set preempt only after the slot is queued. If we set it first
+    // and the send fails, the flag stays high — on the next DMA
+    // batch the TX loop would drop the in-flight source and promote
+    // whatever was already at the head of the (full) queue, which
+    // may be lower priority than what was just dropped.
     let current = AUDIO_TX_CURRENT_PRIORITY.load(Ordering::Relaxed);
     if (utterance.priority as u8) > current {
         AUDIO_TX_PREEMPT.store(true, Ordering::Relaxed);
     }
-
-    AUDIO_TX_QUEUE
-        .try_send(slot)
-        .map_err(|_| DispatchError::QueueFull)
+    Ok(())
 }
 
 /// Microphone RMS sample, published per render tick.
