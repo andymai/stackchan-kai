@@ -352,14 +352,22 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     /// Run the cascade only every Nth frame.
     ///
     /// On-device profiling on CoreS3 puts a single ROI scan at
-    /// ~80–120 ms after the `tracker::cascade::SCAN_*` tunings
-    /// landed. At ~30 FPS that's still 2–4× over the per-frame
-    /// budget. Skipping `(N − 1)` frames between scores brings the
-    /// average load to `cascade_us / N`. `N = 4` lands around the
-    /// 30 ms / frame budget while keeping the engagement state
-    /// machine's lock latency under ~400 ms (3 cascade hits ×
-    /// 4 frames × 33 ms).
-    const CASCADE_PERIOD: u8 = 4;
+    /// ~80–100 ms after the `tracker::cascade::SCAN_*` tunings
+    /// landed. The cascade scan is synchronous in the cooperative
+    /// embassy scheduler — for the duration of a scan, no other
+    /// task runs. With `N = 4` (one scan per ~132 ms) the scheduler
+    /// was visibly starving the I²C polling tasks (touch, body
+    /// touch, LED ring, audio DMA) because their embassy timers
+    /// kept firing while their wakeups were delayed past the scan
+    /// window, producing spurious `with_timeout` failures.
+    ///
+    /// `N = 8` (one scan per ~264 ms) drops the cascade duty cycle
+    /// to ~30 % and gives the rest of the executor ~180 ms of
+    /// uninterrupted runway between scans — enough headroom for
+    /// every other peripheral poll under default cadences. The
+    /// trade is engagement lock latency: 3 cascade hits × 8 frames
+    /// × 33 ms ≈ 800 ms instead of 400 ms. Acceptable.
+    const CASCADE_PERIOD: u8 = 8;
 
     // Tracker: block-grid motion analysis on each captured frame.
     // Defaults are tuned in the `tracker` crate; tweak via
