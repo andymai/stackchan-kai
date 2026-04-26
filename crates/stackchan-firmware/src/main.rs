@@ -297,8 +297,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         // Drain camera-mode toggle edges from the button task. Each
         // signal is a fresh "user wants this mode" assertion; we mirror
         // it locally + fire the appropriate audio chirp on transitions.
-        // The camera task gets the same signal directly and starts /
-        // stops streaming accordingly.
+        // CAMERA_MODE_SIGNAL is now a display-only toggle: the camera
+        // task always streams (for tracking); this flag only decides
+        // whether the LCD shows the camera preview or the avatar.
         if let Some(active) = camera::CAMERA_MODE_SIGNAL.try_take()
             && active != camera_mode
         {
@@ -314,11 +315,6 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
                     defmt::Debug2Format(&e),
                 );
             }
-            // Re-publish so the camera task (which may have been
-            // drained between this take and its own try_take) still
-            // sees the latest intent. `Signal::signal` is latest-
-            // wins so a duplicate publish is safe.
-            camera::CAMERA_MODE_SIGNAL.signal(active);
         }
         // Drain any newly completed camera frame slice. Latest-wins:
         // we hold the most recent slice ref until the camera task
@@ -636,11 +632,11 @@ async fn audio_task(peripherals: audio::AudioPeripherals) -> ! {
 
 /// Camera task. Owns the `LCD_CAM` peripheral + `DMA_CH1` + 11 DVP pins,
 /// shares the I²C0 bus for SCCB control. Runs the GC0308 register
-/// init at boot, then mode-gates streaming on
-/// [`camera::CAMERA_MODE_SIGNAL`]: when active, alternates ping-pong
-/// DMA captures and copies each completed frame into a PSRAM scratch
-/// slot, publishing the slice via [`camera::CAMERA_FRAME_SIGNAL`] for
-/// the render task to blit.
+/// init at boot, then streams continuously: alternates ping-pong DMA
+/// captures and copies each completed frame into a PSRAM scratch slot,
+/// publishing the slice via [`camera::CAMERA_FRAME_SIGNAL`] for the
+/// render task to blit AND running the block-grid tracker on every
+/// frame, with results published on [`camera::CAMERA_TRACKING_SIGNAL`].
 #[embassy_executor::task]
 async fn camera_task(peripherals: camera::CameraPeripherals) -> ! {
     camera::run_camera_task(peripherals).await
@@ -805,9 +801,12 @@ async fn main(spawner: Spawner) -> ! {
     // Camera subsystem. The task owns LCD_CAM + DMA_CH1 + the 11 DVP
     // pins and shares the existing I²C0 bus for SCCB control. It
     // runs SCCB init + LCD_CAM construction once at boot, then
-    // mode-gates streaming on `CAMERA_MODE_SIGNAL`. Failures inside
-    // the task log-and-park — camera mode silently degrades to "no
-    // preview available" while the rest of the avatar keeps running.
+    // streams continuously: each frame is published on
+    // `CAMERA_FRAME_SIGNAL` for preview AND fed through the block-
+    // grid tracker, with the result landing on
+    // `CAMERA_TRACKING_SIGNAL` for the engine. Failures inside the
+    // task log-and-park — camera silently degrades to "no preview /
+    // no tracking" while the rest of the avatar keeps running.
     let camera_periph = camera::CameraPeripherals {
         lcd_cam: peripherals.LCD_CAM,
         dma: peripherals.DMA_CH1,
