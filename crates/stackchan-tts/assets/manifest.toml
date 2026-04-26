@@ -1,0 +1,25 @@
+# Verbal-phrase manifest.
+#
+# Source-of-truth text content per `PhraseId` × `Locale`. The
+# `just bake-tts` recipe reads this file, runs Piper for each entry,
+# and writes raw 16 kHz / 16-bit / mono PCM to
+# `crates/stackchan-tts/assets/<locale>/<phrase_id>.pcm`.
+#
+# Adding a phrase:
+# 1. Add a `PhraseId` variant in `crates/stackchan-core/src/voice.rs`.
+# 2. Add a `BakedBackend::render` arm in `crates/stackchan-tts/src/baked.rs`.
+# 3. Add an `[<phrase_id>]` table here with text per supported locale.
+# 4. Run `just bake-tts` to generate / refresh the `.pcm` files.
+# 5. Commit the generated `.pcm` files alongside the manifest entry.
+
+[greeting]
+en = "Hello, I'm Stack-chan."
+ja = "こんにちは、スタックチャンです。"
+
+[acknowledge_name]
+en = "Yes?"
+ja = "はい?"
+
+[battery_low]
+en = "Battery is low."
+ja = "バッテリーが少ないです。"

@@ -46,12 +46,11 @@
 //! - TX DMA start failure → fall through to RX-only mode (RMS loop
 //!   runs without speaker output).
 
+use alloc::boxed::Box;
 use aw88298::Aw88298;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
-    channel::{Channel, TrySendError},
-    signal::Signal,
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
 use embassy_time::{Delay, Duration, Timer};
 use es7210::Es7210;
@@ -62,6 +61,8 @@ use esp_hal::{
     time::Rate,
 };
 use micromath::F32Ext as _;
+use stackchan_core::voice::{Priority, Utterance};
+use stackchan_tts::{AudioSource, BakedBackend, RenderError, SpeechBackend};
 
 use crate::board::SharedI2c;
 
@@ -126,270 +127,134 @@ const BOOT_VOLUME_DB: i8 = -18;
 /// speaker doesn't pop.
 const TX_SETTLE_MS: u32 = 30;
 
-/// One-cycle 1 kHz sine table at 16 kHz sample rate. 16 samples per
-/// cycle. Amplitude `8192 ≈ -12 dBFS`, picked so the AW88298 output
-/// stage stays well clear of the digital ceiling. Pre-computed at
-/// compile time so the TX feeder is `sin()`-free at runtime (and
-/// `libm`-free in this firmware crate).
-const SINE_1KHZ_CYCLE: [i16; 16] = [
-    0, 3135, 5793, 7568, 8192, 7568, 5793, 3135, 0, -3135, -5793, -7568, -8192, -7568, -5793, -3135,
-];
+/// Stateless v1 backend instance. The dispatch path consults this
+/// directly; multi-backend routing (cloud, on-device) layers in via
+/// the `SpeechBackend` trait when those backends land.
+const BAKED_BACKEND: BakedBackend = BakedBackend::new();
 
-/// One-cycle 2 kHz sine table at 16 kHz sample rate. 8 samples per
-/// cycle. Same -12 dBFS amplitude as [`SINE_1KHZ_CYCLE`]; intended for
-/// alert-style beeps (low-battery, error chirps) where the higher
-/// pitch makes it distinct from the boot greeting.
-const SINE_2KHZ_CYCLE: [i16; 8] = [0, 5793, 8192, 5793, 0, -5793, -8192, -5793];
-
-/// One-cycle 4 kHz sine table at 16 kHz sample rate. 4 samples per
-/// cycle (the highest pitch we can produce cleanly without going
-/// past the Nyquist limit). Used as the top of the
-/// [`PICKUP_CHIRP`] rising sweep.
-const SINE_4KHZ_CYCLE: [i16; 4] = [0, 8192, 0, -8192];
-
-/// 8-sample silence cycle for [`AudioClip`]-encoded gaps. Used between
-/// successive beeps in [`try_enqueue_low_battery_alert`] so the user
-/// hears two distinct pulses rather than one long tone.
-const SILENCE_CYCLE: [i16; 8] = [0; 8];
-
-/// Boot greeting: 500 ms of 1 kHz sine. Available for explicit
-/// playback via the `audio-bench` example; not auto-enqueued at boot.
+/// One queued speech item: source + originating priority.
 ///
-/// `500 cycles × 16 samples = 8 000 samples = 500 ms` at the 16 kHz
-/// sample rate. Tweak `cycles` to change duration without touching
-/// the table.
-pub const BOOT_GREETING: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 500,
-};
-
-/// Single-clip "wake" chirp: 100 ms of 1 kHz sine. Audibly soft but
-/// distinct from the boot greeting (which is 5× longer); enqueued
-/// when [`stackchan_core::modifiers::EmotionFromVoice`] just fired.
-///
-/// `100 cycles × 16 samples = 1 600 samples = 100 ms`.
-pub const WAKE_CHIRP: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 100,
-};
-
-/// First leg of the pickup chirp: 50 ms of 2 kHz.
-const PICKUP_CHIRP_LO: AudioClip = AudioClip {
-    samples: &SINE_2KHZ_CYCLE,
-    cycles: 100,
-};
-/// Second leg of the pickup chirp: 50 ms of 4 kHz. Played
-/// back-to-back with [`PICKUP_CHIRP_LO`] for an upward sweep that
-/// matches the "Surprised!" emotion fire from
-/// [`stackchan_core::modifiers::EmotionFromIntent`].
-const PICKUP_CHIRP_HI: AudioClip = AudioClip {
-    samples: &SINE_4KHZ_CYCLE,
-    cycles: 200,
-};
-
-/// Single beep used inside [`try_enqueue_low_battery_alert`]. 100 ms
-/// of 2 kHz; two of these separated by silence form the full alert.
-const LOW_BATTERY_BEEP: AudioClip = AudioClip {
-    samples: &SINE_2KHZ_CYCLE,
-    cycles: 200,
-};
-
-/// First leg of the camera-mode-enter chirp: 50 ms of 1 kHz.
-/// Distinct from the pickup chirp (2 kHz → 4 kHz, brighter sweep) and
-/// from the wake chirp (single 1 kHz tone) by the descending two-tone
-/// pattern formed with [`CAMERA_ENTER_CHIRP_HI`].
-const CAMERA_ENTER_CHIRP_LO: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 50,
-};
-/// Second leg of the camera-mode-enter chirp: 80 ms of 2 kHz —
-/// upward two-tone "doot-DEE" that signals "preview is now on
-/// screen." Plays back-to-back with [`CAMERA_ENTER_CHIRP_LO`].
-const CAMERA_ENTER_CHIRP_HI: AudioClip = AudioClip {
-    samples: &SINE_2KHZ_CYCLE,
-    cycles: 160,
-};
-
-/// First leg of the camera-mode-exit chirp: 80 ms of 2 kHz.
-/// Inverted ordering of the enter chirp — descending "DEE-doot" that
-/// signals "back to avatar."
-const CAMERA_EXIT_CHIRP_HI: AudioClip = AudioClip {
-    samples: &SINE_2KHZ_CYCLE,
-    cycles: 160,
-};
-/// Second leg of the camera-mode-exit chirp: 50 ms of 1 kHz.
-const CAMERA_EXIT_CHIRP_LO: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 50,
-};
-/// 80 ms gap between the two low-battery beeps. Silence stored as a
-/// short cycle table looped many times — keeps the tx feeder code
-/// uniform (everything goes through clip playback).
-const LOW_BATTERY_GAP: AudioClip = AudioClip {
-    samples: &SILENCE_CYCLE,
-    cycles: 160,
-};
-
-/// PCM audio clip queued for TX playback.
-///
-/// Stored as a `&'static [i16]` buffer (one cycle of a tone, or a
-/// pre-baked sample) plus a `cycles` count. The TX feeder plays
-/// through `samples` `cycles` times back-to-back, then transitions
-/// to silence (or the next queued clip).
-///
-/// `cycles = 0` plays nothing — the clip is consumed but produces
-/// zero output samples. Useful for testing the queue without making
-/// noise.
-///
-/// # Examples
-///
-/// ```ignore
-/// // 500 ms of a 1 kHz tone using a 16-sample cycle table.
-/// const TONE: &[i16] = &[/* one 1 kHz cycle at 16 kHz */];
-/// let clip = AudioClip::new(TONE, 500);
-/// audio::AUDIO_TX_QUEUE.try_send(clip).ok();
-/// ```
-#[derive(Debug, Clone, Copy)]
-pub struct AudioClip {
-    /// Sample buffer. Played through `cycles` times, in order.
-    /// Conventional encoding: 16-bit signed mono at
-    /// [`SAMPLE_RATE_HZ`].
-    pub samples: &'static [i16],
-    /// How many times to loop through `samples`. `1` = one-shot.
-    pub cycles: u32,
+/// Priority is read by the TX feeder when the slot becomes current so
+/// [`AUDIO_TX_CURRENT_PRIORITY`] tracks what's actually playing.
+pub struct SpeechSlot {
+    /// PCM source rendered by a [`SpeechBackend`]. Pulled via
+    /// [`AudioSource::fill`] until exhausted.
+    pub source: Box<dyn AudioSource + Send>,
+    /// Original utterance priority. Drives in-flight preemption
+    /// decisions on the producer side and tracker updates on the
+    /// consumer side.
+    pub priority: Priority,
 }
 
-impl AudioClip {
-    /// Construct a clip from a sample buffer + cycle count.
-    #[must_use]
-    pub const fn new(samples: &'static [i16], cycles: u32) -> Self {
-        Self { samples, cycles }
-    }
+/// Speech queue.
+///
+/// Producers ([`try_dispatch_utterance`] callers — chirp translators in
+/// `main.rs`, future modifier-published utterances) enqueue
+/// [`SpeechSlot`]s; the TX feeder pops them and pulls samples through
+/// [`AudioSource::fill`].
+///
+/// Capacity 4. Eviction policy when full is "drop incoming non-Critical;
+/// log Critical drops" — full-priority eviction (drop oldest non-Critical
+/// to make room for Critical) is a TODO once the v1 catalog grows past
+/// the no-overlap regime.
+pub static AUDIO_TX_QUEUE: Channel<CriticalSectionRawMutex, SpeechSlot, 4> = Channel::new();
 
-    /// Construct a one-shot clip (plays through `samples` exactly once).
-    #[must_use]
-    pub const fn one_shot(samples: &'static [i16]) -> Self {
-        Self { samples, cycles: 1 }
+/// Discriminant of the [`Priority`] of the source currently playing —
+/// `0` (Background) when nothing is playing.
+///
+/// `Priority` is `#[repr(u8)]` with explicit discriminants so the cast
+/// `priority as u8` matches the value seen by [`Priority::partial_cmp`].
+///
+/// # Memory ordering — single-core invariant
+///
+/// All accesses to this atomic and to [`AUDIO_TX_PREEMPT`] use
+/// [`Ordering::Relaxed`]. That's safe only because esp-rtos runs a
+/// single-core embassy executor on the CoreS3: tasks don't preempt
+/// each other except at `.await` points, so producer-side
+/// `try_dispatch_utterance` (sync, called between `Director::run`
+/// frames) and consumer-side `TxSampler::next_sample` (sync, called
+/// inside the audio task's `push_with` closure) never interleave.
+/// Porting to multi-core (ESP32-P4 or enabling the second Xtensa
+/// core) requires revisiting these orderings — at minimum upgrading
+/// the producer's PREEMPT store to `Release` and the consumer's swap
+/// to `Acquire`.
+pub static AUDIO_TX_CURRENT_PRIORITY: AtomicU8 = AtomicU8::new(0);
+
+/// Preemption signal from dispatch path to TX feeder.
+///
+/// Set by [`try_dispatch_utterance`] when an incoming utterance has
+/// strictly higher priority than the source currently playing. The
+/// TX feeder observes this on each fill, drops its current source,
+/// and clears the flag.
+pub static AUDIO_TX_PREEMPT: AtomicBool = AtomicBool::new(false);
+
+/// Reasons [`try_dispatch_utterance`] can fail.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum DispatchError {
+    /// No registered backend reported `can_handle` for the utterance's
+    /// content kind.
+    NoBackend,
+    /// Backend's [`SpeechBackend::render`] returned an error
+    /// (asset missing, unsupported phrase, backend unavailable).
+    Render(RenderError),
+    /// [`AUDIO_TX_QUEUE`] is full and the new slot was dropped.
+    QueueFull,
+}
+
+impl defmt::Format for DispatchError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        // Distinct labels per variant; clippy::match_same_arms sees
+        // structurally identical macro expansions for the two unit
+        // variants (only the literal differs) and false-flags them.
+        #[allow(
+            clippy::match_same_arms,
+            reason = "labels are distinct strings even though clippy reads the macro arms as identical"
+        )]
+        match self {
+            Self::NoBackend => defmt::write!(f, "NoBackend"),
+            Self::Render(e) => defmt::write!(f, "Render({:?})", defmt::Debug2Format(e)),
+            Self::QueueFull => defmt::write!(f, "QueueFull"),
+        }
     }
 }
 
-/// TX clip queue.
+/// Render an utterance via a registered [`SpeechBackend`] and queue
+/// the resulting [`AudioSource`] for TX playback.
 ///
-/// Producers (any task) enqueue [`AudioClip`]s; the audio task plays
-/// them back-to-back, falling back to digital silence when empty.
-/// Capacity 4 fits a few queued alerts without blocking the producer;
-/// when the queue is full, [`try_enqueue_clip`] returns `Err` and the
-/// caller can drop the clip rather than block.
-pub static AUDIO_TX_QUEUE: Channel<CriticalSectionRawMutex, AudioClip, 4> = Channel::new();
-
-/// Enqueue a clip for TX playback. Non-blocking; returns `Err` if the
-/// queue is full so the caller can drop the clip rather than wait.
+/// Honors priority preemption: if the new utterance's priority is
+/// strictly higher than [`AUDIO_TX_CURRENT_PRIORITY`], sets
+/// [`AUDIO_TX_PREEMPT`] so the TX loop drops its in-flight source
+/// before pulling from the queue.
 ///
 /// # Errors
 ///
-/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] has 4 clips
-/// already queued.
-pub fn try_enqueue_clip(clip: AudioClip) -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(clip)
-}
+/// See [`DispatchError`].
+pub fn try_dispatch_utterance(utterance: &Utterance) -> Result<(), DispatchError> {
+    if !BAKED_BACKEND.can_handle(&utterance.content) {
+        return Err(DispatchError::NoBackend);
+    }
+    let source = BAKED_BACKEND
+        .render(utterance)
+        .map_err(DispatchError::Render)?;
+    let slot = SpeechSlot {
+        source,
+        priority: utterance.priority,
+    };
 
-/// Enqueue the canonical low-battery alert: two 100 ms 2 kHz beeps
-/// separated by an 80 ms gap. Three queued clips total.
-///
-/// Best-effort: if the queue fills mid-sequence, the partially-queued
-/// alert plays as far as it got and the helper returns the failure.
-/// The render-loop caller logs once and continues; partial alerts
-/// are unlikely in practice (the queue starts empty between fires).
-///
-/// # Errors
-///
-/// Returns the first [`TrySendError::Full`] encountered. Earlier
-/// clips that did fit are not rolled back — they will play.
-pub fn try_enqueue_low_battery_alert() -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(LOW_BATTERY_BEEP)?;
-    AUDIO_TX_QUEUE.try_send(LOW_BATTERY_GAP)?;
-    AUDIO_TX_QUEUE.try_send(LOW_BATTERY_BEEP)?;
-    Ok(())
-}
+    AUDIO_TX_QUEUE
+        .try_send(slot)
+        .map_err(|_| DispatchError::QueueFull)?;
 
-/// Enqueue the wake chirp: 100 ms of 1 kHz. One queued clip.
-///
-/// `stackchan_core::modifiers::EmotionFromVoice` sets
-/// `entity.voice.chirp_request = Some(ChirpKind::Wake)` on the tick it
-/// flips emotion to `Happy`; the render task drains that and calls this
-/// to play a confirmation tone.
-///
-/// # Errors
-///
-/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] is full.
-pub fn try_enqueue_wake_chirp() -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(WAKE_CHIRP)
-}
-
-/// Enqueue the pickup chirp: 50 ms of 2 kHz then 50 ms of 4 kHz —
-/// an upward sweep that matches the "Surprised!" emotion fire from
-/// [`stackchan_core::modifiers::EmotionFromIntent`]. Two queued clips.
-///
-/// Best-effort, same partial-queue caveat as
-/// [`try_enqueue_low_battery_alert`].
-///
-/// # Errors
-///
-/// Returns the first [`TrySendError::Full`] encountered. The first
-/// clip, if it queued successfully, will play.
-pub fn try_enqueue_pickup_chirp() -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_LO)?;
-    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_HI)?;
-    Ok(())
-}
-
-/// Enqueue the startle chirp: 50 ms of 4 kHz — sharp single tone.
-///
-/// `stackchan_core::modifiers::IntentFromLoud` sets
-/// `entity.voice.chirp_request = Some(ChirpKind::Startle)` on the
-/// rising edge across the loud-RMS threshold; the render task drains
-/// that and calls this. Reuses [`PICKUP_CHIRP_HI`] (the high half of
-/// the pickup sweep) for a deliberately sharp, singular reaction —
-/// distinct from the pickup chirp's two-tone sweep.
-///
-/// # Errors
-///
-/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] is full.
-pub fn try_enqueue_startle_chirp() -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_HI)
-}
-
-/// Enqueue the camera-mode-enter chirp: 50 ms of 1 kHz then 80 ms of
-/// 2 kHz — an upward two-tone "doot-DEE" signalling that the preview
-/// is now on screen. Two queued clips.
-///
-/// Pair with [`crate::camera::CAMERA_MODE_SIGNAL`] = `true`
-/// transitions in `render_task`. Best-effort, same partial-queue
-/// caveat as [`try_enqueue_pickup_chirp`].
-///
-/// # Errors
-///
-/// Returns the first [`TrySendError::Full`] encountered.
-pub fn try_enqueue_camera_mode_enter() -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(CAMERA_ENTER_CHIRP_LO)?;
-    AUDIO_TX_QUEUE.try_send(CAMERA_ENTER_CHIRP_HI)?;
-    Ok(())
-}
-
-/// Enqueue the camera-mode-exit chirp: 80 ms of 2 kHz then 50 ms of
-/// 1 kHz — a descending two-tone "DEE-doot" that mirrors the enter
-/// chirp inverted. Two queued clips.
-///
-/// Pair with [`crate::camera::CAMERA_MODE_SIGNAL`] = `false`
-/// transitions in `render_task`. Best-effort, same partial-queue
-/// caveat as [`try_enqueue_pickup_chirp`].
-///
-/// # Errors
-///
-/// Returns the first [`TrySendError::Full`] encountered.
-pub fn try_enqueue_camera_mode_exit() -> Result<(), TrySendError<AudioClip>> {
-    AUDIO_TX_QUEUE.try_send(CAMERA_EXIT_CHIRP_HI)?;
-    AUDIO_TX_QUEUE.try_send(CAMERA_EXIT_CHIRP_LO)?;
+    // Set preempt only after the slot is queued. If we set it first
+    // and the send fails, the flag stays high — on the next DMA
+    // batch the TX loop would drop the in-flight source and promote
+    // whatever was already at the head of the (full) queue, which
+    // may be lower priority than what was just dropped.
+    let current = AUDIO_TX_CURRENT_PRIORITY.load(Ordering::Relaxed);
+    if (utterance.priority as u8) > current {
+        AUDIO_TX_PREEMPT.store(true, Ordering::Relaxed);
+    }
     Ok(())
 }
 
@@ -432,6 +297,20 @@ pub static AUDIO_TX_PLAYING: AtomicBool = AtomicBool::new(false);
 /// for the AW88298's anti-pop ramp. Tunable on-device via the
 /// audio-bench if it turns out to be wrong.
 pub const TX_GATE_TAIL_MS: u64 = 150;
+
+/// TX-side lip-sync hint, published per DMA fill batch (~32 ms cadence).
+///
+/// While speech is playing, the audio task publishes envelope (and
+/// optional viseme) here so `MouthFromAudio` can drive the avatar's
+/// mouth from the avatar's own outgoing audio rather than from the
+/// gated mic. Latest-wins: the render task reads with `try_take` and
+/// stamps `entity.perception.tx_lip_sync`.
+///
+/// When idle, the audio task does not publish; the render task
+/// observes [`AUDIO_TX_PLAYING`] to clear the field on the same
+/// transition that ends the gate.
+pub static TX_LIP_SYNC_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::lipsync::LipSync> =
+    Signal::new();
 
 /// Audio task peripherals, grouped so `main.rs` spawns the task with
 /// a single `Spawner::spawn` call rather than a 9-argument function.
@@ -793,55 +672,121 @@ fn accumulate(sum_sq: &mut f32, count: &mut u32, sample: i16) {
     *count += 1;
 }
 
-/// In-flight playback of one [`AudioClip`]. Tracks the cursor inside
-/// `samples` and how many full cycles remain.
-struct ClipPlayback {
-    /// Held by reference; the clip itself lives in `.rodata` (or any
-    /// `'static` location).
-    samples: &'static [i16],
-    /// Index of the next sample to emit on a `next_sample()` call.
-    cursor: usize,
-    /// Cycles left to play through `samples`. Decremented to zero
-    /// when the cursor wraps past the end of the slice; once at zero
-    /// the clip is done and `next_sample()` returns `None`.
-    cycles_remaining: u32,
-}
+/// Sample buffer chunk size for the TX feeder's [`AudioSource::fill`]
+/// pulls. 256 samples ≈ 16 ms at 16 kHz — small enough that a
+/// preempt flag is observed promptly, large enough that the per-fill
+/// overhead is amortised.
+const TX_FILL_CHUNK: usize = 256;
 
-impl ClipPlayback {
-    /// Construct a fresh playback cursor at the start of `clip`.
-    const fn new(clip: AudioClip) -> Self {
-        Self {
-            samples: clip.samples,
-            cursor: 0,
-            cycles_remaining: clip.cycles,
-        }
-    }
-
-    /// Yield the next sample, or `None` if the clip is done. An empty
-    /// `samples` slice or `cycles = 0` yields `None` immediately.
-    fn next_sample(&mut self) -> Option<i16> {
-        if self.cycles_remaining == 0 || self.samples.is_empty() {
-            return None;
-        }
-        let s = self.samples[self.cursor];
-        self.cursor += 1;
-        if self.cursor >= self.samples.len() {
-            self.cursor = 0;
-            self.cycles_remaining -= 1;
-        }
-        Some(s)
-    }
-}
-
-/// TX feeder. Pulls [`AudioClip`]s off [`AUDIO_TX_QUEUE`] and plays
-/// them back-to-back; emits digital silence when the queue is empty
-/// so the AW88298's I²S receiver stays locked to the clock domain.
+/// Iterator-style adapter that pulls samples one at a time from a
+/// chain of [`SpeechSlot`]s, refilling its internal buffer from the
+/// current source's [`AudioSource::fill`] as needed and pulling fresh
+/// slots from [`AUDIO_TX_QUEUE`] when sources exhaust.
 ///
-/// Mid-batch transitions: when one clip ends partway through a push
-/// buffer, the feeder immediately checks the queue for the next clip
-/// and continues without an audible gap. If nothing is queued, the
-/// remainder of the buffer is filled with zeros and the loop tries
-/// again on the next push.
+/// Owns the in-flight [`SpeechSlot`] so it can update
+/// [`AUDIO_TX_CURRENT_PRIORITY`] whenever the active source changes,
+/// and observes [`AUDIO_TX_PREEMPT`] each call to drop the active
+/// source on a preempting utterance.
+struct TxSampler {
+    /// Slot whose source is currently being drained, if any.
+    current: Option<SpeechSlot>,
+    /// Pre-fetched samples not yet emitted to the DMA buffer.
+    /// Populated by [`AudioSource::fill`] in chunks of up to
+    /// [`TX_FILL_CHUNK`].
+    buf: [i16; TX_FILL_CHUNK],
+    /// Index of the next sample to emit from `buf`.
+    buf_pos: usize,
+    /// Number of valid samples in `buf` (`buf_pos..buf_len`).
+    buf_len: usize,
+}
+
+impl TxSampler {
+    /// Construct an empty sampler. Idle until a slot is queued.
+    const fn new() -> Self {
+        Self {
+            current: None,
+            buf: [0; TX_FILL_CHUNK],
+            buf_pos: 0,
+            buf_len: 0,
+        }
+    }
+
+    /// Drop the active source (if any) and clear the local PCM
+    /// buffer. Resets [`AUDIO_TX_CURRENT_PRIORITY`] to 0
+    /// (`Priority::Background`).
+    fn drop_active(&mut self) {
+        self.current = None;
+        self.buf_pos = 0;
+        self.buf_len = 0;
+        AUDIO_TX_CURRENT_PRIORITY.store(0, Ordering::Relaxed);
+    }
+
+    /// Promote a queued [`SpeechSlot`] to active and publish its
+    /// priority. Caller must ensure no source is active.
+    fn promote(&mut self, slot: SpeechSlot) {
+        AUDIO_TX_CURRENT_PRIORITY.store(slot.priority as u8, Ordering::Relaxed);
+        self.current = Some(slot);
+    }
+
+    /// Yield the next i16 sample, refilling from the current source
+    /// or pulling the next queued slot as needed. Returns `0`
+    /// (digital silence) if nothing is queued.
+    ///
+    /// Preemption is observed only on the slow path (buffer refill),
+    /// not per sample. Preempt latency is therefore bounded by the
+    /// in-flight buffer length: at most one [`TX_FILL_CHUNK`] worth
+    /// of samples (~16 ms at 16 kHz). Per-sample preempt checks
+    /// would burn an atomic swap 512× per DMA batch for sub-ms
+    /// latency improvement that's well below the perceptual floor.
+    fn next_sample(&mut self) -> i16 {
+        // Fast path: pop one sample from the pre-fetched buffer.
+        if self.buf_pos < self.buf_len {
+            let s = self.buf[self.buf_pos];
+            self.buf_pos += 1;
+            return s;
+        }
+
+        // Slow path: observe preempt, then refill from current source,
+        // advancing through queued slots if exhausted. Bounded loop —
+        // we either get a non-zero fill, or the queue runs dry and we
+        // return silence.
+        if AUDIO_TX_PREEMPT.swap(false, Ordering::Relaxed) {
+            self.drop_active();
+        }
+        for _ in 0..4 {
+            if let Some(slot) = self.current.as_mut() {
+                let n = slot.source.fill(&mut self.buf);
+                if n > 0 {
+                    self.buf_len = n;
+                    self.buf_pos = 1;
+                    return self.buf[0];
+                }
+                self.drop_active();
+            }
+            match AUDIO_TX_QUEUE.try_receive() {
+                Ok(slot) => self.promote(slot),
+                Err(_) => return 0,
+            }
+        }
+        0
+    }
+
+    /// Whether the sampler currently has audio to emit.
+    const fn is_active(&self) -> bool {
+        self.current.is_some() || self.buf_pos < self.buf_len
+    }
+
+    /// Lip-sync hint from the active source, if it supplies one.
+    /// `None` falls back to live RMS in the TX loop.
+    fn lip_sync_hint(&self) -> Option<stackchan_core::lipsync::LipSync> {
+        self.current.as_ref()?.source.lip_sync()
+    }
+}
+
+/// TX feeder. Drains [`SpeechSlot`]s from [`AUDIO_TX_QUEUE`] and pulls
+/// PCM samples through [`AudioSource::fill`]; emits digital silence
+/// when idle so the AW88298's I²S receiver stays locked to the clock
+/// domain.
 ///
 /// Uses `push_with` so the closure produces exactly as many samples
 /// as the DMA tail accepts in this batch — no partial-acceptance
@@ -849,27 +794,64 @@ impl ClipPlayback {
 async fn run_tx_loop<BUFFER>(
     tx_transfer: &mut esp_hal::i2s::master::asynch::I2sWriteDmaTransferAsync<'_, BUFFER>,
 ) -> ! {
-    // The currently-playing clip, if any. `None` = silence.
-    let mut current: Option<ClipPlayback> = None;
+    let mut sampler = TxSampler::new();
 
     loop {
+        // Per-batch envelope accumulator. RMS of outgoing samples gives
+        // us a backend-agnostic lip-sync envelope when the source
+        // can't supply a richer hint via `AudioSource::lip_sync`.
+        let mut sum_sq: f32 = 0.0;
+        let mut sample_count: u32 = 0;
+        let mut had_explicit_lip_sync: Option<stackchan_core::lipsync::LipSync> = None;
+
         let result = tx_transfer
             .push_with(|buf: &mut [u8]| {
                 let pairs = buf.len() / 2;
                 for i in 0..pairs {
-                    let sample = next_sample_with_chaining(&mut current);
+                    let sample = sampler.next_sample();
+                    let s = f32::from(sample);
+                    sum_sq += s * s;
                     let bytes = sample.to_le_bytes();
                     buf[i * 2] = bytes[0];
                     buf[i * 2 + 1] = bytes[1];
                 }
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "pairs is bounded by the DMA buffer size, well below u32::MAX"
+                )]
+                let pairs_u32 = pairs as u32;
+                sample_count = pairs_u32;
+                // Prefer an explicit lip-sync hint from the active
+                // source if one is available — backends with viseme
+                // or sidecar envelope data outrank live RMS.
+                had_explicit_lip_sync = sampler.lip_sync_hint();
                 pairs * 2
             })
             .await;
 
-        // Publish playback state once per DMA buffer (~32 ms). The
-        // render task uses this + TX_GATE_TAIL_MS to suppress
-        // self-trigger of sound-reactive modifiers.
-        AUDIO_TX_PLAYING.store(current.is_some(), Ordering::Relaxed);
+        let active = sampler.is_active();
+        AUDIO_TX_PLAYING.store(active, Ordering::Relaxed);
+
+        // Publish lip-sync hint while a source is in flight. When idle,
+        // the render task observes AUDIO_TX_PLAYING transitioning to
+        // false and clears `entity.perception.tx_lip_sync`.
+        if active {
+            let hint = had_explicit_lip_sync.unwrap_or_else(|| {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "sample_count <= 2048 (DMA buffer bound); exact in f32"
+                )]
+                let count_f32 = sample_count as f32;
+                let mean_sq = if sample_count == 0 {
+                    0.0
+                } else {
+                    sum_sq / count_f32
+                };
+                let rms_norm = (mean_sq / FULL_SCALE_SQ).sqrt().min(1.0);
+                stackchan_core::lipsync::LipSync::envelope(rms_norm)
+            });
+            TX_LIP_SYNC_SIGNAL.signal(hint);
+        }
 
         if let Err(e) = result {
             defmt::warn!(
@@ -879,29 +861,6 @@ async fn run_tx_loop<BUFFER>(
             Timer::after(Duration::from_millis(10)).await;
         }
     }
-}
-
-/// Yield one TX sample. If the current clip is exhausted, transition
-/// straight into the next queued clip (if any) so consecutive clips
-/// play without a silence gap. Returns `0` if no clip is playable.
-fn next_sample_with_chaining(current: &mut Option<ClipPlayback>) -> i16 {
-    // Up to two iterations: first attempt with `current`, second
-    // attempt with whatever was just pulled from the queue. Bounded
-    // because each new clip yields at least one sample (or `None` if
-    // its slice is empty / cycles == 0, in which case we fall
-    // through to silence).
-    for _ in 0..2 {
-        if let Some(s) = current.as_mut().and_then(ClipPlayback::next_sample) {
-            return s;
-        }
-        *current = AUDIO_TX_QUEUE.try_receive().ok().map(ClipPlayback::new);
-        if current.is_none() {
-            return 0;
-        }
-    }
-    // Shouldn't reach here for non-degenerate clips. Treat any
-    // pathological zero-yield clip as silence.
-    0
 }
 
 /// Infinite sleep for tasks that have nothing else to do. `-> !` so

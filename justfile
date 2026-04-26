@@ -287,3 +287,14 @@ i2c-probe:
 si12t-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example si12t_bench
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/si12t_bench{{_serial_suffix}}
+
+
+# Bake verbal-phrase PCM clips from the manifest using Piper TTS.
+# Reads `crates/stackchan-tts/assets/manifest.toml` and writes raw
+# 16 kHz / 16-bit / mono / little-endian PCM to
+# `crates/stackchan-tts/assets/<locale>/<phrase_id>.pcm`. Prereqs
+# (piper, sox) are checked by the script and the failure mode is a
+# clear install hint, not a partial bake. Pass optional `<locale>
+# <phrase>` args to bake one entry; no args bakes everything.
+bake-tts *args:
+    bash scripts/bake-tts.sh {{args}}

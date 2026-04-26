@@ -15,6 +15,7 @@
 //! [`Phase::Audio`]: crate::director::Phase::Audio
 
 use crate::head::Pose;
+use crate::lipsync::LipSync;
 
 /// Per-zone body-touch intensity (back-of-head `Si12T` pads).
 ///
@@ -186,8 +187,16 @@ pub struct Perception {
     pub usb_power_present: Option<bool>,
     /// Latest microphone RMS amplitude, normalised against full-scale
     /// i16 (`0.0..=1.0`), or `None` before the audio task publishes
-    /// its first window.
+    /// its first window. Gated to `None` by the firmware's TX-playing
+    /// guard so sound-reactive modifiers don't self-trigger on the
+    /// avatar's own speech.
     pub audio_rms: Option<f32>,
+    /// Latest TX-side lip-sync hint (envelope + optional viseme),
+    /// `Some(...)` while the audio task is playing back synthesised
+    /// speech, `None` otherwise. `MouthFromAudio` reads this in
+    /// preference to [`Self::audio_rms`] so the mouth animates from
+    /// outgoing speech rather than from the gated mic.
+    pub tx_lip_sync: Option<LipSync>,
     /// Per-zone body-touch state from the back-of-head `Si12T` pads,
     /// or `None` before the first successful read. Continuous state,
     /// not an edge — modifiers add their own edge detection if needed.
@@ -212,6 +221,7 @@ impl Default for Perception {
             battery_percent: None,
             usb_power_present: None,
             audio_rms: None,
+            tx_lip_sync: None,
             body_touch: None,
             tracking: None,
         }
