@@ -77,6 +77,7 @@
 mod attention_from_tracking;
 mod blink;
 mod breath;
+mod dormancy_from_activity;
 mod emotion_cycle;
 mod emotion_from_ambient;
 mod emotion_from_battery;
@@ -104,6 +105,7 @@ pub use attention_from_tracking::{
 };
 pub use blink::Blink;
 pub use breath::Breath;
+pub use dormancy_from_activity::{DORMANCY_TIMEOUT_MS, DormancyFromActivity};
 pub use emotion_cycle::EmotionCycle;
 pub use emotion_from_ambient::{
     AMBIENT_HOLD_MS, EmotionFromAmbient, SLEEPY_ENTER_LUX, SLEEPY_EXIT_LUX,

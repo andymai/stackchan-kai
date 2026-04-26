@@ -159,10 +159,14 @@ impl Modifier for IdleSway {
         static META: ModifierMeta = ModifierMeta {
             name: "IdleSway",
             description: "Slow two-axis triangle-wave wander on motor.head_pose so the head \
-                          looks alive at rest. Composes additively with upstream pose writes.",
+                          looks alive at rest. Composes additively with upstream pose writes. \
+                          Gates to no contribution while mind.dormancy == Asleep so the SCServo \
+                          stays still when nothing's happening in the room.",
             phase: Phase::Motion,
             priority: 0,
-            reads: &[Field::HeadPose],
+            // `Field::Dormancy` is a read so the writes-checker
+            // permits us to consult it; we only write `HeadPose`.
+            reads: &[Field::HeadPose, Field::Dormancy],
             writes: &[Field::HeadPose],
         };
         &META
@@ -170,8 +174,20 @@ impl Modifier for IdleSway {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let pan = Self::unit_triangle(self.pan_period_ms, now) * self.pan_amplitude_deg;
-        let tilt = Self::unit_triangle(self.tilt_period_ms, now) * self.tilt_amplitude_deg;
+        // Gate by dormancy: when asleep, the requested contribution
+        // is zero. The diff-and-undo path then subtracts the prior
+        // contribution and adds nothing, returning the head exactly
+        // to upstream — silently and without a snap, since the prior
+        // contribution was the small triangle-wave value we wrote
+        // last tick.
+        let (pan, tilt) = if entity.mind.dormancy.is_asleep() {
+            (0.0, 0.0)
+        } else {
+            (
+                Self::unit_triangle(self.pan_period_ms, now) * self.pan_amplitude_deg,
+                Self::unit_triangle(self.tilt_period_ms, now) * self.tilt_amplitude_deg,
+            )
+        };
         let upstream_pan = entity.motor.head_pose.pan_deg - self.last_pan_deg;
         let upstream_tilt = entity.motor.head_pose.tilt_deg - self.last_tilt_deg;
         let new_pose = Pose::new(upstream_pan + pan, upstream_tilt + tilt).clamped();

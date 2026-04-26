@@ -65,11 +65,11 @@ use mipidsi::{
 use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
-        AttentionFromTracking, Blink, Breath, EmotionCycle, EmotionFromAmbient, EmotionFromBattery,
-        EmotionFromIntent, EmotionFromRemote, EmotionFromTouch, EmotionFromVoice,
-        GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent, IdleDrift, IdleSway,
-        IntentFromBodyTouch, IntentFromLoud, MicrosaccadeFromAttention, MouthFromAudio,
-        StyleFromEmotion, StyleFromIntent,
+        AttentionFromTracking, Blink, Breath, DormancyFromActivity, EmotionCycle,
+        EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
+        EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
+        HeadFromIntent, IdleDrift, IdleSway, IntentFromBodyTouch, IntentFromLoud,
+        MicrosaccadeFromAttention, MouthFromAudio, StyleFromEmotion, StyleFromIntent,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -187,6 +187,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut emotion_from_voice = EmotionFromVoice::new();
     let mut intent_from_loud = IntentFromLoud::new();
     let mut attention_from_tracking = AttentionFromTracking::new();
+    let mut dormancy_from_activity = DormancyFromActivity::new();
     let mut cycle = EmotionCycle::new();
     let mut style = StyleFromEmotion::new();
     let mut style_from_intent = StyleFromIntent::new();
@@ -250,6 +251,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     director
         .add_modifier(&mut attention_from_tracking)
         .expect("registry full");
+    director
+        .add_modifier(&mut dormancy_from_activity)
+        .expect("registry full");
     director.add_modifier(&mut cycle).expect("registry full");
     director.add_modifier(&mut style).expect("registry full");
     director
@@ -304,7 +308,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleSway + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleSway + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
