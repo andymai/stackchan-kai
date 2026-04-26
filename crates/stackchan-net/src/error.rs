@@ -18,8 +18,14 @@ pub enum ConfigError {
 
     /// RON serialize failure on round-trip. Should not happen with a
     /// well-formed [`crate::Config`]; treat as a bug if observed.
+    ///
+    /// No `#[from]` on this variant: `ron::Error` is also the inner
+    /// error code embedded in [`ron::error::SpannedError`] (the parse
+    /// path), so an automatic `From<ron::Error>` would silently tag
+    /// any deserialize-side error as a serialize one. Callers map
+    /// explicitly via `Result::map_err`.
     #[error("RON serialize error: {0}")]
-    Serialize(#[from] ron::Error),
+    Serialize(ron::Error),
 
     /// `wifi.ssid` was empty or whitespace-only after trim. The
     /// firmware treats an empty SSID as "no Wi-Fi configured" via
@@ -46,4 +52,12 @@ pub enum ConfigError {
     /// never advances past whatever the backup battery preserved.
     #[error("time.sntp_servers must contain at least one entry")]
     NoSntpServers,
+
+    /// A `time.sntp_servers` entry was empty or whitespace-only.
+    /// Caught at parse time so the firmware's "try in order" loop
+    /// doesn't burn its full per-server timeout on an unresolvable
+    /// hostname before falling back. The `usize` carries the offending
+    /// index in the original list.
+    #[error("time.sntp_servers[{0}] is empty or whitespace-only")]
+    EmptySntpServer(usize),
 }

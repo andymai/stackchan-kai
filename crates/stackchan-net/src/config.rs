@@ -105,7 +105,19 @@ pub fn parse_ron(input: &str) -> Result<Config, ConfigError> {
 /// Render a [`Config`] back to a pretty-printed RON string.
 ///
 /// Used by `PUT /settings` to persist user changes back to SD, and
-/// by `GET /settings` to expose the current state.
+/// internally by the firmware's snapshot path. **Not directly safe
+/// for `GET /settings`** — see Security below.
+///
+/// # Security
+///
+/// This serializer faithfully renders every field, including
+/// `wifi.psk`. The v1 HTTP control plane is LAN-scoped and unauthed,
+/// so a `GET /settings` handler that returns this verbatim would
+/// leak the WPA2 PSK to any host on the LAN. The HTTP layer in PR #5
+/// must redact the PSK on the read path (separate read/write DTOs,
+/// or a masked-render variant) before the endpoint ships. The
+/// `parse_ron` ↔ `render_ron` round trip is preserved here so SD
+/// reads/writes stay lossless.
 ///
 /// # Errors
 ///
@@ -134,12 +146,24 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
     if config.time.sntp_servers.is_empty() {
         return Err(ConfigError::NoSntpServers);
     }
+    if let Some(idx) = config
+        .time
+        .sntp_servers
+        .iter()
+        .position(|s| s.trim().is_empty())
+    {
+        return Err(ConfigError::EmptySntpServer(idx));
+    }
     Ok(())
 }
 
-/// True iff `s` is exactly two ASCII letters (ISO-3166 alpha-2).
+/// True iff `s` is exactly two uppercase ASCII letters (ISO-3166
+/// alpha-2). esp-wifi's regulatory-domain API expects the canonical
+/// uppercase form (`"US"`, `"JP"`); a lowercase value would silently
+/// pass an alphabetic check and then mis-apply the channel/TX mask
+/// at the driver layer, so the validator pins the case here.
 fn is_valid_country(s: &str) -> bool {
-    s.len() == 2 && s.bytes().all(|b| b.is_ascii_alphabetic())
+    s.len() == 2 && s.bytes().all(|b| b.is_ascii_uppercase())
 }
 
 /// True iff `s` is an RFC-952 subset hostname: ASCII letters / digits
@@ -178,13 +202,23 @@ mod tests {
     }
 
     #[test]
-    fn validates_country_length() {
+    fn validates_country_length_and_case() {
+        // Canonical ISO-3166 alpha-2.
         assert!(is_valid_country("US"));
         assert!(is_valid_country("JP"));
+        // Length wrong.
         assert!(!is_valid_country("USA"));
         assert!(!is_valid_country("U"));
-        assert!(!is_valid_country("U1"));
         assert!(!is_valid_country(""));
+        // Non-letter content.
+        assert!(!is_valid_country("U1"));
+        // Lowercase rejected — esp-wifi expects uppercase, and a
+        // case-insensitive validator would silently pass through to
+        // the wrong regulatory mask.
+        assert!(!is_valid_country("us"));
+        assert!(!is_valid_country("jp"));
+        // Mixed case rejected too.
+        assert!(!is_valid_country("Us"));
     }
 
     #[test]

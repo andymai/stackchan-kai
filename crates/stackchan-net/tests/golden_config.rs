@@ -14,6 +14,8 @@ const EMPTY_SSID_RON: &str = include_str!("fixtures/empty-ssid.ron");
 const BAD_COUNTRY_RON: &str = include_str!("fixtures/bad-country.ron");
 const BAD_HOSTNAME_RON: &str = include_str!("fixtures/bad-hostname.ron");
 const NO_SNTP_SERVERS_RON: &str = include_str!("fixtures/no-sntp-servers.ron");
+const EMPTY_SNTP_ENTRY_RON: &str = include_str!("fixtures/empty-sntp-entry.ron");
+const LOWERCASE_COUNTRY_RON: &str = include_str!("fixtures/lowercase-country.ron");
 
 #[test]
 fn parses_minimal_fixture() {
@@ -94,6 +96,26 @@ fn rejects_bad_hostname() {
 fn rejects_empty_sntp_servers() {
     let err = parse_ron(NO_SNTP_SERVERS_RON).unwrap_err();
     assert!(matches!(err, ConfigError::NoSntpServers), "got {err:?}");
+}
+
+#[test]
+fn rejects_empty_sntp_entry() {
+    let err = parse_ron(EMPTY_SNTP_ENTRY_RON).unwrap_err();
+    match err {
+        // Index 1 — first entry is "pool.ntp.org" (valid), second is
+        // whitespace-only, so the validator fires on index 1.
+        ConfigError::EmptySntpServer(idx) => assert_eq!(idx, 1),
+        other => panic!("expected EmptySntpServer(1), got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_lowercase_country() {
+    let err = parse_ron(LOWERCASE_COUNTRY_RON).unwrap_err();
+    match err {
+        ConfigError::InvalidCountry(c) => assert_eq!(c, "us"),
+        other => panic!("expected InvalidCountry, got {other:?}"),
+    }
 }
 
 #[test]
