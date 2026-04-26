@@ -28,11 +28,12 @@
 //!      full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
 //!    - TX (`run_tx_loop`): play queued [`AudioClip`]s back-to-back,
 //!      filling with digital silence between/after clips so the
-//!      AW88298 stays clock-locked. Higher-level code (e.g. main.rs's
-//!      RTC-aware boot greeting, low-battery alerts, pickup chirps)
-//!      enqueues clips via [`try_enqueue_clip`] and the typed
+//!      AW88298 stays clock-locked. Higher-level code (low-battery
+//!      alerts, pickup chirps, startle chirps, etc.) enqueues clips
+//!      via [`try_enqueue_clip`] and the typed
 //!      [`try_enqueue_wake_chirp`] / [`try_enqueue_pickup_chirp`] /
-//!      [`try_enqueue_low_battery_alert`] helpers.
+//!      [`try_enqueue_startle_chirp`] / [`try_enqueue_low_battery_alert`]
+//!      helpers.
 //!
 //! This matches esp-bsp's ordering in `bsp_audio_codec_microphone_init`:
 //! `bsp_audio_init` (spins up I²S + MCLK) runs *before* `es7210_codec_new`.
@@ -46,6 +47,7 @@
 //!   runs without speaker output).
 
 use aw88298::Aw88298;
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     channel::{Channel, TrySendError},
@@ -341,6 +343,22 @@ pub fn try_enqueue_pickup_chirp() -> Result<(), TrySendError<AudioClip>> {
     Ok(())
 }
 
+/// Enqueue the startle chirp: 50 ms of 4 kHz — sharp single tone.
+///
+/// `stackchan_core::modifiers::StartleOnLoud` sets
+/// `entity.voice.chirp_request = Some(ChirpKind::Startle)` on the
+/// rising edge across the loud-RMS threshold; the render task drains
+/// that and calls this. Reuses [`PICKUP_CHIRP_HI`] (the high half of
+/// the pickup sweep) for a deliberately sharp, singular reaction —
+/// distinct from the pickup chirp's two-tone sweep.
+///
+/// # Errors
+///
+/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] is full.
+pub fn try_enqueue_startle_chirp() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_HI)
+}
+
 /// Enqueue the camera-mode-enter chirp: 50 ms of 1 kHz then 80 ms of
 /// 2 kHz — an upward two-tone "doot-DEE" signalling that the preview
 /// is now on screen. Two queued clips.
@@ -394,6 +412,26 @@ pub struct AudioRms(pub f32);
 /// need: if the modifier misses a frame, the next one should reflect
 /// current mic state, not queued history.
 pub static AUDIO_RMS_SIGNAL: Signal<CriticalSectionRawMutex, AudioRms> = Signal::new();
+
+/// `true` while the TX feeder has a clip in flight.
+///
+/// Set / cleared once per DMA push (~32 ms cadence) inside
+/// [`run_tx_loop`]. The render task reads this each frame and gates
+/// `entity.perception.audio_rms` to `None` while playing — without
+/// the gate, the speaker output would re-trigger sound-reactive
+/// modifiers (`WakeOnVoice` / `StartleOnLoud`) on its own chirps.
+///
+/// Pair the read with a [`TX_GATE_TAIL_MS`] tail window so the mic
+/// doesn't pick up the speaker's residual response immediately after
+/// playback ends.
+pub static AUDIO_TX_PLAYING: AtomicBool = AtomicBool::new(false);
+
+/// How long after TX playback ends to keep gating the mic, in ms.
+///
+/// `150 ms` covers the speaker's mechanical decay plus a small margin
+/// for the AW88298's anti-pop ramp. Tunable on-device via the
+/// audio-bench if it turns out to be wrong.
+pub const TX_GATE_TAIL_MS: u64 = 150;
 
 /// Audio task peripherals, grouped so `main.rs` spawns the task with
 /// a single `Spawner::spawn` call rather than a 9-argument function.
@@ -827,6 +865,11 @@ async fn run_tx_loop<BUFFER>(
                 pairs * 2
             })
             .await;
+
+        // Publish playback state once per DMA buffer (~32 ms). The
+        // render task uses this + TX_GATE_TAIL_MS to suppress
+        // self-trigger of sound-reactive modifiers.
+        AUDIO_TX_PLAYING.store(current.is_some(), Ordering::Relaxed);
 
         if let Err(e) = result {
             defmt::warn!(

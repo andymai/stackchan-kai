@@ -14,11 +14,13 @@
 //!
 //! ## Per-intent additions
 //!
-//! | Intent     | `cheek_blush` add | Why                                    |
-//! |------------|-------------------|----------------------------------------|
-//! | `Idle`     |              `0`  | no override                            |
-//! | `Listen`   |              `0`  | handled separately by `ListenHead`     |
-//! | `BeingPet` |             `+30` | extra blush on top of any emotion base |
+//! | Intent        | `cheek_blush` add | Why                                       |
+//! |---------------|-------------------|-------------------------------------------|
+//! | `Idle`        |              `0`  | no override                               |
+//! | `Listen`      |              `0`  | handled separately by `ListenHead`        |
+//! | `HearingLoud` |              `0`  | `StartleOnLoud` writes `Surprised`, which |
+//! |               |                   | `EmotionStyle` already renders            |
+//! | `BeingPet`    |             `+30` | extra blush on top of any emotion base    |
 
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::entity::Entity;
@@ -53,7 +55,12 @@ impl IntentStyle {
 const fn blush_for(intent: Intent) -> u8 {
     match intent {
         Intent::BeingPet => PETTING_BLUSH_BUMP,
-        Intent::Idle | Intent::Listen | Intent::PickedUp | Intent::Shaken | Intent::Tilted => 0,
+        Intent::Idle
+        | Intent::Listen
+        | Intent::PickedUp
+        | Intent::Shaken
+        | Intent::Tilted
+        | Intent::HearingLoud => 0,
     }
 }
 
@@ -105,6 +112,16 @@ mod tests {
     fn listen_intent_does_not_change_blush() {
         let mut m = IntentStyle::new();
         let mut entity = entity_with(Intent::Listen, 100);
+        m.update(&mut entity);
+        assert_eq!(entity.face.style.cheek_blush, 100);
+    }
+
+    #[test]
+    fn hearing_loud_intent_does_not_change_blush() {
+        // StartleOnLoud writes Emotion::Surprised which gives the
+        // visible reaction; this modifier stays out.
+        let mut m = IntentStyle::new();
+        let mut entity = entity_with(Intent::HearingLoud, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 100);
     }

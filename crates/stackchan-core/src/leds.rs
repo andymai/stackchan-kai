@@ -17,6 +17,12 @@
 //! - **Emotion → base colour** via a warm/cool palette
 //!   ([`Neutral`]=soft white, [`Happy`]=amber, [`Sad`]=deep blue,
 //!   [`Sleepy`]=dim violet, [`Surprised`]=cyan).
+//! - **Intent overrides emotion colour** for sound-reactive intents:
+//!   [`Intent::Listen`] swaps the palette to a teal "I'm listening"
+//!   hue regardless of the underlying emotion (which `WakeOnVoice`
+//!   typically pins to `Happy`). [`Intent::HearingLoud`] keeps the
+//!   `Surprised` cyan but pins brightness to peak — the breath dim
+//!   is suppressed so the ring "flashes" for the hold duration.
 //! - **Breath-phase → brightness envelope** in `[0.6, 1.0]` over a
 //!   6-second triangle cycle, matching the default
 //!   [`Breath`](crate::modifiers::Breath) modifier. The LED pulse stays
@@ -29,12 +35,16 @@
 //! The mapping is uniform across all 12 pixels — no per-pixel animation
 //! yet. A gaze-direction arc is an obvious next iteration.
 //!
+//! [`Intent::Listen`]: crate::mind::Intent::Listen
+//! [`Intent::HearingLoud`]: crate::mind::Intent::HearingLoud
+//!
 //! [`Neutral`]: crate::Emotion::Neutral
 //! [`Happy`]: crate::Emotion::Happy
 //! [`Sad`]: crate::Emotion::Sad
 //! [`Sleepy`]: crate::Emotion::Sleepy
 //! [`Surprised`]: crate::Emotion::Surprised
 
+use crate::mind::Intent;
 use crate::{Emotion, Entity, Instant};
 
 /// Number of pixels on the StackChan LED ring.
@@ -97,6 +107,33 @@ const fn palette(emotion: Emotion) -> u32 {
     }
 }
 
+/// "Listening" teal — used as a palette override when
+/// [`Intent::Listen`] is held.
+///
+/// Cool, calm, distinct from both `Happy`'s amber (which `WakeOnVoice`
+/// typically pins simultaneously) and `Surprised`'s cyan (used for
+/// [`Intent::HearingLoud`]).
+const LISTEN_PALETTE: u32 = 0x0010_C0A0;
+
+/// Resolve the per-frame palette: intent overrides emotion for the
+/// sound-reactive intents.
+#[must_use]
+const fn palette_for(intent: Intent, emotion: Emotion) -> u32 {
+    match intent {
+        Intent::Listen => LISTEN_PALETTE,
+        // HearingLoud doesn't override the palette — it relies on the
+        // `Surprised` emotion that `StartleOnLoud` writes simultaneously.
+        // Idle / BeingPet / PickedUp / Shaken / Tilted / HearingLoud all
+        // fall through to the emotion palette.
+        Intent::Idle
+        | Intent::BeingPet
+        | Intent::PickedUp
+        | Intent::Shaken
+        | Intent::Tilted
+        | Intent::HearingLoud => palette(emotion),
+    }
+}
+
 /// Brightness envelope for the breath-phase pulse at time `now`.
 ///
 /// Returns an 8-bit multiplier where `255` = [`BRIGHTNESS_PEAK`] and
@@ -156,7 +193,7 @@ const fn rgb888_to_565(r: u8, g: u8, b: u8) -> u16 {
 /// `now`. Deterministic with respect to `(entity.mind.affect.emotion,
 /// now)` — host-testable.
 pub fn render_leds(entity: &Entity, now: Instant, out: &mut LedFrame) {
-    let base = palette(entity.mind.affect.emotion);
+    let base = palette_for(entity.mind.intent, entity.mind.affect.emotion);
     #[allow(
         clippy::cast_possible_truncation,
         reason = "bitmasked to 8 bits before truncation"
@@ -166,7 +203,14 @@ pub fn render_leds(entity: &Entity, now: Instant, out: &mut LedFrame) {
         ((base >> 8) & 0xFF) as u8,
         (base & 0xFF) as u8,
     );
-    let brightness = breath_brightness(now);
+    // `HearingLoud` pins brightness to peak — the breath dim is
+    // suppressed so the ring reads as a "flash" for the hold
+    // duration. Other intents follow the breath envelope.
+    let brightness = if matches!(entity.mind.intent, Intent::HearingLoud) {
+        BRIGHTNESS_PEAK
+    } else {
+        breath_brightness(now)
+    };
     let pixel = rgb888_to_565(
         scale_channel(r_raw, brightness),
         scale_channel(g_raw, brightness),
@@ -310,6 +354,84 @@ mod tests {
         let frame = LedFrame::default();
         for px in &frame.0 {
             assert_eq!(*px, 0);
+        }
+    }
+
+    #[test]
+    fn listen_intent_overrides_emotion_palette() {
+        // `WakeOnVoice` pins emotion to Happy when sustained voice is
+        // detected. With Intent::Listen also set (by LookAtSound), the
+        // LED palette must shift to teal — not amber.
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy;
+        entity.mind.intent = Intent::Listen;
+        let mut frame = LedFrame::default();
+        render_leds(&entity, Instant::from_millis(3_000), &mut frame);
+        let listen_px = frame.0[0];
+
+        entity.mind.intent = Intent::Idle;
+        render_leds(&entity, Instant::from_millis(3_000), &mut frame);
+        let happy_px = frame.0[0];
+
+        assert_ne!(
+            listen_px, happy_px,
+            "Listen intent should produce a different colour than the underlying Happy"
+        );
+    }
+
+    #[test]
+    fn hearing_loud_pins_brightness_to_peak() {
+        // At the breath trough, brightness should normally dip to ~60%.
+        // With Intent::HearingLoud set, the dim is suppressed and the
+        // pixel is at peak brightness regardless of breath phase.
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Surprised;
+        let mut frame = LedFrame::default();
+
+        // Trough phase, no intent override.
+        render_leds(&entity, Instant::from_millis(0), &mut frame);
+        let trough_b = frame.0[0] & 0x1F;
+
+        // Same trough phase, HearingLoud override.
+        entity.mind.intent = Intent::HearingLoud;
+        render_leds(&entity, Instant::from_millis(0), &mut frame);
+        let loud_b = frame.0[0] & 0x1F;
+
+        assert!(
+            loud_b > trough_b,
+            "HearingLoud should pin brightness above the breath trough ({trough_b} → {loud_b})"
+        );
+    }
+
+    #[test]
+    fn other_intents_do_not_override_emotion_palette() {
+        // BeingPet / PickedUp / Shaken / Tilted / Idle / HearingLoud
+        // all defer to the emotion palette for colour. Verify by
+        // comparing each against Idle for the same emotion.
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy;
+        let mut frame = LedFrame::default();
+        let now = Instant::from_millis(3_000); // peak brightness, deterministic
+
+        entity.mind.intent = Intent::Idle;
+        render_leds(&entity, now, &mut frame);
+        let baseline = frame.0[0];
+
+        for intent in [
+            Intent::BeingPet,
+            Intent::PickedUp,
+            Intent::Shaken,
+            Intent::Tilted,
+            // HearingLoud overrides brightness, not palette — same
+            // hue at peak brightness.
+            Intent::HearingLoud,
+        ] {
+            entity.mind.intent = intent;
+            render_leds(&entity, now, &mut frame);
+            assert_eq!(
+                frame.0[0], baseline,
+                "intent {intent:?} unexpectedly changed the palette"
+            );
         }
     }
 }

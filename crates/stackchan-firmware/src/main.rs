@@ -67,7 +67,7 @@ use stackchan_core::{
     modifiers::{
         AmbientSleepy, Blink, BodyGesture, Breath, EmotionCycle, EmotionHead, EmotionStyle,
         EmotionTouch, IdleDrift, IdleSway, IntentReflex, IntentStyle, ListenHead,
-        LowBatteryEmotion, MouthOpenAudio, RemoteCommand, WakeOnVoice,
+        LowBatteryEmotion, MouthOpenAudio, RemoteCommand, StartleHead, StartleOnLoud, WakeOnVoice,
     },
     render_leds,
     skills::{Handling, LookAtSound, Petting},
@@ -183,6 +183,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut ambient_sleepy = AmbientSleepy::new();
     let mut low_battery = LowBatteryEmotion::new();
     let mut wake_on_voice = WakeOnVoice::new();
+    let mut startle_on_loud = StartleOnLoud::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut intent_style = IntentStyle::new();
@@ -196,12 +197,17 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut listen_head = ListenHead::new();
+    let mut startle_head = StartleHead::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut look_at_sound = LookAtSound::new();
     let mut petting = Petting::new();
     let mut handling = Handling::new();
     let mut body_gesture = BodyGesture::new();
     let mut last_rendered: Option<Face> = None;
+    // Last instant TX was observed playing. Drives the post-playback
+    // tail of the audio_rms gate so the mic doesn't pick up the
+    // speaker's residual response immediately after a chirp ends.
+    let mut last_tx_active_at: Option<stackchan_core::Instant> = None;
 
     // Build the Director and register the canonical modifier stack
     // plus skills (via add_skill).
@@ -224,6 +230,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .add_modifier(&mut wake_on_voice)
         .expect("registry full");
     director
+        .add_modifier(&mut startle_on_loud)
+        .expect("registry full");
+    director
         .add_modifier(&mut ambient_sleepy)
         .expect("registry full");
     director
@@ -243,6 +252,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .expect("registry full");
     director
         .add_modifier(&mut listen_head)
+        .expect("registry full");
+    director
+        .add_modifier(&mut startle_head)
         .expect("registry full");
     director
         .add_modifier(&mut mouth_open_audio)
@@ -274,7 +286,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + IntentReflex + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + IntentStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + MouthOpenAudio + LookAtSound[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + IntentReflex + WakeOnVoice + StartleOnLoud + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + IntentStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + StartleHead + MouthOpenAudio + LookAtSound[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
@@ -354,9 +366,23 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
             entity.perception.battery_percent = Some(status.battery_percent);
             entity.perception.usb_power_present = Some(status.usb_power);
         }
-        // Drain the latest mic-RMS sample. MouthOpenAudio reads
-        // entity.perception.audio_rms now (no more .set_rms()).
-        if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
+        // Drain the latest mic-RMS sample, gated by TX activity so the
+        // speaker doesn't re-trigger sound-reactive modifiers on its
+        // own chirps. While TX is playing — or for `TX_GATE_TAIL_MS`
+        // afterwards to cover the speaker's mechanical decay —
+        // `audio_rms` is held at `None` and any pending RMS signal is
+        // drained so a stale window doesn't leak through post-gate.
+        let tx_playing = audio::AUDIO_TX_PLAYING.load(core::sync::atomic::Ordering::Relaxed);
+        if tx_playing {
+            last_tx_active_at = Some(now);
+        }
+        let gate_active = tx_playing
+            || last_tx_active_at
+                .is_some_and(|t| now.saturating_duration_since(t) < audio::TX_GATE_TAIL_MS);
+        if gate_active {
+            entity.perception.audio_rms = None;
+            let _ = audio::AUDIO_RMS_SIGNAL.try_take();
+        } else if let Some(rms) = audio::AUDIO_RMS_SIGNAL.try_take() {
             entity.perception.audio_rms = Some(rms.0);
         }
         // Drain the latest body-touch (back-of-head Si12T) reading.
@@ -378,6 +404,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
             let result = match kind {
                 ChirpKind::Pickup => audio::try_enqueue_pickup_chirp(),
                 ChirpKind::Wake => audio::try_enqueue_wake_chirp(),
+                ChirpKind::Startle => audio::try_enqueue_startle_chirp(),
                 ChirpKind::LowBatteryAlert => audio::try_enqueue_low_battery_alert(),
                 ChirpKind::CameraModeEnter => audio::try_enqueue_camera_mode_enter(),
                 ChirpKind::CameraModeExit => audio::try_enqueue_camera_mode_exit(),

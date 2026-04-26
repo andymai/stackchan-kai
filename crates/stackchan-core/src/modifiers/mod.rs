@@ -21,13 +21,18 @@
 //!      Driven by the [`crate::skills::Handling`] skill upstream.
 //!   4. [`WakeOnVoice`] — reads `perception.audio_rms`, flips to
 //!      `Happy` on sustained voice. Wakes from `Sleepy`.
-//!   5. [`AmbientSleepy`] — reads `perception.ambient_lux`, flips to
+//!   5. [`StartleOnLoud`] — reads `perception.audio_rms`, flips to
+//!      `Surprised` + writes `Intent::HearingLoud` + queues
+//!      `ChirpKind::Startle` on the rising edge above the loud
+//!      threshold. Overrides `WakeOnVoice` (sustained voice) but
+//!      defers to explicit-input holds.
+//!   6. [`AmbientSleepy`] — reads `perception.ambient_lux`, flips to
 //!      `Sleepy` in dark rooms.
-//!   6. [`LowBatteryEmotion`] — reads `perception.battery_percent` and
+//!   7. [`LowBatteryEmotion`] — reads `perception.battery_percent` and
 //!      `perception.usb_power_present`, forces `Sleepy` below threshold
 //!      while unplugged. Sets `voice.chirp_request` to `LowBatteryAlert`
 //!      on the arming edge.
-//!   7. [`EmotionCycle`] — autonomous emotion advancer. Stands
+//!   8. [`EmotionCycle`] — autonomous emotion advancer. Stands
 //!      down when `mind.autonomy.manual_until` is held.
 //!
 //! - **[`crate::director::Phase::Expression`]** — visual style. 4
@@ -37,7 +42,7 @@
 //!   3. [`Breath`] — vertical drift on all features.
 //!   4. [`IdleDrift`] — occasional eye-center jitter.
 //!
-//! - **[`crate::director::Phase::Motion`]** — head motion. 3 modifiers:
+//! - **[`crate::director::Phase::Motion`]** — head motion:
 //!   1. [`IdleSway`] — slow pan/tilt head wander written to
 //!      `motor.head_pose`.
 //!   2. [`EmotionHead`] — emotion-keyed pan/tilt bias added on top
@@ -45,6 +50,9 @@
 //!   3. [`ListenHead`] — upward tilt bias when `mind.attention` is
 //!      `Listening` (cocked-head listening posture). Added on top of
 //!      sway + emotion bias.
+//!   4. [`StartleHead`] — brief asymmetric pan/tilt recoil on the
+//!      entry edge into `Intent::HearingLoud`. Fixed-duration impulse
+//!      added on top of the other motion modifiers.
 //!
 //! - **[`crate::director::Phase::Audio`]** — audio-driven visual. 1
 //!   modifier:
@@ -73,6 +81,8 @@ mod listen_head;
 mod low_battery;
 mod mouth_open_audio;
 mod remote_command;
+mod startle_head;
+mod startle_on_loud;
 mod wake_on_voice;
 
 pub use ambient_sleepy::{AMBIENT_HOLD_MS, AmbientSleepy, SLEEPY_ENTER_LUX, SLEEPY_EXIT_LUX};
@@ -99,4 +109,9 @@ pub use mouth_open_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthOpenAudio,
 };
 pub use remote_command::{RemoteCommand, RemoteMapping};
+pub use startle_head::{
+    STARTLE_HEAD_ATTACK_MS, STARTLE_HEAD_DECAY_MS, STARTLE_HEAD_PAN_DEG, STARTLE_HEAD_TILT_DEG,
+    STARTLE_HEAD_TOTAL_MS, StartleHead,
+};
+pub use startle_on_loud::{STARTLE_HOLD_MS, STARTLE_RMS_THRESHOLD, StartleOnLoud};
 pub use wake_on_voice::{WAKE_HOLD_MS, WAKE_RMS_THRESHOLD, WAKE_SUSTAIN_TICKS, WakeOnVoice};
