@@ -11,14 +11,18 @@
 //!
 //! ## Catalog
 //!
-//! - [`LookAtSound`] — sustained `perception.audio_rms` flips
-//!   `mind.attention` to `Listening` and `mind.intent` to `Listen`.
-//!   Pairs with the [`crate::modifiers::ListenHead`] motion modifier
-//!   for a cocked-head listening posture.
+//! See each skill's module docs for the full description; this list is
+//! a quick map of which input drives which intent. Add new skills by
+//! dropping a module here and registering it on the [`crate::Director`].
 
+mod handling;
 mod look_at_sound;
 mod petting;
 
+pub use handling::{
+    Handling, PICKUP_DEVIATION_G, PICKUP_SUSTAIN_MS, SHAKE_DEVIATION_G, SHAKE_REQUIRED_TRANSITIONS,
+    SHAKE_WINDOW_MS, TILT_SUSTAIN_MS, TILT_Z_THRESHOLD_G,
+};
 pub use look_at_sound::{
     LISTEN_RELEASE_MS, LISTEN_RMS_THRESHOLD, LISTEN_SUSTAIN_TICKS, LookAtSound,
 };

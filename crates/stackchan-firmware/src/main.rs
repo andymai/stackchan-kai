@@ -66,11 +66,11 @@ use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
         AmbientSleepy, Blink, BodyGesture, Breath, EmotionCycle, EmotionHead, EmotionStyle,
-        EmotionTouch, IdleDrift, IdleSway, IntentStyle, ListenHead, LowBatteryEmotion,
-        MouthOpenAudio, PickupReaction, RemoteCommand, WakeOnVoice,
+        EmotionTouch, IdleDrift, IdleSway, IntentReflex, IntentStyle, ListenHead,
+        LowBatteryEmotion, MouthOpenAudio, RemoteCommand, WakeOnVoice,
     },
     render_leds,
-    skills::{LookAtSound, Petting},
+    skills::{Handling, LookAtSound, Petting},
     voice::ChirpKind,
 };
 use static_cell::StaticCell;
@@ -179,7 +179,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     // NEC `(address, command, emotion)` tuples after running
     // `examples/ir_bench.rs` to discover your remote's codes.
     let mut remote = RemoteCommand::new();
-    let mut pickup = PickupReaction::new();
+    let mut intent_reflex = IntentReflex::new();
     let mut ambient_sleepy = AmbientSleepy::new();
     let mut low_battery = LowBatteryEmotion::new();
     let mut wake_on_voice = WakeOnVoice::new();
@@ -199,6 +199,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut look_at_sound = LookAtSound::new();
     let mut petting = Petting::new();
+    let mut handling = Handling::new();
     let mut body_gesture = BodyGesture::new();
     let mut last_rendered: Option<Face> = None;
 
@@ -216,7 +217,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .add_modifier(&mut body_gesture)
         .expect("registry full");
     director.add_modifier(&mut remote).expect("registry full");
-    director.add_modifier(&mut pickup).expect("registry full");
+    director
+        .add_modifier(&mut intent_reflex)
+        .expect("registry full");
     director
         .add_modifier(&mut wake_on_voice)
         .expect("registry full");
@@ -250,6 +253,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     director
         .add_skill(&mut petting)
         .expect("skill registry full");
+    director
+        .add_skill(&mut handling)
+        .expect("skill registry full");
     let mut led_frame = LedFrame::default();
     // Camera-mode state. The button task's long-press handler is the
     // sole producer of `CAMERA_MODE_SIGNAL`; we mirror it locally so
@@ -268,7 +274,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + PickupReaction + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + MouthOpenAudio + LookAtSound[skill]",
+        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + IntentReflex + WakeOnVoice + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + IntentStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + MouthOpenAudio + LookAtSound[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
@@ -364,7 +370,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         director.run(&mut entity, now);
 
         // Drain the chirp request modifiers raised this tick. Modifiers
-        // (`PickupReaction`, `WakeOnVoice`, `LowBatteryEmotion`) set
+        // (`IntentReflex`, `WakeOnVoice`, `LowBatteryEmotion`) set
         // `entity.voice.chirp_request`; we read it once after `run()`,
         // dispatch on `ChirpKind`, then clear so the next frame starts
         // fresh.
@@ -530,7 +536,7 @@ async fn touch_task(shared_i2c: SharedI2c) -> ! {
     touch::run_touch_loop(touch).await
 }
 
-/// Si12T body-touch polling task. Drives the back-of-head 3-zone pads
+/// `Si12T` body-touch polling task. Drives the back-of-head 3-zone pads
 /// at 50 ms cadence and publishes per-zone state on
 /// [`body_touch::BODY_TOUCH_SIGNAL`]. The render task drains it into
 /// `entity.perception.body_touch`; modifiers / skills do their own

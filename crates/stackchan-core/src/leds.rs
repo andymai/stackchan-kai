@@ -93,6 +93,7 @@ const fn palette(emotion: Emotion) -> u32 {
         Emotion::Sad => 0x0015_30A0,
         Emotion::Sleepy => 0x0030_1448,
         Emotion::Surprised => 0x0030_E0FF,
+        Emotion::Angry => 0x00FF_2020,
     }
 }
 

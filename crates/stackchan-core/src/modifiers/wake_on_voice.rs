@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn manual_hold_from_other_modifier_blocks_wake() {
-        // PickupReaction has already claimed the avatar with Surprised
+        // IntentReflex has already claimed the avatar with Surprised
         // and a long hold. WakeOnVoice still sees sustained loud
         // ticks but stands down — explicit input wins.
         let mut wake = WakeOnVoice::new();

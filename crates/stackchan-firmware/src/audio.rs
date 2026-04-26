@@ -224,7 +224,7 @@ const PICKUP_CHIRP_LO: AudioClip = AudioClip {
 /// Second leg of the pickup chirp: 50 ms of 4 kHz. Played
 /// back-to-back with [`PICKUP_CHIRP_LO`] for an upward sweep that
 /// matches the "Surprised!" emotion fire from
-/// [`stackchan_core::modifiers::PickupReaction`].
+/// [`stackchan_core::modifiers::IntentReflex`].
 const PICKUP_CHIRP_HI: AudioClip = AudioClip {
     samples: &SINE_4KHZ_CYCLE,
     cycles: 200,
@@ -371,7 +371,7 @@ pub fn try_enqueue_wake_chirp() -> Result<(), TrySendError<AudioClip>> {
 
 /// Enqueue the pickup chirp: 50 ms of 2 kHz then 50 ms of 4 kHz —
 /// an upward sweep that matches the "Surprised!" emotion fire from
-/// [`stackchan_core::modifiers::PickupReaction`]. Two queued clips.
+/// [`stackchan_core::modifiers::IntentReflex`]. Two queued clips.
 ///
 /// Best-effort, same partial-queue caveat as
 /// [`try_enqueue_low_battery_alert`].

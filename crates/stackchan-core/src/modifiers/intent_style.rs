@@ -46,10 +46,14 @@ impl IntentStyle {
 }
 
 /// Look up the per-intent cheek-blush addition.
+///
+/// `PickedUp` / `Shaken` / `Tilted` get their visible reaction from
+/// [`super::IntentReflex`] (emotion + autonomy hold), which then flows
+/// through `EmotionStyle`. They contribute zero blush themselves.
 const fn blush_for(intent: Intent) -> u8 {
     match intent {
         Intent::BeingPet => PETTING_BLUSH_BUMP,
-        Intent::Idle | Intent::Listen => 0,
+        Intent::Idle | Intent::Listen | Intent::PickedUp | Intent::Shaken | Intent::Tilted => 0,
     }
 }
 

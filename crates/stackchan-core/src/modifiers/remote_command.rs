@@ -18,7 +18,7 @@
 //! ## Coordination
 //!
 //! Follows the same "explicit input wins" convention as
-//! [`super::EmotionTouch`] and [`super::PickupReaction`]: if
+//! [`super::EmotionTouch`] and [`super::IntentReflex`]: if
 //! `entity.mind.autonomy.manual_until` is already set by another
 //! modifier, the `RemoteCommand` stands down. Otherwise it sets the
 //! emotion from the table + writes `manual_until = now + MANUAL_HOLD_MS`.

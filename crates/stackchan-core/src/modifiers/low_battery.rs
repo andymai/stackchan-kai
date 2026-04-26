@@ -41,7 +41,7 @@
 //!
 //! ## Coordination with the other emotion modifiers
 //!
-//! Like [`super::PickupReaction`] and [`super::AmbientSleepy`], this
+//! Like [`super::IntentReflex`] and [`super::AmbientSleepy`], this
 //! modifier respects an existing `entity.mind.autonomy.manual_until`
 //! hold — if touch, a pickup, or any other explicit input has already
 //! claimed the emotion, we stand down. Low battery is *background
