@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/andymai/stackchan-kai/compare/ir-nec-v0.7.0...ir-nec-v0.8.0) (2026-04-26)
+
+
+### Features
+
+* power-button taps + IR NEC RemoteCommand modifier ([#19](https://github.com/andymai/stackchan-kai/issues/19)) ([f29c92e](https://github.com/andymai/stackchan-kai/commit/f29c92e7550fa450be0adb8b94a8b57801e18ddf))
+* scaffold missing hardware-spec drivers + README freshness hook ([#26](https://github.com/andymai/stackchan-kai/issues/26)) ([eecb238](https://github.com/andymai/stackchan-kai/commit/eecb238bfb7005c553d9a6fb3b722fca4c504658))
+
 ## [0.7.0](https://github.com/andymai/stackchan-kai/compare/v0.6.0...v0.7.0) (2026-04-25)
 
 
