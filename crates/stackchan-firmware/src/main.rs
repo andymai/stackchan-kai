@@ -800,25 +800,17 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn camera_task failed: {}", defmt::Debug2Format(&e));
     }
 
-    // One-shot wall-clock read. Drives both the boot-log timestamp
-    // and the time-of-day boot greeting. RTC failures are warn-only
-    // (logged inside `wallclock::read_datetime`); we fall back to
-    // the default daytime greeting when no reading is available.
+    // One-shot wall-clock read for the boot-log timestamp. RTC
+    // failures are warn-only (logged inside `wallclock::read_datetime`);
+    // we just skip the timestamped log line when no reading is
+    // available. The boot greeting clips remain available for explicit
+    // playback via `audio-bench`.
     let rtc_bus = I2cDevice::new(board_io.i2c_bus);
-    let boot_clip = wallclock::read_datetime(rtc_bus)
-        .await
-        .map_or(audio::BOOT_GREETING, |dt| {
-            let mut rtc_buf = [0u8; 19];
-            defmt::info!(
-                "boot @ {=str} (RTC)",
-                bm8563::format_datetime(dt, &mut rtc_buf),
-            );
-            audio::boot_greeting_for_hour(dt.hours)
-        });
-    if let Err(e) = audio::try_enqueue_clip(boot_clip) {
-        defmt::warn!(
-            "audio: boot greeting dropped, queue full ({:?})",
-            defmt::Debug2Format(&e)
+    if let Some(dt) = wallclock::read_datetime(rtc_bus).await {
+        let mut rtc_buf = [0u8; 19];
+        defmt::info!(
+            "boot @ {=str} (RTC)",
+            bm8563::format_datetime(dt, &mut rtc_buf),
         );
     }
 

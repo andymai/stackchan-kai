@@ -150,9 +150,8 @@ const SINE_4KHZ_CYCLE: [i16; 4] = [0, 8192, 0, -8192];
 /// hears two distinct pulses rather than one long tone.
 const SILENCE_CYCLE: [i16; 8] = [0; 8];
 
-/// Default boot greeting: 500 ms of 1 kHz sine. Used when the RTC
-/// is unavailable (no battery / chip missing) and as the daytime
-/// (12:00–17:59) variant in the time-of-day selector.
+/// Boot greeting: 500 ms of 1 kHz sine. Available for explicit
+/// playback via the `audio-bench` example; not auto-enqueued at boot.
 ///
 /// `500 cycles × 16 samples = 8 000 samples = 500 ms` at the 16 kHz
 /// sample rate. Tweak `cycles` to change duration without touching
@@ -161,50 +160,6 @@ pub const BOOT_GREETING: AudioClip = AudioClip {
     samples: &SINE_1KHZ_CYCLE,
     cycles: 500,
 };
-
-/// Morning greeting (05:00–11:59): a brighter 2 kHz / 300 ms tone.
-/// Higher pitch + shorter duration than the default — more "wake up"
-/// than "settle in".
-pub const BOOT_GREETING_MORNING: AudioClip = AudioClip {
-    samples: &SINE_2KHZ_CYCLE,
-    cycles: 600,
-};
-
-/// Evening greeting (18:00–22:59): the default 1 kHz tone but
-/// slightly longer (700 ms) for a warmer feel.
-pub const BOOT_GREETING_EVENING: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 700,
-};
-
-/// Night greeting (23:00–04:59): a single short, soft beep — 200 ms
-/// of 1 kHz. Quiet enough not to wake a sleeping household.
-pub const BOOT_GREETING_NIGHT: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 200,
-};
-
-/// Pick the boot greeting clip for a given clock hour (`0..=23`).
-///
-/// - Morning (05–11): [`BOOT_GREETING_MORNING`]
-/// - Day (12–17): [`BOOT_GREETING`] (default)
-/// - Evening (18–22): [`BOOT_GREETING_EVENING`]
-/// - Night (23, 00–04): [`BOOT_GREETING_NIGHT`]
-///
-/// Hours outside `0..=23` (which the BM8563 should never produce)
-/// fall back to the default daytime greeting.
-#[must_use]
-pub const fn boot_greeting_for_hour(hour: u8) -> AudioClip {
-    match hour {
-        5..=11 => BOOT_GREETING_MORNING,
-        18..=22 => BOOT_GREETING_EVENING,
-        23 | 0..=4 => BOOT_GREETING_NIGHT,
-        // 12..=17 (default daytime) + any out-of-range hour (the
-        // BM8563 caps at 23, so this branch covers spec-compliant
-        // and degenerate-input alike).
-        _ => BOOT_GREETING,
-    }
-}
 
 /// Single-clip "wake" chirp: 100 ms of 1 kHz sine. Audibly soft but
 /// distinct from the boot greeting (which is 5× longer); enqueued
@@ -652,10 +607,9 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         defmt::info!("audio: AW88298 un-muted — speaker live");
     }
 
-    // The boot greeting is enqueued by main.rs after it reads the RTC
-    // (so the time-of-day variant can be chosen). If the RTC isn't
-    // available main falls back to BOOT_GREETING. Either way the TX
-    // queue is the single source of TX content from here on.
+    // The TX queue is the single source of TX content from here on.
+    // Nothing is enqueued at boot — clips (boot greetings, low-battery
+    // alerts, pickup chirps) are pushed by their respective triggers.
     defmt::info!(
         "audio: bring-up complete — RX RMS loop ({=u32}-sample windows) + TX feeder (clip-queue driven)",
         RMS_WINDOW_SAMPLES,
