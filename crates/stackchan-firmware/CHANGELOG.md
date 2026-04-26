@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.14.0...stackchan-firmware-v0.15.0) (2026-04-26)
+
+
+### Features
+
+* **core:** dormant mode quiets head servos when nothing's happening ([#128](https://github.com/andymai/stackchan-kai/issues/128)) ([1d60ae9](https://github.com/andymai/stackchan-kai/commit/1d60ae902ed1cdb0d26129ede92105912e0aa70d))
+
 ## [0.14.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.13.1...stackchan-firmware-v0.14.0) (2026-04-26)
 
 

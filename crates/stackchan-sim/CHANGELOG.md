@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.10.2...stackchan-sim-v0.11.0) (2026-04-26)
+
+
+### Features
+
+* **core:** dormant mode quiets head servos when nothing's happening ([#128](https://github.com/andymai/stackchan-kai/issues/128)) ([1d60ae9](https://github.com/andymai/stackchan-kai/commit/1d60ae902ed1cdb0d26129ede92105912e0aa70d))
+
 ## [0.10.2](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.10.1...stackchan-sim-v0.10.2) (2026-04-26)
 
 ## [0.10.1](https://github.com/andymai/stackchan-kai/compare/v0.10.0...v0.10.1) (2026-04-26)

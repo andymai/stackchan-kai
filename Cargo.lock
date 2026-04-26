@@ -4142,7 +4142,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stackchan-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "embedded-graphics",
  "heapless 0.8.0",
@@ -4151,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4192,7 +4192,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "eframe",
  "embedded-graphics",
@@ -4469,7 +4469,7 @@ dependencies = [
 
 [[package]]
 name = "tracker"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "heapless 0.8.0",
  "libm",
