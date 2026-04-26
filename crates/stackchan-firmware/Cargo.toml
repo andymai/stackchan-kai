@@ -69,9 +69,18 @@ mipidsi = "0.10"
 # lockstep). `esp-rtos` is the current embassy integration; it replaced
 # `esp-hal-embassy` for the 1.0 line.
 esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "psram", "unstable"] }
-esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp32s3"] }
+esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp-radio", "esp32s3"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
+# Wi-Fi station-mode driver. `esp-radio` replaces `esp-wifi` on the
+# esp-hal 1.0 release line. Pinned to 0.17.x because 0.18 requires
+# esp-hal ~1.1.0-rc.0 which would force a wider toolchain bump.
+# `unstable` is required because esp-hal itself runs with `unstable`
+# enabled here.
+esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "unstable"] }
+# embassy-net's TCP / UDP / DHCPv4 stack on top of smoltcp. 0.9.x
+# pairs with esp-radio 0.18 (both ride the embassy-sync 0.7 line).
+embassy-net = { version = "0.9", features = ["defmt", "proto-ipv4", "tcp", "udp", "dhcpv4", "medium-ethernet"] }
 
 embassy-executor = { version = "0.9.1", features = ["defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt"] }

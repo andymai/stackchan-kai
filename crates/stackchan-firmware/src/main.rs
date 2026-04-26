@@ -26,7 +26,7 @@ extern crate alloc;
 
 use stackchan_firmware::{
     ambient, audio, board, body_touch, button, camera, clock, framebuffer, head, imu, ir, leds,
-    power, storage, touch, tracking_trace, wallclock, watchdog,
+    net, power, storage, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -835,9 +835,43 @@ async fn main(spawner: Spawner) -> ! {
             stackchan_net::Config::default()
         }
     };
-    // No downstream consumer yet; bind to `_` so the unused-result
-    // lint stays quiet without dropping the call.
-    let _ = net_config;
+    // Bring up the radio + Wi-Fi station + embassy-net TCP/IP stack.
+    // `esp_rtos::start` ran at boot (line above), which `esp_radio::init`
+    // requires before claiming the WIFI peripheral. Both the
+    // `Controller` and `WifiController` live in static cells so the
+    // spawned tasks can borrow them for `'static`.
+    #[allow(clippy::items_after_statements)]
+    static RADIO: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
+    let radio = match esp_radio::init() {
+        Ok(c) => RADIO.init(c),
+        Err(e) => defmt::panic!("esp-radio init failed: {}", defmt::Debug2Format(&e)),
+    };
+    let (wifi_controller, interfaces) =
+        match esp_radio::wifi::new(radio, peripherals.WIFI, esp_radio::wifi::Config::default()) {
+            Ok(r) => r,
+            Err(e) => defmt::panic!("wifi::new failed: {}", defmt::Debug2Format(&e)),
+        };
+
+    let net_rng = Rng::new();
+    let net_seed: u64 = u64::from(net_rng.random()) | (u64::from(net_rng.random()) << 32);
+    let stack_resources = net::stack::STACK_RESOURCES
+        .init(embassy_net::StackResources::<{ net::stack::STACK_SOCKETS }>::new());
+    let (_net_stack, net_runner) = embassy_net::new(
+        interfaces.sta,
+        embassy_net::Config::dhcpv4(embassy_net::DhcpConfig::default()),
+        stack_resources,
+        net_seed,
+    );
+    if let Err(e) = spawner.spawn(net::stack::net_runner_task(net_runner)) {
+        defmt::panic!("spawn(net_runner_task) failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(net::wifi::wifi_task(
+        wifi_controller,
+        net_config.wifi.ssid.clone(),
+        net_config.wifi.psk.clone(),
+    )) {
+        defmt::panic!("spawn(wifi_task) failed: {}", defmt::Debug2Format(&e));
+    }
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
     // (eyes), once for IdleHeadDrift (head). Using independent seeds
