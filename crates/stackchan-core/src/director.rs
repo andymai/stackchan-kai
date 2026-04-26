@@ -184,6 +184,8 @@ pub enum Field {
     Attention,
     /// `entity.mind.engagement`
     Engagement,
+    /// `entity.mind.dormancy`
+    Dormancy,
 
     // ---- Voice ----
     /// `entity.voice.chirp_request`
@@ -268,9 +270,12 @@ impl Field {
             | Self::AudioRms
             | Self::BodyTouch
             | Self::Tracking => FieldGroup::Perception,
-            Self::Emotion | Self::Autonomy | Self::Intent | Self::Attention | Self::Engagement => {
-                FieldGroup::Mind
-            }
+            Self::Emotion
+            | Self::Autonomy
+            | Self::Intent
+            | Self::Attention
+            | Self::Engagement
+            | Self::Dormancy => FieldGroup::Mind,
             Self::ChirpRequest => FieldGroup::Voice,
             Self::TapPending | Self::RemotePending => FieldGroup::Input,
         }
@@ -361,6 +366,7 @@ impl Field {
             Self::Intent => before.mind.intent != after.mind.intent,
             Self::Attention => before.mind.attention != after.mind.attention,
             Self::Engagement => before.mind.engagement != after.mind.engagement,
+            Self::Dormancy => before.mind.dormancy != after.mind.dormancy,
             Self::ChirpRequest => before.voice.chirp_request != after.voice.chirp_request,
             Self::TapPending => before.input.tap_pending != after.input.tap_pending,
             Self::RemotePending => before.input.remote_pending != after.input.remote_pending,

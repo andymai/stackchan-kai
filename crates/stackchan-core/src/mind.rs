@@ -242,6 +242,47 @@ impl Engagement {
     }
 }
 
+/// Activity-driven sleep state.
+///
+/// `Awake` while any of `intent`, `attention`, or `engagement` are
+/// non-default; `Asleep { since }` after a timeout of full quiet.
+/// Modifiers that produce continuous per-tick servo motion (the
+/// triangle-wave [`crate::modifiers::IdleSway`]) gate on this so the
+/// hardware servos stop chattering when the avatar is alone in the
+/// room. Set by [`crate::modifiers::DormancyFromActivity`]; read by
+/// [`crate::modifiers::IdleSway`].
+///
+/// Wake conditions: any change that bumps `intent`, `attention`, or
+/// `engagement` away from their defaults. That covers face detection
+/// (engagement), sustained voice / mic VAD (attention=Listening),
+/// loud audio transients (intent=Startled), pickup (intent=PickedUp),
+/// body touch (intent=Petted), and IR remote (intent change).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Dormancy {
+    /// Active state — autonomous background motion runs normally.
+    #[default]
+    Awake,
+    /// No wake signals for the configured timeout.
+    /// [`crate::modifiers::IdleSway`] holds at zero contribution
+    /// while in this state, so the head servos stay still.
+    Asleep {
+        /// When the dormant transition fired. Consumers can use this
+        /// for an ease-in / ease-out animation, or to gate other
+        /// behaviour by dormancy duration.
+        since: Instant,
+    },
+}
+
+impl Dormancy {
+    /// `true` if currently in [`Self::Asleep`]. Convenience for
+    /// modifiers that gate their per-tick contribution on dormancy.
+    #[must_use]
+    pub const fn is_asleep(&self) -> bool {
+        matches!(self, Self::Asleep { .. })
+    }
+}
+
 /// Persistent facts the entity remembers across boots. Placeholder
 /// marker type; not yet populated.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -267,6 +308,11 @@ pub struct Mind {
     /// [`crate::modifiers::AttentionFromTracking`] from the firmware-side
     /// cascade observations; read by engagement modifiers.
     pub engagement: Engagement,
+    /// Activity-driven sleep state. Default `Awake`. Set by
+    /// [`crate::modifiers::DormancyFromActivity`]; read by
+    /// [`crate::modifiers::IdleSway`] to silence the head servos
+    /// when nothing's happening in the room.
+    pub dormancy: Dormancy,
     /// Persistent facts.
     pub memory: Memory,
 }
