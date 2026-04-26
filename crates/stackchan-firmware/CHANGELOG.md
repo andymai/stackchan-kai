@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.13.0...stackchan-firmware-v0.13.1) (2026-04-26)
+
+
+### Bug Fixes
+
+* **firmware:** bump CASCADE_PERIOD 4→8 to relieve cooperative-scheduler starvation ([#123](https://github.com/andymai/stackchan-kai/issues/123)) ([beed888](https://github.com/andymai/stackchan-kai/commit/beed888ad36cc6a10074d7c10504d659f859d510))
+
 ## [0.13.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.12.1...stackchan-firmware-v0.13.0) (2026-04-26)
 
 
