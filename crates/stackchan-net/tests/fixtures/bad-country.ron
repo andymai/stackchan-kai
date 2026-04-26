@@ -1,0 +1,14 @@
+(
+    wifi: (
+        ssid: "home",
+        psk: "redacted",
+        country: "USA",
+    ),
+    mdns: (
+        hostname: "stackchan",
+    ),
+    time: (
+        tz: "UTC",
+        sntp_servers: ["pool.ntp.org"],
+    ),
+)

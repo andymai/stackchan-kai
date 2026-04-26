@@ -101,6 +101,15 @@ Half-duplex serial servo bus.
 ### `ir-nec`
 No `Error` enum — decoder returns `Option<NecCommand>` and treats noise as "no decode" rather than an error.
 
+### `stackchan_net::ConfigError`
+RON config parse + validation. Host crate; firmware wraps with `Debug2Format` for `defmt` logging. Validators only fire through `parse_ron` — the firmware's `Config::default()` fallback path never trips them.
+- `Parse(SpannedError)` — RON syntax error / missing field / type mismatch. Inner value carries `(line, col)`.
+- `Serialize(ron::Error)` — RON round-trip failure on `render_ron`. Should not happen with well-formed `Config`; treat as a bug.
+- `EmptySsid` — `wifi.ssid` empty / whitespace-only on disk. Default `WifiConfig` has an empty SSID by design (the offline-first sentinel), but explicit blanks in a written file are almost always mistakes.
+- `InvalidCountry(String)` — `wifi.country` not exactly two ASCII letters. ESP-WIFI expects ISO-3166 alpha-2.
+- `InvalidHostname(String)` — `mdns.hostname` failed RFC-952 subset (alphanumerics + hyphen, must start with letter, no trailing hyphen, length 1-63).
+- `NoSntpServers` — `time.sntp_servers` empty. Firmware needs at least one candidate.
+
 ## Firmware-side error wrapping
 
 `stackchan-firmware` does not introduce its own typed-error enum. Init

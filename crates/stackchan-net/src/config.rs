@@ -1,0 +1,208 @@
+//! Schema v1 of the Stack-chan RON config — `wifi`, `mdns`, `time`.
+//!
+//! Held deliberately minimal: avatar geometry and modifier params
+//! stay hardcoded in `stackchan-core` for now. The shape this crate
+//! commits to is the surface that `PUT /settings` round-trips and
+//! that the SD-card boot reader populates.
+
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::ConfigError;
+
+/// Top-level on-disk config.
+///
+/// Defaults are tuned for offline-first boot: an empty SSID is a
+/// no-op at the Wi-Fi layer, hostname `"stackchan"` is the canonical
+/// mDNS label, and `time` points at `pool.ntp.org` so SNTP picks up
+/// once Wi-Fi is configured.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Config {
+    /// Wi-Fi station credentials and regulatory country code.
+    pub wifi: WifiConfig,
+    /// Local hostname advertised on `.local` via mDNS.
+    pub mdns: MdnsConfig,
+    /// Timezone label + SNTP server list.
+    pub time: TimeConfig,
+}
+
+/// Wi-Fi station credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiConfig {
+    /// SSID of the access point to join. An empty string disables the
+    /// Wi-Fi join attempt entirely (avatar runs offline-first).
+    pub ssid: String,
+    /// WPA2/WPA3 pre-shared key. Empty string permitted for open APs.
+    pub psk: String,
+    /// ISO-3166 alpha-2 country code. Default `"US"`. Determines
+    /// channel availability and TX power per regulatory domain.
+    pub country: String,
+}
+
+impl Default for WifiConfig {
+    fn default() -> Self {
+        Self {
+            ssid: String::new(),
+            psk: String::new(),
+            country: "US".to_string(),
+        }
+    }
+}
+
+/// mDNS hostname configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MdnsConfig {
+    /// Hostname advertised on `.local`. Default `"stackchan"` →
+    /// device reachable as `stackchan.local`.
+    pub hostname: String,
+}
+
+impl Default for MdnsConfig {
+    fn default() -> Self {
+        Self {
+            hostname: "stackchan".to_string(),
+        }
+    }
+}
+
+/// Time / SNTP configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeConfig {
+    /// IANA timezone label (e.g. `"UTC"`, `"America/Los_Angeles"`).
+    /// Currently parsed but unused — the BM8563 RTC stores UTC.
+    pub tz: String,
+    /// SNTP servers to query in order. The firmware tries each with
+    /// a 5-second timeout before falling back to the next.
+    pub sntp_servers: Vec<String>,
+}
+
+impl Default for TimeConfig {
+    fn default() -> Self {
+        Self {
+            tz: "UTC".to_string(),
+            sntp_servers: vec!["pool.ntp.org".to_string()],
+        }
+    }
+}
+
+/// Parse + validate a RON document into a [`Config`].
+///
+/// # Errors
+///
+/// Returns [`ConfigError::Parse`] on malformed RON, or one of the
+/// validation variants ([`ConfigError::EmptySsid`],
+/// [`ConfigError::InvalidCountry`], [`ConfigError::InvalidHostname`],
+/// [`ConfigError::NoSntpServers`]) on out-of-range values.
+pub fn parse_ron(input: &str) -> Result<Config, ConfigError> {
+    let config: Config = ron::from_str(input)?;
+    validate(&config)?;
+    Ok(config)
+}
+
+/// Render a [`Config`] back to a pretty-printed RON string.
+///
+/// Used by `PUT /settings` to persist user changes back to SD, and
+/// by `GET /settings` to expose the current state.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::Serialize`] on serializer failure. Should
+/// not happen with a well-formed [`Config`].
+pub fn render_ron(config: &Config) -> Result<String, ConfigError> {
+    let pretty = ron::ser::PrettyConfig::new();
+    ron::ser::to_string_pretty(config, pretty).map_err(ConfigError::Serialize)
+}
+
+/// Run the v1 schema validators against a parsed [`Config`]. Public
+/// entry is via [`parse_ron`]; this fn is the post-deserialize gate.
+fn validate(config: &Config) -> Result<(), ConfigError> {
+    // SSID: empty *file value* is rejected. `Config::default()` uses
+    // an empty SSID as a sentinel for "no wifi configured" and never
+    // routes through this validator.
+    if config.wifi.ssid.trim().is_empty() {
+        return Err(ConfigError::EmptySsid);
+    }
+    if !is_valid_country(&config.wifi.country) {
+        return Err(ConfigError::InvalidCountry(config.wifi.country.clone()));
+    }
+    if !is_valid_hostname(&config.mdns.hostname) {
+        return Err(ConfigError::InvalidHostname(config.mdns.hostname.clone()));
+    }
+    if config.time.sntp_servers.is_empty() {
+        return Err(ConfigError::NoSntpServers);
+    }
+    Ok(())
+}
+
+/// True iff `s` is exactly two ASCII letters (ISO-3166 alpha-2).
+fn is_valid_country(s: &str) -> bool {
+    s.len() == 2 && s.bytes().all(|b| b.is_ascii_alphabetic())
+}
+
+/// True iff `s` is an RFC-952 subset hostname: ASCII letters / digits
+/// / hyphens, must start with a letter, must not end with a hyphen,
+/// length 1-63.
+fn is_valid_hostname(s: &str) -> bool {
+    // RFC-952 subset: 1-63 chars; ASCII alphanumerics + hyphen; must
+    // start with a letter; must not end with a hyphen.
+    if s.is_empty() || s.len() > 63 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if !bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    if bytes[bytes.len() - 1] == b'-' {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_offline_first() {
+        let c = Config::default();
+        assert!(c.wifi.ssid.is_empty(), "empty SSID = no Wi-Fi attempt");
+        assert_eq!(c.wifi.country, "US");
+        assert_eq!(c.mdns.hostname, "stackchan");
+        assert_eq!(c.time.tz, "UTC");
+        assert_eq!(c.time.sntp_servers, vec!["pool.ntp.org".to_string()]);
+    }
+
+    #[test]
+    fn validates_country_length() {
+        assert!(is_valid_country("US"));
+        assert!(is_valid_country("JP"));
+        assert!(!is_valid_country("USA"));
+        assert!(!is_valid_country("U"));
+        assert!(!is_valid_country("U1"));
+        assert!(!is_valid_country(""));
+    }
+
+    #[test]
+    fn validates_hostname_rfc952_subset() {
+        assert!(is_valid_hostname("stackchan"));
+        assert!(is_valid_hostname("stackchan-01"));
+        assert!(is_valid_hostname("a"));
+        // Too long.
+        assert!(!is_valid_hostname(&"a".repeat(64)));
+        // Empty.
+        assert!(!is_valid_hostname(""));
+        // Starts with digit.
+        assert!(!is_valid_hostname("1stackchan"));
+        // Starts with hyphen.
+        assert!(!is_valid_hostname("-stackchan"));
+        // Ends with hyphen.
+        assert!(!is_valid_hostname("stackchan-"));
+        // Underscore not allowed in RFC-952.
+        assert!(!is_valid_hostname("stack_chan"));
+    }
+}

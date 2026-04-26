@@ -19,6 +19,7 @@ members = [
     "crates/si12t",
     "crates/tracker",
     "crates/stackchan-tts",
+    "crates/stackchan-net",
     "crates/stackchan-firmware",
     "xtask",
 ]
@@ -41,6 +42,7 @@ default-members = [
     "crates/si12t",
     "crates/tracker",
     "crates/stackchan-tts",
+    "crates/stackchan-net",
 ]
 
 [workspace.package]
