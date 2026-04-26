@@ -24,6 +24,10 @@ pub enum ChirpKind {
     /// Voice-wake chirp. Set by `WakeOnVoice` when sustained audio
     /// wakes the entity.
     Wake,
+    /// Startle chirp. Set by `IntentFromLoud` on a transient acoustic
+    /// spike (clap, shout, slam) — distinct from `Wake`, which is
+    /// sustained-voice driven.
+    Startle,
     /// Low-battery alert beep. Set by `LowBatteryEmotion` when the
     /// percent crosses the enter threshold while unplugged.
     LowBatteryAlert,

@@ -188,10 +188,9 @@ es7210-bench:
 
 # Audio playlist bench: brings up the full audio stack (I²S + AW88298
 # + ES7210) and loops through every clip in the chirp library
-# (BOOT_GREETING, time-of-day variants, WAKE_CHIRP, pickup chirp,
-# low-battery alert) with 800 ms gaps. Use this when tuning clip
-# amplitudes / durations / pitches without rebuilding the full
-# firmware.
+# (BOOT_GREETING, WAKE_CHIRP, pickup chirp, low-battery alert) with
+# 800 ms gaps. Use this when tuning clip amplitudes / durations /
+# pitches without rebuilding the full firmware.
 audio-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example audio_bench
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/audio_bench{{_serial_suffix}}

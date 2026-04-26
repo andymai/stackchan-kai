@@ -28,11 +28,12 @@
 //!      full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
 //!    - TX (`run_tx_loop`): play queued [`AudioClip`]s back-to-back,
 //!      filling with digital silence between/after clips so the
-//!      AW88298 stays clock-locked. Higher-level code (e.g. main.rs's
-//!      RTC-aware boot greeting, low-battery alerts, pickup chirps)
-//!      enqueues clips via [`try_enqueue_clip`] and the typed
+//!      AW88298 stays clock-locked. Higher-level code (low-battery
+//!      alerts, pickup chirps, startle chirps, etc.) enqueues clips
+//!      via [`try_enqueue_clip`] and the typed
 //!      [`try_enqueue_wake_chirp`] / [`try_enqueue_pickup_chirp`] /
-//!      [`try_enqueue_low_battery_alert`] helpers.
+//!      [`try_enqueue_startle_chirp`] / [`try_enqueue_low_battery_alert`]
+//!      helpers.
 //!
 //! This matches esp-bsp's ordering in `bsp_audio_codec_microphone_init`:
 //! `bsp_audio_init` (spins up I²S + MCLK) runs *before* `es7210_codec_new`.
@@ -46,6 +47,7 @@
 //!   runs without speaker output).
 
 use aw88298::Aw88298;
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     channel::{Channel, TrySendError},
@@ -150,9 +152,8 @@ const SINE_4KHZ_CYCLE: [i16; 4] = [0, 8192, 0, -8192];
 /// hears two distinct pulses rather than one long tone.
 const SILENCE_CYCLE: [i16; 8] = [0; 8];
 
-/// Default boot greeting: 500 ms of 1 kHz sine. Used when the RTC
-/// is unavailable (no battery / chip missing) and as the daytime
-/// (12:00–17:59) variant in the time-of-day selector.
+/// Boot greeting: 500 ms of 1 kHz sine. Available for explicit
+/// playback via the `audio-bench` example; not auto-enqueued at boot.
 ///
 /// `500 cycles × 16 samples = 8 000 samples = 500 ms` at the 16 kHz
 /// sample rate. Tweak `cycles` to change duration without touching
@@ -161,50 +162,6 @@ pub const BOOT_GREETING: AudioClip = AudioClip {
     samples: &SINE_1KHZ_CYCLE,
     cycles: 500,
 };
-
-/// Morning greeting (05:00–11:59): a brighter 2 kHz / 300 ms tone.
-/// Higher pitch + shorter duration than the default — more "wake up"
-/// than "settle in".
-pub const BOOT_GREETING_MORNING: AudioClip = AudioClip {
-    samples: &SINE_2KHZ_CYCLE,
-    cycles: 600,
-};
-
-/// Evening greeting (18:00–22:59): the default 1 kHz tone but
-/// slightly longer (700 ms) for a warmer feel.
-pub const BOOT_GREETING_EVENING: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 700,
-};
-
-/// Night greeting (23:00–04:59): a single short, soft beep — 200 ms
-/// of 1 kHz. Quiet enough not to wake a sleeping household.
-pub const BOOT_GREETING_NIGHT: AudioClip = AudioClip {
-    samples: &SINE_1KHZ_CYCLE,
-    cycles: 200,
-};
-
-/// Pick the boot greeting clip for a given clock hour (`0..=23`).
-///
-/// - Morning (05–11): [`BOOT_GREETING_MORNING`]
-/// - Day (12–17): [`BOOT_GREETING`] (default)
-/// - Evening (18–22): [`BOOT_GREETING_EVENING`]
-/// - Night (23, 00–04): [`BOOT_GREETING_NIGHT`]
-///
-/// Hours outside `0..=23` (which the BM8563 should never produce)
-/// fall back to the default daytime greeting.
-#[must_use]
-pub const fn boot_greeting_for_hour(hour: u8) -> AudioClip {
-    match hour {
-        5..=11 => BOOT_GREETING_MORNING,
-        18..=22 => BOOT_GREETING_EVENING,
-        23 | 0..=4 => BOOT_GREETING_NIGHT,
-        // 12..=17 (default daytime) + any out-of-range hour (the
-        // BM8563 caps at 23, so this branch covers spec-compliant
-        // and degenerate-input alike).
-        _ => BOOT_GREETING,
-    }
-}
 
 /// Single-clip "wake" chirp: 100 ms of 1 kHz sine. Audibly soft but
 /// distinct from the boot greeting (which is 5× longer); enqueued
@@ -386,6 +343,22 @@ pub fn try_enqueue_pickup_chirp() -> Result<(), TrySendError<AudioClip>> {
     Ok(())
 }
 
+/// Enqueue the startle chirp: 50 ms of 4 kHz — sharp single tone.
+///
+/// `stackchan_core::modifiers::IntentFromLoud` sets
+/// `entity.voice.chirp_request = Some(ChirpKind::Startle)` on the
+/// rising edge across the loud-RMS threshold; the render task drains
+/// that and calls this. Reuses [`PICKUP_CHIRP_HI`] (the high half of
+/// the pickup sweep) for a deliberately sharp, singular reaction —
+/// distinct from the pickup chirp's two-tone sweep.
+///
+/// # Errors
+///
+/// Returns [`TrySendError::Full`] if [`AUDIO_TX_QUEUE`] is full.
+pub fn try_enqueue_startle_chirp() -> Result<(), TrySendError<AudioClip>> {
+    AUDIO_TX_QUEUE.try_send(PICKUP_CHIRP_HI)
+}
+
 /// Enqueue the camera-mode-enter chirp: 50 ms of 1 kHz then 80 ms of
 /// 2 kHz — an upward two-tone "doot-DEE" signalling that the preview
 /// is now on screen. Two queued clips.
@@ -439,6 +412,26 @@ pub struct AudioRms(pub f32);
 /// need: if the modifier misses a frame, the next one should reflect
 /// current mic state, not queued history.
 pub static AUDIO_RMS_SIGNAL: Signal<CriticalSectionRawMutex, AudioRms> = Signal::new();
+
+/// `true` while the TX feeder has a clip in flight.
+///
+/// Set / cleared once per DMA push (~32 ms cadence) inside
+/// [`run_tx_loop`]. The render task reads this each frame and gates
+/// `entity.perception.audio_rms` to `None` while playing — without
+/// the gate, the speaker output would re-trigger sound-reactive
+/// modifiers (`WakeOnVoice` / `IntentFromLoud`) on its own chirps.
+///
+/// Pair the read with a [`TX_GATE_TAIL_MS`] tail window so the mic
+/// doesn't pick up the speaker's residual response immediately after
+/// playback ends.
+pub static AUDIO_TX_PLAYING: AtomicBool = AtomicBool::new(false);
+
+/// How long after TX playback ends to keep gating the mic, in ms.
+///
+/// `150 ms` covers the speaker's mechanical decay plus a small margin
+/// for the AW88298's anti-pop ramp. Tunable on-device via the
+/// audio-bench if it turns out to be wrong.
+pub const TX_GATE_TAIL_MS: u64 = 150;
 
 /// Audio task peripherals, grouped so `main.rs` spawns the task with
 /// a single `Spawner::spawn` call rather than a 9-argument function.
@@ -652,10 +645,9 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         defmt::info!("audio: AW88298 un-muted — speaker live");
     }
 
-    // The boot greeting is enqueued by main.rs after it reads the RTC
-    // (so the time-of-day variant can be chosen). If the RTC isn't
-    // available main falls back to BOOT_GREETING. Either way the TX
-    // queue is the single source of TX content from here on.
+    // The TX queue is the single source of TX content from here on.
+    // Nothing is enqueued at boot — clips (boot greetings, low-battery
+    // alerts, pickup chirps) are pushed by their respective triggers.
     defmt::info!(
         "audio: bring-up complete — RX RMS loop ({=u32}-sample windows) + TX feeder (clip-queue driven)",
         RMS_WINDOW_SAMPLES,
@@ -873,6 +865,11 @@ async fn run_tx_loop<BUFFER>(
                 pairs * 2
             })
             .await;
+
+        // Publish playback state once per DMA buffer (~32 ms). The
+        // render task uses this + TX_GATE_TAIL_MS to suppress
+        // self-trigger of sound-reactive modifiers.
+        AUDIO_TX_PLAYING.store(current.is_some(), Ordering::Relaxed);
 
         if let Err(e) = result {
             defmt::warn!(

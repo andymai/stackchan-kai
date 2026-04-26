@@ -132,7 +132,13 @@ const fn react(intent: Intent) -> Option<(Emotion, OverrideSource, Option<ChirpK
             Some(ChirpKind::Pickup),
         )),
         Intent::Shaken => Some((Emotion::Angry, OverrideSource::Shake, None)),
-        Intent::Tilted | Intent::Idle | Intent::Listen | Intent::BeingPet => None,
+        // `Startled` reaction is owned by `IntentFromLoud` (single-tick
+        // latency: it writes emotion + chirp + hold itself in
+        // `Phase::Affect`). Returning `None` here keeps IntentReflex
+        // out of the way so we don't double-emit.
+        Intent::Tilted | Intent::Idle | Intent::Listen | Intent::BeingPet | Intent::Startled => {
+            None
+        }
     }
 }
 

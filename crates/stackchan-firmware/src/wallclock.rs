@@ -1,13 +1,9 @@
-//! BM8563 wall-clock read, used to timestamp a single boot log line
-//! and select the time-of-day boot greeting.
+//! BM8563 wall-clock read, used to timestamp a single boot log line.
 //!
 //! The `defmt` timestamp stays as `embassy_time::Instant::now()` in
 //! milliseconds — that's what the embassy / defmt integration expects.
 //! This module exists to give the boot log an absolute time ("boot @
-//! 2026-04-24 13:37:05") so post-reboot logs can be correlated, and
-//! to surface the current hour so the audio task can pick a
-//! morning / day / evening / night greeting (see
-//! [`crate::audio::boot_greeting_for_hour`]).
+//! 2026-04-24 13:37:05") so post-reboot logs can be correlated.
 //!
 //! No attempt to keep a running wall-clock: callers today pay for
 //! one I²C round-trip at boot. YAGNI until we grow a regular polling

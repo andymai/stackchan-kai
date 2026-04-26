@@ -6,16 +6,12 @@
 //! Use this bench when iterating on:
 //! - boot-greeting amplitude / duration / pitch
 //! - chirp distinguishability (wake vs pickup vs low-battery)
-//! - time-of-day greeting variants
 //! - any new `AudioClip` you add to `audio.rs`
 //!
 //! Expected log after bring-up (one playlist run):
 //!
 //! ```text
-//! audio-bench: playing BOOT_GREETING (default)
-//! audio-bench: playing BOOT_GREETING_MORNING
-//! audio-bench: playing BOOT_GREETING_EVENING
-//! audio-bench: playing BOOT_GREETING_NIGHT
+//! audio-bench: playing BOOT_GREETING
 //! audio-bench: playing WAKE_CHIRP
 //! audio-bench: playing pickup chirp (2 clips)
 //! audio-bench: playing low-battery alert (3 clips)
@@ -127,10 +123,7 @@ async fn main(spawner: Spawner) -> ! {
     defmt::info!("audio-bench: audio task spawned, starting playlist");
 
     loop {
-        play_clip("BOOT_GREETING (default)", audio::BOOT_GREETING).await;
-        play_clip("BOOT_GREETING_MORNING", audio::BOOT_GREETING_MORNING).await;
-        play_clip("BOOT_GREETING_EVENING", audio::BOOT_GREETING_EVENING).await;
-        play_clip("BOOT_GREETING_NIGHT", audio::BOOT_GREETING_NIGHT).await;
+        play_clip("BOOT_GREETING", audio::BOOT_GREETING).await;
         play_clip("WAKE_CHIRP", audio::WAKE_CHIRP).await;
 
         play_helper("pickup chirp (2 clips)", audio::try_enqueue_pickup_chirp()).await;

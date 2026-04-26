@@ -142,7 +142,16 @@ impl Skill for LookAtSound {
             if !matches!(entity.mind.attention, Attention::Listening { .. }) {
                 entity.mind.attention = Attention::Listening { since: now };
             }
-            entity.mind.intent = Intent::Listen;
+            // Defer to higher-priority intents per the documented
+            // priority `Startled > … > Listen > Idle`. Without this
+            // guard, a sustained loud burst (above both
+            // [`super::super::modifiers::STARTLE_RMS_THRESHOLD`] and
+            // [`super::LISTEN_RMS_THRESHOLD`]) would have its startle
+            // edge clobbered in the same frame, because skills run
+            // after modifiers.
+            if !matches!(entity.mind.intent, Intent::Startled) {
+                entity.mind.intent = Intent::Listen;
+            }
             return SkillStatus::Continuing;
         }
 
@@ -155,7 +164,11 @@ impl Skill for LookAtSound {
                 return SkillStatus::Continuing;
             }
             entity.mind.attention = Attention::None;
-            entity.mind.intent = Intent::Idle;
+            // Same priority guard as the entry path: only clear back
+            // to Idle if we're the one who set the current intent.
+            if matches!(entity.mind.intent, Intent::Listen) {
+                entity.mind.intent = Intent::Idle;
+            }
             self.last_loud = None;
         } else if !loud {
             // Not listening, not loud: drop any stale anchor left by

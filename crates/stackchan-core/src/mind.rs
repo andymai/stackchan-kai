@@ -52,6 +52,10 @@ pub enum OverrideSource {
     Shake,
     /// Sustained voice activity.
     Voice,
+    /// High-level acoustic transient — clap, shout, slam — set by
+    /// `IntentFromLoud` when `audio_rms` crosses the loud threshold
+    /// on a single tick.
+    Startle,
     /// Ambient-light-driven sleepy override.
     Ambient,
     /// Low-battery sleepy override.
@@ -83,9 +87,10 @@ pub struct Autonomy {
 /// Multiple skills may try to write `intent` on the same tick. The
 /// [`crate::skills::Handling`] skill resolves IMU-derived states
 /// against [`crate::skills::Petting`] using the order
-/// `PickedUp > Shaken > BeingPet > Tilted > Listen > Idle` — physical
-/// handling of the whole avatar dominates over local body-touch, and
-/// passive pose (`Tilted`) is lowest because it's not active handling.
+/// `Startled > PickedUp > Shaken > BeingPet > Tilted > Listen > Idle`
+/// — a startle-class transient outranks even physical handling
+/// (the avatar reacts to a loud noise even mid-pickup), passive
+/// pose (`Tilted`) is lowest because it's not active handling.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Intent {
@@ -95,6 +100,13 @@ pub enum Intent {
     /// Listening to ambient sound. Set by
     /// [`crate::skills::LookAtSound`]; cleared on release.
     Listen,
+    /// Reacting to an acoustic transient (clap, shout, slam). Set by
+    /// [`crate::modifiers::IntentFromLoud`] on the rising edge across
+    /// the loud-threshold; cleared by the modifier when the hold
+    /// expires. `IntentReflex` does not own the emotion for this
+    /// intent — `IntentFromLoud` writes `Surprised` directly to keep
+    /// reaction latency to a single tick.
+    Startled,
     /// Being pet on the back-of-head strip. Set by
     /// [`crate::skills::Petting`] after sustained any-zone contact;
     /// cleared on release.
