@@ -1,0 +1,20 @@
+// Full fixture exercising every field with non-default values.
+// Used to confirm the round-trip preserves SNTP server ordering.
+(
+    wifi: (
+        ssid: "andy-iot",
+        psk: "supersecret123",
+        country: "JP",
+    ),
+    mdns: (
+        hostname: "kai-stackchan-01",
+    ),
+    time: (
+        tz: "America/Los_Angeles",
+        sntp_servers: [
+            "time.nist.gov",
+            "time.cloudflare.com",
+            "pool.ntp.org",
+        ],
+    ),
+)
