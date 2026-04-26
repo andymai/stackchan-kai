@@ -21,11 +21,16 @@ use core::num::NonZeroU32;
 const DEFAULT_SEED: NonZeroU32 = NonZeroU32::new(0x1234_5678).unwrap();
 
 /// Default interval between drifts, in milliseconds.
-const DEFAULT_INTERVAL_MS: u64 = 4_000;
+pub const DEFAULT_INTERVAL_MS: u64 = 4_000;
 /// Maximum horizontal drift in either direction, in pixels.
-const DEFAULT_MAX_X: i32 = 6;
-/// Maximum vertical drift in either direction, in pixels.
-const DEFAULT_MAX_Y: i32 = 4;
+///
+/// Tests composing [`IdleDrift`] with other eye-center modifiers can
+/// use this to bound the combined offset honestly instead of
+/// hardcoding the literal.
+pub const DEFAULT_MAX_X: i32 = 6;
+/// Maximum vertical drift in either direction, in pixels. See
+/// [`DEFAULT_MAX_X`].
+pub const DEFAULT_MAX_Y: i32 = 4;
 
 /// Modifier that occasionally offsets both eyes' centers by a small amount.
 /// The offset is removed on the next tick, so the eyes return to baseline

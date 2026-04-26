@@ -16,6 +16,10 @@ stackchan-core = { path = "../stackchan-core" }
 # Used by `Framebuffer` — the Vec<Rgb565>-backed `DrawTarget` that lets
 # render-regression tests assert against `Avatar::draw` without hardware.
 embedded-graphics = { workspace = true }
+# Used by `TrackingScenario` to construct `TrackingObservation`s — the
+# `candidates` field is a `heapless::Vec<TargetCandidate, 4>` and the
+# helper needs to mint empty + populated values.
+heapless = "0.8"
 
 # Optional: the host visualiser binary depends on `eframe` (egui +
 # winit). Only pulled in when the `viz` feature is on, so the default
