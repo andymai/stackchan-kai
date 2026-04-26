@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.16.0...stackchan-firmware-v0.17.0) (2026-04-26)
+
+
+### Features
+
+* **net:** bare RON parser + GPIO35 OE-flip SD-SPI adapter ([#136](https://github.com/andymai/stackchan-kai/issues/136)) ([d8d399e](https://github.com/andymai/stackchan-kai/commit/d8d399e827e2963d7563cd5fc427e4649ebed9e4))
+
 ## [0.16.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.15.0...stackchan-firmware-v0.16.0) (2026-04-26)
 
 
