@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.17.2...stackchan-firmware-v0.18.0) (2026-04-26)
+
+
+### Features
+
+* **firmware:** SD-card boot config read with offline-first fallback ([#142](https://github.com/andymai/stackchan-kai/issues/142)) ([4081b72](https://github.com/andymai/stackchan-kai/commit/4081b72bcd67c2068f53a13d5288b1ad13a0b42b))
+
 ## [0.17.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.17.1...stackchan-firmware-v0.17.2) (2026-04-26)
 
 
