@@ -66,8 +66,8 @@ use stackchan_core::{
     Clock, Director, Entity, Face, HeadDriver, LedFrame,
     modifiers::{
         AmbientSleepy, Blink, BodyGesture, Breath, EmotionCycle, EmotionHead, EmotionStyle,
-        EmotionTouch, IdleDrift, IdleSway, IntentReflex, IntentStyle, ListenHead,
-        LowBatteryEmotion, MouthOpenAudio, RemoteCommand, StartleHead, StartleOnLoud, WakeOnVoice,
+        EmotionTouch, HeadFromIntent, IdleDrift, IdleSway, IntentFromLoud, IntentReflex,
+        IntentStyle, ListenHead, LowBatteryEmotion, MouthOpenAudio, RemoteCommand, WakeOnVoice,
     },
     render_leds,
     skills::{Handling, LookAtSound, Petting},
@@ -183,7 +183,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut ambient_sleepy = AmbientSleepy::new();
     let mut low_battery = LowBatteryEmotion::new();
     let mut wake_on_voice = WakeOnVoice::new();
-    let mut startle_on_loud = StartleOnLoud::new();
+    let mut intent_from_loud = IntentFromLoud::new();
     let mut cycle = EmotionCycle::new();
     let mut style = EmotionStyle::new();
     let mut intent_style = IntentStyle::new();
@@ -197,7 +197,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut sway = IdleSway::new();
     let mut emotion_head = EmotionHead::new();
     let mut listen_head = ListenHead::new();
-    let mut startle_head = StartleHead::new();
+    let mut head_from_intent = HeadFromIntent::new();
     let mut mouth_open_audio = MouthOpenAudio::new();
     let mut look_at_sound = LookAtSound::new();
     let mut petting = Petting::new();
@@ -230,7 +230,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .add_modifier(&mut wake_on_voice)
         .expect("registry full");
     director
-        .add_modifier(&mut startle_on_loud)
+        .add_modifier(&mut intent_from_loud)
         .expect("registry full");
     director
         .add_modifier(&mut ambient_sleepy)
@@ -254,7 +254,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         .add_modifier(&mut listen_head)
         .expect("registry full");
     director
-        .add_modifier(&mut startle_head)
+        .add_modifier(&mut head_from_intent)
         .expect("registry full");
     director
         .add_modifier(&mut mouth_open_audio)
@@ -286,7 +286,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + IntentReflex + WakeOnVoice + StartleOnLoud + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + IntentStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + StartleHead + MouthOpenAudio + LookAtSound[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionTouch + BodyGesture + RemoteCommand + IntentReflex + WakeOnVoice + IntentFromLoud + AmbientSleepy + LowBatteryEmotion + EmotionCycle + EmotionStyle + IntentStyle + Blink + Breath + IdleDrift + IdleSway + EmotionHead + ListenHead + HeadFromIntent + MouthOpenAudio + LookAtSound[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 

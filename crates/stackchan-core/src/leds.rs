@@ -20,7 +20,7 @@
 //! - **Intent overrides emotion colour** for sound-reactive intents:
 //!   [`Intent::Listen`] swaps the palette to a teal "I'm listening"
 //!   hue regardless of the underlying emotion (which `WakeOnVoice`
-//!   typically pins to `Happy`). [`Intent::HearingLoud`] keeps the
+//!   typically pins to `Happy`). [`Intent::Startled`] keeps the
 //!   `Surprised` cyan but pins brightness to peak — the breath dim
 //!   is suppressed so the ring "flashes" for the hold duration.
 //! - **Breath-phase → brightness envelope** in `[0.6, 1.0]` over a
@@ -36,7 +36,7 @@
 //! yet. A gaze-direction arc is an obvious next iteration.
 //!
 //! [`Intent::Listen`]: crate::mind::Intent::Listen
-//! [`Intent::HearingLoud`]: crate::mind::Intent::HearingLoud
+//! [`Intent::Startled`]: crate::mind::Intent::Startled
 //!
 //! [`Neutral`]: crate::Emotion::Neutral
 //! [`Happy`]: crate::Emotion::Happy
@@ -112,7 +112,7 @@ const fn palette(emotion: Emotion) -> u32 {
 ///
 /// Cool, calm, distinct from both `Happy`'s amber (which `WakeOnVoice`
 /// typically pins simultaneously) and `Surprised`'s cyan (used for
-/// [`Intent::HearingLoud`]).
+/// [`Intent::Startled`]).
 const LISTEN_PALETTE: u32 = 0x0010_C0A0;
 
 /// Resolve the per-frame palette: intent overrides emotion for the
@@ -121,16 +121,16 @@ const LISTEN_PALETTE: u32 = 0x0010_C0A0;
 const fn palette_for(intent: Intent, emotion: Emotion) -> u32 {
     match intent {
         Intent::Listen => LISTEN_PALETTE,
-        // HearingLoud doesn't override the palette — it relies on the
-        // `Surprised` emotion that `StartleOnLoud` writes simultaneously.
-        // Idle / BeingPet / PickedUp / Shaken / Tilted / HearingLoud all
+        // Startled doesn't override the palette — it relies on the
+        // `Surprised` emotion that `IntentFromLoud` writes simultaneously.
+        // Idle / BeingPet / PickedUp / Shaken / Tilted / Startled all
         // fall through to the emotion palette.
         Intent::Idle
         | Intent::BeingPet
         | Intent::PickedUp
         | Intent::Shaken
         | Intent::Tilted
-        | Intent::HearingLoud => palette(emotion),
+        | Intent::Startled => palette(emotion),
     }
 }
 
@@ -203,10 +203,10 @@ pub fn render_leds(entity: &Entity, now: Instant, out: &mut LedFrame) {
         ((base >> 8) & 0xFF) as u8,
         (base & 0xFF) as u8,
     );
-    // `HearingLoud` pins brightness to peak — the breath dim is
+    // `Startled` pins brightness to peak — the breath dim is
     // suppressed so the ring reads as a "flash" for the hold
     // duration. Other intents follow the breath envelope.
-    let brightness = if matches!(entity.mind.intent, Intent::HearingLoud) {
+    let brightness = if matches!(entity.mind.intent, Intent::Startled) {
         BRIGHTNESS_PEAK
     } else {
         breath_brightness(now)
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn hearing_loud_pins_brightness_to_peak() {
         // At the breath trough, brightness should normally dip to ~60%.
-        // With Intent::HearingLoud set, the dim is suppressed and the
+        // With Intent::Startled set, the dim is suppressed and the
         // pixel is at peak brightness regardless of breath phase.
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Surprised;
@@ -392,20 +392,20 @@ mod tests {
         render_leds(&entity, Instant::from_millis(0), &mut frame);
         let trough_b = frame.0[0] & 0x1F;
 
-        // Same trough phase, HearingLoud override.
-        entity.mind.intent = Intent::HearingLoud;
+        // Same trough phase, Startled override.
+        entity.mind.intent = Intent::Startled;
         render_leds(&entity, Instant::from_millis(0), &mut frame);
         let loud_b = frame.0[0] & 0x1F;
 
         assert!(
             loud_b > trough_b,
-            "HearingLoud should pin brightness above the breath trough ({trough_b} → {loud_b})"
+            "Startled should pin brightness above the breath trough ({trough_b} → {loud_b})"
         );
     }
 
     #[test]
     fn other_intents_do_not_override_emotion_palette() {
-        // BeingPet / PickedUp / Shaken / Tilted / Idle / HearingLoud
+        // BeingPet / PickedUp / Shaken / Tilted / Idle / Startled
         // all defer to the emotion palette for colour. Verify by
         // comparing each against Idle for the same emotion.
         let mut entity = Entity::default();
@@ -422,9 +422,9 @@ mod tests {
             Intent::PickedUp,
             Intent::Shaken,
             Intent::Tilted,
-            // HearingLoud overrides brightness, not palette — same
+            // Startled overrides brightness, not palette — same
             // hue at peak brightness.
-            Intent::HearingLoud,
+            Intent::Startled,
         ] {
             entity.mind.intent = intent;
             render_leds(&entity, now, &mut frame);

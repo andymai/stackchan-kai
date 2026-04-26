@@ -143,13 +143,13 @@ impl Skill for LookAtSound {
                 entity.mind.attention = Attention::Listening { since: now };
             }
             // Defer to higher-priority intents per the documented
-            // priority `HearingLoud > … > Listen > Idle`. Without this
+            // priority `Startled > … > Listen > Idle`. Without this
             // guard, a sustained loud burst (above both
             // [`super::super::modifiers::STARTLE_RMS_THRESHOLD`] and
             // [`super::LISTEN_RMS_THRESHOLD`]) would have its startle
             // edge clobbered in the same frame, because skills run
             // after modifiers.
-            if !matches!(entity.mind.intent, Intent::HearingLoud) {
+            if !matches!(entity.mind.intent, Intent::Startled) {
                 entity.mind.intent = Intent::Listen;
             }
             return SkillStatus::Continuing;

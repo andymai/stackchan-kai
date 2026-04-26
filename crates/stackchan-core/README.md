@@ -68,12 +68,12 @@ render tick. Listed roughly in application order:
 | `AmbientSleepy`   | Dark room (low lux) → sleepy emotion                           |
 | `IntentReflex`    | `mind.intent` transitions → emotion (PickedUp→Surprised, Shaken→Angry) |
 | `WakeOnVoice`     | Sustained `audio_rms` above threshold → `Happy` + `Wake` chirp |
-| `StartleOnLoud`   | Rising-edge `audio_rms` across loud threshold → `Surprised` + `HearingLoud` intent + `Startle` chirp |
+| `IntentFromLoud`   | Rising-edge `audio_rms` across loud threshold → `Surprised` + `Startled` intent + `Startle` chirp |
 | `EmotionCycle`    | Default sequence: Neutral → Happy → Sleepy → Surprised → Sad   |
 | `EmotionStyle`    | 300 ms ease on style fields (curves, scale, blush) per emotion |
 | `EmotionHead`     | Per-emotion pose bias (neutral center, surprised up, etc.)     |
 | `ListenHead`      | Upward tilt bias while `mind.attention == Listening`           |
-| `StartleHead`     | Brief asymmetric pan/tilt recoil on entry to `HearingLoud`     |
+| `HeadFromIntent`     | Brief asymmetric pan/tilt recoil on entry to `Startled`     |
 | `IdleDrift`       | Slow randomized gaze drift                                     |
 | `IdleSway`        | Subtle head-pan sway when idle                                 |
 | `Blink`           | Lid close / open pulses                                        |

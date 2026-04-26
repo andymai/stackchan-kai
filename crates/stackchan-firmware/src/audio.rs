@@ -345,7 +345,7 @@ pub fn try_enqueue_pickup_chirp() -> Result<(), TrySendError<AudioClip>> {
 
 /// Enqueue the startle chirp: 50 ms of 4 kHz — sharp single tone.
 ///
-/// `stackchan_core::modifiers::StartleOnLoud` sets
+/// `stackchan_core::modifiers::IntentFromLoud` sets
 /// `entity.voice.chirp_request = Some(ChirpKind::Startle)` on the
 /// rising edge across the loud-RMS threshold; the render task drains
 /// that and calls this. Reuses [`PICKUP_CHIRP_HI`] (the high half of
@@ -419,7 +419,7 @@ pub static AUDIO_RMS_SIGNAL: Signal<CriticalSectionRawMutex, AudioRms> = Signal:
 /// [`run_tx_loop`]. The render task reads this each frame and gates
 /// `entity.perception.audio_rms` to `None` while playing — without
 /// the gate, the speaker output would re-trigger sound-reactive
-/// modifiers (`WakeOnVoice` / `StartleOnLoud`) on its own chirps.
+/// modifiers (`WakeOnVoice` / `IntentFromLoud`) on its own chirps.
 ///
 /// Pair the read with a [`TX_GATE_TAIL_MS`] tail window so the mic
 /// doesn't pick up the speaker's residual response immediately after

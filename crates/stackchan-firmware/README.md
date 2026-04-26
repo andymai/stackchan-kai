@@ -63,9 +63,9 @@ Main spawns a render task that runs this stack per tick:
 
 ```
 EmotionTouch → BodyGesture → RemoteCommand → IntentReflex →
-WakeOnVoice → StartleOnLoud → AmbientSleepy → LowBatteryEmotion →
+WakeOnVoice → IntentFromLoud → AmbientSleepy → LowBatteryEmotion →
 EmotionCycle → EmotionStyle → IntentStyle → Blink → Breath →
-IdleDrift → IdleSway → EmotionHead → ListenHead → StartleHead →
+IdleDrift → IdleSway → EmotionHead → ListenHead → HeadFromIntent →
 MouthOpenAudio
 ```
 

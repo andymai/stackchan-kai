@@ -1,9 +1,9 @@
-//! `StartleHead`: motion modifier that fires a brief head recoil on
-//! the entry edge into [`Intent::HearingLoud`].
+//! `HeadFromIntent`: motion modifier that fires a brief head recoil on
+//! the entry edge into [`Intent::Startled`].
 //!
-//! Driven by [`super::StartleOnLoud`] (which sets the intent on a
+//! Driven by [`super::IntentFromLoud`] (which sets the intent on a
 //! loud-threshold rising edge). The recoil is fixed-duration —
-//! [`STARTLE_HEAD_TOTAL_MS`] — so even if `Intent::HearingLoud` holds
+//! [`STARTLE_HEAD_TOTAL_MS`] — so even if `Intent::Startled` holds
 //! for the full [`super::STARTLE_HOLD_MS`], the head returns to its
 //! upstream pose well before the intent clears.
 //!
@@ -64,20 +64,20 @@ pub const STARTLE_HEAD_ATTACK_MS: u64 = 50;
 pub const STARTLE_HEAD_DECAY_MS: u64 = 350;
 
 /// Total recoil duration. After `attack + decay` ms past the entry
-/// edge the modifier contributes zero, even if `Intent::HearingLoud`
+/// edge the modifier contributes zero, even if `Intent::Startled`
 /// is still held.
 pub const STARTLE_HEAD_TOTAL_MS: u64 = STARTLE_HEAD_ATTACK_MS + STARTLE_HEAD_DECAY_MS;
 
-/// Modifier that translates the entry edge into `Intent::HearingLoud`
+/// Modifier that translates the entry edge into `Intent::Startled`
 /// into a brief asymmetric recoil on `motor.head_pose`.
 #[derive(Debug, Clone, Copy)]
-pub struct StartleHead {
+pub struct HeadFromIntent {
     /// Pan contribution as actually applied last tick (post-clamp).
     /// Diff-and-undo bookkeeping — see `ListenHead::last_tilt_deg`.
     last_pan_deg: f32,
     /// Tilt contribution as actually applied last tick (post-clamp).
     last_tilt_deg: f32,
-    /// Was the previous tick `Intent::HearingLoud`? Drives edge
+    /// Was the previous tick `Intent::Startled`? Drives edge
     /// detection so we anchor on the entry edge.
     was_hearing_loud: bool,
     /// Instant the most recent recoil began. `None` outside an active
@@ -85,7 +85,7 @@ pub struct StartleHead {
     started_at: Option<Instant>,
 }
 
-impl StartleHead {
+impl HeadFromIntent {
     /// Construct an idle modifier with no in-flight recoil.
     #[must_use]
     pub const fn new() -> Self {
@@ -98,7 +98,7 @@ impl StartleHead {
     }
 }
 
-impl Default for StartleHead {
+impl Default for HeadFromIntent {
     fn default() -> Self {
         Self::new()
     }
@@ -130,11 +130,11 @@ fn envelope(elapsed_ms: u64, attack_ms: u64, decay_ms: u64) -> f32 {
     1.0 - (decay_elapsed as f32 / decay_ms as f32)
 }
 
-impl Modifier for StartleHead {
+impl Modifier for HeadFromIntent {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "StartleHead",
-            description: "On entry to Intent::HearingLoud, applies a brief asymmetric recoil \
+            name: "HeadFromIntent",
+            description: "On entry to Intent::Startled, applies a brief asymmetric recoil \
                           (fast attack, slower decay) to motor.head_pose pan + tilt. Total \
                           duration STARTLE_HEAD_TOTAL_MS regardless of how long the intent \
                           holds. Composes additively after IdleSway / EmotionHead / ListenHead \
@@ -149,7 +149,7 @@ impl Modifier for StartleHead {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let hearing_loud = matches!(entity.mind.intent, Intent::HearingLoud);
+        let hearing_loud = matches!(entity.mind.intent, Intent::Startled);
 
         // Anchor a fresh recoil on the entry edge. Re-entry after a
         // completed recoil restarts the envelope; re-entry while
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn no_intent_leaves_pose_alone() {
-        let mut m = StartleHead::new();
+        let mut m = HeadFromIntent::new();
         let mut entity = entity_at(0, Intent::Idle);
         entity.motor.head_pose = Pose::new(2.0, 1.0);
         m.update(&mut entity);
@@ -219,12 +219,12 @@ mod tests {
 
     #[test]
     fn entry_edge_anchors_recoil() {
-        let mut m = StartleHead::new();
+        let mut m = HeadFromIntent::new();
         let mut entity = entity_at(0, Intent::Idle);
         m.update(&mut entity);
 
         // Entry edge: amplitude = 0 on the entry tick (elapsed = 0).
-        entity.mind.intent = Intent::HearingLoud;
+        entity.mind.intent = Intent::Startled;
         m.update(&mut entity);
         assert_eq!(entity.motor.head_pose.pan_deg, 0.0);
         assert_eq!(entity.motor.head_pose.tilt_deg, 0.0);
@@ -238,8 +238,8 @@ mod tests {
 
     #[test]
     fn decay_returns_to_zero() {
-        let mut m = StartleHead::new();
-        let mut entity = entity_at(0, Intent::HearingLoud);
+        let mut m = HeadFromIntent::new();
+        let mut entity = entity_at(0, Intent::Startled);
         m.update(&mut entity);
 
         // Past total duration → no contribution.
@@ -251,12 +251,12 @@ mod tests {
 
     #[test]
     fn recoil_completes_even_if_intent_holds() {
-        // Intent::HearingLoud may hold for the full STARTLE_HOLD_MS
+        // Intent::Startled may hold for the full STARTLE_HOLD_MS
         // (1500ms) but the head recoil only lasts STARTLE_HEAD_TOTAL_MS
         // (400ms). Verify the head returns to upstream well before
         // the intent clears.
-        let mut m = StartleHead::new();
-        let mut entity = entity_at(0, Intent::HearingLoud);
+        let mut m = HeadFromIntent::new();
+        let mut entity = entity_at(0, Intent::Startled);
         m.update(&mut entity);
 
         // 1000 ms in — well past the recoil window, intent still held.
@@ -268,8 +268,8 @@ mod tests {
 
     #[test]
     fn re_entry_after_completion_re_anchors() {
-        let mut m = StartleHead::new();
-        let mut entity = entity_at(0, Intent::HearingLoud);
+        let mut m = HeadFromIntent::new();
+        let mut entity = entity_at(0, Intent::Startled);
         m.update(&mut entity);
 
         // Wait out full recoil.
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(entity.motor.head_pose.pan_deg, 0.0);
 
         // Re-enter. Fresh recoil starts; peak after attack window.
-        entity.mind.intent = Intent::HearingLoud;
+        entity.mind.intent = Intent::Startled;
         let restart = STARTLE_HEAD_TOTAL_MS + 300;
         entity.tick.now = Instant::from_millis(restart);
         m.update(&mut entity);
@@ -299,8 +299,8 @@ mod tests {
         // modifier's diff-and-undo, the recoil contribution at peak
         // should equal STARTLE_HEAD_PAN_DEG / TILT_DEG (within FP
         // tolerance), and the absolute pose stays inside clamps.
-        let mut m = StartleHead::new();
-        let mut entity = entity_at(0, Intent::HearingLoud);
+        let mut m = HeadFromIntent::new();
+        let mut entity = entity_at(0, Intent::Startled);
         let upstream_pan = -2.0;
         let upstream_tilt = 5.0;
         entity.motor.head_pose = Pose::new(upstream_pan, upstream_tilt);

@@ -18,7 +18,7 @@
 //! |---------------|-------------------|-------------------------------------------|
 //! | `Idle`        |              `0`  | no override                               |
 //! | `Listen`      |              `0`  | handled separately by `ListenHead`        |
-//! | `HearingLoud` |              `0`  | `StartleOnLoud` writes `Surprised`, which |
+//! | `Startled` |              `0`  | `IntentFromLoud` writes `Surprised`, which |
 //! |               |                   | `EmotionStyle` already renders            |
 //! | `BeingPet`    |             `+30` | extra blush on top of any emotion base    |
 
@@ -60,7 +60,7 @@ const fn blush_for(intent: Intent) -> u8 {
         | Intent::PickedUp
         | Intent::Shaken
         | Intent::Tilted
-        | Intent::HearingLoud => 0,
+        | Intent::Startled => 0,
     }
 }
 
@@ -118,10 +118,10 @@ mod tests {
 
     #[test]
     fn hearing_loud_intent_does_not_change_blush() {
-        // StartleOnLoud writes Emotion::Surprised which gives the
+        // IntentFromLoud writes Emotion::Surprised which gives the
         // visible reaction; this modifier stays out.
         let mut m = IntentStyle::new();
-        let mut entity = entity_with(Intent::HearingLoud, 100);
+        let mut entity = entity_with(Intent::Startled, 100);
         m.update(&mut entity);
         assert_eq!(entity.face.style.cheek_blush, 100);
     }

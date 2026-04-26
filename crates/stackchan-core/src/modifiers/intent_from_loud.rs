@@ -1,4 +1,4 @@
-//! `StartleOnLoud`: single-tick reaction to a high-amplitude acoustic
+//! `IntentFromLoud`: single-tick reaction to a high-amplitude acoustic
 //! transient (clap, shout, slam).
 //!
 //! ## Detection shape
@@ -11,7 +11,7 @@
 //! - `mind.affect.emotion` ← `Surprised`
 //! - `mind.autonomy.manual_until` ← `now + STARTLE_HOLD_MS`
 //! - `mind.autonomy.source` ← [`OverrideSource::Startle`]
-//! - `mind.intent` ← [`Intent::HearingLoud`]
+//! - `mind.intent` ← [`Intent::Startled`]
 //! - `voice.chirp_request` ← [`ChirpKind::Startle`]
 //!
 //! There's no sustain requirement (the contrast with
@@ -21,7 +21,7 @@
 //!
 //! ## Re-arm
 //!
-//! After firing, the modifier holds [`Intent::HearingLoud`] for
+//! After firing, the modifier holds [`Intent::Startled`] for
 //! [`STARTLE_HOLD_MS`] then clears it back to [`Intent::Idle`]. A
 //! second startle within the hold window is suppressed (the avatar is
 //! already in the reaction). After the hold expires, audio must drop
@@ -57,7 +57,7 @@ use crate::voice::ChirpKind;
 /// description for on-device measurements.
 pub const STARTLE_RMS_THRESHOLD: f32 = 0.4;
 
-/// How long the [`Intent::HearingLoud`] reaction holds before clearing
+/// How long the [`Intent::Startled`] reaction holds before clearing
 /// back to [`Intent::Idle`].
 ///
 /// 1500 ms reads as "the avatar reacted visibly and is now settling"
@@ -68,10 +68,10 @@ pub const STARTLE_HOLD_MS: u64 = 1_500;
 /// Modifier that watches `entity.perception.audio_rms` for a transient
 /// above [`STARTLE_RMS_THRESHOLD`] and reacts on the rising edge.
 #[derive(Debug, Clone, Copy)]
-pub struct StartleOnLoud {
+pub struct IntentFromLoud {
     /// Linear-RMS threshold above which a tick counts as loud.
     pub threshold: f32,
-    /// Hold duration on `Intent::HearingLoud`, in ms.
+    /// Hold duration on `Intent::Startled`, in ms.
     pub hold_ms: u64,
     /// Was the previous tick above threshold? Used for rising-edge
     /// detection. `None` for "no audio reading yet" (initial / gated).
@@ -81,7 +81,7 @@ pub struct StartleOnLoud {
     fired_at: Option<Instant>,
 }
 
-impl StartleOnLoud {
+impl IntentFromLoud {
     /// Construct with default tuning ([`STARTLE_RMS_THRESHOLD`] /
     /// [`STARTLE_HOLD_MS`]).
     #[must_use]
@@ -106,7 +106,7 @@ impl StartleOnLoud {
     }
 }
 
-impl Default for StartleOnLoud {
+impl Default for IntentFromLoud {
     fn default() -> Self {
         Self::new()
     }
@@ -121,12 +121,12 @@ const fn is_explicit_input(source: Option<OverrideSource>) -> bool {
     )
 }
 
-impl Modifier for StartleOnLoud {
+impl Modifier for IntentFromLoud {
     fn meta(&self) -> &'static ModifierMeta {
         static META: ModifierMeta = ModifierMeta {
-            name: "StartleOnLoud",
+            name: "IntentFromLoud",
             description: "Rising-edge perception.audio_rms above STARTLE_RMS_THRESHOLD fires \
-                          Surprised + manual hold + HearingLoud intent + Startle chirp. \
+                          Surprised + manual hold + Startled intent + Startle chirp. \
                           Defers to explicit-input holds (Touch / BodyTouch / Remote); \
                           overrides Voice / Pickup / Ambient. Holds intent for STARTLE_HOLD_MS \
                           then releases to Idle.",
@@ -152,7 +152,7 @@ impl Modifier for StartleOnLoud {
         // returns to Idle even on ticks where audio_rms is None.
         if let Some(fired) = self.fired_at
             && now.saturating_duration_since(fired) >= self.hold_ms
-            && matches!(entity.mind.intent, Intent::HearingLoud)
+            && matches!(entity.mind.intent, Intent::Startled)
         {
             entity.mind.intent = Intent::Idle;
             self.fired_at = None;
@@ -195,7 +195,7 @@ impl Modifier for StartleOnLoud {
         entity.mind.affect.emotion = Emotion::Surprised;
         entity.mind.autonomy.manual_until = Some(now + self.hold_ms);
         entity.mind.autonomy.source = Some(OverrideSource::Startle);
-        entity.mind.intent = Intent::HearingLoud;
+        entity.mind.intent = Intent::Startled;
         entity.voice.chirp_request = Some(ChirpKind::Startle);
         self.fired_at = Some(now);
     }
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn no_audio_does_not_fire() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = at(0);
         for t in (0..500).step_by(33) {
             entity.tick.now = Instant::from_millis(t);
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn quiet_audio_does_not_fire() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         for t in (0..500).step_by(33) {
             entity.tick.now = Instant::from_millis(t);
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn rising_edge_above_threshold_fires() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         m.update(&mut entity);
 
@@ -254,7 +254,7 @@ mod tests {
         m.update(&mut entity);
 
         assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
         assert_eq!(entity.voice.chirp_request, Some(ChirpKind::Startle));
         assert_eq!(entity.mind.autonomy.source, Some(OverrideSource::Startle));
         assert_eq!(
@@ -267,7 +267,7 @@ mod tests {
     fn unknown_then_loud_counts_as_rising_edge() {
         // Boot path: audio_rms is None, then becomes loud once the
         // firmware publishes a sample. That counts as a rising edge.
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = at(0);
         m.update(&mut entity);
 
@@ -275,12 +275,12 @@ mod tests {
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
 
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
     }
 
     #[test]
     fn sustained_loud_only_fires_once_per_burst() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         m.update(&mut entity);
 
@@ -288,7 +288,7 @@ mod tests {
         entity.tick.now = Instant::from_millis(33);
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
         let first_until = entity.mind.autonomy.manual_until;
 
         // Drain the chirp the way firmware would.
@@ -311,13 +311,13 @@ mod tests {
 
     #[test]
     fn hold_expires_to_idle() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         m.update(&mut entity);
         entity.tick.now = Instant::from_millis(33);
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
 
         // Quiet down. Step past the hold.
         entity.perception.audio_rms = Some(0.01);
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn re_armed_after_quiet_then_loud() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         m.update(&mut entity);
 
@@ -336,7 +336,7 @@ mod tests {
         entity.tick.now = Instant::from_millis(33);
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
 
         // Quiet beyond hold.
         entity.perception.audio_rms = Some(0.01);
@@ -352,13 +352,13 @@ mod tests {
         entity.tick.now = Instant::from_millis(33 + STARTLE_HOLD_MS + 133);
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
         assert_eq!(entity.voice.chirp_request, Some(ChirpKind::Startle));
     }
 
     #[test]
     fn touch_hold_blocks_startle() {
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         // Pretend EmotionTouch already claimed the avatar.
         entity.mind.affect.emotion = Emotion::Happy;
@@ -379,7 +379,7 @@ mod tests {
     fn voice_hold_does_not_block_startle() {
         // WakeOnVoice has set Happy + Voice hold. A loud transient
         // mid-conversation must still startle the avatar.
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         entity.mind.affect.emotion = Emotion::Happy;
         entity.mind.autonomy.manual_until = Some(Instant::from_millis(10_000));
@@ -391,7 +391,7 @@ mod tests {
         m.update(&mut entity);
 
         assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
         assert_eq!(entity.mind.autonomy.source, Some(OverrideSource::Startle));
     }
 
@@ -399,7 +399,7 @@ mod tests {
     fn at_threshold_does_not_count_as_loud() {
         // The check is `rms > threshold`, so exactly-at-threshold is
         // quiet. Pin so it doesn't drift to `>=`.
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         m.update(&mut entity);
         entity.tick.now = Instant::from_millis(33);
@@ -414,13 +414,13 @@ mod tests {
         // reset, "loud → None → loud" would not re-fire (prev_loud
         // would still be true). Confirm that the None tick clears the
         // edge so a post-release loud spike fires fresh.
-        let mut m = StartleOnLoud::new();
+        let mut m = IntentFromLoud::new();
         let mut entity = with_rms(0, Some(0.01));
         m.update(&mut entity);
         entity.tick.now = Instant::from_millis(33);
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
         entity.voice.chirp_request = None;
 
         // Wait out the hold; gate inactive (audio_rms = None) the
@@ -437,7 +437,7 @@ mod tests {
         entity.tick.now = Instant::from_millis(STARTLE_HOLD_MS + 233);
         entity.perception.audio_rms = Some(0.6);
         m.update(&mut entity);
-        assert_eq!(entity.mind.intent, Intent::HearingLoud);
+        assert_eq!(entity.mind.intent, Intent::Startled);
         assert_eq!(entity.voice.chirp_request, Some(ChirpKind::Startle));
     }
 }

@@ -1,13 +1,13 @@
-//! End-to-end sim test for the `StartleOnLoud` modifier + `StartleHead`
+//! End-to-end sim test for the `IntentFromLoud` modifier + `HeadFromIntent`
 //! recoil + `render_leds` brightness override chain.
 //!
 //! Drives a Director with the full Affect + Motion stack relevant to
 //! startle, varies `perception.audio_rms` across simulated time, and
-//! asserts the cross-cutting reaction chain ([`Intent::HearingLoud`] +
+//! asserts the cross-cutting reaction chain ([`Intent::Startled`] +
 //! [`Emotion::Surprised`] + [`ChirpKind::Startle`] + head recoil + LED
 //! brightness pin).
 //!
-//! Pins the modifier-writes-intent pattern: `StartleOnLoud` writes
+//! Pins the modifier-writes-intent pattern: `IntentFromLoud` writes
 //! `mind.intent` directly (uncommon — most intents come from skills)
 //! to keep the startle reaction within a single tick. A regression
 //! that splits the writes back across two frames would manifest as
@@ -19,8 +19,8 @@
 )]
 
 use stackchan_core::modifiers::{
-    EmotionHead, IdleSway, ListenHead, STARTLE_HEAD_TOTAL_MS, STARTLE_HOLD_MS, StartleHead,
-    StartleOnLoud, WakeOnVoice,
+    EmotionHead, HeadFromIntent, IdleSway, IntentFromLoud, ListenHead, STARTLE_HEAD_TOTAL_MS,
+    STARTLE_HOLD_MS, WakeOnVoice,
 };
 use stackchan_core::skills::LookAtSound;
 use stackchan_core::voice::ChirpKind;
@@ -42,7 +42,7 @@ fn run_for(director: &mut Director<'_>, entity: &mut Entity, start_ms: u64, tick
 #[test]
 fn quiet_audio_does_not_startle() {
     let mut entity = Entity::default();
-    let mut startle = StartleOnLoud::new();
+    let mut startle = IntentFromLoud::new();
     let mut director = Director::new();
     director.add_modifier(&mut startle).unwrap();
 
@@ -60,13 +60,13 @@ fn loud_transient_fires_full_reaction_chain() {
     let mut sway = IdleSway::new();
     let mut emo = EmotionHead::new();
     let mut listen_head = ListenHead::new();
-    let mut startle_head = StartleHead::new();
-    let mut startle = StartleOnLoud::new();
+    let mut head_from_intent = HeadFromIntent::new();
+    let mut startle = IntentFromLoud::new();
     let mut director = Director::new();
     director.add_modifier(&mut sway).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut listen_head).unwrap();
-    director.add_modifier(&mut startle_head).unwrap();
+    director.add_modifier(&mut head_from_intent).unwrap();
     director.add_modifier(&mut startle).unwrap();
 
     // Establish a quiet baseline so the rising edge is unambiguous,
@@ -85,18 +85,18 @@ fn loud_transient_fires_full_reaction_chain() {
 
     assert_eq!(
         entity.mind.intent,
-        Intent::HearingLoud,
-        "rising-edge loud must set Intent::HearingLoud"
+        Intent::Startled,
+        "rising-edge loud must set Intent::Startled"
     );
     assert_eq!(
         entity.mind.affect.emotion,
         Emotion::Surprised,
-        "StartleOnLoud must write Surprised in the same tick"
+        "IntentFromLoud must write Surprised in the same tick"
     );
     assert_eq!(
         entity.voice.chirp_request,
         Some(ChirpKind::Startle),
-        "StartleOnLoud must queue a Startle chirp on the rising edge"
+        "IntentFromLoud must queue a Startle chirp on the rising edge"
     );
 
     // Drive forward to the head recoil's peak (anchor + attack window).
@@ -105,11 +105,11 @@ fn loud_transient_fires_full_reaction_chain() {
     let pan_after = entity.motor.head_pose.pan_deg;
     assert!(
         pan_after - pan_before > 2.0,
-        "StartleHead must add a positive pan recoil on top of upstream sway \
+        "HeadFromIntent must add a positive pan recoil on top of upstream sway \
          (before {pan_before}, after {pan_after})",
     );
 
-    // LEDs at HearingLoud should pin to peak brightness regardless of
+    // LEDs at Startled should pin to peak brightness regardless of
     // the breath envelope phase — verify by sampling at the breath
     // trough where dim would normally apply.
     let mut frame = LedFrame::default();
@@ -120,7 +120,7 @@ fn loud_transient_fires_full_reaction_chain() {
     let idle_blue = frame.0[0] & 0x1F;
     assert!(
         loud_blue > idle_blue,
-        "HearingLoud must pin LED brightness above the breath trough ({idle_blue} → {loud_blue})",
+        "Startled must pin LED brightness above the breath trough ({idle_blue} → {loud_blue})",
     );
 }
 
@@ -130,13 +130,13 @@ fn intent_clears_after_hold_head_returns_to_baseline() {
     let mut sway = IdleSway::new();
     let mut emo = EmotionHead::new();
     let mut listen_head = ListenHead::new();
-    let mut startle_head = StartleHead::new();
-    let mut startle = StartleOnLoud::new();
+    let mut head_from_intent = HeadFromIntent::new();
+    let mut startle = IntentFromLoud::new();
     let mut director = Director::new();
     director.add_modifier(&mut sway).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut listen_head).unwrap();
-    director.add_modifier(&mut startle_head).unwrap();
+    director.add_modifier(&mut head_from_intent).unwrap();
     director.add_modifier(&mut startle).unwrap();
 
     // Fire the startle.
@@ -144,7 +144,7 @@ fn intent_clears_after_hold_head_returns_to_baseline() {
     run_for(&mut director, &mut entity, 0, 3);
     entity.perception.audio_rms = Some(0.6);
     director.run(&mut entity, Instant::from_millis(3 * TICK_MS));
-    assert_eq!(entity.mind.intent, Intent::HearingLoud);
+    assert_eq!(entity.mind.intent, Intent::Startled);
 
     // Quiet down. Drive past STARTLE_HOLD_MS so the modifier releases
     // intent back to Idle.
@@ -175,11 +175,11 @@ fn intent_clears_after_hold_head_returns_to_baseline() {
 fn startle_overrides_in_progress_listen() {
     // Sustained voice puts the avatar into Listen + Happy via
     // LookAtSound + WakeOnVoice. A loud spike mid-conversation must
-    // still flip the intent to HearingLoud (StartleOnLoud overrides
+    // still flip the intent to Startled (IntentFromLoud overrides
     // the WakeOnVoice hold).
     let mut entity = Entity::default();
     let mut wake_on_voice = WakeOnVoice::new();
-    let mut startle = StartleOnLoud::new();
+    let mut startle = IntentFromLoud::new();
     let mut look_at_sound = LookAtSound::new();
     let mut director = Director::new();
     director.add_modifier(&mut wake_on_voice).unwrap();
@@ -201,7 +201,7 @@ fn startle_overrides_in_progress_listen() {
     director.run(&mut entity, Instant::from_millis(31 * TICK_MS));
     assert_eq!(
         entity.mind.intent,
-        Intent::HearingLoud,
+        Intent::Startled,
         "loud transient must override in-progress Listen",
     );
     assert_eq!(entity.mind.affect.emotion, Emotion::Surprised);
