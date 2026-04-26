@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.17.1...stackchan-firmware-v0.17.2) (2026-04-26)
+
+
+### Bug Fixes
+
+* **firmware:** time-bound log_angle_limits read so headless boot doesn't hang ([#140](https://github.com/andymai/stackchan-kai/issues/140)) ([c74f4aa](https://github.com/andymai/stackchan-kai/commit/c74f4aa14e7f464fdef4721e459e706d7b4e9e48))
+
 ## [0.17.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.17.0...stackchan-firmware-v0.17.1) (2026-04-26)
 
 
