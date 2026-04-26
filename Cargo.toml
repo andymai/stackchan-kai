@@ -19,6 +19,7 @@ members = [
     "crates/si12t",
     "crates/tracker",
     "crates/stackchan-firmware",
+    "xtask",
 ]
 default-members = [
     "crates/stackchan-core",

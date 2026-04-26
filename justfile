@@ -249,6 +249,15 @@ tracker-bench:
     cd crates/stackchan-firmware && cargo +esp build --release --example tracker_bench
     {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/tracker_bench{{_serial_suffix}}
 
+# Haar face cascade bench: streams camera frames through the tracker,
+# scores each motion candidate's ROI through the OpenCV-converted
+# frontal-face cascade, and logs per-frame step + cascade timings.
+# Used to validate the FPS budget and detection accuracy on hardware
+# before face detection ships in `main.rs`. No servos commanded.
+face-bench:
+    cd crates/stackchan-firmware && cargo +esp build --release --example face_bench
+    {{_serial_prefix}}espflash flash --monitor --log-format defmt --port {{PORT}} {{example_elf_dir}}/face_bench{{_serial_suffix}}
+
 # I²C bus probe: sweeps 0x08..=0x77 and logs which addresses ACK. Used
 # to confirm chip presence on the shared I²C bus before committing to
 # address constants in driver crates without a published datasheet.

@@ -28,6 +28,7 @@ use crate::entity::Entity;
 use crate::head::Pose;
 use crate::mind::Attention;
 use crate::modifier::Modifier;
+use crate::perception::{HALF_FOV_H_DEG, HALF_FOV_V_DEG};
 
 /// Peak upward tilt added when fully attentive, in degrees.
 ///
@@ -197,49 +198,69 @@ impl Modifier for HeadFromAttention {
         let upstream_pan = entity.motor.head_pose.pan_deg - self.last_pan_deg;
         let upstream_tilt = entity.motor.head_pose.tilt_deg - self.last_tilt_deg;
 
-        // Pick the contribution shape per attention variant.
-        let (target_pan_contrib, target_tilt_contrib) = match entity.mind.attention {
-            Attention::Tracking { target, .. } => {
-                // Eye-leads-head: the head's effective target is a
-                // single-pole low-pass over the live tracker target.
-                // Eyes already moved to the live target via
-                // `GazeFromAttention`; the head naturally lags + the
-                // filter smooths jittery per-frame centroids.
-                //
-                // On entry to Tracking the smoother anchors at the
-                // live target (no chase from a stale value).
-                let prev = self.smoothed_target.unwrap_or(target);
-                let smoothed = lerp_pose(prev, target);
-                self.smoothed_target = Some(smoothed);
-                (
-                    smoothed.pan_deg - upstream_pan,
-                    smoothed.tilt_deg - upstream_tilt,
-                )
-            }
-            Attention::Listening { .. } | Attention::None => {
-                // Drop the smoother anchor so a future Tracking run
-                // re-anchors at the live target (no stale chase).
-                self.smoothed_target = None;
-                // Tilt-only contribution, eased by the listen / release
-                // anchors. Pan stays at zero (no contribution).
-                let target_tilt = match (self.listen_since, self.release_since) {
-                    (Some(since), _) => {
-                        LISTEN_HEAD_TILT_DEG * ease(since, now, LISTEN_HEAD_EASE_MS)
-                    }
-                    (None, Some(rel_at)) => {
-                        let t = ease(rel_at, now, LISTEN_HEAD_EASE_MS);
-                        if t >= 1.0 {
-                            self.release_since = None;
-                            0.0
-                        } else {
-                            LISTEN_HEAD_TILT_DEG * (1.0 - t)
+        // Pick the contribution shape per attention variant. When the
+        // engagement state carries a face centroid we use it (in pose-
+        // degree units via the camera FOV) as the live target — the
+        // head should track the face, not the noisier motion blob.
+        let face_target_pose = entity
+            .mind
+            .engagement
+            .centroid()
+            .map(|(nx, ny)| Pose::new(nx * HALF_FOV_H_DEG, -ny * HALF_FOV_V_DEG).clamped());
+        let (target_pan_contrib, target_tilt_contrib) =
+            match (face_target_pose, entity.mind.attention) {
+                (Some(face_target), _) => {
+                    // Engagement-driven path: same low-pass as the motion
+                    // path but anchored on the face centroid.
+                    let prev = self.smoothed_target.unwrap_or(face_target);
+                    let smoothed = lerp_pose(prev, face_target);
+                    self.smoothed_target = Some(smoothed);
+                    (
+                        smoothed.pan_deg - upstream_pan,
+                        smoothed.tilt_deg - upstream_tilt,
+                    )
+                }
+                (None, Attention::Tracking { target, .. }) => {
+                    // Eye-leads-head: the head's effective target is a
+                    // single-pole low-pass over the live tracker target.
+                    // Eyes already moved to the live target via
+                    // `GazeFromAttention`; the head naturally lags + the
+                    // filter smooths jittery per-frame centroids.
+                    //
+                    // On entry to Tracking the smoother anchors at the
+                    // live target (no chase from a stale value).
+                    let prev = self.smoothed_target.unwrap_or(target);
+                    let smoothed = lerp_pose(prev, target);
+                    self.smoothed_target = Some(smoothed);
+                    (
+                        smoothed.pan_deg - upstream_pan,
+                        smoothed.tilt_deg - upstream_tilt,
+                    )
+                }
+                (None, Attention::Listening { .. } | Attention::None) => {
+                    // Drop the smoother anchor so a future Tracking run
+                    // re-anchors at the live target (no stale chase).
+                    self.smoothed_target = None;
+                    // Tilt-only contribution, eased by the listen / release
+                    // anchors. Pan stays at zero (no contribution).
+                    let target_tilt = match (self.listen_since, self.release_since) {
+                        (Some(since), _) => {
+                            LISTEN_HEAD_TILT_DEG * ease(since, now, LISTEN_HEAD_EASE_MS)
                         }
-                    }
-                    (None, None) => 0.0,
-                };
-                (0.0, target_tilt)
-            }
-        };
+                        (None, Some(rel_at)) => {
+                            let t = ease(rel_at, now, LISTEN_HEAD_EASE_MS);
+                            if t >= 1.0 {
+                                self.release_since = None;
+                                0.0
+                            } else {
+                                LISTEN_HEAD_TILT_DEG * (1.0 - t)
+                            }
+                        }
+                        (None, None) => 0.0,
+                    };
+                    (0.0, target_tilt)
+                }
+            };
 
         let combined = Pose::new(
             upstream_pan + target_pan_contrib,
@@ -260,7 +281,7 @@ impl Modifier for HeadFromAttention {
 mod tests {
     use super::*;
     use crate::Entity;
-    use crate::mind::Attention;
+    use crate::mind::{Attention, Engagement};
 
     fn listening(since_ms: u64) -> Attention {
         Attention::Listening {
@@ -499,6 +520,47 @@ mod tests {
                 && (after_many.tilt_deg - t2.tilt_deg).abs() < 0.1,
             "head should converge to ~t2 after ~40 ticks (got {after_many:?})",
         );
+    }
+
+    #[test]
+    fn engaged_face_centroid_overrides_motion_target() {
+        // Motion centroid says "pan +15°"; face centroid says "pan -15°".
+        // Head's first-tick contribution must come from the face — the
+        // smoother anchors at the face target, so the head lands there
+        // exactly on tick 0.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        entity.mind.attention = tracking(Pose::new(15.0, 0.0));
+        entity.mind.engagement = Engagement::Locked {
+            // -0.5 × HALF_FOV_H_DEG (31°) = -15.5°
+            centroid: (-0.5_f32, 0.0_f32),
+            at: Instant::from_millis(0),
+        };
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+        assert!(
+            entity.motor.head_pose.pan_deg < 0.0,
+            "head should pan LEFT toward the face, not right toward the motion target",
+        );
+    }
+
+    #[test]
+    fn engaged_releasing_state_keeps_face_target() {
+        // Releasing must keep driving the head toward the last-known
+        // face centroid for the search beat — the lost-target
+        // choreography (PR3) layers on top of this.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        entity.mind.attention = Attention::None;
+        entity.mind.engagement = Engagement::Releasing {
+            centroid: (0.4_f32, 0.0_f32),
+            at: Instant::from_millis(0),
+            misses: 5,
+        };
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+        // 0.4 × 31° ≈ +12.4°, smoother first-tick anchors at it.
+        assert!(entity.motor.head_pose.pan_deg > 5.0);
     }
 
     #[test]

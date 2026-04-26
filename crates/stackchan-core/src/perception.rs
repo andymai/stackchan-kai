@@ -67,6 +67,21 @@ impl BodyTouch {
 /// import the tracker crate just for the const.
 pub const MAX_TRACKING_CANDIDATES: usize = 4;
 
+/// Half the camera's horizontal FOV, in degrees.
+///
+/// Used by engagement modifiers to convert a normalised face centroid
+/// (`-1..1`) into a head-pose target — the cascade emits centroids in
+/// frame-normalised coordinates, but `Pose` is in degrees.
+///
+/// Mirrors `tracker::TrackerConfig::DEFAULT.fov_h_deg / 2.0`. The
+/// `tracker` crate is firmware-side; pulling it in from
+/// `stackchan-core` would leak `no_std` boundaries, so this constant
+/// is duplicated. Audit with `rg HALF_FOV` if the camera lens
+/// changes.
+pub const HALF_FOV_H_DEG: f32 = 31.0;
+/// Half the camera's vertical FOV, in degrees. See [`HALF_FOV_H_DEG`].
+pub const HALF_FOV_V_DEG: f32 = 24.5;
+
 /// One detected motion blob from the firmware tracker, after
 /// temporal + connected-component filtering.
 ///
@@ -113,6 +128,18 @@ pub struct TrackingObservation {
     /// `cell_count` descending. Cap [`MAX_TRACKING_CANDIDATES`].
     /// Empty on `Warmup` / `GlobalEvent` / no-motion.
     pub candidates: heapless::Vec<TargetCandidate, MAX_TRACKING_CANDIDATES>,
+    /// Whether the firmware-side face cascade fired on any motion
+    /// candidate this frame. `false` when cascade scoring is disabled
+    /// or no motion was found. Engine cognition modifiers gate
+    /// engagement state on this — observation-only in v0.x; behavioural
+    /// effects ship in a follow-up PR.
+    pub face_present: bool,
+    /// Centroid of the highest-scoring face detection in normalised
+    /// frame coordinates `[-1, 1]`. `None` when no face was scored or
+    /// the cascade didn't fire. Provided alongside [`Self::face_present`]
+    /// so engine cognition can centre attention on the face directly
+    /// rather than the (potentially larger) motion blob.
+    pub face_centroid: Option<(f32, f32)>,
 }
 
 /// Why the tracker chose its current target. Mirrors `tracker::Motion`

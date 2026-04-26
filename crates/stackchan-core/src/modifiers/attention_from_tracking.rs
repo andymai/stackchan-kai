@@ -40,7 +40,7 @@
 use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::entity::Entity;
-use crate::mind::Attention;
+use crate::mind::{Attention, Engagement};
 use crate::modifier::Modifier;
 use crate::perception::TrackingMotion;
 
@@ -62,6 +62,25 @@ pub const TRACKING_LOCK_TICKS: u8 = 3;
 /// [`crate::skills::Listening`] release window for symmetry.
 pub const TRACKING_RELEASE_MS: u64 = 1_500;
 
+/// Consecutive face-cascade hits required to engage
+/// [`Engagement::Locked`].
+///
+/// `3` ticks at the firmware tracker's ~30 Hz cadence is ~100 ms — long
+/// enough to ride out single-frame detector misses (head turn, hand
+/// briefly occluding) without lagging the engagement onset, and the
+/// match for [`TRACKING_LOCK_TICKS`].
+pub const FACE_LOCK_HITS: u8 = 3;
+
+/// Consecutive face-cascade misses tolerated before releasing
+/// [`Engagement::Locked`] / [`Engagement::Releasing`] back to
+/// [`Engagement::Idle`].
+///
+/// `10` ticks at ~30 Hz is ~330 ms — survives a blink, a quick head
+/// turn, or one frame of false-negative without dropping engagement,
+/// but transitions to idle quickly enough that a face leaving the
+/// scene reads as "they're gone" rather than "they're still here".
+pub const FACE_RELEASE_MISSES: u8 = 10;
+
 /// Modifier that watches `perception.tracking` and decides whether
 /// `mind.attention` should be `Tracking{target}`.
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +91,12 @@ pub struct AttentionFromTracking {
     /// Hold window after the last tracking tick before releasing
     /// attention back to `None`, in ms.
     pub release_ms: u64,
+    /// Consecutive face-cascade hits required to engage the face
+    /// lock.
+    pub face_lock_hits: u8,
+    /// Consecutive face-cascade misses tolerated before releasing the
+    /// face lock back to [`Engagement::Idle`].
+    pub face_release_misses: u8,
     /// Running counter of consecutive `Tracking` ticks. Saturates at
     /// `u8::MAX` so a very long sustained run doesn't wrap.
     consecutive_tracking: u8,
@@ -82,23 +107,30 @@ pub struct AttentionFromTracking {
 
 impl AttentionFromTracking {
     /// Construct with default tuning ([`TRACKING_LOCK_TICKS`] /
-    /// [`TRACKING_RELEASE_MS`]).
+    /// [`TRACKING_RELEASE_MS`] / [`FACE_LOCK_HITS`] /
+    /// [`FACE_RELEASE_MISSES`]).
     #[must_use]
     pub const fn new() -> Self {
         Self {
             lock_ticks: TRACKING_LOCK_TICKS,
             release_ms: TRACKING_RELEASE_MS,
+            face_lock_hits: FACE_LOCK_HITS,
+            face_release_misses: FACE_RELEASE_MISSES,
             consecutive_tracking: 0,
             last_tracking_at: None,
         }
     }
 
-    /// Construct with custom lock + release tuning.
+    /// Construct with custom motion lock + release tuning. Face-lock
+    /// thresholds keep their defaults; tweak the public fields after
+    /// construction if you need to override those too.
     #[must_use]
     pub const fn with_config(lock_ticks: u8, release_ms: u64) -> Self {
         Self {
             lock_ticks,
             release_ms,
+            face_lock_hits: FACE_LOCK_HITS,
+            face_release_misses: FACE_RELEASE_MISSES,
             consecutive_tracking: 0,
             last_tracking_at: None,
         }
@@ -119,20 +151,54 @@ impl Modifier for AttentionFromTracking {
                           after TRACKING_LOCK_TICKS consecutive Tracking-classified ticks. \
                           Releases to None after TRACKING_RELEASE_MS quiet ms. Updates target \
                           continuously while locked; pins `since` to the entry tick for \
-                          stable ease-in animation.",
+                          stable ease-in animation. Also drives mind.engagement from \
+                          face_present/face_centroid with FACE_LOCK_HITS / \
+                          FACE_RELEASE_MISSES hysteresis.",
             phase: Phase::Cognition,
             priority: 0,
-            reads: &[Field::Tracking, Field::Attention],
-            writes: &[Field::Attention],
+            reads: &[Field::Tracking, Field::Attention, Field::Engagement],
+            writes: &[Field::Attention, Field::Engagement],
         };
         &META
     }
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        let Some(obs) = entity.perception.tracking.as_ref() else {
-            // No observation yet — leave attention alone, reset
-            // counter so the next non-None obs starts fresh.
+        // No observation = treat as a face-less + motion-less frame,
+        // running through the same release paths the live tracker
+        // would use. This way a brief drain miss bleeds engagement
+        // through the natural `face_release_misses` window instead
+        // of clobbering a live lock.
+        let motion_obs = entity.perception.tracking.as_ref();
+        let face_present = motion_obs.is_some_and(|obs| obs.face_present);
+        let face_centroid = motion_obs.and_then(|obs| obs.face_centroid);
+
+        // Engagement state machine. Runs alongside attention rather
+        // than gated by it: faces are only scored when there's a
+        // motion candidate (camera task gates the cascade), so
+        // `face_present` is `true` only inside the same window where
+        // attention is ramping up or locked. The natural
+        // `face_release_misses` path handles cleanup when faces
+        // disappear, regardless of what attention does — including
+        // the case where the motion-tracker drops attention while a
+        // face is still detected.
+        //
+        // Computed up-front so every attention-state branch below
+        // sees the same engagement update — no early-return ordering
+        // hazards.
+        entity.mind.engagement = advance_engagement(
+            entity.mind.engagement,
+            face_present,
+            face_centroid,
+            self.face_lock_hits,
+            self.face_release_misses,
+            now,
+        );
+
+        // The remaining attention-side state machine needs a live
+        // observation. Without one we leave attention alone — the
+        // engagement path above already handled face-side hysteresis.
+        let Some(obs) = motion_obs else {
             self.consecutive_tracking = 0;
             return;
         };
@@ -169,6 +235,7 @@ impl Modifier for AttentionFromTracking {
             self.consecutive_tracking = 0;
         }
 
+        let target_pose = obs.target_pose;
         let currently_tracking = matches!(entity.mind.attention, Attention::Tracking { .. });
 
         if self.consecutive_tracking >= self.lock_ticks {
@@ -180,14 +247,18 @@ impl Modifier for AttentionFromTracking {
                 _ => now,
             };
             entity.mind.attention = Attention::Tracking {
-                target: obs.target_pose,
+                target: target_pose,
                 since,
             };
             return;
         }
 
         // Not enough sustained motion to lock. If we're already
-        // tracking, hold until the release window expires.
+        // tracking, hold until the release window expires. Don't
+        // reset engagement here — the `advance_engagement` path
+        // above is the single source of truth for face hysteresis,
+        // which lets a still-detected face survive a motion-only
+        // release window.
         if currently_tracking {
             let elapsed = self
                 .last_tracking_at
@@ -196,6 +267,82 @@ impl Modifier for AttentionFromTracking {
                 entity.mind.attention = Attention::None;
                 self.last_tracking_at = None;
             }
+        }
+    }
+}
+
+/// Advance the [`Engagement`] state machine by one tick.
+///
+/// `face_present` reflects whether the firmware-side cascade fired on
+/// any motion candidate this frame. `face_centroid` is the centroid
+/// to track when present; ignored when `face_present` is false. `now`
+/// stamps fresh `Locked` transitions so engagement modifiers can
+/// reason about how long the lock has held.
+///
+/// The state machine is a Mealy machine — every transition is
+/// determined by `(state, face_present)`; centroid only refreshes the
+/// `Locked` state's payload while the lock holds. Pulled out as a free
+/// function so it's straightforward to unit-test in isolation.
+const fn advance_engagement(
+    current: Engagement,
+    face_present: bool,
+    face_centroid: Option<(f32, f32)>,
+    lock_hits: u8,
+    release_misses: u8,
+    now: Instant,
+) -> Engagement {
+    match (current, face_present, face_centroid) {
+        // No face this frame: count toward release / reset locking.
+        // `Idle` and `Locking` collapse to the same outcome — neither
+        // had a confirmed lock, so we just fall back to Idle.
+        (Engagement::Idle | Engagement::Locking { .. }, false, _) => Engagement::Idle,
+        (Engagement::Locked { centroid, at }, false, _) => Engagement::Releasing {
+            centroid,
+            at,
+            misses: 1,
+        },
+        (
+            Engagement::Releasing {
+                centroid,
+                at,
+                misses,
+            },
+            false,
+            _,
+        ) => {
+            let next = misses.saturating_add(1);
+            if next >= release_misses {
+                Engagement::Idle
+            } else {
+                Engagement::Releasing {
+                    centroid,
+                    at,
+                    misses: next,
+                }
+            }
+        }
+
+        // Face this frame WITHOUT a centroid (shouldn't happen in
+        // practice — camera task always pairs them — but defensive
+        // for the rare warmup race). Treat as "no useful data this
+        // frame" without resetting hits.
+        (state, true, None) => state,
+
+        // Face this frame WITH a centroid: advance the locking /
+        // refresh the lock. `Locked` and `Releasing` collapse to the
+        // same outcome — both already had a lock and a fresh face
+        // confirms / re-confirms it.
+        (Engagement::Idle, true, Some(_centroid)) => Engagement::Locking { hits: 1 },
+        (Engagement::Locking { hits }, true, Some(centroid)) => {
+            let next = hits.saturating_add(1);
+            if next >= lock_hits {
+                Engagement::Locked { centroid, at: now }
+            } else {
+                Engagement::Locking { hits: next }
+            }
+        }
+        (Engagement::Locked { .. } | Engagement::Releasing { .. }, true, Some(centroid)) => {
+            Engagement::Locked { centroid, at: now }
         }
     }
 }
@@ -227,7 +374,97 @@ mod tests {
             },
             motion,
             candidates: heapless::Vec::new(),
+            face_present: false,
+            face_centroid: None,
         }
+    }
+
+    #[test]
+    fn advance_engagement_table() {
+        // Direct table coverage of the Mealy machine, independent of
+        // entity / observation plumbing. Each row is
+        // `(initial, face_present, centroid) -> expected`. Locking and
+        // release thresholds chosen small (2 / 3) so the test exercises
+        // the boundaries cheaply.
+        const LOCK: u8 = 2;
+        const REL: u8 = 3;
+        let now = Instant::from_millis(0);
+        let c = Some((0.1_f32, 0.2_f32));
+
+        // Idle paths.
+        assert_eq!(
+            advance_engagement(Engagement::Idle, false, None, LOCK, REL, now),
+            Engagement::Idle,
+        );
+        assert_eq!(
+            advance_engagement(Engagement::Idle, true, c, LOCK, REL, now),
+            Engagement::Locking { hits: 1 },
+        );
+        assert_eq!(
+            advance_engagement(Engagement::Idle, true, None, LOCK, REL, now),
+            Engagement::Idle,
+            "true-without-centroid is a defensive no-op, not a state change",
+        );
+
+        // Locking{hits=1} + face → reaches lock threshold, transitions
+        // to Locked carrying the latest centroid.
+        match advance_engagement(Engagement::Locking { hits: 1 }, true, c, LOCK, REL, now) {
+            Engagement::Locked { centroid, .. } => assert_eq!(Some(centroid), c),
+            other => panic!("expected Locked at hit threshold, got {other:?}"),
+        }
+        // Locking + miss → drops to Idle (no half-lock).
+        assert_eq!(
+            advance_engagement(Engagement::Locking { hits: 1 }, false, None, LOCK, REL, now),
+            Engagement::Idle,
+        );
+
+        // Locked + miss → first-frame Releasing.
+        let locked = Engagement::Locked {
+            centroid: (0.5, -0.5),
+            at: now,
+        };
+        match advance_engagement(locked, false, None, LOCK, REL, now) {
+            Engagement::Releasing {
+                centroid, misses, ..
+            } => {
+                assert_eq!(centroid, (0.5, -0.5));
+                assert_eq!(misses, 1);
+            }
+            other => panic!("expected Releasing on first miss, got {other:?}"),
+        }
+        // Locked + face → still Locked, centroid refreshed.
+        match advance_engagement(locked, true, c, LOCK, REL, now) {
+            Engagement::Locked { centroid, .. } => assert_eq!(Some(centroid), c),
+            other => panic!("expected Locked refresh, got {other:?}"),
+        }
+
+        // Releasing edge cases.
+        let releasing = Engagement::Releasing {
+            centroid: (0.5, -0.5),
+            at: now,
+            misses: REL - 1,
+        };
+        // Hits release threshold this frame → Idle.
+        assert_eq!(
+            advance_engagement(releasing, false, None, LOCK, REL, now),
+            Engagement::Idle,
+        );
+        // Re-acquire face mid-Releasing → straight back to Locked.
+        match advance_engagement(releasing, true, c, LOCK, REL, now) {
+            Engagement::Locked { centroid, .. } => assert_eq!(Some(centroid), c),
+            other => panic!("expected re-Locked, got {other:?}"),
+        }
+    }
+
+    fn observation_with_face(
+        motion: TrackingMotion,
+        target: Pose,
+        centroid: (f32, f32),
+    ) -> TrackingObservation {
+        let mut obs = observation(motion, target);
+        obs.face_present = true;
+        obs.face_centroid = Some(centroid);
+        obs
     }
 
     #[test]
@@ -418,6 +655,193 @@ mod tests {
             m.update(&mut entity);
         }
         assert_eq!(entity.mind.attention, Attention::None);
+    }
+
+    #[test]
+    fn face_lock_engages_after_three_hits_and_releases_after_ten_misses() {
+        let mut m = AttentionFromTracking::new();
+        let mut entity = at(0);
+        let target = Pose::new(10.0, 5.0);
+        let centroid = (0.2_f32, -0.1_f32);
+
+        // Sustained motion + face: locks attention AND engagement.
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Tracking,
+            target,
+            centroid,
+        ));
+        for tick in 0..u64::from(FACE_LOCK_HITS) {
+            entity.tick.now = Instant::from_millis(tick * 33);
+            m.update(&mut entity);
+        }
+        match entity.mind.engagement {
+            Engagement::Locked { centroid: c, at: _ } => assert_eq!(c, centroid),
+            other => panic!("expected Locked, got {other:?}"),
+        }
+
+        // Face vanishes mid-tracking. Each empty frame increments
+        // `misses`; engagement enters `Releasing` immediately.
+        entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
+        entity.tick.now = Instant::from_millis(u64::from(FACE_LOCK_HITS) * 33);
+        m.update(&mut entity);
+        match entity.mind.engagement {
+            Engagement::Releasing { misses, .. } => assert_eq!(misses, 1),
+            other => panic!("expected Releasing after first miss, got {other:?}"),
+        }
+
+        // Step through `FACE_RELEASE_MISSES - 1` more empty frames.
+        for tick in 1..u64::from(FACE_RELEASE_MISSES) {
+            entity.tick.now = Instant::from_millis((u64::from(FACE_LOCK_HITS) + tick) * 33);
+            m.update(&mut entity);
+        }
+        assert_eq!(entity.mind.engagement, Engagement::Idle);
+    }
+
+    #[test]
+    fn brief_face_dropout_does_not_release_lock() {
+        // A single missed cascade frame inside the release window
+        // must NOT drop the lock — the head shouldn't twitch on a
+        // blink or single false-negative.
+        let mut m = AttentionFromTracking::new();
+        let mut entity = at(0);
+        let target = Pose::new(0.0, 0.0);
+        let centroid = (0.0_f32, 0.0_f32);
+
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Tracking,
+            target,
+            centroid,
+        ));
+        for tick in 0..u64::from(FACE_LOCK_HITS) {
+            entity.tick.now = Instant::from_millis(tick * 33);
+            m.update(&mut entity);
+        }
+        assert!(matches!(entity.mind.engagement, Engagement::Locked { .. }));
+
+        // One frame without a face → Releasing { misses: 1 }.
+        entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
+        entity.tick.now = Instant::from_millis(u64::from(FACE_LOCK_HITS) * 33);
+        m.update(&mut entity);
+        assert!(matches!(
+            entity.mind.engagement,
+            Engagement::Releasing { misses: 1, .. }
+        ));
+
+        // Face returns: Releasing → Locked again with refreshed centroid.
+        let new_centroid = (0.3_f32, 0.0_f32);
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Tracking,
+            target,
+            new_centroid,
+        ));
+        entity.tick.now = Instant::from_millis((u64::from(FACE_LOCK_HITS) + 1) * 33);
+        m.update(&mut entity);
+        match entity.mind.engagement {
+            Engagement::Locked { centroid: c, .. } => assert_eq!(c, new_centroid),
+            other => panic!("expected re-Locked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn motion_release_does_not_clobber_active_face_lock() {
+        // Reviewer finding: when motion's release window expires, we
+        // must NOT force engagement to Idle. A still face is still
+        // detected (face_present=true) even after the wave-and-stop
+        // has gone quiet on motion. Engagement state is owned by the
+        // face-side hysteresis; only `face_release_misses` consecutive
+        // face-less frames should release it.
+        let mut m = AttentionFromTracking::new();
+        let mut entity = at(0);
+        let target = Pose::new(5.0, 0.0);
+        let centroid = (0.0_f32, 0.0_f32);
+
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Tracking,
+            target,
+            centroid,
+        ));
+        for tick in 0..u64::from(FACE_LOCK_HITS) {
+            entity.tick.now = Instant::from_millis(tick * 33);
+            m.update(&mut entity);
+        }
+        assert!(matches!(entity.mind.engagement, Engagement::Locked { .. }));
+        let lock_at = entity.tick.now;
+
+        // Motion goes quiet (Returning) BUT face is still detected.
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Returning,
+            target,
+            centroid,
+        ));
+        entity.tick.now = lock_at + TRACKING_RELEASE_MS + 200;
+        m.update(&mut entity);
+        // Motion-side attention may release, but engagement holds.
+        assert!(
+            matches!(entity.mind.engagement, Engagement::Locked { .. }),
+            "face lock must survive motion release while face_present=true",
+        );
+    }
+
+    #[test]
+    fn engagement_releases_after_face_misses_window() {
+        // Same setup as the previous test, but the face vanishes
+        // alongside motion. Engagement must release after exactly
+        // `FACE_RELEASE_MISSES` consecutive face-less frames — not
+        // sooner just because attention also dropped.
+        let mut m = AttentionFromTracking::new();
+        let mut entity = at(0);
+        let target = Pose::new(5.0, 0.0);
+        let centroid = (0.0_f32, 0.0_f32);
+
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Tracking,
+            target,
+            centroid,
+        ));
+        for tick in 0..u64::from(FACE_LOCK_HITS) {
+            entity.tick.now = Instant::from_millis(tick * 33);
+            m.update(&mut entity);
+        }
+        assert!(matches!(entity.mind.engagement, Engagement::Locked { .. }));
+
+        // Run exactly `face_release_misses` face-less frames; engagement
+        // ends in Idle.
+        for tick in 0..u64::from(FACE_RELEASE_MISSES) {
+            entity.perception.tracking =
+                Some(observation(TrackingMotion::Returning, Pose::new(0.0, 0.0)));
+            entity.tick.now = Instant::from_millis((u64::from(FACE_LOCK_HITS) + tick) * 33);
+            m.update(&mut entity);
+        }
+        assert_eq!(entity.mind.engagement, Engagement::Idle);
+    }
+
+    #[test]
+    fn single_face_hit_in_locking_resets_on_miss() {
+        // Locking { hits: 1 or 2 } followed by a missing frame must
+        // drop back to Idle without engaging — proves we don't lock
+        // on isolated detections.
+        let mut m = AttentionFromTracking::new();
+        let mut entity = at(0);
+        let target = Pose::new(0.0, 0.0);
+        let centroid = (0.0_f32, 0.0_f32);
+
+        // First two hits → Locking.
+        entity.perception.tracking = Some(observation_with_face(
+            TrackingMotion::Tracking,
+            target,
+            centroid,
+        ));
+        for tick in 0..(u64::from(FACE_LOCK_HITS) - 1) {
+            entity.tick.now = Instant::from_millis(tick * 33);
+            m.update(&mut entity);
+        }
+        assert!(matches!(entity.mind.engagement, Engagement::Locking { .. }));
+
+        // Miss → reset to Idle.
+        entity.perception.tracking = Some(observation(TrackingMotion::Tracking, target));
+        entity.tick.now = Instant::from_millis(u64::from(FACE_LOCK_HITS - 1) * 33);
+        m.update(&mut entity);
+        assert_eq!(entity.mind.engagement, Engagement::Idle);
     }
 
     #[test]

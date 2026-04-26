@@ -162,6 +162,86 @@ pub enum Attention {
     },
 }
 
+/// Face-lock engagement state.
+///
+/// Orthogonal to [`Attention`]: motion-tracking attention attracts
+/// the head toward whatever moved; engagement records whether the
+/// firmware-side face cascade has confirmed a face inside that motion
+/// region, with hysteresis so the head doesn't twitch on single-frame
+/// detector flickers.
+///
+/// Lifecycle:
+/// `Idle → Locking { hits } → Locked → Releasing { misses } → Idle`.
+/// Hit / miss thresholds are configurable on
+/// [`crate::modifiers::AttentionFromTracking`] (default: 3 frames to
+/// engage, 10 frames to release). Set by
+/// [`crate::modifiers::AttentionFromTracking`]; consumed by engagement
+/// modifiers (`HeadLagFromGaze`, `Blink`, lost-target search).
+///
+/// `centroid` is in normalised frame coordinates `[-1, 1]` — same
+/// convention as [`crate::perception::TrackingObservation::face_centroid`].
+/// `at` is the wall-clock time the centroid was last refreshed; the
+/// lost-target search choreography in [`Engagement::Releasing`] uses
+/// it to time the "hold last pose then look around" beat.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum Engagement {
+    /// No face seen recently. Default state.
+    #[default]
+    Idle,
+    /// Face detected for `hits` consecutive frames; not yet locked.
+    /// Resets to [`Engagement::Idle`] on the first miss before the
+    /// lock threshold.
+    Locking {
+        /// Consecutive frames the cascade has fired in this run.
+        hits: u8,
+    },
+    /// Lock engaged. The head and eyes should now follow `centroid`
+    /// preferentially (eye-leads-head, blink-rate boost, etc.).
+    Locked {
+        /// Most recently observed face centroid in `[-1, 1]` per axis.
+        centroid: (f32, f32),
+        /// Wall-clock time `centroid` was last refreshed.
+        at: Instant,
+    },
+    /// Lock fading. The face was lost `misses` frames ago — modifiers
+    /// continue acting on `centroid` for the brief search beat, then
+    /// transition to [`Engagement::Idle`] when `misses` exceeds the
+    /// release threshold.
+    Releasing {
+        /// Last known face centroid before the lock was lost.
+        centroid: (f32, f32),
+        /// Wall-clock time the lock was last fresh
+        /// (= last `Engagement::Locked.at`).
+        at: Instant,
+        /// Consecutive frames without a face since `at`.
+        misses: u8,
+    },
+}
+
+impl Engagement {
+    /// `true` iff the engagement state is currently driving behaviour
+    /// (i.e. eyes/head should privilege the face centroid). Both
+    /// [`Engagement::Locked`] and [`Engagement::Releasing`] qualify;
+    /// `Locking` does not, because the lock hasn't crossed the
+    /// hysteresis threshold yet.
+    #[must_use]
+    pub const fn is_engaged(&self) -> bool {
+        matches!(self, Self::Locked { .. } | Self::Releasing { .. })
+    }
+
+    /// The most recently observed face centroid, if the engagement
+    /// state carries one. `None` for [`Engagement::Idle`] /
+    /// [`Engagement::Locking`].
+    #[must_use]
+    pub const fn centroid(&self) -> Option<(f32, f32)> {
+        match self {
+            Self::Locked { centroid, .. } | Self::Releasing { centroid, .. } => Some(*centroid),
+            Self::Idle | Self::Locking { .. } => None,
+        }
+    }
+}
+
 /// Persistent facts the entity remembers across boots. Placeholder
 /// marker type; not yet populated.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +263,10 @@ pub struct Mind {
     pub intent: Intent,
     /// What the entity is focused on.
     pub attention: Attention,
+    /// Face-lock state riding on top of [`Self::attention`]. Set by
+    /// [`crate::modifiers::AttentionFromTracking`] from the firmware-side
+    /// cascade observations; read by engagement modifiers.
+    pub engagement: Engagement,
     /// Persistent facts.
     pub memory: Memory,
 }

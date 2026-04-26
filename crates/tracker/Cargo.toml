@@ -19,3 +19,8 @@ stackchan-core = { path = "../stackchan-core" }
 # `heapless::Vec` for the multi-target candidate list emitted per
 # `step` — fixed cap (`MAX_CANDIDATES`) so no `alloc` needed.
 heapless = "0.8"
+# `libm` provides `f64::sqrt` etc. against `no_std`. Used by the
+# cascade scorer's variance-norm computation; the alternative is a
+# Newton-Raphson loop in pure Rust which costs more lines than it
+# saves.
+libm = "0.2"

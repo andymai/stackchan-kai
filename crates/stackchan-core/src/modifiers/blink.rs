@@ -23,11 +23,20 @@ const DEFAULT_OPEN_MS: u64 = 5_200;
 const DEFAULT_CLOSED_MS: u64 = 180;
 
 /// Divisor applied to `blink_rate_scale` when `mind.attention` is
-/// non-`None`. Halving the rate doubles the open-phase duration —
-/// blinks happen ~half as often during engagement, matching the
-/// physiological pattern (cognitive load suppresses blink rate;
-/// Nature Sci Rep 2025).
+/// `Tracking` / `Listening` but no face has locked. Halving the rate
+/// doubles the open-phase duration — blinks happen ~half as often
+/// during diffuse attention, matching the physiological pattern
+/// (cognitive load suppresses blink rate; Nature Sci Rep 2025).
 pub const ENGAGED_BLINK_DIVISOR: u8 = 2;
+
+/// Multiplier applied to `blink_rate_scale` when
+/// [`crate::mind::Engagement`] is `Locked` / `Releasing`. Faster
+/// blinks read as "the avatar is actively engaging with me" — a
+/// strong "alive" cue that overrides the slow-during-attention rule
+/// (the boost only fires once a real face is locked, not on every
+/// motion blob). Saturates `blink_rate_scale` at `u8::MAX` so the
+/// open-phase still stays positive.
+pub const FACE_LOCKED_BLINK_MULTIPLIER: u8 = 2;
 
 /// A modifier that periodically closes both eyes for a short duration.
 ///
@@ -149,12 +158,24 @@ impl Modifier for Blink {
 
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
-        // Halve the effective rate when attention is engaged so the
-        // open-phase doubles. Explicit suppression (raw_rate == 0)
-        // always wins; the engagement branch floors at 1 so we don't
-        // accidentally cross into the suppression branch ourselves.
+        // Three rate paths:
+        //   1. Explicit suppression (raw_rate == 0): keeps eyes open
+        //      forever, wins over everything.
+        //   2. Face-locked engagement: multiply by
+        //      `FACE_LOCKED_BLINK_MULTIPLIER` (saturating at u8::MAX
+        //      so we never hit the suppression sentinel by accident),
+        //      producing the "actively engaging" fast-blink cue.
+        //   3. Generic attention without a face lock: divide by
+        //      `ENGAGED_BLINK_DIVISOR` to slow blinks (cognitive-load
+        //      physiology). Floors at 1 so we don't cross into
+        //      suppression.
+        //   4. No attention: baseline rate.
         let raw_rate = entity.face.style.blink_rate_scale;
-        let rate = if raw_rate == 0 || matches!(entity.mind.attention, Attention::None) {
+        let rate = if raw_rate == 0 {
+            0
+        } else if entity.mind.engagement.is_engaged() {
+            raw_rate.saturating_mul(FACE_LOCKED_BLINK_MULTIPLIER)
+        } else if matches!(entity.mind.attention, Attention::None) {
             raw_rate
         } else {
             (raw_rate / ENGAGED_BLINK_DIVISOR).max(1)
@@ -424,6 +445,62 @@ mod tests {
         assert_eq!(entity.face.left_eye.phase, EyePhase::Open);
         assert_eq!(entity.face.left_eye.weight, 100);
         assert_eq!(entity.face.right_eye.weight, 30);
+    }
+
+    #[test]
+    fn face_locked_engagement_speeds_blinks() {
+        // Three entities: idle (no attention), tracking (motion only,
+        // no face lock), locked (engagement::Locked). Over the same
+        // window the locked entity must blink MORE than the tracking
+        // entity, which blinks LESS than the idle entity.
+        use crate::mind::{Attention, Engagement};
+        let mut idle = Entity::default();
+        let mut tracking = Entity::default();
+        tracking.mind.attention = Attention::Tracking {
+            target: crate::Pose::NEUTRAL,
+            since: Instant::from_millis(0),
+        };
+        let mut locked = Entity::default();
+        locked.mind.attention = Attention::Tracking {
+            target: crate::Pose::NEUTRAL,
+            since: Instant::from_millis(0),
+        };
+        locked.mind.engagement = Engagement::Locked {
+            centroid: (0.0, 0.0),
+            at: Instant::from_millis(0),
+        };
+
+        let mut idle_blink = Blink::with_timing(100, 20);
+        let mut tracking_blink = Blink::with_timing(100, 20);
+        let mut locked_blink = Blink::with_timing(100, 20);
+
+        let count = |entity: &mut Entity, blink: &mut Blink| -> u32 {
+            let mut closes = 0;
+            let mut last = EyePhase::Open;
+            for ms in 0..=2_000 {
+                entity.tick.now = Instant::from_millis(ms);
+                blink.update(entity);
+                if entity.face.left_eye.phase == EyePhase::Closed && last == EyePhase::Open {
+                    closes += 1;
+                }
+                last = entity.face.left_eye.phase;
+            }
+            closes
+        };
+
+        let idle_count = count(&mut idle, &mut idle_blink);
+        let tracking_count = count(&mut tracking, &mut tracking_blink);
+        let locked_count = count(&mut locked, &mut locked_blink);
+
+        assert!(
+            tracking_count < idle_count,
+            "tracking attention should slow blinks (idle={idle_count}, tracking={tracking_count})",
+        );
+        assert!(
+            locked_count > idle_count,
+            "face-locked engagement should boost blinks above baseline \
+             (idle={idle_count}, locked={locked_count})",
+        );
     }
 
     #[test]

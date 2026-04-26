@@ -73,7 +73,10 @@ use esp_hal::{
     time::Rate,
 };
 use stackchan_core::{TargetCandidate, TrackingMotion, TrackingObservation};
-use tracker::{Motion, Tracker, TrackerConfig};
+use tracker::{
+    FRONTAL_FACE, Motion, Tracker, TrackerConfig,
+    cascade::{CascadeScratch, FaceDetection},
+};
 
 use crate::board::SharedI2c;
 
@@ -219,8 +222,12 @@ pub struct CameraPeripherals {
 /// brief backoff.
 #[allow(
     clippy::too_many_lines,
+    clippy::items_after_statements,
     reason = "single bring-up sequence — splitting into helpers fragments \
-              the SCCB init → peripheral construction → capture loop ordering"
+              the SCCB init → peripheral construction → capture loop ordering. \
+              The CASCADE_ROI_DIM const sits next to the cascade scratch it \
+              configures, after the tracker is constructed; lifting it to \
+              module scope hides the wiring."
 )]
 pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     use embassy_time::Delay;
@@ -335,11 +342,44 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     let mut buf_slot_b: Option<DmaRxBuf> = Some(buf_b);
     let mut active_idx: usize = 0;
 
+    /// ROI side length in pixels for cascade scoring. Sized for a
+    /// face occupying ~⅓ of the QVGA frame at the typical ~70 cm
+    /// interaction distance — generous enough that the head doesn't
+    /// drag the ROI off the actual face when the candidate centroid
+    /// drifts a few cells.
+    const CASCADE_ROI_DIM: u16 = 96;
+
+    /// Run the cascade only every Nth frame.
+    ///
+    /// On-device profiling on CoreS3 puts a single ROI scan at
+    /// ~80–120 ms after the `tracker::cascade::SCAN_*` tunings
+    /// landed. At ~30 FPS that's still 2–4× over the per-frame
+    /// budget. Skipping `(N − 1)` frames between scores brings the
+    /// average load to `cascade_us / N`. `N = 4` lands around the
+    /// 30 ms / frame budget while keeping the engagement state
+    /// machine's lock latency under ~400 ms (3 cascade hits ×
+    /// 4 frames × 33 ms).
+    const CASCADE_PERIOD: u8 = 4;
+
     // Tracker: block-grid motion analysis on each captured frame.
     // Defaults are tuned in the `tracker` crate; tweak via
     // `TrackerConfig` here if on-device tuning calls for it.
     let mut tracker = Tracker::new(TrackerConfig::DEFAULT);
     let mut last_step_at = Instant::now();
+    // Cascade scratch lives in PSRAM (~120 KiB) and is reused for
+    // every frame. `Box::leak` hands us a `&'static mut` view that
+    // matches the camera task's lifetime — the rest of the firmware
+    // never touches this buffer.
+    let cascade_scratch: &'static mut CascadeScratch =
+        alloc::boxed::Box::leak(alloc::boxed::Box::new(CascadeScratch::new()));
+    // Frame counter mod `CASCADE_PERIOD` — the cascade runs only on
+    // ticks where this == 0.
+    let mut cascade_phase: u8 = 0;
+    // Most recent face detection — replayed on intervening frames
+    // so the engagement state machine sees a stable signal across
+    // the full 30 FPS cadence (otherwise face_present would flicker
+    // at the cascade period and never accumulate hits).
+    let mut last_face: Option<FaceDetection> = None;
 
     loop {
         // Pick the buffer to fill on this iteration; the OTHER one
@@ -429,6 +469,50 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
                 u32::try_from(now.duration_since(last_step_at).as_millis()).unwrap_or(u32::MAX);
             last_step_at = now;
             let outcome = tracker.step(view, dt_ms);
+
+            // Motion-gated face cascade. Two layers of gating:
+            //
+            // 1. Run only if there's at least one motion candidate
+            //    to score (cheap reject for static scenes).
+            // 2. Run only every `CASCADE_PERIOD`-th camera frame
+            //    (cooperative time-share so the cascade's ~80–120 ms
+            //    cost amortises across multiple 33 ms frames).
+            //
+            // On intervening frames we replay `last_face` so engagement
+            // hysteresis sees a stable face signal across the full
+            // capture cadence. `last_face` is cleared whenever the
+            // cascade runs and finds no face, OR when motion drops
+            // (no candidate to score = the user moved out of frame).
+            //
+            // FRAME_WIDTH/HEIGHT are u32 const QVGA dims; they're
+            // statically less than u16::MAX (320, 240), so the cast is
+            // safe — `u16::try_from` would panic-or-error on values
+            // that the binary's compile-time constants make impossible.
+            let scoring_frame = cascade_phase == 0;
+            cascade_phase = (cascade_phase + 1) % CASCADE_PERIOD;
+            if outcome.candidates.is_empty() {
+                // No motion → no candidate → forget the last face;
+                // engagement releases through the natural miss path.
+                last_face = None;
+            } else if scoring_frame {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "FRAME_WIDTH=320, FRAME_HEIGHT=240; both fit u16 trivially"
+                )]
+                let det = outcome.candidates.first().and_then(|c| {
+                    FRONTAL_FACE.scan_around_centroid(
+                        view,
+                        FRAME_WIDTH as u16,
+                        FRAME_HEIGHT as u16,
+                        c.centroid,
+                        CASCADE_ROI_DIM,
+                        cascade_scratch,
+                    )
+                });
+                last_face = det;
+            }
+            // Else: keep `last_face` from the previous scoring frame.
+
             // Translate the firmware-side per-blob list into the
             // engine-side mirror type. Both are heapless::Vec with
             // the same cap so this can never overflow.
@@ -439,11 +523,17 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
                     cell_count: c.cell_count,
                 });
             }
+            let (face_present, face_centroid) = match last_face {
+                Some(FaceDetection { centroid, .. }) => (true, Some(centroid)),
+                None => (false, None),
+            };
             CAMERA_TRACKING_SIGNAL.signal(TrackingObservation {
                 target_pose: outcome.target,
                 fired_cells: outcome.fired_cells,
                 motion: motion_to_engine(outcome.motion),
                 candidates,
+                face_present,
+                face_centroid,
             });
 
             // Honour any pending capture request — log frame stats +
