@@ -1,10 +1,11 @@
 //! `HeadFromEmotion`: translate [`Emotion`] into a head pan/tilt **bias**.
 //!
-//! Runs after [`IdleSway`](super::IdleSway) in the modifier pipeline and
-//! adds its bias on top of whatever sway has already written — the same
-//! layered-pose pattern foreshadowed in `IdleSway`'s doc comment. Sway
-//! wanders the head around a *biased* center rather than fighting with
-//! a second absolute-set source.
+//! Runs after [`IdleHeadDrift`](super::IdleHeadDrift) in the modifier
+//! pipeline and adds its bias on top of whatever the head-drift
+//! glances have already written — the same layered-pose pattern
+//! foreshadowed in `IdleHeadDrift`'s doc comment. Glances ride
+//! around a *biased* center rather than fighting with a second
+//! absolute-set source.
 //!
 //! Transition timing matches [`StyleFromEmotion`](super::StyleFromEmotion): 300 ms
 //! linear ease so the face and head both finish their transition at the
@@ -22,9 +23,10 @@
 //! | Surprised  |     0.0 |     +2.0 | Small back-and-up recoil. |
 //!
 //! Pan bias is zero across the board — desk-toy emotions don't read as
-//! left/right turns, and `IdleSway` already contributes the natural pan
+//! left/right turns, and `IdleHeadDrift` already contributes the natural pan
 //! variation. The tilt values are conservative; combined with
-//! `IdleSway`'s ±2.5° tilt, worst-case tilt reaches ~8.5° — well inside
+//! `IdleHeadDrift`'s up-to-±3° tilt (a single glance at peak amplitude),
+//! worst-case tilt reaches ~9° — well inside
 //! [`MAX_TILT_DEG`](crate::head::MAX_TILT_DEG) (30°).
 
 use crate::clock::Instant;
@@ -159,7 +161,7 @@ impl Modifier for HeadFromEmotion {
         static META: ModifierMeta = ModifierMeta {
             name: "HeadFromEmotion",
             description: "Adds an emotion-keyed pan/tilt bias on top of motor.head_pose. Composes \
-                          additively after IdleSway via diff-and-undo so upstream pose writes \
+                          additively after IdleHeadDrift via diff-and-undo so upstream pose writes \
                           survive.",
             phase: Phase::Motion,
             priority: 10,
@@ -187,7 +189,7 @@ impl Modifier for HeadFromEmotion {
 
         let bias = self.current_bias(now);
 
-        // Layered compose via diff-and-undo (matches `IdleSway` /
+        // Layered compose via diff-and-undo (matches `IdleHeadDrift` /
         // `Breath`): subtract our previous *applied* (post-clamp) bias
         // from the current pose to recover upstream, add the new bias
         // request, then clamp. Storing the effective contribution into
@@ -230,8 +232,8 @@ fn ease_bias(from: HeadBias, to: HeadBias, elapsed_ms: u64, duration_ms: u64) ->
 /// Linear interpolation `from` → `to` by fraction `t`.
 ///
 /// `mul_add` would be more accurate but routes through an `fma`
-/// intrinsic that needs libm on `no_std` — same tradeoff as in
-/// [`IdleSway::unit_triangle`](super::IdleSway).
+/// intrinsic that needs libm on `no_std`; the simple form is
+/// accurate to within one ULP at servo magnitudes.
 #[allow(
     clippy::suboptimal_flops,
     reason = "avoiding libm dep — precision is ample for ±MAX_*_DEG servo output"
@@ -258,7 +260,7 @@ mod tests {
     fn neutral_emotion_produces_zero_bias() {
         let mut entity = Entity::default();
         entity.mind.affect.emotion = Emotion::Neutral;
-        entity.motor.head_pose = Pose::new(1.0, 2.0); // simulate IdleSway output
+        entity.motor.head_pose = Pose::new(1.0, 2.0); // simulate IdleHeadDrift output
         let mut eh = HeadFromEmotion::new();
         // First tick: snap, then hold.
         entity.tick.now = Instant::from_millis(0);
@@ -320,7 +322,7 @@ mod tests {
         let mut eh = HeadFromEmotion::new();
 
         // Advance past transition so the full bias applies.
-        entity.motor.head_pose = Pose::new(2.0, 1.5); // sway output
+        entity.motor.head_pose = Pose::new(2.0, 1.5); // upstream contribution
         entity.tick.now = Instant::from_millis(HeadFromEmotion::TRANSITION_MS + 1);
         eh.update(&mut entity);
         // Happy tilt bias is +3 → final tilt = 1.5 + 3 = 4.5.
@@ -392,8 +394,8 @@ mod tests {
     #[test]
     fn bias_does_not_accumulate_across_ticks() {
         // Regression for the diff-and-undo refactor: previously
-        // HeadFromEmotion added bias absolutely, which relied on IdleSway
-        // clobbering head_pose first. Now that IdleSway also contributes
+        // HeadFromEmotion added bias absolutely, which relied on IdleHeadDrift
+        // clobbering head_pose first. Now that IdleHeadDrift also contributes
         // additively, HeadFromEmotion must subtract the previous tick's bias
         // before adding the new one — otherwise a steady-state emotion
         // would see its bias compound each tick.

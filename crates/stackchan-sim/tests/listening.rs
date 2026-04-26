@@ -2,12 +2,12 @@
 //! motion modifier handoff.
 //!
 //! Drives a Director with the full Motion-phase modifier stack
-//! (`IdleSway` + `HeadFromEmotion` + `HeadFromAttention`) plus the `Listening`
+//! (`IdleHeadDrift` + `HeadFromEmotion` + `HeadFromAttention`) plus the `Listening`
 //! skill, varies `perception.audio_rms` across simulated time, and
 //! asserts:
 //!
 //! - Silence keeps `mind.attention == None` and head tilt at the
-//!   sway+emotion baseline.
+//!   head-drift+emotion baseline.
 //! - Sustained loud audio causes `mind.attention` to enter
 //!   `Listening` and adds an upward tilt bias.
 //! - Quieting past `LISTEN_RELEASE_MS` returns attention to None and
@@ -23,17 +23,19 @@
               fixture, the unwraps can't fire"
 )]
 
-use stackchan_core::modifiers::{HeadFromAttention, HeadFromEmotion, IdleSway};
+use stackchan_core::modifiers::GLANCE_TILT_MAX_DEG;
+use stackchan_core::modifiers::{HeadFromAttention, HeadFromEmotion, IdleHeadDrift};
 use stackchan_core::skills::{LISTEN_RELEASE_MS, LISTEN_SUSTAIN_TICKS, Listening};
 use stackchan_core::{Attention, Director, Entity, Instant};
 
 const TICK_MS: u64 = 33;
 
 /// Baseline tilt ceiling used by silence + post-release assertions:
-/// sway amplitude (±2.5°) + `HeadFromEmotion` Neutral bias (0°) + a small
-/// margin. Tight enough that an 8° `HeadFromAttention` leak would blow past
-/// it. Pose clamps the lower bound at 0 so we only upper-bound here.
-const BASELINE_TILT_CEILING_DEG: f32 = 3.0;
+/// `IdleHeadDrift`'s peak per-glance tilt (`GLANCE_TILT_MAX_DEG`) +
+/// `HeadFromEmotion` Neutral bias (0°) + a small margin. Tight
+/// enough that an 8° `HeadFromAttention` leak would blow past it.
+/// Pose clamps the lower bound at 0 so we only upper-bound here.
+const BASELINE_TILT_CEILING_DEG: f32 = GLANCE_TILT_MAX_DEG + 1.0;
 
 /// Drive the director for `ticks` frames at `TICK_MS` cadence,
 /// starting at `start_ms`. Returns the final tick's `now`.
@@ -49,12 +51,12 @@ fn run_for(director: &mut Director<'_>, entity: &mut Entity, start_ms: u64, tick
 #[test]
 fn silence_holds_attention_none_and_baseline_tilt() {
     let mut entity = Entity::default();
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut emo = HeadFromEmotion::new();
     let mut head_from_attention = HeadFromAttention::new();
     let mut listening = Listening::new();
     let mut director = Director::new();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut head_from_attention).unwrap();
     director.add_skill(&mut listening).unwrap();
@@ -73,18 +75,18 @@ fn silence_holds_attention_none_and_baseline_tilt() {
 #[test]
 fn sustained_loud_enters_listening_and_lifts_tilt() {
     let mut entity = Entity::default();
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut emo = HeadFromEmotion::new();
     let mut head_from_attention = HeadFromAttention::new();
     let mut listening = Listening::new();
     let mut director = Director::new();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut head_from_attention).unwrap();
     director.add_skill(&mut listening).unwrap();
 
     // Sample baseline tilt across a couple of seconds of silence so
-    // we know the max sway+emotion contribution at rest.
+    // we know the max head-drift+emotion contribution at rest.
     let mut baseline_max = 0.0_f32;
     for t in 0..60 {
         director.run(&mut entity, Instant::from_millis(t * TICK_MS));
@@ -107,7 +109,7 @@ fn sustained_loud_enters_listening_and_lifts_tilt() {
         "expected Listening after sustained audio, got {:?}",
         entity.mind.attention
     );
-    // HeadFromAttention adds 8° on top of baseline. Even with sway at its
+    // HeadFromAttention adds 8° on top of baseline. Even with the head-drift glance at its
     // valley, listening tilt must clear baseline + a few degrees.
     let listen_tilt = entity.motor.head_pose.tilt_deg;
     assert!(
@@ -119,12 +121,12 @@ fn sustained_loud_enters_listening_and_lifts_tilt() {
 #[test]
 fn quieting_past_release_window_returns_to_baseline() {
     let mut entity = Entity::default();
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::new();
     let mut emo = HeadFromEmotion::new();
     let mut head_from_attention = HeadFromAttention::new();
     let mut listening = Listening::new();
     let mut director = Director::new();
-    director.add_modifier(&mut sway).unwrap();
+    director.add_modifier(&mut head_drift).unwrap();
     director.add_modifier(&mut emo).unwrap();
     director.add_modifier(&mut head_from_attention).unwrap();
     director.add_skill(&mut listening).unwrap();

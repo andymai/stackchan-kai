@@ -247,10 +247,10 @@ impl Engagement {
 /// `Awake` while any of `intent`, `attention`, or `engagement` are
 /// non-default; `Asleep { since }` after a timeout of full quiet.
 /// Modifiers that produce continuous per-tick servo motion (the
-/// triangle-wave [`crate::modifiers::IdleSway`]) gate on this so the
+/// triangle-wave [`crate::modifiers::IdleHeadDrift`]) gate on this so the
 /// hardware servos stop chattering when the avatar is alone in the
 /// room. Set by [`crate::modifiers::DormancyFromActivity`]; read by
-/// [`crate::modifiers::IdleSway`].
+/// [`crate::modifiers::IdleHeadDrift`].
 ///
 /// Wake conditions: any change that bumps `intent`, `attention`, or
 /// `engagement` away from their defaults. That covers face detection
@@ -264,7 +264,7 @@ pub enum Dormancy {
     #[default]
     Awake,
     /// No wake signals for the configured timeout.
-    /// [`crate::modifiers::IdleSway`] holds at zero contribution
+    /// [`crate::modifiers::IdleHeadDrift`] holds at zero contribution
     /// while in this state, so the head servos stay still.
     Asleep {
         /// When the dormant transition fired. Consumers can use this
@@ -280,6 +280,12 @@ impl Dormancy {
     #[must_use]
     pub const fn is_asleep(&self) -> bool {
         matches!(self, Self::Asleep { .. })
+    }
+
+    /// `true` if currently [`Self::Awake`].
+    #[must_use]
+    pub const fn is_awake(&self) -> bool {
+        matches!(self, Self::Awake)
     }
 }
 
@@ -310,7 +316,7 @@ pub struct Mind {
     pub engagement: Engagement,
     /// Activity-driven sleep state. Default `Awake`. Set by
     /// [`crate::modifiers::DormancyFromActivity`]; read by
-    /// [`crate::modifiers::IdleSway`] to silence the head servos
+    /// [`crate::modifiers::IdleHeadDrift`] to silence the head servos
     /// when nothing's happening in the room.
     pub dormancy: Dormancy,
     /// Persistent facts.

@@ -47,13 +47,13 @@
 //!   6. [`IdleDrift`] — occasional eye-center jitter.
 //!
 //! - **[`crate::director::Phase::Motion`]** — head motion:
-//!   1. [`IdleSway`] — slow pan/tilt head wander written to
-//!      `motor.head_pose`.
+//!   1. [`IdleHeadDrift`] — occasional brief head glances at
+//!      randomised intervals, written to `motor.head_pose`.
 //!   2. [`HeadFromEmotion`] — emotion-keyed pan/tilt bias added on top
-//!      of sway.
+//!      of head drift.
 //!   3. [`HeadFromAttention`] — upward tilt bias when `mind.attention` is
 //!      `Listening` (cocked-head listening posture). Added on top of
-//!      sway + emotion bias.
+//!      head-drift + emotion bias.
 //!   4. [`HeadFromIntent`] — brief asymmetric pan/tilt recoil on the
 //!      entry edge into `Intent::Startled`. Fixed-duration impulse
 //!      added on top of the other motion modifiers.
@@ -90,7 +90,7 @@ mod head_from_attention;
 mod head_from_emotion;
 mod head_from_intent;
 mod idle_drift;
-mod idle_sway;
+mod idle_head_drift;
 mod intent_from_body_touch;
 mod intent_from_loud;
 mod lost_target_search;
@@ -130,11 +130,9 @@ pub use idle_drift::{
     DEFAULT_INTERVAL_MS as IDLE_DRIFT_INTERVAL_MS, DEFAULT_MAX_X as IDLE_DRIFT_MAX_X,
     DEFAULT_MAX_Y as IDLE_DRIFT_MAX_Y, IdleDrift,
 };
-pub use idle_sway::{
-    DEFAULT_PAN_AMPLITUDE_DEG as IDLE_SWAY_PAN_AMPLITUDE_DEG,
-    DEFAULT_PAN_PERIOD_MS as IDLE_SWAY_PAN_PERIOD_MS,
-    DEFAULT_TILT_AMPLITUDE_DEG as IDLE_SWAY_TILT_AMPLITUDE_DEG,
-    DEFAULT_TILT_PERIOD_MS as IDLE_SWAY_TILT_PERIOD_MS, IdleSway,
+pub use idle_head_drift::{
+    GLANCE_EASE_IN_MS, GLANCE_EASE_OUT_MS, GLANCE_HOLD_MS, GLANCE_INTERVAL_MAX_MS,
+    GLANCE_INTERVAL_MIN_MS, GLANCE_PAN_MAX_DEG, GLANCE_TILT_MAX_DEG, IdleHeadDrift,
 };
 pub use intent_from_body_touch::{
     BODY_GESTURE_HOLD_MS, DEFAULT_CENTRE_PRESS, DEFAULT_LEFT_PRESS, DEFAULT_RIGHT_PRESS,

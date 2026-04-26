@@ -13,7 +13,7 @@ use crate::head::Pose;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Motor {
     /// Commanded head pose in degrees. Produced by motion modifiers
-    /// ([`crate::modifiers::IdleSway`], [`crate::modifiers::HeadFromEmotion`]);
+    /// ([`crate::modifiers::IdleHeadDrift`], [`crate::modifiers::HeadFromEmotion`]);
     /// consumed by firmware's head-update task. Excluded from
     /// [`crate::entity::Entity::frame_eq`] — the LCD is rigidly mounted
     /// to the head, so pan/tilt updates never change pixels.

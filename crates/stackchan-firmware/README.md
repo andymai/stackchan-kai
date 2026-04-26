@@ -65,9 +65,10 @@ Main spawns a render task that runs this stack per tick:
 ```
 EmotionFromTouch → IntentFromBodyTouch → EmotionFromRemote → EmotionFromIntent →
 EmotionFromVoice → IntentFromLoud → EmotionFromAmbient → EmotionFromBattery →
-AttentionFromTracking → EmotionCycle → StyleFromEmotion → StyleFromIntent →
-GazeFromAttention → Blink → Breath → IdleDrift → IdleSway → HeadFromEmotion →
-HeadFromAttention → HeadFromIntent → MouthFromAudio
+AttentionFromTracking → DormancyFromActivity → EmotionCycle → StyleFromEmotion →
+StyleFromIntent → GazeFromAttention → MicrosaccadeFromAttention → Blink → Breath →
+IdleDrift → IdleHeadDrift → HeadFromEmotion → HeadFromAttention → HeadFromIntent →
+LostTargetSearch → MouthFromAudio
 ```
 
 Inputs arrive through embassy `Signal` channels from the per-peripheral

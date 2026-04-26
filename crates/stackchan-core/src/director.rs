@@ -70,7 +70,7 @@ pub enum Phase {
     /// Emotion → face style. `StyleFromEmotion` picks curve / scale /
     /// blush; Blink / Breath / `IdleDrift` add per-frame deltas.
     Expression = 50,
-    /// Intent + emotion → pose. `IdleSway` writes a baseline;
+    /// Intent + emotion → pose. `IdleHeadDrift` writes a baseline;
     /// `HeadFromEmotion` adds an emotion-keyed bias on top.
     Motion = 60,
     /// Audio-driven visual updates. `MouthFromAudio` drives
@@ -92,7 +92,7 @@ pub enum FieldGroup {
     Motor,
     /// Sensor inputs.
     Perception,
-    /// Cognitive layer (affect, autonomy, intent, attention, memory).
+    /// Cognitive layer (affect, autonomy, intent, attention, engagement, dormancy, memory).
     Mind,
     /// Speech I/O.
     Voice,
@@ -235,6 +235,7 @@ impl Field {
         Self::Intent,
         Self::Attention,
         Self::Engagement,
+        Self::Dormancy,
         Self::ChirpRequest,
         Self::TapPending,
         Self::RemotePending,
@@ -777,7 +778,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            35,
+            36,
             "update Field::ALL when adding variants"
         );
     }

@@ -68,7 +68,7 @@ use stackchan_core::{
         AttentionFromTracking, Blink, Breath, DormancyFromActivity, EmotionCycle,
         EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
-        HeadFromIntent, IdleDrift, IdleSway, IntentFromBodyTouch, IntentFromLoud,
+        HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
         MicrosaccadeFromAttention, MouthFromAudio, StyleFromEmotion, StyleFromIntent,
     },
     render_leds,
@@ -149,10 +149,10 @@ type LcdDisplay = mipidsi::Display<
 ///
 /// Modifier order is the canonical stackchan-core stack:
 /// `EmotionFromTouch` → `EmotionCycle` → `StyleFromEmotion` → `Blink` →
-/// `Breath` → `IdleDrift` → `IdleSway` → `HeadFromEmotion` →
+/// `Breath` → `IdleDrift` → `IdleHeadDrift` → `HeadFromEmotion` →
 /// `HeadFromAttention`. `EmotionFromTouch` runs first so a tap queued from the
 /// touch task becomes the active emotion before `EmotionCycle` checks
-/// the `manual_until` gate. `IdleSway` writes the base
+/// the `manual_until` gate. `IdleHeadDrift` writes the base
 /// `entity.motor.head_pose` (slow wander); `HeadFromEmotion` adds an
 /// emotion-keyed bias on top; `HeadFromAttention` adds an upward listening
 /// tilt when the `Listening` skill (registered separately) sets
@@ -167,7 +167,7 @@ type LcdDisplay = mipidsi::Display<
     clippy::too_many_lines,
     reason = "tick body composes 12+ modifiers + sensor drains + render — splitting fragments the per-frame ordering invariants"
 )]
-async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
+async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift_seed: NonZeroU32) {
     let clock = HalClock;
     let mut fb = Framebuffer::new();
     defmt::debug!(
@@ -195,12 +195,13 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     let mut microsaccade = MicrosaccadeFromAttention::new();
     let mut blink = Blink::new();
     let mut breath = Breath::new();
-    // Seed comes from the ESP32-S3 hardware RNG (`esp_hal::rng::Rng`),
-    // sampled once at boot in `main()` before this task spawns. Each
-    // boot produces a distinct drift sequence — eyes don't fall into
-    // the same micro-pattern after a power cycle.
+    // Both idle modifiers seed from independent ESP32-S3 hardware RNG
+    // samples (`esp_hal::rng::Rng`) taken once at boot in `main()`
+    // before this task spawns. Each boot produces a distinct schedule,
+    // and the two schedules aren't correlated within a unit — so the
+    // eye drift and head glance don't fall into a shared rhythm.
     let mut drift = IdleDrift::with_seed(drift_seed);
-    let mut sway = IdleSway::new();
+    let mut head_drift = IdleHeadDrift::with_seed(head_drift_seed);
     let mut head_from_emotion = HeadFromEmotion::new();
     let mut head_from_attention = HeadFromAttention::new();
     let mut head_from_intent = HeadFromIntent::new();
@@ -268,7 +269,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
     director.add_modifier(&mut blink).expect("registry full");
     director.add_modifier(&mut breath).expect("registry full");
     director.add_modifier(&mut drift).expect("registry full");
-    director.add_modifier(&mut sway).expect("registry full");
+    director
+        .add_modifier(&mut head_drift)
+        .expect("registry full");
     director
         .add_modifier(&mut head_from_emotion)
         .expect("registry full");
@@ -308,7 +311,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleSway + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
@@ -491,7 +494,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
             // Compare faces directly: `Face` has `PartialEq` derived on
             // every visual field. Non-visual state (pose, sensors,
             // mind, events, tick) lives elsewhere on `Entity` and so
-            // can't trigger spurious blits — `IdleSway` mutates
+            // can't trigger spurious blits — `IdleHeadDrift` mutates
             // `motor.head_pose`, which is invisible to this dirty
             // check by construction.
             //
@@ -759,18 +762,27 @@ async fn main(spawner: Spawner) -> ! {
     };
     defmt::info!("ILI9342C ready — spawning render task");
 
-    // Sample the chip's hardware RNG once for IdleDrift's xorshift32
-    // seed. xorshift32 forbids zero, so re-roll on the (1 in 2^32)
+    // Sample the chip's hardware RNG twice — once for IdleDrift
+    // (eyes), once for IdleHeadDrift (head). Using independent seeds
+    // keeps the two idle schedules from drifting in lockstep across a
+    // multi-unit deployment AND from being correlated within a single
+    // unit. xorshift32 forbids zero, so re-roll on the (1 in 2^32)
     // chance we hit it — the loop almost always exits first try.
     let rng = Rng::new();
-    let drift_seed = loop {
+    let sample_seed = || loop {
         if let Some(s) = NonZeroU32::new(rng.random()) {
-            break s;
+            return s;
         }
     };
-    defmt::info!("idle drift seed: {=u32:#010x}", drift_seed.get());
+    let drift_seed = sample_seed();
+    let head_drift_seed = sample_seed();
+    defmt::info!(
+        "idle seeds: eye={=u32:#010x} head={=u32:#010x}",
+        drift_seed.get(),
+        head_drift_seed.get()
+    );
 
-    if let Err(e) = spawner.spawn(render_task(display, drift_seed)) {
+    if let Err(e) = spawner.spawn(render_task(display, drift_seed, head_drift_seed)) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
     if let Err(e) = spawner.spawn(head_task(board_io.head)) {

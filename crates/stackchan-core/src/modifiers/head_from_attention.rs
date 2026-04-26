@@ -8,10 +8,11 @@
 //!
 //! ## Composition
 //!
-//! Runs after [`super::IdleSway`] (priority 0) and
+//! Runs after [`super::IdleHeadDrift`] (priority 0) and
 //! [`super::HeadFromEmotion`] (priority 10) within [`Phase::Motion`], so
-//! its bias rides on top of the baseline sway and emotion-keyed bias.
-//! Same diff-and-undo pattern as `HeadFromEmotion` / `IdleSway`: subtract
+//! its bias rides on top of the head-drift glances and emotion-keyed
+//! bias.
+//! Same diff-and-undo pattern as `HeadFromEmotion` / `IdleHeadDrift`: subtract
 //! the previous *applied* contribution before adding the new one,
 //! storing the post-clamp delta so asymmetric clamping doesn't
 //! accumulate into a permanent offset.
@@ -32,8 +33,9 @@ use crate::perception::{HALF_FOV_H_DEG, HALF_FOV_V_DEG};
 
 /// Peak upward tilt added when fully attentive, in degrees.
 ///
-/// Combined with `IdleSway`'s ±2.5° tilt and `HeadFromEmotion`'s
-/// up-to-+3° (Happy) the worst-case tilt stays comfortably inside
+/// Combined with `IdleHeadDrift`'s up-to-±3° tilt (a single glance
+/// at peak amplitude) and `HeadFromEmotion`'s up-to-+3° (Happy) the
+/// worst-case tilt stays comfortably inside
 /// [`MAX_TILT_DEG`](crate::head::MAX_TILT_DEG).
 pub const LISTEN_HEAD_TILT_DEG: f32 = 8.0;
 
@@ -79,7 +81,7 @@ pub struct HeadFromAttention {
     last_pan_deg: f32,
     /// Tilt contribution as actually applied on the previous tick
     /// (post-clamp). Subtracted before writing the new contribution
-    /// — see `IdleSway::last_pan_deg` for the same pattern.
+    /// — same diff-and-undo pattern as the rest of the Motion stack.
     last_tilt_deg: f32,
     /// Instant attention transitioned `None` → `Listening`. `None`
     /// when not currently in (or easing into) a listening run.
@@ -148,8 +150,7 @@ fn ease(start: Instant, now: Instant, window_ms: u64) -> f32 {
         return 1.0;
     }
     // Both elapsed and window_ms are bounded by LISTEN_HEAD_EASE_MS in
-    // practice; the cast is far inside f32 mantissa range. Match the
-    // pattern in `IdleSway::unit_triangle`.
+    // practice; the cast is far inside f32 mantissa range.
     #[allow(
         clippy::cast_precision_loss,
         reason = "elapsed and window_ms are both well under 2^24"
@@ -166,7 +167,7 @@ impl Modifier for HeadFromAttention {
                           motor.head_pose for a cocked-head listening posture. When attention \
                           is Tracking{target}, snaps pose toward the tracker's slewed target \
                           (no ease — the tracker handles smoothing). Composes additively after \
-                          IdleSway and HeadFromEmotion via diff-and-undo.",
+                          IdleHeadDrift and HeadFromEmotion via diff-and-undo.",
             phase: Phase::Motion,
             priority: 20,
             reads: &[Field::Attention, Field::HeadPose],
@@ -466,8 +467,8 @@ mod tests {
 
     #[test]
     fn tracking_overrides_upstream_pan_and_tilt() {
-        // With a non-zero upstream pose (sway + emotion bias), the
-        // tracking branch contributes (target - upstream) so the
+        // With a non-zero upstream pose (head-drift + emotion bias),
+        // the tracking branch contributes (target - upstream) so the
         // combined pose lands exactly on target.
         let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();

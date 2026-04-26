@@ -162,9 +162,9 @@ impl DrawTarget for Framebuffer {
 ///
 /// The [`HeadDriver`] impl is `async` to match the firmware's `SCServo`
 /// driver shape, but the recorded future is always immediately `Ready` —
-/// tests can drive it with the small `block_on` helper in the
-/// `head_sway.rs` integration test, or skip the trait entirely and inspect
-/// `entity.motor.head_pose` directly for simple cases.
+/// tests can drive it with the [`block_on`] helper in this crate, or
+/// skip the trait entirely and inspect `entity.motor.head_pose`
+/// directly for simple cases.
 #[derive(Debug, Default)]
 pub struct RecordingHead {
     /// Every `(now, pose)` pair passed to `set_pose`, in call order.
