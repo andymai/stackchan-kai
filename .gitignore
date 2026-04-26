@@ -17,6 +17,11 @@ Cargo.lock.bak
 # Claude Code local state
 .claude/
 
+# Worktree-local research / scratch notes (leading dot = "don't
+# commit"; pattern-matched so future research files follow the rule).
+.*-research.md
+.scratch.md
+
 # Parallel-work git worktrees.
 .worktrees/
 
