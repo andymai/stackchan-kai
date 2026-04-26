@@ -133,6 +133,14 @@ pub struct Perception {
     /// or `None` before the first successful read. Continuous state,
     /// not an edge — modifiers add their own edge detection if needed.
     pub body_touch: Option<BodyTouch>,
+    /// Latest camera tracker observation (target pose + motion class +
+    /// fired-cell count), or `None` before the camera task publishes
+    /// its first frame. The firmware tracker runs at camera frame
+    /// rate (~30 Hz); the engine drains into this field once per
+    /// render tick (~30 Hz). Cognition modifiers read this to decide
+    /// whether the avatar should latch attention to the moving
+    /// target.
+    pub tracking: Option<TrackingObservation>,
 }
 
 impl Default for Perception {
@@ -146,6 +154,7 @@ impl Default for Perception {
             usb_power_present: None,
             audio_rms: None,
             body_touch: None,
+            tracking: None,
         }
     }
 }

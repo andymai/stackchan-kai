@@ -386,6 +386,12 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32) {
         if let Some(touch) = body_touch::BODY_TOUCH_SIGNAL.try_take() {
             entity.perception.body_touch = Some(touch);
         }
+        // Drain the latest camera tracker observation. Cognition
+        // modifiers read entity.perception.tracking to decide whether
+        // to flip mind.attention to Tracking{target}.
+        if let Some(observation) = camera::CAMERA_TRACKING_SIGNAL.try_take() {
+            entity.perception.tracking = Some(observation);
+        }
 
         // Run the entire modifier graph in one call. The Director sorts
         // by (phase, priority, registration order) and ticks each
