@@ -29,6 +29,7 @@ pub mod head;
 pub mod imu;
 pub mod ir;
 pub mod leds;
+pub mod net;
 pub mod power;
 pub mod sd_spi;
 pub mod storage;
