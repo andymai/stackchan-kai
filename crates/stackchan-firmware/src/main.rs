@@ -31,6 +31,7 @@ use stackchan_firmware::{
 
 use board::{HeadDriverImpl, SharedI2c};
 use clock::HalClock;
+use core::cell::RefCell;
 use core::num::NonZeroU32;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
@@ -42,7 +43,13 @@ use embedded_graphics::{
     pixelcolor::raw::RawU16,
     primitives::Rectangle,
 };
-use embedded_hal_bus::spi::ExclusiveDevice;
+// `RefCellDevice` shares the SPI2 bus between the LCD (always-on, every
+// render tick) and a future SD-card client (boot-time read + occasional
+// `PUT /settings` write). Single-core embassy + cooperative scheduling
+// means the `RefCell` borrow held during a blocking SPI transaction
+// can't be re-entered — task switches only happen at `.await` points,
+// and SPI transactions are entirely synchronous.
+use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::{
     Blocking,
     clock::CpuClock,
@@ -133,7 +140,7 @@ const HEAD_PERIOD_MS: u64 = 20;
 type LcdDisplay = mipidsi::Display<
     SpiInterface<
         'static,
-        ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, Delay>,
+        RefCellDevice<'static, Spi<'static, Blocking>, Output<'static>, Delay>,
         Output<'static>,
     >,
     ILI9342CRgb565,
@@ -766,9 +773,19 @@ async fn main(spawner: Spawner) -> ! {
     let cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
     let dc = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
 
-    let spi_device = match ExclusiveDevice::new(spi_bus, cs, Delay) {
+    // SPI2 is shared territory on CoreS3: the LCD owns it today, and the
+    // SD card slot is wired to the same bus (sharing SCK=GPIO36 +
+    // MOSI=GPIO37 with the LCD; SD MISO sits on GPIO35 — the same
+    // physical pin as LCD DC). Park the bus in a `'static RefCell` so
+    // future SD bring-up can register a second `RefCellDevice` against
+    // the same bus without re-plumbing the LCD path.
+    #[allow(clippy::items_after_statements)]
+    static SPI2_BUS: StaticCell<RefCell<Spi<'static, Blocking>>> = StaticCell::new();
+    let spi_bus = SPI2_BUS.init(RefCell::new(spi_bus));
+
+    let spi_device = match RefCellDevice::new(spi_bus, cs, Delay) {
         Ok(dev) => dev,
-        Err(e) => defmt::panic!("ExclusiveDevice init failed: {}", defmt::Debug2Format(&e)),
+        Err(e) => defmt::panic!("RefCellDevice init failed: {}", defmt::Debug2Format(&e)),
     };
 
     // mipidsi's `SpiInterface` batches pixel writes through a caller-owned
