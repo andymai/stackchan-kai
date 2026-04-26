@@ -57,12 +57,12 @@ pub use face::{Eye, EyePhase, Face, Mouth, Point, SCALE_DEFAULT, Style};
 pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
 pub use input::Input;
 pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
-pub use mind::{Affect, Attention, Autonomy, Intent, Mind, OverrideSource};
+pub use mind::{Affect, Attention, Autonomy, Engagement, Intent, Mind, OverrideSource};
 pub use modifier::Modifier;
 pub use motor::Motor;
 pub use perception::{
-    BodyTouch, MAX_TRACKING_CANDIDATES, Perception, TargetCandidate, TrackingMotion,
-    TrackingObservation,
+    BodyTouch, HALF_FOV_H_DEG, HALF_FOV_V_DEG, MAX_TRACKING_CANDIDATES, Perception,
+    TargetCandidate, TrackingMotion, TrackingObservation,
 };
 pub use skill::{Skill, SkillStatus};
 pub use voice::{ChirpKind, Voice};

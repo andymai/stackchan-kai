@@ -25,6 +25,7 @@ use crate::director::{Field, ModifierMeta, Phase};
 use crate::entity::Entity;
 use crate::mind::Attention;
 use crate::modifier::Modifier;
+use crate::perception::{HALF_FOV_H_DEG, HALF_FOV_V_DEG};
 
 /// Pixels of eye-center offset per degree of head target pan / tilt.
 ///
@@ -103,9 +104,22 @@ impl Modifier for GazeFromAttention {
     }
 
     fn update(&mut self, entity: &mut Entity) {
-        let target_offset = match entity.mind.attention {
-            Attention::Tracking { target, .. } => target_to_offset(target.pan_deg, target.tilt_deg),
-            Attention::None | Attention::Listening { .. } => (0, 0),
+        // Prefer the face centroid over the motion centroid when
+        // engaged. The motion target jumps around with frame-
+        // differencing noise; the face centroid is steadier and
+        // (more importantly) points at the actual face, not at the
+        // brightest-changing patch on the body.
+        let face_target = entity
+            .mind
+            .engagement
+            .centroid()
+            .map(|(nx, ny)| (nx * HALF_FOV_H_DEG, -ny * HALF_FOV_V_DEG));
+        let target_offset = match (face_target, entity.mind.attention) {
+            (Some((pan, tilt)), _) => target_to_offset(pan, tilt),
+            (None, Attention::Tracking { target, .. }) => {
+                target_to_offset(target.pan_deg, target.tilt_deg)
+            }
+            (None, Attention::None | Attention::Listening { .. }) => (0, 0),
         };
 
         let (prev_x, prev_y) = self.last_offset;
@@ -129,6 +143,7 @@ mod tests {
     use super::*;
     use crate::Pose;
     use crate::clock::Instant;
+    use crate::mind::Engagement;
 
     fn tracking(pan_deg: f32, tilt_deg: f32) -> Attention {
         Attention::Tracking {
@@ -173,10 +188,9 @@ mod tests {
         m.update(&mut entity);
         assert_eq!(entity.face.left_eye.center.x, baseline_x + 5);
         assert_eq!(entity.face.left_eye.center.y, baseline_y + 3);
-        assert_eq!(
-            entity.face.right_eye.center.x,
-            entity.face.right_eye.center.x
-        );
+        // Right eye gets the same offset as the left (no convergence
+        // math in this modifier). The dedicated `both_eyes_track_same_offset`
+        // test below proves the equality more directly.
     }
 
     #[test]
@@ -223,6 +237,45 @@ mod tests {
         entity.mind.attention = tracking(-10.0, 0.0);
         m.update(&mut entity);
         assert_eq!(entity.face.left_eye.center.x, baseline_x - 5);
+    }
+
+    #[test]
+    fn engaged_face_centroid_wins_over_motion_target() {
+        // Motion target points one way; face centroid points the
+        // other. Eyes must follow the face, not the motion blob.
+        let mut m = GazeFromAttention::new();
+        let mut entity = Entity::default();
+        let baseline_x = entity.face.left_eye.center.x;
+        // Motion centroid says "look right" (+10° pan).
+        entity.mind.attention = tracking(10.0, 0.0);
+        // Face is on the LEFT of the frame: centroid.0 = -0.4.
+        entity.mind.engagement = Engagement::Locked {
+            centroid: (-0.4_f32, 0.0_f32),
+            at: Instant::from_millis(0),
+        };
+        m.update(&mut entity);
+        // Face-driven pan = -0.4 × 31° ≈ -12.4° → -6 px (clamped).
+        assert!(
+            entity.face.left_eye.center.x < baseline_x,
+            "eyes should look LEFT toward the face, not RIGHT toward the motion target",
+        );
+    }
+
+    #[test]
+    fn engaged_releasing_state_still_drives_gaze() {
+        // Releasing carries the last-known centroid; gaze must keep
+        // pointing at it during the search beat.
+        let mut m = GazeFromAttention::new();
+        let mut entity = Entity::default();
+        let baseline_x = entity.face.left_eye.center.x;
+        entity.mind.attention = Attention::None;
+        entity.mind.engagement = Engagement::Releasing {
+            centroid: (0.5_f32, 0.0_f32),
+            at: Instant::from_millis(0),
+            misses: 3,
+        };
+        m.update(&mut entity);
+        assert!(entity.face.left_eye.center.x > baseline_x);
     }
 
     #[test]

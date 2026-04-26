@@ -36,7 +36,11 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
+pub mod cascade;
+mod cascade_data;
 mod luma;
+
+pub use cascade_data::FRONTAL_FACE;
 
 pub use luma::{BYTES_PER_PIXEL, MAX_BLOCKS, MAX_BLOCKS_X, MAX_BLOCKS_Y, fill_block_luma};
 
@@ -120,15 +124,20 @@ pub struct TrackerConfig {
 impl TrackerConfig {
     /// Defaults tuned for QVGA GC0308 → `SCServo` head on a CoreS3.
     ///
-    /// 8×6 grid (40×40 pixel blocks), 12 % per-block luma threshold,
-    /// 50 % global-event ceiling, ≥3 cells required, ≥2-cell blob
+    /// 8×6 grid (40×40 pixel blocks), 8 % per-block luma threshold,
+    /// 50 % global-event ceiling, ≥2 cells required, ≥2-cell blob
     /// filter, P=0.4, ±10 % dead zone, 4 °/frame slew, 3 s idle
     /// timeout, 1 °/step return-to-centre.
     ///
-    /// `block_threshold` + `max_fired_fraction` were retuned from
-    /// the original 5 % / 70 % values to suppress monitor flicker
-    /// and shadow drift; `min_blob_cells` rejects scatter noise that
-    /// passes the per-cell threshold but isn't a coherent target.
+    /// `block_threshold` was retuned again from 12 % → 8 % when the
+    /// face-tracking face-bench landed: at typical 30–60 cm desk
+    /// distance natural upper-body motion produces only 1–2 fired
+    /// blocks at the older threshold, so the cascade never got a
+    /// candidate to score. 8 % + `min_fired_cells = 2` catches that
+    /// motion while still rejecting single-cell scatter and
+    /// monitor-flicker shadows. `min_blob_cells = 2` keeps the
+    /// connected-component filter requiring a coherent blob (not
+    /// scattered single cells).
     ///
     /// The temporal filter is **off** by default
     /// (`temporal_window: 1` collapses the per-cell history to "this
@@ -143,8 +152,8 @@ impl TrackerConfig {
         subsample_step: 2,
         fov_h_deg: 62.0,
         fov_v_deg: 49.0,
-        block_threshold: 0.12,
-        min_fired_cells: 3,
+        block_threshold: 0.08,
+        min_fired_cells: 2,
         max_fired_fraction: 0.50,
         temporal_window: 1,
         temporal_required: 1,
@@ -206,6 +215,15 @@ pub struct Outcome {
     /// descending. Capped at [`MAX_CANDIDATES`]; smaller blobs are
     /// dropped. Empty on `Warmup` / `GlobalEvent` / no-motion.
     pub candidates: heapless::Vec<TargetCandidate, MAX_CANDIDATES>,
+    /// Whether the face cascade fired on any candidate ROI this step.
+    /// `false` when the cascade isn't run (the [`Tracker::step`] path
+    /// never sets this; the firmware camera task patches the outcome
+    /// after calling [`cascade::Cascade::scan_around_centroid`]).
+    pub face_present: bool,
+    /// Centroid of the highest-scoring face detection in normalised
+    /// frame coordinates `[-1, 1]`. `None` when no face was scored or
+    /// the cascade didn't fire.
+    pub face_centroid: Option<(f32, f32)>,
 }
 
 /// Why the tracker chose this pose.
@@ -342,6 +360,8 @@ impl Tracker {
                 motion: Motion::Warmup,
                 target: self.target_pose,
                 candidates: heapless::Vec::new(),
+                face_present: false,
+                face_centroid: None,
             };
         }
 
@@ -365,6 +385,8 @@ impl Tracker {
                 motion: Motion::Warmup,
                 target: self.target_pose,
                 candidates: heapless::Vec::new(),
+                face_present: false,
+                face_centroid: None,
             };
         }
 
@@ -421,6 +443,8 @@ impl Tracker {
                 motion: Motion::GlobalEvent,
                 target: self.target_pose,
                 candidates: heapless::Vec::new(),
+                face_present: false,
+                face_centroid: None,
             };
         }
 
@@ -499,6 +523,8 @@ impl Tracker {
             motion: Motion::Tracking,
             target: self.target_pose,
             candidates,
+            face_present: false,
+            face_centroid: None,
         }
     }
 
@@ -514,6 +540,8 @@ impl Tracker {
                 motion: Motion::Holding,
                 target: self.target_pose,
                 candidates: heapless::Vec::new(),
+                face_present: false,
+                face_centroid: None,
             };
         }
         let step = self.config.idle_step_deg.max(0.0);
@@ -528,6 +556,8 @@ impl Tracker {
             motion: Motion::Returning,
             target: self.target_pose,
             candidates: heapless::Vec::new(),
+            face_present: false,
+            face_centroid: None,
         }
     }
 }

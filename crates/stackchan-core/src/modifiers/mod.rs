@@ -92,6 +92,7 @@ mod idle_drift;
 mod idle_sway;
 mod intent_from_body_touch;
 mod intent_from_loud;
+mod lost_target_search;
 mod microsaccade_from_attention;
 mod mouth_from_audio;
 mod style_from_emotion;
@@ -130,6 +131,10 @@ pub use intent_from_body_touch::{
     SWIPE_DELTA,
 };
 pub use intent_from_loud::{IntentFromLoud, STARTLE_HOLD_MS, STARTLE_RMS_THRESHOLD};
+pub use lost_target_search::{
+    LostTargetSearch, SEARCH_HOLD_MS, SEARCH_RETURN_MS, SEARCH_SACCADE_MS,
+    SEARCH_SACCADE_OVERSHOOT, SEARCH_TOTAL_MS,
+};
 pub use microsaccade_from_attention::{
     MICROSACCADE_AMPLITUDE_PX, MICROSACCADE_DURATION_MS, MICROSACCADE_INTERVAL_MAX_MS,
     MICROSACCADE_INTERVAL_MIN_MS, MicrosaccadeFromAttention,

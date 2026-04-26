@@ -1,0 +1,15 @@
+[package]
+name = "xtask-cascade-convert"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Workspace tooling: convert OpenCV Haar cascade XML files into the Rust `const` data layout consumed by the `tracker` crate."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+roxmltree = "0.20"
