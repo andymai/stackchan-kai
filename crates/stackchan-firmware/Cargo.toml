@@ -32,6 +32,16 @@ tracker = { path = "../tracker" }
 # `BakedBackend` (sine-cycle SFX + future verbal PCM) and the
 # `AudioSource` trait the audio task's TX feeder pulls samples through.
 stackchan-tts = { path = "../stackchan-tts" }
+# Networking domain types + bare RON parser. `default-features = false`
+# skips the `parse` feature (which would pull `ron 0.10` + `serde/std`,
+# broken on the no_std firmware target). The firmware uses
+# `parse_ron_bare` / `render_ron_bare` from `stackchan_net::bare`.
+stackchan-net = { path = "../stackchan-net", default-features = false }
+# FAT16/32 over the `embedded-hal` `SpiDevice` shape — `SdSpiDevice`
+# in `sd_spi.rs` provides the SD-side adapter (with GPIO35 OE flip).
+# Sync (blocking); SD I/O happens at boot + during `PUT /settings`,
+# never during steady-state render.
+embedded-sdmmc = { version = "0.8", default-features = false, features = ["defmt-log"] }
 # `heapless::Vec` for the per-frame multi-target candidate list
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).

@@ -113,20 +113,17 @@ pub fn parse_ron(input: &str) -> Result<Config, ConfigError> {
 
 /// Render a [`Config`] back to a pretty-printed RON string.
 ///
-/// Used by `PUT /settings` to persist user changes back to SD, and
-/// internally by the firmware's snapshot path. **Not directly safe
-/// for `GET /settings`** — see Security below.
+/// Used to persist user changes back to SD, and as the round-trip
+/// pair to [`parse_ron`]. **Not directly safe for unauthed network
+/// readback** — see Security below.
 ///
 /// # Security
 ///
 /// This serializer faithfully renders every field, including
-/// `wifi.psk`. The v1 HTTP control plane is LAN-scoped and unauthed,
-/// so a `GET /settings` handler that returns this verbatim would
-/// leak the WPA2 PSK to any host on the LAN. The HTTP layer in PR #5
-/// must redact the PSK on the read path (separate read/write DTOs,
-/// or a masked-render variant) before the endpoint ships. The
-/// `parse_ron` ↔ `render_ron` round trip is preserved here so SD
-/// reads/writes stay lossless.
+/// `wifi.psk`. Any caller that exposes the output over an unauthed
+/// channel must redact the PSK on the read path (separate read/write
+/// DTOs, or a masked-render variant). The `parse_ron` ↔ `render_ron`
+/// round trip is preserved here so SD reads/writes stay lossless.
 ///
 /// # Errors
 ///
