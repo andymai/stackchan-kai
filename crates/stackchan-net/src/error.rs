@@ -34,10 +34,12 @@ pub enum ConfigError {
     #[error("wifi.ssid is empty or whitespace-only")]
     EmptySsid,
 
-    /// `wifi.country` was not exactly two ASCII letters. ESP-WIFI
-    /// expects an ISO-3166 alpha-2 country code (e.g. `"US"`, `"JP"`)
-    /// to set channel availability and TX power per regulatory domain.
-    #[error("wifi.country must be exactly two ASCII letters; got {0:?}")]
+    /// `wifi.country` was not exactly two **uppercase** ASCII letters.
+    /// ESP-WIFI expects an ISO-3166 alpha-2 country code in canonical
+    /// case (e.g. `"US"`, `"JP"`) to set channel availability and TX
+    /// power per regulatory domain; lowercase silently mis-applies the
+    /// regulatory mask at the driver layer.
+    #[error("wifi.country must be exactly two uppercase ASCII letters (e.g. \"US\"); got {0:?}")]
     InvalidCountry(String),
 
     /// `mdns.hostname` failed RFC-952 subset: ASCII letters / digits /
