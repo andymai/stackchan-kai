@@ -43,13 +43,22 @@ pub const LISTEN_HEAD_TILT_DEG: f32 = 8.0;
 /// reads as deliberate without feeling sluggish.
 pub const LISTEN_HEAD_EASE_MS: u64 = 200;
 
-/// Number of render frames the head's tracking-target lags behind the
-/// instantaneous `Attention::Tracking{target}`. Eyes update without
-/// delay (via `GazeFromAttention` in `Phase::Expression`); the head
-/// reads a frame from this many ticks ago. At 30 FPS this is
-/// ~132 ms — within the 100–150 ms ILM/Disney convention for
-/// eyes-lead-head.
-pub const HEAD_TRACKING_LAG_FRAMES: usize = 4;
+/// Per-frame fraction of the way the head moves from its current
+/// smoothed-target toward the live `Attention::Tracking{target}`.
+///
+/// Acts as a single-pole low-pass filter: each tick, the head's
+/// effective target is `prev + α·(live − prev)`. At 30 FPS, `α =
+/// 0.22` gives a ~4-frame (~132 ms) time constant — within the
+/// 100–150 ms ILM/Disney eyes-lead-head convention. Naturally
+/// smooths jittery tracker centroids (which the tighter v0.11
+/// detection thresholds produce when only a few cells fire).
+///
+/// Encoded as a numerator + denominator pair so the const can stay
+/// integer-only (no `f32` const-fn juggling) and so the math stays
+/// exact in i64. `22 / 100` ≈ the desired α.
+pub const HEAD_TRACKING_SMOOTHING_NUM: i64 = 22;
+/// Denominator for [`HEAD_TRACKING_SMOOTHING_NUM`].
+pub const HEAD_TRACKING_SMOOTHING_DEN: i64 = 100;
 
 /// Modifier that translates `mind.attention` variants into a
 /// `motor.head_pose` contribution.
@@ -77,16 +86,11 @@ pub struct HeadFromAttention {
     /// Instant attention transitioned `Listening` → `None`. `None`
     /// unless currently easing out.
     release_since: Option<Instant>,
-    /// Ring buffer of recent `Tracking{target}` poses, oldest at
-    /// `lag_idx`. The head consumes the entry at `lag_idx` (oldest)
-    /// before overwriting it with the current target — producing the
-    /// eye-leads-head delay without a separate timing buffer.
-    /// Cleared on transition out of `Tracking`.
-    lag_buf: [Option<Pose>; HEAD_TRACKING_LAG_FRAMES],
-    /// Next write index into [`Self::lag_buf`] (also the read index
-    /// — entries form a circular buffer where the oldest pose is at
-    /// the next-to-overwrite slot).
-    lag_idx: u8,
+    /// Smoothed tracking target (single-pole low-pass over the live
+    /// `Attention::Tracking{target}`). `None` between Tracking runs;
+    /// the next entry to Tracking re-anchors at the live target so
+    /// there's no overshoot from a stale value.
+    smoothed_target: Option<Pose>,
 }
 
 impl HeadFromAttention {
@@ -98,8 +102,7 @@ impl HeadFromAttention {
             last_tilt_deg: 0.0,
             listen_since: None,
             release_since: None,
-            lag_buf: [None; HEAD_TRACKING_LAG_FRAMES],
-            lag_idx: 0,
+            smoothed_target: None,
         }
     }
 }
@@ -108,6 +111,28 @@ impl Default for HeadFromAttention {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Single-pole low-pass blend toward `target` from `prev` using the
+/// `HEAD_TRACKING_SMOOTHING_NUM / DEN` α. Per-axis lerp.
+fn lerp_pose(prev: Pose, target: Pose) -> Pose {
+    Pose::new(
+        lerp_axis(prev.pan_deg, target.pan_deg),
+        lerp_axis(prev.tilt_deg, target.tilt_deg),
+    )
+}
+
+/// `prev + α·(target − prev)` with α = `NUM / DEN`.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::suboptimal_flops,
+    reason = "smoothing constants are small integers (well inside f32 mantissa); \
+              `mul_add` would need libm on no_std"
+)]
+fn lerp_axis(prev: f32, target: f32) -> f32 {
+    let num = HEAD_TRACKING_SMOOTHING_NUM as f32;
+    let den = HEAD_TRACKING_SMOOTHING_DEN as f32;
+    prev + (target - prev) * (num / den)
 }
 
 /// Linear `0..=1` ramp over `window_ms` from `start`. Saturates at
@@ -175,27 +200,26 @@ impl Modifier for HeadFromAttention {
         // Pick the contribution shape per attention variant.
         let (target_pan_contrib, target_tilt_contrib) = match entity.mind.attention {
             Attention::Tracking { target, .. } => {
-                // Eye-leads-head: the head consumes a target from
-                // ~HEAD_TRACKING_LAG_FRAMES ticks ago; eyes already
-                // moved to the current target via GazeFromAttention
-                // earlier in Phase::Expression. Read the oldest entry
-                // (the slot we're about to overwrite) before pushing
-                // the current target.
-                let idx = usize::from(self.lag_idx);
-                let delayed = self.lag_buf[idx].unwrap_or(target);
-                self.lag_buf[idx] = Some(target);
-                self.lag_idx =
-                    (self.lag_idx + 1) % u8::try_from(HEAD_TRACKING_LAG_FRAMES).unwrap_or(u8::MAX);
+                // Eye-leads-head: the head's effective target is a
+                // single-pole low-pass over the live tracker target.
+                // Eyes already moved to the live target via
+                // `GazeFromAttention`; the head naturally lags + the
+                // filter smooths jittery per-frame centroids.
+                //
+                // On entry to Tracking the smoother anchors at the
+                // live target (no chase from a stale value).
+                let prev = self.smoothed_target.unwrap_or(target);
+                let smoothed = lerp_pose(prev, target);
+                self.smoothed_target = Some(smoothed);
                 (
-                    delayed.pan_deg - upstream_pan,
-                    delayed.tilt_deg - upstream_tilt,
+                    smoothed.pan_deg - upstream_pan,
+                    smoothed.tilt_deg - upstream_tilt,
                 )
             }
             Attention::Listening { .. } | Attention::None => {
-                // Clear the lag buffer so a future Tracking run
-                // starts with an empty history (no stale targets).
-                self.lag_buf = [None; HEAD_TRACKING_LAG_FRAMES];
-                self.lag_idx = 0;
+                // Drop the smoother anchor so a future Tracking run
+                // re-anchors at the live target (no stale chase).
+                self.smoothed_target = None;
                 // Tilt-only contribution, eased by the listen / release
                 // anchors. Pan stays at zero (no contribution).
                 let target_tilt = match (self.listen_since, self.release_since) {
@@ -436,22 +460,45 @@ mod tests {
     }
 
     #[test]
-    fn tracking_target_updates_per_tick() {
+    fn tracking_smooths_toward_new_target_across_frames() {
+        // The smoother eases head pose from the previous entry-anchor
+        // toward the live target each tick, so a target change does
+        // NOT snap on the next frame — it bleeds over several frames.
+        // Head reaches (within ~0.1°) of the new target after enough
+        // ticks (~5 × time-constant ≈ 20 frames).
         let mut m = HeadFromAttention::new();
         let mut entity = Entity::default();
         let t1 = Pose::new(10.0, 5.0);
         entity.mind.attention = tracking(t1);
         entity.tick.now = Instant::from_millis(0);
         m.update(&mut entity);
+        // Entry-tick anchor: smoother latches on `target` so the head
+        // arrives at `t1` immediately.
         assert_eq!(entity.motor.head_pose, t1);
 
+        // Switch target. Next tick: head moves a fraction of the way.
         let t2 = Pose::new(-5.0, 10.0);
         entity.mind.attention = tracking(t2);
-        // Simulate upstream wandering on the next tick.
-        entity.motor.head_pose = Pose::new(t1.pan_deg + 1.0, t1.tilt_deg + 1.0);
         entity.tick.now = Instant::from_millis(33);
         m.update(&mut entity);
-        assert_eq!(entity.motor.head_pose, t2);
+        let after_one = entity.motor.head_pose;
+        assert!(
+            (after_one.pan_deg - t1.pan_deg).abs() > 1.0
+                && (after_one.pan_deg - t2.pan_deg).abs() > 1.0,
+            "head should move toward t2 but not reach it in one tick (got {after_one:?})",
+        );
+
+        // Drive many more ticks; should converge close to t2.
+        for t in 2..40 {
+            entity.tick.now = Instant::from_millis(t * 33);
+            m.update(&mut entity);
+        }
+        let after_many = entity.motor.head_pose;
+        assert!(
+            (after_many.pan_deg - t2.pan_deg).abs() < 0.1
+                && (after_many.tilt_deg - t2.tilt_deg).abs() < 0.1,
+            "head should converge to ~t2 after ~40 ticks (got {after_many:?})",
+        );
     }
 
     #[test]
