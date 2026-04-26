@@ -35,12 +35,16 @@
 //!   8. [`EmotionCycle`] — autonomous emotion advancer. Stands
 //!      down when `mind.autonomy.manual_until` is held.
 //!
-//! - **[`crate::director::Phase::Expression`]** — visual style. 4
-//!   modifiers:
+//! - **[`crate::director::Phase::Expression`]** — visual style:
 //!   1. [`StyleFromEmotion`] — translates emotion into face style fields.
-//!   2. [`Blink`] — drives eye open/closed phase.
-//!   3. [`Breath`] — vertical drift on all features.
-//!   4. [`IdleDrift`] — occasional eye-center jitter.
+//!   2. [`StyleFromIntent`] — adds per-intent style overrides on top
+//!      (cheek blush bump for `Petted`).
+//!   3. [`GazeFromAttention`] — when `mind.attention` is `Tracking`,
+//!      shifts both eye centers toward the target so eyes lead head
+//!      motion.
+//!   4. [`Blink`] — drives eye open/closed phase.
+//!   5. [`Breath`] — vertical drift on all features.
+//!   6. [`IdleDrift`] — occasional eye-center jitter.
 //!
 //! - **[`crate::director::Phase::Motion`]** — head motion:
 //!   1. [`IdleSway`] — slow pan/tilt head wander written to
@@ -80,6 +84,7 @@ mod emotion_from_intent;
 mod emotion_from_remote;
 mod emotion_from_touch;
 mod emotion_from_voice;
+mod gaze_from_attention;
 mod head_from_attention;
 mod head_from_emotion;
 mod head_from_intent;
@@ -109,6 +114,7 @@ pub use emotion_from_touch::{EMOTION_ORDER, EmotionFromTouch, MANUAL_HOLD_MS};
 pub use emotion_from_voice::{
     EmotionFromVoice, WAKE_HOLD_MS, WAKE_RMS_THRESHOLD, WAKE_SUSTAIN_TICKS,
 };
+pub use gaze_from_attention::{GAZE_MAX_OFFSET_PX, GAZE_PIXELS_PER_DEG, GazeFromAttention};
 pub use head_from_attention::{HeadFromAttention, LISTEN_HEAD_EASE_MS, LISTEN_HEAD_TILT_DEG};
 pub use head_from_emotion::HeadFromEmotion;
 pub use head_from_intent::{
