@@ -28,6 +28,7 @@ modifier pipeline at ~30 FPS.
 - `src/imu.rs` — BMI270 task publishing accel/gyro samples on `IMU_SIGNAL`
 - `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` / `src/power.rs` — per-peripheral tasks
 - `src/audio.rs` — I²S0 + codec bring-up, then RX RMS loop (publishing on `AUDIO_RMS_SIGNAL`) + TX feeder (silence between trigger-driven clips) running concurrently via `embassy_futures::join`. Exposes `AUDIO_TX_PLAYING` so the render loop can gate `audio_rms` against speaker self-trigger
+- `src/camera.rs` — `LCD_CAM` + DMA bring-up + always-on capture loop. Each frame is published on `CAMERA_FRAME_SIGNAL` for the LCD preview AND fed through `tracker::Tracker::step`, with the result on `CAMERA_TRACKING_SIGNAL`. `CAMERA_MODE_SIGNAL` is now display-only (preview vs avatar)
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
 - `examples/{aw88298,es7210,imu,mag,leds,ambient,touch,ir}_bench.rs` — per-driver control-path benches (chip-ID probe + init + heartbeat; the streaming I²S path runs only inside `src/audio.rs` in the main firmware)
 
@@ -64,9 +65,9 @@ Main spawns a render task that runs this stack per tick:
 ```
 EmotionFromTouch → IntentFromBodyTouch → EmotionFromRemote → EmotionFromIntent →
 EmotionFromVoice → IntentFromLoud → EmotionFromAmbient → EmotionFromBattery →
-EmotionCycle → StyleFromEmotion → StyleFromIntent → Blink → Breath →
-IdleDrift → IdleSway → HeadFromEmotion → HeadFromAttention → HeadFromIntent →
-MouthFromAudio
+AttentionFromTracking → EmotionCycle → StyleFromEmotion → StyleFromIntent →
+GazeFromAttention → Blink → Breath → IdleDrift → IdleSway → HeadFromEmotion →
+HeadFromAttention → HeadFromIntent → MouthFromAudio
 ```
 
 Inputs arrive through embassy `Signal` channels from the per-peripheral
@@ -120,5 +121,5 @@ port is `/dev/ttyACM1`; override with `just PORT=/dev/ttyACM0 flash`.
 ## Integration
 
 - **Consumes `stackchan-core`** for every domain type (`Avatar`, `Modifier`, `Pose`, `Clock`, `HeadDriver`, `LedFrame`)
-- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, es7210, ft6336u, ir-nec, ltr553, py32, scservo, si12t. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (digital silence between trigger-driven clips). Si12T 3-zone body-touch publishes via `src/body_touch.rs`. bmm150 is bench-only (`examples/mag_bench.rs`) until a real consumer modifier is built. Scaffolded-only: gc0308.
+- **Consumes every driver crate in the workspace** — axp2101, aw9523, aw88298, bm8563, bmi270, es7210, ft6336u, gc0308, ir-nec, ltr553, py32, scservo, si12t. ES7210 streams RX over I²S into the RMS loop in `src/audio.rs`; AW88298 streams TX (digital silence between trigger-driven clips). Si12T 3-zone body-touch publishes via `src/body_touch.rs`. gc0308 streams continuously into `src/camera.rs` and the `tracker` crate runs block-grid motion analysis on every frame, publishing `TrackingObservation` for the engine. bmm150 is bench-only (`examples/mag_bench.rs`) until a real consumer modifier is built.
 - **HIL via probe-rs + defmt-test** (planned) — CI runs host tests today; on-device integration tests run on a flash-and-capture rig
