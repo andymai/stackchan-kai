@@ -4188,6 +4188,7 @@ dependencies = [
  "embassy-sync 0.7.2",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
@@ -4208,6 +4209,7 @@ dependencies = [
  "scservo",
  "si12t",
  "stackchan-core",
+ "stackchan-net",
  "stackchan-tts",
  "static_cell",
  "tracker",
@@ -4215,7 +4217,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ron",
  "serde",

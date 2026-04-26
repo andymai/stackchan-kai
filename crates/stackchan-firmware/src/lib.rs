@@ -30,6 +30,7 @@ pub mod imu;
 pub mod ir;
 pub mod leds;
 pub mod power;
+pub mod sd_spi;
 pub mod touch;
 pub mod tracking_trace;
 pub mod wallclock;

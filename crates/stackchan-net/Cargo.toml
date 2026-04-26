@@ -1,6 +1,6 @@
 [package]
 name = "stackchan-net"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -11,19 +11,24 @@ readme = "README.md"
 [lints]
 workspace = true
 
+[features]
+# `parse` exposes `parse_ron` / `render_ron` and the serde derives on
+# the data types. Default-on for host builds (sim, tests, future
+# host-side tooling). The firmware crate depends on this without
+# `parse` because `ron 0.10` hard-pins `serde/std` and `base64/std` —
+# both are broken on `xtensa-esp32s3-none-elf`. Firmware-side RON
+# parsing happens in a hand-rolled parser inside `stackchan-firmware`.
+default = ["parse"]
+parse = ["dep:serde", "dep:ron"]
+
 [dependencies]
-# `no_std` serde with derive macros. The `alloc` feature lets `String`
-# / `Vec<T>` participate in the schema — the firmware reads the config
-# off SD into a heap-allocated `String`, then parses through this crate.
-serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
-# RON (Rusty Object Notation) — chosen for ergonomic Rust-shaped config
-# (enums, comments, trailing commas). 0.10 is `no_std + alloc`-compatible
-# with `default-features = false` — `alloc` support is implicit, not a
-# named feature. The full `Serialize`/`Deserialize` round trip is what
-# `PUT /settings` and `GET /settings` lean on.
-ron = { version = "0.10", default-features = false }
-# Typed errors without `std`. v2 supports `no_std` natively; firmware
-# wraps with `defmt::Debug2Format` rather than this crate deriving
-# `defmt::Format` — keeps the host crate independent of the firmware
-# log transport.
+# `no_std` serde with derive macros. Optional; only pulled when the
+# `parse` feature is active. Firmware target avoids it because of the
+# transitive `serde/std` requirement upstream of ron.
+serde = { version = "1", default-features = false, features = ["alloc", "derive"], optional = true }
+# RON (Rusty Object Notation). Optional behind `parse`. Same reason
+# as `serde` — host-only.
+ron = { version = "0.10", default-features = false, optional = true }
+# Typed errors without `std`. Always on — not parse-gated. Firmware
+# wraps with `defmt::Debug2Format`.
 thiserror = { version = "2", default-features = false }

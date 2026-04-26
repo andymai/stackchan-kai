@@ -1,0 +1,500 @@
+//! Hand-rolled RON-subset parser + renderer for [`crate::Config`].
+//!
+//! The default `parse` feature in this crate uses `ron 0.10`, which
+//! pulls `serde/std + base64/std`. Both break on
+//! `xtensa-esp32s3-none-elf` (no std). This module is the firmware's
+//! escape hatch: a tiny RON-subset parser that handles exactly the
+//! schema v1 shape — top-level tuple struct, three nested tuple
+//! structs, string fields, and one `Vec<String>` — and nothing else.
+//!
+//! It's symmetric with [`crate::parse_ron`] / [`crate::render_ron`]:
+//! anything either side renders the other side parses, so SD round
+//! trips and `PUT /settings` bodies stay lossless.
+//!
+//! The parser is deliberately minimal — no expression evaluation,
+//! no enums, no maps, no unsigned/signed/float literals. Any schema
+//! growth beyond v1 must extend this module in lockstep with the
+//! serde derives.
+
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use crate::config::{Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+use crate::error::ConfigError;
+
+/// Parse a schema-v1 RON document into a [`Config`] without using `serde` or `ron`.
+///
+/// The accepted grammar is the exact subset that [`crate::render_ron`]
+/// emits when called with `PrettyConfig::new`, plus some tolerance for
+/// hand-edits (whitespace, line comments, trailing commas).
+///
+/// # Errors
+///
+/// Returns [`ConfigError::BareParse`] on any structural mismatch
+/// (missing field, unexpected token, runaway string), then runs the
+/// shared [`validate`] gate so out-of-range values surface the same
+/// `Invalid*` variants as the host parser.
+pub fn parse_ron_bare(input: &str) -> Result<Config, ConfigError> {
+    let mut p = Parser::new(input);
+    let config = p.parse_config()?;
+    validate(&config)?;
+    Ok(config)
+}
+
+/// Render a [`Config`] to RON. Output matches what
+/// [`crate::render_ron`] (host-side, serde + ron) emits, so a config
+/// written by either side parses cleanly through the other.
+///
+/// # Errors
+///
+/// Currently infallible — kept as `Result` for symmetry with the
+/// host renderer, which can fail under serde edge cases.
+pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
+    let mut out = String::new();
+    out.push_str("(\n");
+    out.push_str("    wifi: (\n");
+    push_field(&mut out, "        ssid", &config.wifi.ssid);
+    push_field(&mut out, "        psk", &config.wifi.psk);
+    push_field(&mut out, "        country", &config.wifi.country);
+    out.push_str("    ),\n");
+
+    out.push_str("    mdns: (\n");
+    push_field(&mut out, "        hostname", &config.mdns.hostname);
+    out.push_str("    ),\n");
+
+    out.push_str("    time: (\n");
+    push_field(&mut out, "        tz", &config.time.tz);
+    out.push_str("        sntp_servers: [\n");
+    for s in &config.time.sntp_servers {
+        out.push_str("            ");
+        push_string_literal(&mut out, s);
+        out.push_str(",\n");
+    }
+    out.push_str("        ],\n");
+    out.push_str("    ),\n");
+
+    out.push_str(")\n");
+    Ok(out)
+}
+
+/// Helper: emit `        name: "value",\n`.
+fn push_field(out: &mut String, indented_name: &str, value: &str) {
+    out.push_str(indented_name);
+    out.push_str(": ");
+    push_string_literal(out, value);
+    out.push_str(",\n");
+}
+
+/// Helper: emit a quoted RON string with `\\` and `\"` escapes.
+fn push_string_literal(out: &mut String, value: &str) {
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+}
+
+/// Recursive-descent parser over a `&str` cursor. Slow but sized for
+/// a config-file workload — schema v1 is well under 1 KiB.
+struct Parser<'a> {
+    /// Remaining input. `advance` slides the start pointer; nothing
+    /// is allocated for tokens.
+    input: &'a str,
+}
+
+impl<'a> Parser<'a> {
+    /// Construct a fresh parser over `input`.
+    const fn new(input: &'a str) -> Self {
+        Self { input }
+    }
+
+    /// Top-level grammar: parse the schema-v1 outer tuple struct.
+    fn parse_config(&mut self) -> Result<Config, ConfigError> {
+        self.skip_ws_and_comments();
+        self.expect_char('(')?;
+        let mut wifi: Option<WifiConfig> = None;
+        let mut mdns: Option<MdnsConfig> = None;
+        let mut time: Option<TimeConfig> = None;
+
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "wifi" => wifi = Some(self.parse_wifi()?),
+                "mdns" => mdns = Some(self.parse_mdns()?),
+                "time" => time = Some(self.parse_time()?),
+                other => return Err(bare_err("unknown top-level field", other)),
+            }
+            self.skip_ws_and_comments();
+            // Trailing comma optional; closing `)` also OK.
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')'", ""));
+            }
+        }
+
+        Ok(Config {
+            wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
+            mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
+            time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
+        })
+    }
+
+    /// Parse the `wifi: (ssid, psk, country)` block.
+    fn parse_wifi(&mut self) -> Result<WifiConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut ssid: Option<String> = None;
+        let mut psk: Option<String> = None;
+        let mut country: Option<String> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            let value = self.parse_string()?;
+            match key {
+                "ssid" => ssid = Some(value),
+                "psk" => psk = Some(value),
+                "country" => country = Some(value),
+                other => return Err(bare_err("unknown wifi field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in wifi", ""));
+            }
+        }
+        Ok(WifiConfig {
+            ssid: ssid.ok_or_else(|| bare_err("missing wifi.ssid", ""))?,
+            psk: psk.ok_or_else(|| bare_err("missing wifi.psk", ""))?,
+            country: country.ok_or_else(|| bare_err("missing wifi.country", ""))?,
+        })
+    }
+
+    /// Parse the `mdns: (hostname)` block.
+    fn parse_mdns(&mut self) -> Result<MdnsConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut hostname: Option<String> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            let value = self.parse_string()?;
+            match key {
+                "hostname" => hostname = Some(value),
+                other => return Err(bare_err("unknown mdns field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in mdns", ""));
+            }
+        }
+        Ok(MdnsConfig {
+            hostname: hostname.ok_or_else(|| bare_err("missing mdns.hostname", ""))?,
+        })
+    }
+
+    /// Parse the `time: (tz, sntp_servers)` block.
+    fn parse_time(&mut self) -> Result<TimeConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut tz: Option<String> = None;
+        let mut sntp_servers: Option<Vec<String>> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "tz" => tz = Some(self.parse_string()?),
+                "sntp_servers" => sntp_servers = Some(self.parse_string_list()?),
+                other => return Err(bare_err("unknown time field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in time", ""));
+            }
+        }
+        Ok(TimeConfig {
+            tz: tz.ok_or_else(|| bare_err("missing time.tz", ""))?,
+            sntp_servers: sntp_servers.ok_or_else(|| bare_err("missing time.sntp_servers", ""))?,
+        })
+    }
+
+    /// Parse `[ "...", "...", ]` into a `Vec<String>`.
+    fn parse_string_list(&mut self) -> Result<Vec<String>, ConfigError> {
+        self.expect_char('[')?;
+        let mut out: Vec<String> = Vec::new();
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(']') {
+                break;
+            }
+            let s = self.parse_string()?;
+            out.push(s);
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(']') {
+                return Err(bare_err("expected ',' or ']' in list", ""));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Parse a `"..."` string literal with `\\` and `\"` escapes.
+    fn parse_string(&mut self) -> Result<String, ConfigError> {
+        self.expect_char('"')?;
+        let mut out = String::new();
+        loop {
+            let Some(ch) = self.peek_char() else {
+                return Err(bare_err("unterminated string literal", ""));
+            };
+            if ch == '"' {
+                self.advance(1);
+                return Ok(out);
+            }
+            if ch == '\\' {
+                self.advance(1);
+                let Some(esc) = self.peek_char() else {
+                    return Err(bare_err("dangling backslash", ""));
+                };
+                match esc {
+                    '\\' => out.push('\\'),
+                    '"' => out.push('"'),
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    other => return Err(bare_err("unsupported escape", &other.to_string())),
+                }
+                self.advance(esc.len_utf8());
+            } else {
+                out.push(ch);
+                self.advance(ch.len_utf8());
+            }
+        }
+    }
+
+    /// Read a bare identifier `[a-zA-Z_][a-zA-Z0-9_]*`. Returns a
+    /// borrowed slice into `input` that's valid only until the next
+    /// `advance` past it; callers must `match` on it before
+    /// continuing.
+    fn read_ident(&mut self) -> Result<&'a str, ConfigError> {
+        let bytes = self.input.as_bytes();
+        if bytes.is_empty() {
+            return Err(bare_err("expected identifier, got EOF", ""));
+        }
+        let first = bytes[0];
+        if !(first.is_ascii_alphabetic() || first == b'_') {
+            return Err(bare_err("expected identifier", ""));
+        }
+        let mut end = 1;
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+            end += 1;
+        }
+        let (ident, rest) = self.input.split_at(end);
+        self.input = rest;
+        Ok(ident)
+    }
+
+    /// Skip ASCII whitespace and `// line comments` until a token.
+    fn skip_ws_and_comments(&mut self) {
+        loop {
+            let bytes = self.input.as_bytes();
+            // Skip whitespace.
+            let mut i = 0;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i > 0 {
+                self.advance(i);
+                continue;
+            }
+            // Try line comment.
+            if self.input.starts_with("//") {
+                let bytes = self.input.as_bytes();
+                let mut j = 2;
+                while j < bytes.len() && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                self.advance(j);
+                continue;
+            }
+            return;
+        }
+    }
+
+    /// Slide the cursor forward `n` bytes. Caller guarantees `n` is
+    /// at a UTF-8 char boundary (we only call this with `len_utf8()`
+    /// or after byte-only matches like `'('`).
+    fn advance(&mut self, n: usize) {
+        self.input = &self.input[n..];
+    }
+
+    /// Peek the next char without consuming.
+    fn peek_char(&self) -> Option<char> {
+        self.input.chars().next()
+    }
+
+    /// True iff the next byte is `c`.
+    fn peek_eq(&self, c: char) -> bool {
+        self.input.as_bytes().first().copied() == Some(c as u8)
+    }
+
+    /// Consume `c` if it's next; otherwise leave the cursor put.
+    fn try_consume_char(&mut self, c: char) -> bool {
+        if self.peek_eq(c) {
+            self.advance(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Consume `c` or return a parse error.
+    fn expect_char(&mut self, c: char) -> Result<(), ConfigError> {
+        if self.try_consume_char(c) {
+            Ok(())
+        } else {
+            Err(bare_err("expected char", &c.to_string()))
+        }
+    }
+}
+
+/// Build a `BareParse` error. The format-arg pattern keeps the
+/// firmware-side `defmt::Debug2Format` log line readable.
+fn bare_err(reason: &str, detail: &str) -> ConfigError {
+    let mut s = String::with_capacity(reason.len() + detail.len() + 4);
+    s.push_str(reason);
+    if !detail.is_empty() {
+        s.push_str(": ");
+        s.push_str(detail);
+    }
+    ConfigError::BareParse(s)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    const FIXTURE: &str = r#"
+(
+    wifi: (
+        ssid: "home",
+        psk: "redacted",
+        country: "US",
+    ),
+    mdns: (
+        hostname: "stackchan",
+    ),
+    time: (
+        tz: "UTC",
+        sntp_servers: ["pool.ntp.org"],
+    ),
+)
+"#;
+
+    #[test]
+    fn parses_minimal_fixture() {
+        let cfg = parse_ron_bare(FIXTURE).unwrap();
+        assert_eq!(cfg.wifi.ssid, "home");
+        assert_eq!(cfg.wifi.psk, "redacted");
+        assert_eq!(cfg.wifi.country, "US");
+        assert_eq!(cfg.mdns.hostname, "stackchan");
+        assert_eq!(cfg.time.tz, "UTC");
+        assert_eq!(cfg.time.sntp_servers, vec!["pool.ntp.org".to_string()]);
+    }
+
+    #[test]
+    fn handles_line_comments_and_trailing_commas() {
+        let s = r#"
+            // top comment
+            (
+                wifi: ( ssid: "n", psk: "p", country: "JP", ),
+                mdns: ( hostname: "h" ), // trailing
+                time: ( tz: "UTC", sntp_servers: ["a","b",], ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert_eq!(
+            cfg.time.sntp_servers,
+            vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn handles_string_escapes() {
+        let s = r#"
+            (
+                wifi: ( ssid: "foo\"bar", psk: "back\\slash", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert_eq!(cfg.wifi.ssid, "foo\"bar");
+        assert_eq!(cfg.wifi.psk, "back\\slash");
+    }
+
+    #[test]
+    fn renders_then_re_parses() {
+        let original = parse_ron_bare(FIXTURE).unwrap();
+        let rendered = render_ron_bare(&original).unwrap();
+        let re_parsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(original, re_parsed);
+    }
+
+    #[test]
+    fn render_output_round_trips_through_serde_path() {
+        // Sanity: anything our renderer emits, the serde-side parser
+        // (gated behind feature `parse`) should also accept. Only
+        // exercised when running the host test suite, which has the
+        // feature on by default.
+        #[cfg(feature = "parse")]
+        {
+            let original = parse_ron_bare(FIXTURE).unwrap();
+            let rendered = render_ron_bare(&original).unwrap();
+            let via_serde = crate::parse_ron(&rendered).unwrap();
+            assert_eq!(original, via_serde);
+        }
+    }
+
+    #[test]
+    fn rejects_missing_field() {
+        let err = parse_ron_bare("(wifi: (ssid: \"x\", psk: \"y\", country: \"US\"))").unwrap_err();
+        assert!(matches!(err, ConfigError::BareParse(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn validates_after_parse() {
+        // Lowercase country slips through bare parse but fails the
+        // shared validate gate.
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "us" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+            )
+        "#;
+        let err = parse_ron_bare(s).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidCountry(_)), "got {err:?}");
+    }
+}
