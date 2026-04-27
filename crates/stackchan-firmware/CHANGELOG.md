@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.23.0...stackchan-firmware-v0.24.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** HTTP GET/PUT /settings (atomic SD writeback) ([#154](https://github.com/andymai/stackchan-kai/issues/154)) ([5622096](https://github.com/andymai/stackchan-kai/commit/5622096a58fc9b0c775e935080907f5a8c39f89c))
+
 ## [0.23.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.22.0...stackchan-firmware-v0.23.0) (2026-04-27)
 
 
