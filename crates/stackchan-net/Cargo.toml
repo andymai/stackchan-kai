@@ -22,6 +22,11 @@ default = ["parse"]
 parse = ["dep:serde", "dep:ron"]
 
 [dependencies]
+# Domain types for the HTTP control plane (`Emotion`, `Pose`,
+# `Locale`, `PhraseId`, `Priority`, `RemoteCommand`). Pulled
+# unconditionally — the JSON body parsers in `http_command` map
+# directly onto these types.
+stackchan-core = { path = "../stackchan-core" }
 # `no_std` serde with derive macros. Optional; only pulled when the
 # `parse` feature is active. Firmware target avoids it because of the
 # transitive `serde/std` requirement upstream of ron.

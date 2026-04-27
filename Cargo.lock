@@ -4452,6 +4452,7 @@ version = "0.2.0"
 dependencies = [
  "ron",
  "serde",
+ "stackchan-core",
  "thiserror 2.0.18",
 ]
 

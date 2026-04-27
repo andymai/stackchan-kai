@@ -1,5 +1,9 @@
-//! Hand-rolled JSON-ish parser for the HTTP control plane's POST
-//! bodies.
+//! Hand-rolled JSON-ish parser for the HTTP control plane's POST bodies.
+//!
+//! Lives in `stackchan-net` (not `stackchan-firmware`) so the parser
+//! tests run on host — the firmware crate is
+//! `xtensa-esp32s3-none-elf`-only and its `cfg(test)` modules are
+//! never executed by `just check`.
 //!
 //! The HTTP server only accepts a handful of body shapes:
 //!
@@ -22,8 +26,9 @@ use stackchan_core::{Emotion, Pose, RemoteCommand};
 pub const DEFAULT_HOLD_MS: u32 = 30_000;
 
 /// Parser error surface — kept small; routes turn these into
-/// `400 Bad Request` plain-text responses.
-#[derive(Debug, defmt::Format)]
+/// `400 Bad Request` plain-text responses. The firmware logs these
+/// via `defmt::Debug2Format` so this crate doesn't pull `defmt`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsonError {
     /// Body did not start with `{` after optional whitespace.
     NotAnObject,
