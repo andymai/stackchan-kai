@@ -856,7 +856,7 @@ async fn main(spawner: Spawner) -> ! {
     let net_seed: u64 = u64::from(net_rng.random()) | (u64::from(net_rng.random()) << 32);
     let stack_resources = net::stack::STACK_RESOURCES
         .init(embassy_net::StackResources::<{ net::stack::STACK_SOCKETS }>::new());
-    let (_net_stack, net_runner) = embassy_net::new(
+    let (net_stack, net_runner) = embassy_net::new(
         interfaces.sta,
         embassy_net::Config::dhcpv4(embassy_net::DhcpConfig::default()),
         stack_resources,
@@ -871,6 +871,14 @@ async fn main(spawner: Spawner) -> ! {
         net_config.wifi.psk.clone(),
     )) {
         defmt::panic!("spawn(wifi_task) failed: {}", defmt::Debug2Format(&e));
+    }
+    let sntp_rtc_bus = I2cDevice::new(board_io.i2c_bus);
+    if let Err(e) = spawner.spawn(net::sntp::sntp_task(
+        net_stack,
+        sntp_rtc_bus,
+        net_config.time.sntp_servers.clone(),
+    )) {
+        defmt::panic!("spawn(sntp_task) failed: {}", defmt::Debug2Format(&e));
     }
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
