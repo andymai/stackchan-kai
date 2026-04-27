@@ -28,6 +28,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/emotion`       | Set affect with hold timer                          |
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
+| POST   | `/speak`         | Play a baked phrase / chirp through the speaker      |
 | GET    | `/settings`      | Persisted config (PSK + token redacted)             |
 | PUT    | `/settings`      | Replace persisted config; atomic SD writeback        |
 
@@ -117,6 +118,42 @@ $ curl -X POST http://stackchan.local/reset
 Empty body. Clears any active emotion or look-at hold; autonomous
 behaviours resume on the next render tick.
 
+### `POST /speak`
+
+```
+$ curl -X POST http://stackchan.local/speak \
+       -H 'Content-Type: application/json' \
+       -d '{"phrase":"wake_chirp"}'
+```
+
+| Field   | Type   | Required | Notes                                                  |
+|---------|--------|----------|--------------------------------------------------------|
+| phrase  | string | yes      | Catalog entry — see vocabulary below                   |
+| locale  | string | no       | `"en"` (default) / `"ja"` — only meaningful for verbal phrases |
+
+**Phrase vocabulary** (matches [`stackchan_core::voice::PhraseId`]):
+
+| Wire string                     | Kind           | Notes                                            |
+|---------------------------------|----------------|--------------------------------------------------|
+| `wake_chirp`                    | SFX            | 100 ms / 1 kHz                                   |
+| `pickup_chirp`                  | SFX            | Two-tone upward sweep                            |
+| `startle_chirp`                 | SFX            | Sharp 4 kHz tone                                 |
+| `low_battery_chirp`             | SFX            | Two-pulse 2 kHz alert                            |
+| `camera_mode_entered_chirp`     | SFX            | Upward "doot-DEE"                                |
+| `camera_mode_exited_chirp`      | SFX            | Downward "DEE-doot"                              |
+| `greeting`                      | Verbal phrase  | en + ja PCM assets                               |
+| `acknowledge_name`              | Verbal phrase  | en + ja PCM assets                               |
+| `battery_low`                   | Verbal phrase  | en + ja PCM assets                               |
+
+Fire-and-forget — the request returns `204 No Content` once the
+utterance is queued; playback completes asynchronously. Operator-
+driven calls land at `Priority::Normal`. Modifier-internal call
+sites (low-battery alert, etc.) use elevated priority via the
+firmware's `audio::try_dispatch_utterance` directly and can preempt
+or evict an in-flight operator request.
+
+`POST /speak` is gated by [auth](#auth) when a token is configured.
+
 ## Persistent config
 
 The boot config lives at `/sd/STACKCHAN.RON` in the schema described
@@ -171,7 +208,7 @@ the operator's HTTP session if the SSID changed. Reboot to apply.
 |------|---------------------------------------------------------------------|
 | 200  | GET responses, dashboard, successful PUT                            |
 | 204  | POST `/emotion` / `/look-at` / `/reset` on success                  |
-| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion, redacted PSK or token sentinel, validation failure on PUT `/settings` |
+| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, redacted PSK or token sentinel, validation failure on PUT `/settings` |
 | 401  | Write route called without a valid bearer token (when auth is enabled) |
 | 404  | Path not in the matcher                                             |
 | 405  | Method not allowed                                                  |
