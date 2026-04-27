@@ -6,9 +6,11 @@ title: HTTP control plane
 
 A LAN-scoped HTTP/1.1 server runs on port 80 once Wi-Fi connects.
 It exposes a small, fixed set of routes for live state, manual
-override, persistent config, and an embedded operator dashboard. No
-auth; the security boundary is the LAN. See the [security note](#security)
-for what that means.
+override, persistent config, and an embedded operator dashboard.
+Write routes (`PUT`, `POST`) are gated on a configurable bearer
+token — empty token (default) leaves the LAN open, matching the
+offline-first stance for Wi-Fi. See [Auth](#auth) for how to enable
+it; [security](#security) covers what's still out of scope.
 
 The wire-format implementation is hand-rolled in
 [`crates/stackchan-firmware/src/net/http.rs`](https://github.com/andymai/stackchan-kai/tree/main/crates/stackchan-firmware/src/net/http.rs)
@@ -26,8 +28,11 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/emotion`       | Set affect with hold timer                          |
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
-| GET    | `/settings`      | Persisted config (PSK redacted)                     |
+| GET    | `/settings`      | Persisted config (PSK + token redacted)             |
 | PUT    | `/settings`      | Replace persisted config; atomic SD writeback        |
+
+Write routes (`PUT`, all `POST`) require `Authorization: Bearer <token>`
+when `auth.token` is configured. Reads are always unauthenticated.
 
 ## Live state
 
@@ -124,23 +129,31 @@ The HTTP control plane round-trips it as JSON.
 $ curl http://stackchan.local/settings
 {"wifi":{"ssid":"my-net","psk":"***","country":"US"},
  "mdns":{"hostname":"stackchan"},
- "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}
+ "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+ "auth":{"token":"***"}}
 ```
 
-`wifi.psk` is always redacted to `***`. The server rejects PUT
-bodies that contain `***` for the PSK so a copy-paste round trip
-can't silently overwrite the real key with the redaction sentinel.
+`wifi.psk` and a non-empty `auth.token` are redacted to `***`. The
+server rejects PUT bodies that contain `***` for either field so a
+copy-paste round trip can't silently overwrite the real value with
+the redaction sentinel. An empty `auth.token` (= auth disabled)
+renders as `""` and round-trips losslessly.
 
 ### `PUT /settings`
 
 ```
 $ curl -X PUT http://stackchan.local/settings \
        -H 'Content-Type: application/json' \
+       -H 'Authorization: Bearer s3cret' \
        -d '{"wifi":{"ssid":"new-net","psk":"realkey","country":"US"},
             "mdns":{"hostname":"stackchan"},
-            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}'
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "auth":{"token":"s3cret"}}'
 {"reboot_required":true}
 ```
+
+Drop the `Authorization` header (and replace `auth.token` with `""`)
+to disable auth on a device that previously had it enabled.
 
 Full-replace. The server validates the body via
 `stackchan_net::validate` (rejects empty SSID, invalid country code,
@@ -158,9 +171,12 @@ the operator's HTTP session if the SSID changed. Reboot to apply.
 |------|---------------------------------------------------------------------|
 | 200  | GET responses, dashboard, successful PUT                            |
 | 204  | POST `/emotion` / `/look-at` / `/reset` on success                  |
-| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion, redacted PSK sentinel, validation failure on PUT `/settings` |
+| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion, redacted PSK or token sentinel, validation failure on PUT `/settings` |
+| 401  | Write route called without a valid bearer token (when auth is enabled) |
 | 404  | Path not in the matcher                                             |
 | 405  | Method not allowed                                                  |
+| 413  | Request body exceeds `MAX_BODY_BYTES` (1024)                        |
+| 431  | Headers exceed `REQUEST_BUF_BYTES` before `\r\n\r\n` is reached     |
 | 500  | SD write failed during PUT `/settings`                              |
 | 503  | PUT `/settings` with no SD; GET `/settings` before the config snapshot is loaded; no free SSE subscriber slot |
 
@@ -185,19 +201,71 @@ To customise it, edit the HTML in
 and re-flash. Embedding via `include_bytes!` instead of serving from
 SD is intentional: the dashboard works on a card-less device.
 
+## Auth
+
+Write routes (`PUT`, all `POST`) accept an optional bearer token.
+Token is stored in `auth.token` of the persisted config and read
+once at boot into a snapshot the HTTP handler consults on every
+write request. Empty token (default) disables the gate; non-empty
+token requires `Authorization: Bearer <token>` and returns `401` on
+mismatch.
+
+Compare is constant-time across the byte length so a co-located
+attacker can't leak the token byte by byte through timing — though
+on a LAN, network jitter dominates any sub-microsecond difference.
+
+```
+$ curl -X POST http://stackchan.local/emotion
+HTTP/1.1 401 Unauthorized
+unauthorized
+
+$ curl -X POST http://stackchan.local/emotion \
+       -H 'Authorization: Bearer s3cret' \
+       -H 'Content-Type: application/json' \
+       -d '{"emotion":"happy"}'
+HTTP/1.1 204 No Content
+```
+
+To enable auth on a fresh kit:
+
+```
+$ curl -X PUT http://stackchan.local/settings \
+       -H 'Content-Type: application/json' \
+       -d '{"wifi":{...},"mdns":{...},"time":{...},
+            "auth":{"token":"s3cret"}}'
+$ # reboot the device — Wi-Fi keeps the boot config until restart
+```
+
+The dashboard at `GET /` reads the configured token from
+`localStorage` and prompts the operator on its first `401`. The
+typed value is persisted to the device on `PUT /settings` *and* to
+`localStorage`, so a freshly configured browser keeps writing
+without re-prompting until the device reboots.
+
 ## Security
 
-There is no auth. Anyone on the same LAN can:
+What's covered:
 
-- Read the persisted config (with PSK redaction).
-- Overwrite the persisted config (without redaction — `PUT` accepts
-  the real PSK as plaintext on the wire).
-- Drive the avatar to arbitrary poses and emotions.
+- LAN scope (port 80 binds to `0.0.0.0`; reachable inside the
+  network the device joined).
+- Bearer-token gate on writes.
+- PSK and auth-token redaction on `GET /settings`.
+- Atomic SD writeback for `PUT /settings`.
 
-This is acceptable for a desktop toy on a trusted home LAN and
+What isn't:
+
+- **No TLS.** Tokens cross the wire in cleartext. A network
+  observer on the same broadcast domain can capture and replay.
+- **No rate limiting.** A misconfigured client can hammer `401`s
+  without throttling.
+- **No replay protection.** A captured request can be re-sent.
+- **No CSRF protection on the dashboard.** Any page on the same
+  LAN that can fetch the dashboard can also drive writes through
+  the operator's browser.
+
+These are acceptable for a desktop toy on a trusted home LAN and
 explicitly out of scope for v0.x. If you put Stack-chan on an
-untrusted network, fence it off — there's no TLS, no auth, no rate
-limiting on this server.
+untrusted network, fence it off.
 
 ## Worker pool sizing
 

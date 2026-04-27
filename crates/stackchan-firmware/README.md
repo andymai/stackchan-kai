@@ -82,8 +82,12 @@ runs three networked services on the LAN:
 
 - **HTTP** on port 80 — operator dashboard at `GET /`, live state +
   control plane on `/state`, `/state/stream`, `/emotion`, `/look-at`,
-  `/reset`, `/settings`. See [docs/http.md](../../docs/http.md) for
-  the full route table, body shapes, and error codes.
+  `/reset`, `/settings`. Write routes (`PUT`, `POST`) are gated on
+  `auth.token` from the boot config — empty token (default) leaves
+  the LAN open; non-empty token requires
+  `Authorization: Bearer <token>`. See
+  [docs/http.md](../../docs/http.md) for the full route table, body
+  shapes, error codes, and the auth section with `curl` examples.
 - **mDNS** — advertises `<hostname>.local` from
   `mdns.hostname` in the boot config (default `stackchan`).
 - **SNTP** — on link-up, queries the SNTP servers from
