@@ -101,6 +101,16 @@ Half-duplex serial servo bus.
 ### `ir-nec`
 No `Error` enum — decoder returns `Option<NecCommand>` and treats noise as "no decode" rather than an error.
 
+### `stackchan_net::ConfigError`
+RON config parse + validation. Host crate; firmware wraps with `Debug2Format` for `defmt` logging. Validators only fire through `parse_ron` — the firmware's `Config::default()` fallback path never trips them.
+- `Parse(SpannedError)` — RON syntax error / missing field / type mismatch. Inner value carries `(line, col)`.
+- `Serialize(ron::Error)` — RON round-trip failure on `render_ron`. Should not happen with well-formed `Config`; treat as a bug.
+- `EmptySsid` — `wifi.ssid` empty / whitespace-only on disk. Default `WifiConfig` has an empty SSID by design (the offline-first sentinel), but explicit blanks in a written file are almost always mistakes.
+- `InvalidCountry(String)` — `wifi.country` not exactly two **uppercase** ASCII letters. esp-wifi expects ISO-3166 alpha-2 in canonical case (`"US"`, `"JP"`); lowercase silently mis-applies the regulatory mask at the driver layer, so the validator pins the case here.
+- `InvalidHostname(String)` — `mdns.hostname` failed RFC-952 subset (alphanumerics + hyphen, must start with letter, no trailing hyphen, length 1-63).
+- `NoSntpServers` — `time.sntp_servers` empty. Firmware needs at least one candidate.
+- `EmptySntpServer(usize)` — a `time.sntp_servers` entry was empty / whitespace-only. The `usize` carries the offending index. Caught at parse time so the firmware's "try in order" loop doesn't burn its full per-server timeout on an unresolvable hostname before falling back.
+
 ### `stackchan_tts::RenderError`
 Speech-backend rendering. Returned from `SpeechBackend::render` when a
 backend that answered `can_handle == true` can't produce audio for the
@@ -114,16 +124,6 @@ specific utterance, or is currently degraded. `#[non_exhaustive]`.
 - `BackendUnavailable` — the backend is in a degraded state (Wi-Fi
   down for a cloud backend, decoder failed to initialize). Caller may
   retry later.
-
-### `stackchan_net::ConfigError`
-RON config parse + validation. Host crate; firmware wraps with `Debug2Format` for `defmt` logging. Validators only fire through `parse_ron` — the firmware's `Config::default()` fallback path never trips them.
-- `Parse(SpannedError)` — RON syntax error / missing field / type mismatch. Inner value carries `(line, col)`.
-- `Serialize(ron::Error)` — RON round-trip failure on `render_ron`. Should not happen with well-formed `Config`; treat as a bug.
-- `EmptySsid` — `wifi.ssid` empty / whitespace-only on disk. Default `WifiConfig` has an empty SSID by design (the offline-first sentinel), but explicit blanks in a written file are almost always mistakes.
-- `InvalidCountry(String)` — `wifi.country` not exactly two **uppercase** ASCII letters. esp-wifi expects ISO-3166 alpha-2 in canonical case (`"US"`, `"JP"`); lowercase silently mis-applies the regulatory mask at the driver layer, so the validator pins the case here.
-- `InvalidHostname(String)` — `mdns.hostname` failed RFC-952 subset (alphanumerics + hyphen, must start with letter, no trailing hyphen, length 1-63).
-- `NoSntpServers` — `time.sntp_servers` empty. Firmware needs at least one candidate.
-- `EmptySntpServer(usize)` — a `time.sntp_servers` entry was empty / whitespace-only. The `usize` carries the offending index. Caught at parse time so the firmware's "try in order" loop doesn't burn its full per-server timeout on an unresolvable hostname before falling back.
 
 ## Firmware-side error wrapping
 
