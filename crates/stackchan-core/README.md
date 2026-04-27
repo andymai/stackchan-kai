@@ -78,6 +78,7 @@ render tick. Listed roughly in application order:
 | `GazeFromAttention`  | Eye centers shift toward target while `Tracking` (eyes lead head) |
 | `MicrosaccadeFromAttention` | 0.5–1.5 s involuntary eye darts during `Tracking` (Disney IROS realism contributor) |
 | `AttentionFromTracking` | Cognition: latches `mind.attention=Tracking{target}` on sustained camera motion |
+| `RemoteCommandModifier` | Cognition: drains `entity.input.remote_command` (firmware HTTP), holds emotion or look-at target for the requested window |
 | `Blink` / `Breath`   | Engagement-aware: blink rate halves and breath cycle stretches ×1.67 while attention is non-`None` |
 | `IdleDrift`       | Slow randomized gaze drift                                     |
 | `IdleHeadDrift`   | Occasional brief head glances at randomized intervals          |

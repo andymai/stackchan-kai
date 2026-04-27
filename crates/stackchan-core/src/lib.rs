@@ -56,7 +56,7 @@ pub use entity::{Entity, Tick};
 pub use events::Events;
 pub use face::{Eye, EyePhase, Face, Mouth, Point, SCALE_DEFAULT, Style};
 pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
-pub use input::Input;
+pub use input::{Input, RemoteCommand};
 pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
 pub use lipsync::{LipSync, Viseme};
 pub use mind::{Affect, Attention, Autonomy, Dormancy, Engagement, Intent, Mind, OverrideSource};

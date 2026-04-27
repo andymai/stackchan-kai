@@ -75,7 +75,8 @@ use stackchan_core::{
         EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
         HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
-        MicrosaccadeFromAttention, MouthFromAudio, StyleFromEmotion, StyleFromIntent,
+        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
+        StyleFromIntent,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -193,6 +194,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut emotion_from_voice = EmotionFromVoice::new();
     let mut intent_from_loud = IntentFromLoud::new();
     let mut attention_from_tracking = AttentionFromTracking::new();
+    let mut remote_command = RemoteCommandModifier::new();
     let mut dormancy_from_activity = DormancyFromActivity::new();
     let mut cycle = EmotionCycle::new();
     let mut style = StyleFromEmotion::new();
@@ -257,6 +259,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .expect("registry full");
     director
         .add_modifier(&mut attention_from_tracking)
+        .expect("registry full");
+    director
+        .add_modifier(&mut remote_command)
         .expect("registry full");
     director
         .add_modifier(&mut dormancy_from_activity)
@@ -371,6 +376,12 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // Drain IR-remote decoded commands, if any.
         if let Some(cmd) = ir::REMOTE_SIGNAL.try_take() {
             entity.input.remote_pending = Some((cmd.address, cmd.command));
+        }
+        // Drain HTTP control-plane commands, if any. RemoteCommandModifier
+        // (Phase::Cognition) consumes the slot, asserts emotion or
+        // attention, and re-asserts each tick until the hold expires.
+        if let Some(cmd) = net::http::REMOTE_COMMAND_SIGNAL.try_take() {
+            entity.input.remote_command = Some(cmd);
         }
         // Drain the latest IMU reading.
         if let Some(m) = imu::IMU_SIGNAL.try_take() {
