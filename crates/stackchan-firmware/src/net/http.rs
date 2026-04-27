@@ -22,6 +22,10 @@
 //!   asserting the operator's target against camera tracking.
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
+//! - `POST /speak` — JSON `{"phrase": "...", "locale": "..."}`.
+//!   Renders a [`stackchan_core::voice::PhraseId`] from the baked
+//!   catalog and queues it on the audio TX path. Fire-and-forget;
+//!   no avatar-state hold timer.
 //! - `GET /settings` — current persisted [`stackchan_net::Config`]
 //!   as JSON, with `wifi.psk` and `auth.token` redacted.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
@@ -275,6 +279,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
+        ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
     }

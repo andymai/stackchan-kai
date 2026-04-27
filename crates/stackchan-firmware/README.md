@@ -82,10 +82,11 @@ runs three networked services on the LAN:
 
 - **HTTP** on port 80 — operator dashboard at `GET /`, live state +
   control plane on `/state`, `/state/stream`, `/emotion`, `/look-at`,
-  `/reset`, `/settings`. Write routes (`PUT`, `POST`) are gated on
-  `auth.token` from the boot config — empty token (default) leaves
-  the LAN open; non-empty token requires
-  `Authorization: Bearer <token>`. See
+  `/reset`, `/speak`, `/settings`. Write routes (`PUT`, `POST`) are
+  gated on `auth.token` from the boot config — empty token (default)
+  leaves the LAN open; non-empty token requires
+  `Authorization: Bearer <token>`. `POST /speak` queues a baked
+  phrase or chirp on the AW88298 TX path. See
   [docs/http.md](../../docs/http.md) for the full route table, body
   shapes, error codes, and the auth section with `curl` examples.
 - **mDNS** — advertises `<hostname>.local` from

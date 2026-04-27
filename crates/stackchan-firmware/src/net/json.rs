@@ -15,6 +15,7 @@
 //! that handles full JSON belongs in a real crate. Numbers are
 //! parsed in their entirety with [`core::str::FromStr`].
 
+use stackchan_core::voice::{Locale, PhraseId, Priority};
 use stackchan_core::{Emotion, Pose, RemoteCommand};
 
 /// Default hold window when the request body omits `hold_ms`.
@@ -41,6 +42,10 @@ pub enum JsonError {
     BadValue,
     /// Emotion string didn't match any known variant.
     UnknownEmotion,
+    /// Phrase string didn't match any [`PhraseId`] variant.
+    UnknownPhrase,
+    /// Locale string didn't match any [`Locale`] variant.
+    UnknownLocale,
 }
 
 /// Parse a `POST /emotion` body into a [`RemoteCommand::SetEmotion`].
@@ -122,6 +127,48 @@ pub fn parse_look_at(body: &str) -> Result<RemoteCommand, JsonError> {
             tilt_deg: tilt_deg.ok_or(JsonError::MissingKey("tilt_deg"))?,
         },
         hold_ms: hold_ms.unwrap_or(DEFAULT_HOLD_MS),
+    })
+}
+
+/// Parse a `POST /speak` body into a [`RemoteCommand::Speak`].
+///
+/// Required: `phrase` (string, lowercase `snake_case`). Optional:
+/// `locale` (string, `"en"` / `"ja"`, defaults to `"en"`).
+///
+/// Priority is not on the wire — the firmware fills
+/// [`Priority::Normal`] for every operator-driven request. Modifier-
+/// internal call sites that need elevated priority go through
+/// [`crate::audio::try_dispatch_utterance`] directly.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys, unknown
+/// keys, malformed JSON shape, or unrecognised phrase/locale strings.
+pub fn parse_speak(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut phrase: Option<PhraseId> = None;
+    let mut locale: Option<Locale> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "phrase" => {
+                if phrase.is_some() {
+                    return Err(JsonError::DuplicateKey("phrase"));
+                }
+                phrase = Some(parse_phrase(scanner)?);
+            }
+            "locale" => {
+                if locale.is_some() {
+                    return Err(JsonError::DuplicateKey("locale"));
+                }
+                locale = Some(parse_locale(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(RemoteCommand::Speak {
+        phrase: phrase.ok_or(JsonError::MissingKey("phrase"))?,
+        locale: locale.unwrap_or(Locale::En),
+        priority: Priority::Normal,
     })
 }
 
@@ -265,6 +312,34 @@ fn parse_emotion(scanner: &mut Scanner<'_>) -> Result<Emotion, JsonError> {
         "surprised" => Ok(Emotion::Surprised),
         "angry" => Ok(Emotion::Angry),
         _ => Err(JsonError::UnknownEmotion),
+    }
+}
+
+/// Parse a quoted phrase string into the corresponding [`PhraseId`].
+/// Vocabulary is the full baked catalog: SFX chirps + verbal phrases.
+fn parse_phrase(scanner: &mut Scanner<'_>) -> Result<PhraseId, JsonError> {
+    let raw = scanner.read_string()?;
+    match raw {
+        "wake_chirp" => Ok(PhraseId::WakeChirp),
+        "pickup_chirp" => Ok(PhraseId::PickupChirp),
+        "startle_chirp" => Ok(PhraseId::StartleChirp),
+        "low_battery_chirp" => Ok(PhraseId::LowBatteryChirp),
+        "camera_mode_entered_chirp" => Ok(PhraseId::CameraModeEnteredChirp),
+        "camera_mode_exited_chirp" => Ok(PhraseId::CameraModeExitedChirp),
+        "greeting" => Ok(PhraseId::Greeting),
+        "acknowledge_name" => Ok(PhraseId::AcknowledgeName),
+        "battery_low" => Ok(PhraseId::BatteryLow),
+        _ => Err(JsonError::UnknownPhrase),
+    }
+}
+
+/// Parse a quoted locale string into the corresponding [`Locale`].
+fn parse_locale(scanner: &mut Scanner<'_>) -> Result<Locale, JsonError> {
+    let raw = scanner.read_string()?;
+    match raw {
+        "en" => Ok(Locale::En),
+        "ja" => Ok(Locale::Ja),
+        _ => Err(JsonError::UnknownLocale),
     }
 }
 
@@ -430,5 +505,70 @@ mod tests {
             parse_set_emotion("{}"),
             Err(JsonError::MissingKey("emotion"))
         ));
+    }
+
+    #[test]
+    fn speak_with_phrase_only_defaults_locale_and_priority() {
+        let body = r#"{"phrase":"wake_chirp"}"#;
+        match parse_speak(body).unwrap() {
+            RemoteCommand::Speak {
+                phrase,
+                locale,
+                priority,
+            } => {
+                assert_eq!(phrase, PhraseId::WakeChirp);
+                assert_eq!(locale, Locale::En);
+                assert_eq!(priority, Priority::Normal);
+            }
+            other => panic!("expected Speak, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn speak_accepts_explicit_locale() {
+        let body = r#"{"phrase":"greeting","locale":"ja"}"#;
+        match parse_speak(body).unwrap() {
+            RemoteCommand::Speak { phrase, locale, .. } => {
+                assert_eq!(phrase, PhraseId::Greeting);
+                assert_eq!(locale, Locale::Ja);
+            }
+            other => panic!("expected Speak, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn speak_rejects_missing_phrase() {
+        let body = r#"{"locale":"en"}"#;
+        assert!(matches!(
+            parse_speak(body),
+            Err(JsonError::MissingKey("phrase"))
+        ));
+    }
+
+    #[test]
+    fn speak_rejects_unknown_phrase() {
+        let body = r#"{"phrase":"yodel"}"#;
+        assert!(matches!(parse_speak(body), Err(JsonError::UnknownPhrase)));
+    }
+
+    #[test]
+    fn speak_rejects_unknown_locale() {
+        let body = r#"{"phrase":"greeting","locale":"de"}"#;
+        assert!(matches!(parse_speak(body), Err(JsonError::UnknownLocale)));
+    }
+
+    #[test]
+    fn speak_rejects_duplicate_phrase() {
+        let body = r#"{"phrase":"wake_chirp","phrase":"pickup_chirp"}"#;
+        assert!(matches!(
+            parse_speak(body),
+            Err(JsonError::DuplicateKey("phrase"))
+        ));
+    }
+
+    #[test]
+    fn speak_rejects_unknown_key() {
+        let body = r#"{"phrase":"wake_chirp","priority":"normal"}"#;
+        assert!(matches!(parse_speak(body), Err(JsonError::UnknownKey)));
     }
 }

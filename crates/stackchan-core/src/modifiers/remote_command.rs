@@ -87,6 +87,13 @@ impl RemoteCommandModifier {
                 self.emotion_hold = None;
                 self.lookat_hold = None;
             }
+            RemoteCommand::Speak { .. } => {
+                // Audio dispatch is firmware-only; the producer drains
+                // this variant from `entity.input.remote_command` before
+                // `Director::run`. If a `Speak` slot survives that
+                // intercept, treat it as a no-op rather than panic so
+                // the modifier stays resilient under reordering.
+            }
         }
     }
 }
@@ -407,6 +414,30 @@ mod tests {
             Emotion::Sleepy,
             "reset must drop the emotion hold"
         );
+    }
+
+    #[test]
+    fn speak_is_a_no_op_at_the_modifier() {
+        // Speak is dispatched to the audio queue by the firmware
+        // before Director::run. If a Speak slot reaches the modifier,
+        // it must consume harmlessly without touching mind state.
+        use crate::voice::{Locale, PhraseId, Priority};
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        let baseline_emotion = entity.mind.affect.emotion;
+        let baseline_attention = entity.mind.attention;
+        entity.input.remote_command = Some(RemoteCommand::Speak {
+            phrase: PhraseId::WakeChirp,
+            locale: Locale::En,
+            priority: Priority::Normal,
+        });
+
+        step(&mut m, &mut entity, 0);
+
+        assert_eq!(entity.mind.affect.emotion, baseline_emotion);
+        assert_eq!(entity.mind.attention, baseline_attention);
+        assert!(entity.input.remote_command.is_none(), "slot must drain");
+        assert!(entity.mind.autonomy.manual_until.is_none());
     }
 
     #[test]
