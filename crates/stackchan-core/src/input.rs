@@ -14,6 +14,7 @@
 
 use crate::emotion::Emotion;
 use crate::head::Pose;
+use crate::voice::{Locale, PhraseId, Priority};
 
 /// External command delivered through the firmware control plane.
 ///
@@ -51,6 +52,21 @@ pub enum RemoteCommand {
     /// Clear any active emotion or look-at hold and return to
     /// autonomous behavior.
     Reset,
+    /// Play a [`PhraseId`] from the baked TTS catalog through the
+    /// firmware's TX path. Fire-and-forget — no avatar-state hold,
+    /// no autonomy gate. The firmware drains this slot before
+    /// `Director::run` and dispatches via the audio queue;
+    /// [`crate::modifiers::RemoteCommandModifier`] sees this variant
+    /// only as a defensive no-op.
+    Speak {
+        /// Catalog entry to render (chirp, beep, or verbal phrase).
+        phrase: PhraseId,
+        /// Locale for verbal phrases. Ignored for non-verbal chirps.
+        locale: Locale,
+        /// Queue priority. Higher priorities preempt currently-
+        /// playing audio; the default is [`Priority::Normal`].
+        priority: Priority,
+    },
 }
 
 /// Pending inputs the modifier graph consumes.
