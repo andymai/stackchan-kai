@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.26.0...stackchan-firmware-v0.27.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** preserve-current sentinel for PSK + token on PUT /settings ([#165](https://github.com/andymai/stackchan-kai/issues/165)) ([0356b95](https://github.com/andymai/stackchan-kai/commit/0356b95afda6b159e5511fae87b3b74afdfc1e3b))
+
 ## [0.26.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.25.0...stackchan-firmware-v0.26.0) (2026-04-27)
 
 
