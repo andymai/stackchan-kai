@@ -87,12 +87,14 @@ and exposes static `ModifierMeta`. [`Director`] owns a fixed-capacity
 heapless registry of modifier and skill references, sorts them once
 on first `run()`, and ticks them each frame.
 
-[`Skill`] is a longer-running NPC capability with a `name` and a
-`description` consumable by a dispatcher. Trait surface only — no
-shipped implementations yet.
+[`Skill`] is a longer-running predicate-fired capability — a recognizer
+that watches percepts and writes `mind.intent` / `mind.attention`.
+Later-phase modifiers translate that intent into face / motor. The
+current population lives at `crates/stackchan-core/src/skills/`.
 
-`reads` / `writes` are documentation; debug-mode enforcement after each
-`update` is planned.
+`reads` / `writes` are documentation, and `cfg(debug_assertions)` builds
+assert that each modifier only writes its declared `Field`s after every
+`update` — see `Director::run`.
 
 ## Phase ordering
 

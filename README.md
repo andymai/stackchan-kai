@@ -70,20 +70,35 @@ for the details.
 
 ## Features
 
-- **Animated face** — five emotions, 300 ms eased transitions, blink / breath / idle-drift at double-buffered 30 FPS
+- **Animated face** — eased transitions across the m5stack-avatar emotion palette, blink / breath / idle-drift at double-buffered 30 FPS
 - **Head motion** — Feetech SCServo pan/tilt with a calibration bench (`just bench`)
 - **9-axis sensing** — BMI270 accel + gyro, BMM150 magnetometer (compensated µT, live bench via `just mag-bench`)
-- **Local inputs** — FT6336U touch, LTR-553 ambient + proximity, NEC IR decoder
+- **Local inputs** — FT6336U touch, Si12T body-touch strip, LTR-553 ambient + proximity, NEC IR decoder
 - **Timekeeping + peripherals** — BM8563 RTC, PY32 co-processor, WS2812 neck LED ring (`just leds-bench`)
+- **Camera tracking** — GC0308 capture into a block-grid motion tracker, engagement-driven gaze with microsaccades and lost-target search
 - **Host-side sim** — runs the full modifier stack on the host with pixel-golden tests + an `egui` visualiser (`cargo run -p stackchan-sim --bin viz --features viz`); cuts behaviour iteration from ~30 s build cycles to under a second
 - **Safe by default** — no `unwrap` in library code, typed errors throughout, `unsafe` denied workspace-wide
+
+## Networking
+
+`STACKCHAN.RON` on an SD card brings up Wi-Fi station, mDNS, and SNTP-on-link-up,
+and the firmware exposes a LAN-only HTTP control plane:
+
+- `GET /` — operator dashboard, single-page HTML embedded in the binary
+- `GET /state/stream` — live state via Server-Sent Events
+- `POST /emotion`, `/look-at`, `/reset`, `/speak` — manual override
+- `GET` / `PUT /settings` — persistent config with atomic SD writeback
+- Bearer-token auth on writes; constant-time compare; LAN-scoped (no TLS)
+
+Without an SD card the firmware boots offline and the desk-toy surface works
+the same. See [HTTP control plane](https://andymai.github.io/stackchan-kai/http)
+for the full reference.
 
 ## Non-goals
 
 - No voice agent or LLM. This is not a xiaozhi replacement.
-- No cloud or telemetry. Zero outbound network calls.
+- No cloud APIs or telemetry.
 - No C/C++ in the firmware binary. Drivers are written directly against datasheets.
-- No Wi-Fi or BLE.
 - Not an M5Unified port. Only the desk-toy surface area is covered.
 
 ## License

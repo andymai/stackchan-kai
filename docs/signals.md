@@ -7,7 +7,10 @@ title: Signal channels
 Cross-task communication runs through typed `Signal<RawMutex, T>`
 channels — `embassy_sync::signal::Signal`. Each channel has exactly
 one producer and one consumer, latest-wins semantics, and never
-blocks.
+blocks. SSE fan-out is the deliberate exception: it uses
+`embassy_sync::pubsub::PubSubChannel` because `/state/stream` has
+multiple concurrent subscribers; see [HTTP control plane](http) for
+how that channel is sized and exhausted.
 
 ## The pattern
 
@@ -24,7 +27,7 @@ SOMETHING_SIGNAL.signal(my_value);
 
 // Consumer side (render task):
 if let Some(value) = SOMETHING_SIGNAL.try_take() {
-    avatar.something = Some(value);
+    entity.perception.something = Some(value);
 }
 ```
 
@@ -51,11 +54,11 @@ task's 33 ms tick virtually never coincides with the signal write.
 | `audio::AUDIO_RMS_SIGNAL` | audio task RX RMS loop | render → `MouthFromAudio` + `EmotionFromVoice` | ~33 ms |
 | `touch::TAP_SIGNAL` | touch task / button task | render → `EmotionFromTouch` | event |
 | `ir::REMOTE_SIGNAL` | IR RMT task | render → `EmotionFromRemote` | event |
-| `imu::IMU_SIGNAL` | IMU polling | render → `avatar.accel_g`, `gyro_dps` | 10 ms |
-| `ambient::AMBIENT_LUX_SIGNAL` | LTR-553 polling | render → `avatar.ambient_lux` | 500 ms |
-| `power::POWER_STATUS_SIGNAL` | AXP2101 polling | render → `avatar.battery_percent` | 1000 ms |
+| `imu::IMU_SIGNAL` | IMU polling | render → `entity.perception.accel_g`, `.gyro_dps` | 10 ms |
+| `ambient::AMBIENT_LUX_SIGNAL` | LTR-553 polling | render → `entity.perception.ambient_lux` | 500 ms |
+| `power::POWER_STATUS_SIGNAL` | AXP2101 polling | render → `entity.perception.battery_percent` | 1000 ms |
 | `head::POSE_SIGNAL` | render task | head task → SCServo | 33 ms |
-| `head::HEAD_POSE_ACTUAL_SIGNAL` | head task readback | render → `avatar.head_pose_actual` | 1000 ms |
+| `head::HEAD_POSE_ACTUAL_SIGNAL` | head task readback | render → `entity.motor.head_pose_actual` | 1000 ms |
 | `leds::LED_FRAME_SIGNAL` | render task | led task → PY32 | 33 ms |
 | `camera::CAMERA_FRAME_SIGNAL` | camera DMA task | render task → blit | gated |
 | `camera::CAMERA_MODE_SIGNAL` | button task | render + camera tasks | event |

@@ -94,8 +94,9 @@ Entity fields fall into a few buckets:
 - Output requests (`voice.chirp_request`): modifiers write; firmware
   reads + clears after `Director::run`.
 
-The `reads` / `writes` slices on `ModifierMeta` are documentation;
-debug-mode enforcement after each `update` is planned.
+The `reads` / `writes` slices on `ModifierMeta` are documentation, and
+`cfg(debug_assertions)` builds assert that each modifier only writes its
+declared `Field`s after every `update` — see `Director::run`.
 
 ## Field granularity
 
@@ -130,7 +131,8 @@ A `Skill` has `should_fire(&Entity) -> bool` and
 `invoke(&mut Entity) -> SkillStatus`, plus richer metadata than a
 modifier. Use it when the behavior is discoverable — selected from a
 menu rather than always-on. Skills don't write `face` or `motor`
-directly; they go through `mind` / `voice` / `events` and modifiers
-translate. The trait ships; no implementations have landed.
+directly; they go through `mind` / `voice` / `events` and modifiers in
+later phases translate that into rendered face and physical motion.
+The current population lives at `crates/stackchan-core/src/skills/`.
 
 [`Director`]: https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/director.rs

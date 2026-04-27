@@ -119,33 +119,21 @@ grammatical forms of the same concept, so the pair reads naturally
 in context (`source = Pickup, intent = PickedUp`) without colliding
 on identifier.
 
-## Current inventory
+## Source-of-truth
 
-All names on `main` conform to the rules above. The inventory below
-is a quick cross-reference; the canonical lists live in the source
-(`crates/stackchan-core/src/{mind,voice,emotion}.rs` and
-`crates/stackchan-core/src/{modifiers,skills}/mod.rs`).
+All names on `main` conform to the rules above. Canonical lists live
+in the source — read these instead of trying to keep an inline
+inventory in sync:
 
-- **Intent** (rule A): `Idle`, `Listening`, `Startled`, `Petted`,
-  `PickedUp`, `Shaken`, `Tilted`.
-- **Emotion** (single-word adjectives, matches the
+- `crates/stackchan-core/src/mind.rs` — `Intent`, `Attention`, `Autonomy`.
+- `crates/stackchan-core/src/emotion.rs` — `Emotion` (matches the
   [m5stack-avatar `Expression`][m5stack-expression] enum this project
-  descends from): `Neutral`, `Happy`, `Sad`, `Sleepy`, `Surprised`,
-  `Angry`.
-- **Skills** (rule C, all gerund recognizers today): `Listening`,
-  `Petting`, `Handling`.
-- **ChirpKind** (rule D): `Pickup`, `Wake`, `Startle`,
-  `LowBatteryAlert`, `CameraModeEntered`, `CameraModeExited`.
-- **OverrideSource** (rule E): `FaceTouch`, `BodyTouch`, `Remote`,
-  `Pickup`, `Shake`, `Voice`, `Startle`, `Ambient`, `LowBattery`.
-- **Modifiers — autonomous** (rule B, bare noun): `Blink`, `Breath`,
-  `IdleHeadDrift`, `IdleDrift`, `EmotionCycle`.
-- **Modifiers — translators** (rule B, `<Output>From<Source>`):
-  `EmotionFromTouch`, `EmotionFromRemote`, `EmotionFromIntent`,
-  `EmotionFromVoice`, `EmotionFromAmbient`, `EmotionFromBattery`,
-  `IntentFromBodyTouch`, `IntentFromLoud`, `StyleFromEmotion`,
-  `StyleFromIntent`, `HeadFromEmotion`, `HeadFromAttention`,
-  `HeadFromIntent`, `MouthFromAudio`.
+  descends from).
+- `crates/stackchan-core/src/voice.rs` — `ChirpKind`, `PhraseId`,
+  `Locale`.
+- `crates/stackchan-core/src/modifiers/mod.rs` — every shipped
+  `Modifier` (autonomous + translator).
+- `crates/stackchan-core/src/skills/mod.rs` — every shipped `Skill`.
 
 [m5stack-expression]: https://github.com/stack-chan/m5stack-avatar/blob/master/src/Expression.h
 

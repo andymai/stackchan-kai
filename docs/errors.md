@@ -111,6 +111,20 @@ RON config parse + validation. Host crate; firmware wraps with `Debug2Format` fo
 - `NoSntpServers` — `time.sntp_servers` empty. Firmware needs at least one candidate.
 - `EmptySntpServer(usize)` — a `time.sntp_servers` entry was empty / whitespace-only. The `usize` carries the offending index. Caught at parse time so the firmware's "try in order" loop doesn't burn its full per-server timeout on an unresolvable hostname before falling back.
 
+### `stackchan_tts::RenderError`
+Speech-backend rendering. Returned from `SpeechBackend::render` when a
+backend that answered `can_handle == true` can't produce audio for the
+specific utterance, or is currently degraded. `#[non_exhaustive]`.
+- `UnsupportedContent` — content kind is supported but the specific
+  `PhraseId` / dynamic handle isn't baked into this backend yet.
+  Caller should fall through to the next backend in registration order.
+- `AssetMissing` — a required asset (PCM file, cached response) is
+  unavailable. Distinct from `UnsupportedContent` because the content
+  kind itself is supported in principle.
+- `BackendUnavailable` — the backend is in a degraded state (Wi-Fi
+  down for a cloud backend, decoder failed to initialize). Caller may
+  retry later.
+
 ## Firmware-side error wrapping
 
 `stackchan-firmware` does not introduce its own typed-error enum. Init

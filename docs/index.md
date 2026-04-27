@@ -6,7 +6,8 @@ title: stackchan-kai engineering handbook
 
 Reference docs for [stackchan-kai](https://github.com/andymai/stackchan-kai)
 — `no_std` Rust firmware for the M5Stack CoreS3 Stack-chan, plus the
-host simulator and 14 driver crates.
+host simulator, networking + voice crates, and a stack of `embedded-hal-async`
+driver crates.
 
 ## Pages
 
@@ -21,13 +22,15 @@ host simulator and 14 driver crates.
 
 ```
 crates/
-├── stackchan-core   # no_std engine (Entity, Director, Modifier, Skill, Phase, Clock)
-├── stackchan-sim    # host simulator (FakeClock, Framebuffer, viz binary)
+├── stackchan-core      # no_std engine (Entity, Director, Modifier, Skill, Phase, Clock)
+├── stackchan-sim       # host simulator (FakeClock, Framebuffer, viz binary)
+├── stackchan-net       # no_std wire formats: RON config, HTTP parsers, validators
+├── stackchan-tts       # no_std + alloc speech surface: SpeechBackend trait + BakedBackend
 ├── stackchan-firmware  # CoreS3 firmware binary (embassy + esp-rtos)
-├── tracker          # block-grid motion tracker for the camera path
-└── driver crates    # axp2101, aw9523, aw88298, bm8563, bmi270, bmm150,
-                    # es7210, ft6336u, gc0308, ir-nec, ltr553, py32,
-                    # scservo, si12t
+├── tracker             # block-grid motion tracker for the camera path
+└── driver crates       # axp2101, aw9523, aw88298, bm8563, bmi270, bmm150,
+                        # es7210, ft6336u, gc0308, ir-nec, ltr553, py32,
+                        # scservo, si12t
 ```
 
 See [STABILITY.md](https://github.com/andymai/stackchan-kai/blob/main/STABILITY.md)
