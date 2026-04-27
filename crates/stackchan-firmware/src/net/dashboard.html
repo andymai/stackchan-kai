@@ -100,12 +100,12 @@ small { color: var(--muted); }
       <label>Country <input type="text" name="country" id="set-country" maxlength="2"></label>
       <label>mDNS hostname <input type="text" name="hostname" id="set-hostname"></label>
       <label>SNTP servers (comma-separated) <input type="text" name="sntp" id="set-sntp"></label>
-      <label>Auth token <input type="password" name="token" id="set-token" autocomplete="off" placeholder="(empty = auth disabled — type real token to overwrite)"></label>
+      <label>Auth token <input type="password" name="token" id="set-token" autocomplete="off"></label>
       <div class="btn-row">
         <button type="submit">Save (reboot to apply)</button>
         <button type="button" id="settings-reload">Reload</button>
       </div>
-      <small>PSK and token show as <code>***</code> in GET; submit blank to clear, type the real value to overwrite. The server rejects <code>***</code> on PUT.</small>
+      <small>PSK and token show as <code>***</code> in GET and pre-fill into the form. Submit unchanged to keep the current value, clear the field to disable (open AP / auth off), or type a new value to overwrite.</small>
     </form>
   </section>
 </main>
@@ -249,15 +249,16 @@ async function loadSettings() {
     }
     const c = await res.json();
     $("set-ssid").value = c.wifi.ssid;
-    $("set-psk").value = "";
-    $("set-psk").placeholder = c.wifi.psk === "***" ? "(redacted — type real key to overwrite)" : "(empty = open AP — type real key to set)";
+    // Pre-fill the secret fields with whatever the server returned —
+    // either the `"***"` redaction sentinel (which the server now
+    // treats as "preserve current value" on PUT) or an empty string
+    // (open AP / auth disabled). The user clears to disable, types
+    // a new value to overwrite, or leaves untouched to preserve.
+    $("set-psk").value = c.wifi.psk;
     $("set-country").value = c.wifi.country;
     $("set-hostname").value = c.mdns.hostname;
     $("set-sntp").value = c.time.sntp_servers.join(", ");
-    $("set-token").value = "";
-    $("set-token").placeholder = (c.auth && c.auth.token === "***")
-      ? "(redacted — type real token to overwrite, or leave blank to disable)"
-      : "(empty = auth disabled — type a token to enable)";
+    $("set-token").value = (c.auth && c.auth.token) || "";
     loadedTz = c.time.tz;
   } catch (e) { toast(e.message, true); }
 }
