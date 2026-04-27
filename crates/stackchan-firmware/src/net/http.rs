@@ -64,7 +64,7 @@ use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use embedded_io_async::Write as AsyncWrite;
-use stackchan_core::{Emotion, RemoteCommand};
+use stackchan_core::RemoteCommand;
 use stackchan_net::http_command::{self as json, JsonError};
 use stackchan_net::http_parse::{
     ct_eq, find_subsequence, parse_bearer_token, parse_content_length,
@@ -514,34 +514,11 @@ fn state_body(s: AvatarSnapshot) -> String {
 \"battery\":{{\"percent\":{pct},\"voltage_mv\":{mv}}},\
 \"wifi\":{{\"connected\":{connected},\"ip\":{ip}}}\
 }}\n",
-        emotion = emotion_str(s.emotion),
+        emotion = s.emotion.wire_str(),
         pan = s.head_pose.pan_deg,
         tilt = s.head_pose.tilt_deg,
         connected = s.wifi.connected,
     )
-}
-
-/// Render an [`Emotion`] as its lowercase wire name. The vocabulary
-/// is mirrored by [`stackchan_net::http_command`]'s emotion parser —
-/// so a consumer can
-/// take an emotion from `GET /state` and `POST /emotion` it back
-/// without any case translation. Pinning the mapping here also
-/// guards against a future non-unit `Emotion` variant whose `Debug`
-/// representation would otherwise inject `{` into the JSON string.
-///
-/// `Emotion` is `#[non_exhaustive]`; the wildcard returns `"unknown"`
-/// so a newly added variant surfaces on the dashboard as a missing
-/// mapping rather than silently aliasing to neutral.
-const fn emotion_str(e: Emotion) -> &'static str {
-    match e {
-        Emotion::Neutral => "neutral",
-        Emotion::Happy => "happy",
-        Emotion::Sad => "sad",
-        Emotion::Sleepy => "sleepy",
-        Emotion::Surprised => "surprised",
-        Emotion::Angry => "angry",
-        _ => "unknown",
-    }
 }
 
 /// Write `status` + `body` as `application/json`.
@@ -663,39 +640,4 @@ async fn write_unauthorized(socket: &mut TcpSocket<'_>) -> Result<(), HttpError>
         .await
         .map_err(|_| HttpError::Write)?;
     socket.flush().await.map_err(|_| HttpError::Write)
-}
-
-#[cfg(test)]
-#[allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    reason = "test-only: panic-on-mismatch for variant extraction"
-)]
-mod tests {
-    use super::*;
-    use stackchan_core::RemoteCommand;
-
-    /// Every `Emotion` variant must round-trip through `emotion_str`
-    /// and `parse_set_emotion` so a `GET /state` consumer can post
-    /// the value back without case translation, and so a future
-    /// non-unit `Emotion` variant can't silently inject `{` into the
-    /// JSON output.
-    #[test]
-    fn emotion_str_round_trips_through_parser() {
-        for variant in [
-            Emotion::Neutral,
-            Emotion::Happy,
-            Emotion::Sad,
-            Emotion::Sleepy,
-            Emotion::Surprised,
-            Emotion::Angry,
-        ] {
-            let wire = emotion_str(variant);
-            let body = alloc::format!(r#"{{"emotion":"{wire}"}}"#);
-            match stackchan_net::http_command::parse_set_emotion(&body).unwrap() {
-                RemoteCommand::SetEmotion { emotion, .. } => assert_eq!(emotion, variant),
-                other => panic!("expected SetEmotion for `{wire}`, got {other:?}"),
-            }
-        }
-    }
 }

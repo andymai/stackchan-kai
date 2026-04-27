@@ -513,6 +513,30 @@ mod tests {
     }
 
     #[test]
+    fn emotion_wire_str_round_trips_through_parser() {
+        // Every `Emotion` variant must round-trip through
+        // `Emotion::wire_str` and `parse_set_emotion` — a `GET /state`
+        // consumer should be able to post the emotion value back
+        // without case translation. A failure here would also surface
+        // an enum/parser mismatch from a newly added variant.
+        for variant in [
+            Emotion::Neutral,
+            Emotion::Happy,
+            Emotion::Sad,
+            Emotion::Sleepy,
+            Emotion::Surprised,
+            Emotion::Angry,
+        ] {
+            let wire = variant.wire_str();
+            let body = alloc::format!(r#"{{"emotion":"{wire}"}}"#);
+            match parse_set_emotion(&body).unwrap() {
+                RemoteCommand::SetEmotion { emotion, .. } => assert_eq!(emotion, variant),
+                other => panic!("expected SetEmotion for `{wire}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn look_at_rejects_leading_plus_on_floats() {
         // RFC 8259 §6: JSON numbers don't allow a leading `+`.
         // `f32::from_str` accepts `"+3.5"` whereas `u32::from_str`
