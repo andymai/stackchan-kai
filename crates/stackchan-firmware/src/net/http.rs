@@ -649,4 +649,111 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn content_length_missing_defaults_to_zero() {
+        let headers = b"Host: stackchan.local\r\nUser-Agent: curl/8\r\n";
+        assert!(matches!(parse_content_length(headers), Ok(0)));
+    }
+
+    #[test]
+    fn content_length_is_case_insensitive() {
+        for raw in [
+            "Content-Length: 42\r\n",
+            "content-length: 42\r\n",
+            "CONTENT-LENGTH: 42\r\n",
+            "cOnTeNt-LeNgTh: 42\r\n",
+        ] {
+            assert!(
+                matches!(parse_content_length(raw.as_bytes()), Ok(42)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_length_trims_value_whitespace() {
+        let headers = b"Content-Length:    99\r\n";
+        assert!(matches!(parse_content_length(headers), Ok(99)));
+    }
+
+    #[test]
+    fn content_length_rejects_non_numeric() {
+        let headers = b"Content-Length: forty-two\r\n";
+        assert!(matches!(
+            parse_content_length(headers),
+            Err(HttpError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn content_length_rejects_signed_value() {
+        // `usize::from_str` doesn't accept a leading '+' or '-'; pin
+        // that the parser surfaces it as Malformed rather than 0.
+        for raw in ["Content-Length: +5\r\n", "Content-Length: -5\r\n"] {
+            assert!(
+                matches!(
+                    parse_content_length(raw.as_bytes()),
+                    Err(HttpError::Malformed)
+                ),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_length_rejects_overflow() {
+        // 2^64-ish — never fits in usize on 32- or 64-bit targets.
+        let headers = b"Content-Length: 99999999999999999999\r\n";
+        assert!(matches!(
+            parse_content_length(headers),
+            Err(HttpError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn content_length_first_match_wins_on_duplicates() {
+        // RFC 7230 forbids multiple Content-Length headers with
+        // different values; this server takes the first match. Pin
+        // the behavior so a future change is conscious.
+        let headers = b"Content-Length: 7\r\nContent-Length: 99\r\n";
+        assert!(matches!(parse_content_length(headers), Ok(7)));
+    }
+
+    #[test]
+    fn find_subsequence_locates_or_misses() {
+        assert_eq!(find_subsequence(b"abcdef", b"cd"), Some(2));
+        assert_eq!(find_subsequence(b"abcdef", b"xy"), None);
+        assert_eq!(find_subsequence(b"abc", b"abcd"), None);
+        // Zero-length needle is a documented `windows(0)` quirk —
+        // the parser only ever passes the four-byte CRLF CRLF
+        // sentinel, so no caller exercises this. Recording the
+        // behaviour rather than relying on it.
+        assert_eq!(find_subsequence(b"abc", b""), Some(0));
+    }
+
+    #[test]
+    fn split_once_partitions_on_first_delim() {
+        assert_eq!(
+            split_once(b"key: value", b':'),
+            Some((b"key".as_slice(), b" value".as_slice()))
+        );
+        assert_eq!(
+            split_once(b"a:b:c", b':'),
+            Some((b"a".as_slice(), b"b:c".as_slice()))
+        );
+        assert_eq!(
+            split_once(b":empty", b':'),
+            Some((b"".as_slice(), b"empty".as_slice()))
+        );
+        assert_eq!(split_once(b"none", b':'), None);
+    }
+
+    #[test]
+    fn trim_ascii_strips_both_sides() {
+        assert_eq!(trim_ascii(b"  hello  "), b"hello");
+        assert_eq!(trim_ascii(b"\t\rkey\n "), b"key");
+        assert_eq!(trim_ascii(b"   "), b"");
+        assert_eq!(trim_ascii(b"clean"), b"clean");
+    }
 }
