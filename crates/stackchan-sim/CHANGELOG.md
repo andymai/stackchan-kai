@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.11.1...stackchan-sim-v0.12.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** HTTP POST control plane (emotion, look-at, reset) ([#152](https://github.com/andymai/stackchan-kai/issues/152)) ([f2f9076](https://github.com/andymai/stackchan-kai/commit/f2f9076edb846f90381b75fbb991632f7331d8a0))
+
 ## [0.11.1](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.11.0...stackchan-sim-v0.11.1) (2026-04-26)
 
 ## [0.11.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.10.2...stackchan-sim-v0.11.0) (2026-04-26)
