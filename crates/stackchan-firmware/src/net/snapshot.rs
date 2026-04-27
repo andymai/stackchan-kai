@@ -38,6 +38,8 @@ pub struct WifiSnapshot {
 /// Composite avatar state surfaced via `GET /state`.
 ///
 /// Only `PartialEq` (not `Eq`) because `head_pose` carries `f32`s.
+/// Note: `==` returns `false` for NaN-vs-NaN; use [`Self::bit_eq`]
+/// when "did anything change" matters more than IEEE 754 equality.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AvatarSnapshot {
     /// Current emotion produced by the modifier pipeline.
@@ -50,6 +52,32 @@ pub struct AvatarSnapshot {
     pub battery: BatterySnapshot,
     /// Wi-Fi link state.
     pub wifi: WifiSnapshot,
+}
+
+impl AvatarSnapshot {
+    /// Bit-pattern equality across all `f32` fields, plus value
+    /// equality on everything else. Unlike `==`, this returns `true`
+    /// for NaN-vs-NaN with the same bit layout, which is what the
+    /// "did anything change since last frame?" gate wants — IEEE
+    /// 754 NaN-inequality would otherwise make every tick look
+    /// changed when a pose value gets stuck at NaN.
+    #[must_use]
+    pub fn bit_eq(&self, other: &Self) -> bool {
+        let pose_eq = |a: Pose, b: Pose| {
+            a.pan_deg.to_bits() == b.pan_deg.to_bits()
+                && a.tilt_deg.to_bits() == b.tilt_deg.to_bits()
+        };
+        let actual_eq = match (self.head_actual, other.head_actual) {
+            (Some(a), Some(b)) => pose_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.emotion == other.emotion
+            && pose_eq(self.head_pose, other.head_pose)
+            && actual_eq
+            && self.battery == other.battery
+            && self.wifi == other.wifi
+    }
 }
 
 impl Default for AvatarSnapshot {
@@ -175,7 +203,9 @@ pub fn publish_if_changed() {
         return;
     }
     let current = read();
-    let changed = LAST_PUBLISHED.lock(|cell| cell.get() != Some(current));
+    // `bit_eq` instead of `!=`: NaN in f32 pose fields would otherwise
+    // make every tick look changed under PartialEq.
+    let changed = LAST_PUBLISHED.lock(|cell| cell.get().is_none_or(|prev| !prev.bit_eq(&current)));
     if !changed {
         return;
     }

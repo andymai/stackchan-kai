@@ -54,7 +54,7 @@ use stackchan_core::RemoteCommand;
 
 use super::json::{self, JsonError};
 use super::snapshot::{self, AvatarSnapshot};
-use super::wifi::{WIFI_LINK_SIGNAL, WifiLinkState};
+use super::wifi::LINK_READY;
 
 /// Listening port. LAN-only; no auth.
 const HTTP_PORT: u16 = 80;
@@ -99,13 +99,13 @@ pub async fn http_worker(stack: Stack<'static>) -> ! {
     let mut rx_buf = [0u8; 1024];
     let mut tx_buf = [0u8; 2048];
 
-    // Wait for the wifi task to publish a Connected state at least
-    // once. After that, every accept loop just keeps trying — embassy-net
+    // Gate on the latched LINK_READY flag — Signal::wait would race
+    // between workers (single stored waker), so we poll the atomic
+    // every 100 ms until the wifi task latches it on first connect.
+    // After that, every accept loop just keeps trying — embassy-net
     // returns errors quickly when the link is down, no busy spin.
-    loop {
-        if matches!(WIFI_LINK_SIGNAL.wait().await, WifiLinkState::Connected) {
-            break;
-        }
+    while !LINK_READY.load(core::sync::atomic::Ordering::Acquire) {
+        embassy_time::Timer::after(Duration::from_millis(100)).await;
     }
 
     defmt::info!(
