@@ -523,6 +523,8 @@ const fn status_reason(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        503 => "Service Unavailable",
         // 200 + everything else fall through; the server only emits
         // codes from this short list, so anything else here is a
         // programming bug.
