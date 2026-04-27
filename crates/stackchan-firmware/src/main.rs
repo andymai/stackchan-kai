@@ -893,6 +893,12 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(e) = spawner.spawn(net::http::http_task(net_stack)) {
         defmt::panic!("spawn(http_task) failed: {}", defmt::Debug2Format(&e));
     }
+    if let Err(e) = spawner.spawn(net::mdns::mdns_task(
+        net_stack,
+        net_config.mdns.hostname.clone(),
+    )) {
+        defmt::panic!("spawn(mdns_task) failed: {}", defmt::Debug2Format(&e));
+    }
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
     // (eyes), once for IdleHeadDrift (head). Using independent seeds
