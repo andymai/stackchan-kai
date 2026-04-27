@@ -16,7 +16,7 @@
 //! - `POST /emotion` — JSON `{"emotion": "...", "hold_ms": ...}`.
 //!   Sets affect + holds `mind.autonomy` against the autonomous
 //!   emotion drivers for `hold_ms` (default
-//!   [`super::json::DEFAULT_HOLD_MS`]).
+//!   [`stackchan_net::http_command::DEFAULT_HOLD_MS`]).
 //! - `POST /look-at` — JSON `{"pan_deg": f32, "tilt_deg": f32, "hold_ms": ...}`.
 //!   Sets `mind.attention = Tracking { target }` for `hold_ms`,
 //!   asserting the operator's target against camera tracking.
@@ -65,11 +65,11 @@ use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use embedded_io_async::Write as AsyncWrite;
 use stackchan_core::{Emotion, RemoteCommand};
+use stackchan_net::http_command::{self as json, JsonError};
 use stackchan_net::http_parse::{
     ct_eq, find_subsequence, parse_bearer_token, parse_content_length,
 };
 
-use super::json::{self, JsonError};
 use super::snapshot::{self, AvatarSnapshot};
 use super::wifi::LINK_READY;
 
@@ -449,7 +449,7 @@ async fn handle_remote(
             write_no_content(socket).await
         }
         Err(e) => {
-            defmt::warn!("http: bad request body ({})", e);
+            defmt::warn!("http: bad request body ({})", defmt::Debug2Format(&e));
             let body = format!("invalid request body: {e:?}\n");
             write_text(socket, 400, &body).await
         }
@@ -522,7 +522,8 @@ fn state_body(s: AvatarSnapshot) -> String {
 }
 
 /// Render an [`Emotion`] as its lowercase wire name. The vocabulary
-/// is mirrored by [`super::json::parse_emotion`] — so a consumer can
+/// is mirrored by [`stackchan_net::http_command`]'s emotion parser —
+/// so a consumer can
 /// take an emotion from `GET /state` and `POST /emotion` it back
 /// without any case translation. Pinning the mapping here also
 /// guards against a future non-unit `Emotion` variant whose `Debug`
@@ -691,7 +692,7 @@ mod tests {
         ] {
             let wire = emotion_str(variant);
             let body = alloc::format!(r#"{{"emotion":"{wire}"}}"#);
-            match super::json::parse_set_emotion(&body).unwrap() {
+            match stackchan_net::http_command::parse_set_emotion(&body).unwrap() {
                 RemoteCommand::SetEmotion { emotion, .. } => assert_eq!(emotion, variant),
                 other => panic!("expected SetEmotion for `{wire}`, got {other:?}"),
             }

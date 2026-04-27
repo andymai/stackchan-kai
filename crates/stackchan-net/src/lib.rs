@@ -52,6 +52,7 @@ pub mod bare;
 pub mod bare_json;
 pub mod config;
 pub mod error;
+pub mod http_command;
 pub mod http_parse;
 
 pub use bare::{parse_ron_bare, render_ron_bare};
