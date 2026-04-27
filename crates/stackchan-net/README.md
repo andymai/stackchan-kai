@@ -36,6 +36,10 @@ shape of the on-disk config and the RON file `PUT /settings` round-trips.
 - `src/lib.rs` — crate root, re-exports
 - `src/config.rs` — `Config`, `WifiConfig`, `MdnsConfig`, `TimeConfig`,
   `parse_ron`, `render_ron`, validators
+- `src/bare.rs` — hand-rolled RON parser/renderer used by the firmware
+  (no `serde`, no `ron` — see the module doc for why)
+- `src/bare_json.rs` — hand-rolled JSON parser/renderer used by the
+  firmware HTTP control plane on `GET /settings` / `PUT /settings`
 - `src/error.rs` — `ConfigError` (parse / serialize / validation variants)
 - `tests/golden_config.rs` + `tests/fixtures/*.ron` — round-trip and
   validation coverage against hand-written fixtures

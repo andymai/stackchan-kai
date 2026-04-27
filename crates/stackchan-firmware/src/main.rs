@@ -838,16 +838,22 @@ async fn main(spawner: Spawner) -> ! {
     // not fatal: the firmware logs a warn and uses `Config::default`.
     let sd_cs = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
     let net_config = match storage::Storage::mount(spi_bus, sd_cs) {
-        Ok(mut sd) => match sd.read_config() {
-            Ok(cfg) => {
-                storage::log_config_summary(&cfg);
-                cfg
-            }
-            Err(e) => {
-                defmt::warn!("SD: read /sd/STACKCHAN.RON failed ({}); using defaults", e);
-                stackchan_net::Config::default()
-            }
-        },
+        Ok(mut sd) => {
+            let cfg = match sd.read_config() {
+                Ok(c) => {
+                    storage::log_config_summary(&c);
+                    c
+                }
+                Err(e) => {
+                    defmt::warn!("SD: read /sd/STACKCHAN.RON failed ({}); using defaults", e);
+                    stackchan_net::Config::default()
+                }
+            };
+            // Park the mounted storage handle in the shared mutex so
+            // PUT /settings can write back without re-mounting.
+            storage::install_storage(sd).await;
+            cfg
+        }
         Err(e) => {
             defmt::warn!(
                 "SD: mount failed ({}); booting offline-first with defaults",
@@ -856,6 +862,8 @@ async fn main(spawner: Spawner) -> ! {
             stackchan_net::Config::default()
         }
     };
+    // Snapshot the live config for GET /settings.
+    *storage::CONFIG_SNAPSHOT.lock().await = Some(net_config.clone());
     // Bring up the radio + Wi-Fi station + embassy-net TCP/IP stack.
     // `esp_rtos::start` ran at boot (line above), which `esp_radio::init`
     // requires before claiming the WIFI peripheral. Both the
