@@ -101,6 +101,20 @@ Half-duplex serial servo bus.
 ### `ir-nec`
 No `Error` enum — decoder returns `Option<NecCommand>` and treats noise as "no decode" rather than an error.
 
+### `stackchan_tts::RenderError`
+Speech-backend rendering. Returned from `SpeechBackend::render` when a
+backend that answered `can_handle == true` can't produce audio for the
+specific utterance, or is currently degraded. `#[non_exhaustive]`.
+- `UnsupportedContent` — content kind is supported but the specific
+  `PhraseId` / dynamic handle isn't baked into this backend yet.
+  Caller should fall through to the next backend in registration order.
+- `AssetMissing` — a required asset (PCM file, cached response) is
+  unavailable. Distinct from `UnsupportedContent` because the content
+  kind itself is supported in principle.
+- `BackendUnavailable` — the backend is in a degraded state (Wi-Fi
+  down for a cloud backend, decoder failed to initialize). Caller may
+  retry later.
+
 ### `stackchan_net::ConfigError`
 RON config parse + validation. Host crate; firmware wraps with `Debug2Format` for `defmt` logging. Validators only fire through `parse_ron` — the firmware's `Config::default()` fallback path never trips them.
 - `Parse(SpannedError)` — RON syntax error / missing field / type mismatch. Inner value carries `(line, col)`.
