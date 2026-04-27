@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.21.0...stackchan-firmware-v0.22.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** minimal mDNS hostname responder ([#150](https://github.com/andymai/stackchan-kai/issues/150)) ([3fd1af1](https://github.com/andymai/stackchan-kai/commit/3fd1af13bc3f462f4e9adc87f3efefe6c2cf1172))
+
 ## [0.21.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.20.0...stackchan-firmware-v0.21.0) (2026-04-27)
 
 
