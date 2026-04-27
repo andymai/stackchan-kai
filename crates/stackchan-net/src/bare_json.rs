@@ -21,6 +21,13 @@ use alloc::vec::Vec;
 use crate::config::{Config, MdnsConfig, TimeConfig, WifiConfig, validate};
 use crate::error::ConfigError;
 
+/// Sentinel emitted by [`render_settings_json`] when `redact_psk = true`.
+///
+/// Rejected as a PSK value by [`parse_settings_json`] so a `GET → PUT`
+/// round trip can't accidentally persist the redacted placeholder as
+/// the real key (which would silently break Wi-Fi on next reboot).
+pub const PSK_REDACTED: &str = "***";
+
 /// Parse a schema-v1 JSON object into a [`Config`].
 ///
 /// Whitespace tolerant. Unknown keys are rejected (typo guard).
@@ -31,9 +38,10 @@ use crate::error::ConfigError;
 /// # Errors
 ///
 /// Returns [`ConfigError::BareParse`] on any structural mismatch
-/// (missing field, unknown key, bad string escape, runaway literal),
-/// then runs the shared [`validate`] gate so out-of-range values
-/// surface the same `Invalid*` variants as [`crate::parse_ron`].
+/// (missing field, unknown key, bad string escape, runaway literal,
+/// or `wifi.psk` set to the [`PSK_REDACTED`] sentinel), then runs
+/// the shared [`validate`] gate so out-of-range values surface the
+/// same `Invalid*` variants as [`crate::parse_ron`].
 pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
     let mut p = Parser::new(input);
     let config = p.parse_config()?;
@@ -60,20 +68,23 @@ pub fn render_settings_json(config: &Config, redact_psk: bool) -> Result<String,
     let mut out = String::new();
     out.push('{');
     out.push_str("\"wifi\":{");
-    push_string_field(&mut out, "ssid", &config.wifi.ssid, false);
+    push_string_field(&mut out, "ssid", &config.wifi.ssid);
     out.push(',');
     push_string_field(
         &mut out,
         "psk",
-        if redact_psk { "***" } else { &config.wifi.psk },
-        false,
+        if redact_psk {
+            PSK_REDACTED
+        } else {
+            &config.wifi.psk
+        },
     );
     out.push(',');
-    push_string_field(&mut out, "country", &config.wifi.country, false);
+    push_string_field(&mut out, "country", &config.wifi.country);
     out.push_str("},\"mdns\":{");
-    push_string_field(&mut out, "hostname", &config.mdns.hostname, false);
+    push_string_field(&mut out, "hostname", &config.mdns.hostname);
     out.push_str("},\"time\":{");
-    push_string_field(&mut out, "tz", &config.time.tz, false);
+    push_string_field(&mut out, "tz", &config.time.tz);
     out.push_str(",\"sntp_servers\":[");
     for (idx, s) in config.time.sntp_servers.iter().enumerate() {
         if idx > 0 {
@@ -87,7 +98,7 @@ pub fn render_settings_json(config: &Config, redact_psk: bool) -> Result<String,
 
 /// Helper: emit `"name":"value"` (no leading comma — the caller
 /// places commas between fields).
-fn push_string_field(out: &mut String, name: &str, value: &str, _trailing: bool) {
+fn push_string_field(out: &mut String, name: &str, value: &str) {
     out.push('"');
     out.push_str(name);
     out.push_str("\":");
@@ -188,9 +199,16 @@ impl<'a> Parser<'a> {
                 return Err(bare_err("expected ',' or '}' in wifi", ""));
             }
         }
+        let psk = psk.ok_or_else(|| bare_err("missing wifi.psk", ""))?;
+        if psk == PSK_REDACTED {
+            return Err(bare_err(
+                "wifi.psk is the redacted sentinel — supply the real key",
+                "",
+            ));
+        }
         Ok(WifiConfig {
             ssid: ssid.ok_or_else(|| bare_err("missing wifi.ssid", ""))?,
-            psk: psk.ok_or_else(|| bare_err("missing wifi.psk", ""))?,
+            psk,
             country: country.ok_or_else(|| bare_err("missing wifi.country", ""))?,
         })
     }
@@ -467,6 +485,31 @@ mod tests {
             matches!(err, ConfigError::NoSntpServers),
             "expected NoSntpServers, got {err:?}"
         );
+    }
+
+    #[test]
+    fn rejects_redacted_psk_sentinel() {
+        // GET /settings emits "psk":"***"; if an operator round-trips
+        // that through PUT /settings unchanged, the firmware would
+        // persist "***" as the real key and break Wi-Fi at next
+        // boot. parse_settings_json must catch it.
+        let body = render_settings_json(&full_config(), true).unwrap();
+        let err = parse_settings_json(&body).unwrap_err();
+        match err {
+            ConfigError::BareParse(msg) => assert!(
+                msg.contains("redacted"),
+                "expected redacted-sentinel message, got `{msg}`"
+            ),
+            other => panic!("expected BareParse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_uses_psk_redacted_constant() {
+        // Pin: the sentinel string emitted by render is the same
+        // string parse rejects.
+        let body = render_settings_json(&full_config(), true).unwrap();
+        assert!(body.contains(&format!("\"psk\":\"{PSK_REDACTED}\"")));
     }
 
     #[test]

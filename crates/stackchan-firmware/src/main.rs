@@ -850,8 +850,11 @@ async fn main(spawner: Spawner) -> ! {
                 }
             };
             // Park the mounted storage handle in the shared mutex so
-            // PUT /settings can write back without re-mounting.
+            // PUT /settings can write back without re-mounting, and
+            // mirror the read config into the snapshot so GET /settings
+            // sees what's actually persisted.
             storage::install_storage(sd).await;
+            *storage::CONFIG_SNAPSHOT.lock().await = Some(cfg.clone());
             cfg
         }
         Err(e) => {
@@ -859,11 +862,11 @@ async fn main(spawner: Spawner) -> ! {
                 "SD: mount failed ({}); booting offline-first with defaults",
                 e
             );
+            // No SD ⇒ leave CONFIG_SNAPSHOT as None so GET /settings
+            // returns 503 (matches PUT /settings, which also 503s).
             stackchan_net::Config::default()
         }
     };
-    // Snapshot the live config for GET /settings.
-    *storage::CONFIG_SNAPSHOT.lock().await = Some(net_config.clone());
     // Bring up the radio + Wi-Fi station + embassy-net TCP/IP stack.
     // `esp_rtos::start` ran at boot (line above), which `esp_radio::init`
     // requires before claiming the WIFI peripheral. Both the
