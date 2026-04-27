@@ -75,6 +75,25 @@ Inputs arrive through embassy `Signal` channels from the per-peripheral
 tasks; the modifiers read those signals and mutate the `Avatar` each
 frame.
 
+## Network surface
+
+Once Wi-Fi connects (SSID from `/sd/STACKCHAN.RON`), the firmware
+runs three networked services on the LAN:
+
+- **HTTP** on port 80 — operator dashboard at `GET /`, live state +
+  control plane on `/state`, `/state/stream`, `/emotion`, `/look-at`,
+  `/reset`, `/settings`. See [docs/http.md](../../docs/http.md) for
+  the full route table, body shapes, and error codes.
+- **mDNS** — advertises `<hostname>.local` from
+  `mdns.hostname` in the boot config (default `stackchan`).
+- **SNTP** — on link-up, queries the SNTP servers from
+  `time.sntp_servers` and writes the result into the BM8563 RTC.
+
+The boot config schema (Wi-Fi credentials, mDNS hostname, SNTP
+servers) lives in [`stackchan-net`](../stackchan-net/README.md) and
+round-trips between the SD-card RON file and the HTTP `/settings`
+JSON.
+
 ## I²C Bus Sharing
 
 All I²C peripherals share one `SharedI2cBus` (`Mutex<NoopRawMutex, I2c<'static, Async>>`)
