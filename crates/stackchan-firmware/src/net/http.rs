@@ -551,12 +551,13 @@ async fn write_text(socket: &mut TcpSocket<'_>, status: u16, body: &str) -> Resu
     socket.flush().await.map_err(|_| HttpError::Write)
 }
 
-/// Serve [`DASHBOARD_HTML`] with `Content-Type: text/html` plus a
-/// short cache hint so reloads during development don't pile bytes
-/// through the LAN.
+/// Serve [`DASHBOARD_HTML`] with `Content-Type: text/html`. Cache is
+/// disabled so a freshly flashed firmware's dashboard JS shows up on
+/// the next reload — the payload is 10 KiB over LAN, so the saving
+/// from a longer max-age was never worth the staleness it caused.
 async fn write_dashboard(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len}\r\nCache-Control: max-age=60\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
         len = DASHBOARD_HTML.len(),
     );
     socket
