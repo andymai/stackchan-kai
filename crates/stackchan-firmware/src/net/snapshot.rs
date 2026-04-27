@@ -11,11 +11,13 @@ use core::net::Ipv4Addr;
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::PubSubChannel;
+use embassy_time::Instant as EmbassyInstant;
 use stackchan_core::Emotion;
 use stackchan_core::head::Pose;
 
 /// Battery snapshot — published by the power task.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BatterySnapshot {
     /// Estimated state-of-charge percentage (0..=100), or `None`
     /// before the first reading lands.
@@ -25,7 +27,7 @@ pub struct BatterySnapshot {
 }
 
 /// Wi-Fi link snapshot — published by the wifi task.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WifiSnapshot {
     /// Whether the controller currently reports a Connected link.
     pub connected: bool,
@@ -34,7 +36,9 @@ pub struct WifiSnapshot {
 }
 
 /// Composite avatar state surfaced via `GET /state`.
-#[derive(Debug, Clone, Copy)]
+///
+/// Only `PartialEq` (not `Eq`) because `head_pose` carries `f32`s.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AvatarSnapshot {
     /// Current emotion produced by the modifier pipeline.
     pub emotion: Emotion,
@@ -117,4 +121,66 @@ pub fn update_wifi(connected: bool, ip: Option<Ipv4Addr>) {
 #[must_use]
 pub fn read() -> AvatarSnapshot {
     AVATAR_SNAPSHOT.lock(core::cell::Cell::get)
+}
+
+/// Maximum simultaneous SSE subscribers. Matches the HTTP worker
+/// pool size — each worker holds at most one subscriber, so SSE
+/// connections beyond this aren't possible anyway.
+pub const SSE_MAX_SUBSCRIBERS: usize = 4;
+
+/// Multi-producer single-publisher channel that pushes the latest
+/// [`AvatarSnapshot`] to SSE subscribers on `GET /state/stream`.
+///
+/// Capacity 1: latest-wins. If a subscriber lags it sees a `Lagged`
+/// result and continues at the next message — operators don't need
+/// every frame, just current state.
+pub static SNAPSHOT_PUBSUB: PubSubChannel<
+    CriticalSectionRawMutex,
+    AvatarSnapshot,
+    1,
+    SSE_MAX_SUBSCRIBERS,
+    1,
+> = PubSubChannel::new();
+
+/// Minimum interval between publishes. Render runs at ~30 Hz; we
+/// throttle the SSE firehose to ~10 Hz so a slow client (or four
+/// of them) can keep up without backpressure.
+const PUBLISH_MIN_INTERVAL_MS: u64 = 100;
+
+/// Last-published-at instant, in `embassy_time::Instant` ticks.
+/// `0` is the sentinel for "never published"; the first call always
+/// publishes.
+static LAST_PUBLISH_MS: Mutex<CriticalSectionRawMutex, core::cell::Cell<u64>> =
+    Mutex::new(core::cell::Cell::new(0));
+
+/// Last-published snapshot value, used to suppress duplicate
+/// publishes when nothing visible changed between ticks.
+static LAST_PUBLISHED: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<AvatarSnapshot>>> =
+    Mutex::new(core::cell::Cell::new(None));
+
+/// Publish the current snapshot to [`SNAPSHOT_PUBSUB`] subscribers.
+///
+/// Called once per render tick by the render task. Only publishes
+/// when the snapshot has actually changed AND
+/// [`PUBLISH_MIN_INTERVAL_MS`] has elapsed since the last publish.
+///
+/// Cheap when no subscribers are connected (the publisher's
+/// `publish_immediate` returns immediately if the channel has no
+/// listeners), so this stays out of the hot path of the
+/// boot-only-no-Wi-Fi scenario.
+pub fn publish_if_changed() {
+    let now_ms = EmbassyInstant::now().as_millis();
+    let last_ms = LAST_PUBLISH_MS.lock(core::cell::Cell::get);
+    if last_ms != 0 && now_ms.saturating_sub(last_ms) < PUBLISH_MIN_INTERVAL_MS {
+        return;
+    }
+    let current = read();
+    let changed = LAST_PUBLISHED.lock(|cell| cell.get() != Some(current));
+    if !changed {
+        return;
+    }
+    LAST_PUBLISH_MS.lock(|cell| cell.set(now_ms));
+    LAST_PUBLISHED.lock(|cell| cell.set(Some(current)));
+    let publisher = SNAPSHOT_PUBSUB.immediate_publisher();
+    publisher.publish_immediate(current);
 }
