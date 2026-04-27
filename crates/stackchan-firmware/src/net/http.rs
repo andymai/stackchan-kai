@@ -23,11 +23,18 @@
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
 //! - `GET /settings` — current persisted [`stackchan_net::Config`]
-//!   as JSON, with `wifi.psk` redacted.
+//!   as JSON, with `wifi.psk` and `auth.token` redacted.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
 //!   Validates, writes back atomically to `/sd/STACKCHAN.RON`, and
 //!   responds `{"reboot_required": true}`. Wi-Fi keeps using the
 //!   boot-time config; reboot to apply.
+//!
+//! ## Auth
+//!
+//! `PUT` and `POST` routes are gated by `auth.token` from the
+//! persisted config. Empty token (default) leaves the LAN open;
+//! a non-empty token requires `Authorization: Bearer <token>` and
+//! returns `401` on mismatch. Read routes stay unauthenticated.
 //!
 //! Avatar-state writes (POST /emotion, /look-at, /reset) funnel
 //! through [`REMOTE_COMMAND_SIGNAL`]; the render task drains it
@@ -59,7 +66,8 @@ use super::json::{self, JsonError};
 use super::snapshot::{self, AvatarSnapshot};
 use super::wifi::LINK_READY;
 
-/// Listening port. LAN-only; no auth.
+/// Listening port. LAN-only; write routes are gated on the
+/// configured `auth.token` (empty = no auth).
 const HTTP_PORT: u16 = 80;
 
 /// Maximum request line + headers + body size we'll buffer before
@@ -126,7 +134,7 @@ pub async fn http_worker(stack: Stack<'static>) -> ! {
     }
 
     defmt::info!(
-        "http: worker listening on 0.0.0.0:{=u16} (LAN-only, no auth)",
+        "http: worker listening on 0.0.0.0:{=u16} (LAN-only; auth gate: token-driven)",
         HTTP_PORT
     );
 
@@ -171,6 +179,9 @@ enum HttpError {
     BodyTooLarge,
     /// Method + path didn't parse as a valid HTTP request line.
     Malformed,
+    /// Write route required a bearer token; the request didn't carry
+    /// one or it didn't match the configured value.
+    Unauthorized,
 }
 
 /// Serve a single HTTP/1.1 exchange against an accepted socket.
@@ -230,6 +241,25 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         core::str::from_utf8(&buf[path_start..second_sp]).map_err(|_| HttpError::Malformed)?;
     let body = core::str::from_utf8(&buf[body_start..body_start + content_length])
         .map_err(|_| HttpError::Malformed)?;
+
+    // Gate write routes on the configured bearer token. An empty
+    // token (or missing config snapshot during the brief boot
+    // window) is treated as "auth disabled" — preserves the LAN-
+    // open behaviour for operators who haven't opted in.
+    if matches!(method, "PUT" | "POST") {
+        let provided = parse_bearer_token(&buf[line_end + 2..header_end]);
+        let snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await;
+        let authorized = match snapshot.as_ref() {
+            Some(cfg) if !cfg.auth.token.is_empty() => {
+                provided.is_some_and(|t| ct_eq(t.as_bytes(), cfg.auth.token.as_bytes()))
+            }
+            _ => true,
+        };
+        drop(snapshot);
+        if !authorized {
+            return Err(HttpError::Unauthorized);
+        }
+    }
 
     match (method, path) {
         ("GET", "/" | "/index.html") => write_dashboard(socket).await,
@@ -420,6 +450,56 @@ async fn write_no_content(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     socket.flush().await.map_err(|_| HttpError::Write)
 }
 
+/// Parse the `Authorization: Bearer <token>` header value out of a
+/// header block. Returns `Some(token)` if a Bearer credential is
+/// present, `None` otherwise.
+///
+/// Header name compare is case-insensitive (RFC 9110 §5.1). Scheme
+/// compare is also case-insensitive — RFC 6750 says the
+/// `Authorization` field uses the standard `auth-scheme` token
+/// production, which is case-insensitive.
+///
+/// Whitespace between scheme and token is collapsed; leading and
+/// trailing whitespace on the token are stripped. Tokens are not
+/// further validated here — the caller compares against the
+/// configured value with [`ct_eq`].
+fn parse_bearer_token(headers: &[u8]) -> Option<&str> {
+    for line in headers.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some((name, value)) = split_once(line, b':') else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case(b"authorization") {
+            continue;
+        }
+        let value = trim_ascii(value);
+        let scheme_end = value.iter().position(|&b| b == b' ')?;
+        let (scheme, rest) = value.split_at(scheme_end);
+        if !scheme.eq_ignore_ascii_case(b"bearer") {
+            return None;
+        }
+        let token = trim_ascii(rest);
+        return core::str::from_utf8(token).ok();
+    }
+    None
+}
+
+/// Constant-time byte comparison. Folds every byte difference into
+/// a single accumulator before testing equality so timing leaks
+/// from an early-exit-on-mismatch loop can't reveal a prefix of the
+/// expected token. Length mismatch returns immediately — leaking
+/// the token *length* is acceptable; the operator chose it.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Parse the `Content-Length` header value out of a header block.
 /// Returns `0` when absent (correct for GET / 0-body POST). Returns
 /// [`HttpError::Malformed`] if the header is present but not a valid
@@ -600,6 +680,7 @@ const fn status_reason(status: u16) -> &'static str {
     match status {
         204 => "No Content",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
@@ -616,14 +697,47 @@ const fn status_reason(status: u16) -> &'static str {
 /// Best-effort: write a status response for a parse-side failure.
 /// `Read`/`Write` skip — the socket is already broken so any further
 /// write would just produce another `Write` error.
+///
+/// `Unauthorized` takes a slightly different path so the response
+/// carries the `WWW-Authenticate: Bearer` challenge required by RFC
+/// 6750 §3 on `401`.
 async fn write_status_for_error(socket: &mut TcpSocket<'_>, err: &HttpError) {
+    if matches!(err, HttpError::Unauthorized) {
+        let _ = write_unauthorized(socket).await;
+        return;
+    }
     let (status, body) = match err {
         HttpError::Malformed => (400, "bad request\n"),
         HttpError::BodyTooLarge => (413, "payload too large\n"),
         HttpError::HeadersTooLarge => (431, "request header fields too large\n"),
-        HttpError::Read | HttpError::Write => return,
+        HttpError::Read | HttpError::Write | HttpError::Unauthorized => return,
     };
     let _ = write_text(socket, status, body).await;
+}
+
+/// Write `401 Unauthorized` with the `WWW-Authenticate: Bearer`
+/// challenge header (RFC 6750 §3). Strict HTTP clients use the
+/// challenge to know which auth scheme to negotiate; without it
+/// they may treat the response as a hard failure.
+async fn write_unauthorized(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let body = "unauthorized\n";
+    let header = format!(
+        "HTTP/1.1 401 Unauthorized\r\n\
+         WWW-Authenticate: Bearer\r\n\
+         Content-Type: text/plain\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\r\n",
+        len = body.len(),
+    );
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket
+        .write_all(body.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
 }
 
 #[cfg(test)]
@@ -755,6 +869,55 @@ mod tests {
             Some((b"".as_slice(), b"empty".as_slice()))
         );
         assert_eq!(split_once(b"none", b':'), None);
+    }
+
+    #[test]
+    fn bearer_token_extracts_value() {
+        let headers = b"Host: stackchan.local\r\nAuthorization: Bearer abc123\r\n";
+        assert_eq!(parse_bearer_token(headers), Some("abc123"));
+    }
+
+    #[test]
+    fn bearer_scheme_and_header_are_case_insensitive() {
+        for raw in [
+            "authorization: Bearer xyz\r\n",
+            "AUTHORIZATION: BEARER xyz\r\n",
+            "Authorization: bearer xyz\r\n",
+        ] {
+            assert_eq!(parse_bearer_token(raw.as_bytes()), Some("xyz"), "{raw}");
+        }
+    }
+
+    #[test]
+    fn bearer_token_absent_returns_none() {
+        let headers = b"Host: stackchan.local\r\nUser-Agent: curl/8\r\n";
+        assert_eq!(parse_bearer_token(headers), None);
+    }
+
+    #[test]
+    fn bearer_token_rejects_other_schemes() {
+        // `Basic` and unknown schemes return `None`, not a bogus token.
+        for raw in [
+            "Authorization: Basic dXNlcjpwYXNz\r\n",
+            "Authorization: Digest realm=test\r\n",
+        ] {
+            assert_eq!(parse_bearer_token(raw.as_bytes()), None, "{raw}");
+        }
+    }
+
+    #[test]
+    fn bearer_token_handles_extra_whitespace() {
+        let headers = b"Authorization:    Bearer    spaced-token   \r\n";
+        assert_eq!(parse_bearer_token(headers), Some("spaced-token"));
+    }
+
+    #[test]
+    fn ct_eq_reports_equality_and_diff() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"ab"));
+        assert!(!ct_eq(b"", b"a"));
+        assert!(ct_eq(b"", b""));
     }
 
     #[test]

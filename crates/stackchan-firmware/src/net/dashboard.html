@@ -100,11 +100,12 @@ small { color: var(--muted); }
       <label>Country <input type="text" name="country" id="set-country" maxlength="2"></label>
       <label>mDNS hostname <input type="text" name="hostname" id="set-hostname"></label>
       <label>SNTP servers (comma-separated) <input type="text" name="sntp" id="set-sntp"></label>
+      <label>Auth token <input type="password" name="token" id="set-token" autocomplete="off" placeholder="(empty = auth disabled — type real token to overwrite)"></label>
       <div class="btn-row">
         <button type="submit">Save (reboot to apply)</button>
         <button type="button" id="settings-reload">Reload</button>
       </div>
-      <small>PSK shows as <code>***</code> in GET; submit blank to keep current PSK only by re-typing the real key. The server rejects <code>***</code>.</small>
+      <small>PSK and token show as <code>***</code> in GET; submit blank to clear, type the real value to overwrite. The server rejects <code>***</code> on PUT.</small>
     </form>
   </section>
 </main>
@@ -162,9 +163,32 @@ function connectStream() {
 }
 connectStream();
 
+// --- Auth (bearer token, stored in localStorage) ---
+const TOKEN_KEY = "stackchan-auth-token";
+const getAuthToken = () => localStorage.getItem(TOKEN_KEY) || "";
+const setAuthToken = (t) => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
+function authHeaders(headers = {}) {
+  const t = getAuthToken();
+  return t ? { ...headers, "Authorization": `Bearer ${t}` } : headers;
+}
+// Wrapper around fetch that retries once with a freshly prompted token
+// when the server returns 401. Reads (GET /settings, /state, SSE) skip
+// this and go through plain `fetch` — the server only gates writes.
+async function authedFetch(path, init = {}) {
+  let res = await fetch(path, { ...init, headers: authHeaders(init.headers) });
+  if (res.status === 401) {
+    const tok = prompt("Auth token required. Enter Bearer token:", getAuthToken());
+    if (tok != null) {
+      setAuthToken(tok);
+      res = await fetch(path, { ...init, headers: authHeaders(init.headers) });
+    }
+  }
+  return res;
+}
+
 // --- Emotion buttons ---
 async function postJson(path, body) {
-  const res = await fetch(path, {
+  const res = await authedFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body == null ? "" : JSON.stringify(body),
@@ -226,10 +250,14 @@ async function loadSettings() {
     const c = await res.json();
     $("set-ssid").value = c.wifi.ssid;
     $("set-psk").value = "";
-    $("set-psk").placeholder = c.wifi.psk === "***" ? "(redacted — type real key to overwrite)" : "";
+    $("set-psk").placeholder = c.wifi.psk === "***" ? "(redacted — type real key to overwrite)" : "(empty = open AP — type real key to set)";
     $("set-country").value = c.wifi.country;
     $("set-hostname").value = c.mdns.hostname;
     $("set-sntp").value = c.time.sntp_servers.join(", ");
+    $("set-token").value = "";
+    $("set-token").placeholder = (c.auth && c.auth.token === "***")
+      ? "(redacted — type real token to overwrite, or leave blank to disable)"
+      : "(empty = auth disabled — type a token to enable)";
     loadedTz = c.time.tz;
   } catch (e) { toast(e.message, true); }
 }
@@ -247,9 +275,15 @@ $("settings-form").addEventListener("submit", async (ev) => {
       tz: loadedTz,
       sntp_servers: $("set-sntp").value.split(",").map((s) => s.trim()).filter(Boolean),
     },
+    auth: { token: $("set-token").value },
   };
+  // After a successful save, mirror the new token into localStorage
+  // so the dashboard's next write request authenticates against the
+  // freshly configured value (until the device reboots and re-applies
+  // it from SD).
+  const newToken = body.auth.token;
   try {
-    const res = await fetch("/settings", {
+    const res = await authedFetch("/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -258,6 +292,7 @@ $("settings-form").addEventListener("submit", async (ev) => {
       const text = await res.text().catch(() => "");
       throw new Error(`${res.status}: ${text || res.statusText}`);
     }
+    setAuthToken(newToken);
     toast("settings saved — reboot to apply");
   } catch (e) { toast(e.message, true); }
 });

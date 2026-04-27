@@ -19,7 +19,8 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::config::{Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+use crate::bare_json::TOKEN_REDACTED;
+use crate::config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
 use crate::error::ConfigError;
 
 /// Parse a schema-v1 RON document into a [`Config`] without using `serde` or `ron`.
@@ -73,6 +74,10 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     out.push_str("        ],\n");
     out.push_str("    ),\n");
 
+    out.push_str("    auth: (\n");
+    push_field(&mut out, "        token", &config.auth.token);
+    out.push_str("    ),\n");
+
     out.push_str(")\n");
     Ok(out)
 }
@@ -119,6 +124,7 @@ impl<'a> Parser<'a> {
         let mut wifi: Option<WifiConfig> = None;
         let mut mdns: Option<MdnsConfig> = None;
         let mut time: Option<TimeConfig> = None;
+        let mut auth: Option<AuthConfig> = None;
 
         loop {
             self.skip_ws_and_comments();
@@ -133,6 +139,7 @@ impl<'a> Parser<'a> {
                 "wifi" => wifi = Some(self.parse_wifi()?),
                 "mdns" => mdns = Some(self.parse_mdns()?),
                 "time" => time = Some(self.parse_time()?),
+                "auth" => auth = Some(self.parse_auth()?),
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -146,6 +153,10 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
+            // `auth` is optional for migration: SD cards written before
+            // schema v1.1 don't have it, and an empty token means
+            // "auth disabled," matching the offline-first stance.
+            auth: auth.unwrap_or_default(),
         })
     }
 
@@ -239,6 +250,45 @@ impl<'a> Parser<'a> {
             tz: tz.ok_or_else(|| bare_err("missing time.tz", ""))?,
             sntp_servers: sntp_servers.ok_or_else(|| bare_err("missing time.sntp_servers", ""))?,
         })
+    }
+
+    /// Parse the `auth: (token)` block. An empty block is permitted
+    /// and yields [`AuthConfig::default`] — operators who haven't
+    /// configured auth keep the LAN-open behaviour.
+    fn parse_auth(&mut self) -> Result<AuthConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut token: Option<String> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            let value = self.parse_string()?;
+            match key {
+                "token" => token = Some(value),
+                other => return Err(bare_err("unknown auth field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in auth", ""));
+            }
+        }
+        let token = token.unwrap_or_default();
+        // Symmetric with the JSON parser: a literal `***` on disk is
+        // almost certainly a copy-paste from `GET /settings`, not an
+        // intentional value. Catch it here so the operator gets a
+        // clear error instead of a silently-locked-out device.
+        if token == TOKEN_REDACTED {
+            return Err(bare_err(
+                "auth.token is the redacted sentinel — supply the real token",
+                "",
+            ));
+        }
+        Ok(AuthConfig { token })
     }
 
     /// Parse `[ "...", "...", ]` into a `Vec<String>`.
@@ -481,6 +531,49 @@ mod tests {
     fn rejects_missing_field() {
         let err = parse_ron_bare("(wifi: (ssid: \"x\", psk: \"y\", country: \"US\"))").unwrap_err();
         assert!(matches!(err, ConfigError::BareParse(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn missing_auth_block_defaults_to_empty_token() {
+        // Schema-v1 SD cards (written before the auth block landed)
+        // omit `auth:` entirely. The parser must accept that and fall
+        // back to the default empty token so a firmware bump doesn't
+        // brick existing kits.
+        let cfg = parse_ron_bare(FIXTURE).unwrap();
+        assert_eq!(cfg.auth.token, "");
+    }
+
+    #[test]
+    fn parses_auth_block_with_token() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                auth: ( token: "shared-secret" ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert_eq!(cfg.auth.token, "shared-secret");
+    }
+
+    #[test]
+    fn round_trips_with_token() {
+        // The renderer always emits an auth block; pin that a token
+        // round-trips losslessly through render → re-parse.
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                auth: ( token: "abc-123" ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        let rendered = render_ron_bare(&cfg).unwrap();
+        let reparsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(cfg, reparsed);
+        assert_eq!(reparsed.auth.token, "abc-123");
     }
 
     #[test]
