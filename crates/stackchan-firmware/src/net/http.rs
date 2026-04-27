@@ -135,6 +135,11 @@ pub async fn http_worker(stack: Stack<'static>) -> ! {
         }
 
         if let Err(e) = serve_one(&mut socket).await {
+            // Best-effort status reply for parse-side failures so
+            // operators see `400`/`413`/`431` from curl instead of a
+            // bare connection reset. `Read`/`Write` skip — the socket
+            // is already broken.
+            write_status_for_error(&mut socket, &e).await;
             defmt::warn!("http: serve error ({})", defmt::Debug2Format(&e));
         }
 
@@ -555,6 +560,8 @@ const fn status_reason(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
         // 200 + everything else fall through; the server only emits
@@ -562,4 +569,17 @@ const fn status_reason(status: u16) -> &'static str {
         // programming bug.
         _ => "OK",
     }
+}
+
+/// Best-effort: write a status response for a parse-side failure.
+/// `Read`/`Write` skip — the socket is already broken so any further
+/// write would just produce another `Write` error.
+async fn write_status_for_error(socket: &mut TcpSocket<'_>, err: &HttpError) {
+    let (status, body) = match err {
+        HttpError::Malformed => (400, "bad request\n"),
+        HttpError::BodyTooLarge => (413, "payload too large\n"),
+        HttpError::HeadersTooLarge => (431, "request header fields too large\n"),
+        HttpError::Read | HttpError::Write => return,
+    };
+    let _ = write_text(socket, status, body).await;
 }
