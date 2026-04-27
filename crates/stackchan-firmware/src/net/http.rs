@@ -15,11 +15,21 @@
 //!   asserting the operator's target against camera tracking.
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
+//! - `GET /settings` — current persisted [`stackchan_net::Config`]
+//!   as JSON, with `wifi.psk` redacted.
+//! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
+//!   Validates, writes back atomically to `/sd/STACKCHAN.RON`, and
+//!   responds `{"reboot_required": true}`. Wi-Fi keeps using the
+//!   boot-time config; reboot to apply.
 //!
-//! All write routes funnel through [`REMOTE_COMMAND_SIGNAL`]; the
-//! render task drains the signal into
-//! `entity.input.remote_command` ahead of `Director::run`, where
-//! [`stackchan_core::modifiers::RemoteCommandModifier`] picks it up.
+//! Avatar-state writes (POST /emotion, /look-at, /reset) funnel
+//! through [`REMOTE_COMMAND_SIGNAL`]; the render task drains it
+//! into `entity.input.remote_command` ahead of `Director::run`,
+//! where [`stackchan_core::modifiers::RemoteCommandModifier`] picks
+//! it up. PUT /settings goes through
+//! [`crate::storage::with_storage`] for the atomic SD writeback;
+//! the new value is mirrored into [`crate::storage::CONFIG_SNAPSHOT`]
+//! so subsequent GETs see it without a re-read.
 //!
 //! No external HTTP crate. The wire format is small, the surface
 //! is fixed, and a hand-roll dodges the impl-trait-in-assoc-type
@@ -182,11 +192,65 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     match (method, path) {
         ("GET", "/health") => write_json(socket, 200, &health_body()).await,
         ("GET", "/state") => write_json(socket, 200, &state_body(snapshot::read())).await,
+        ("GET", "/settings") => handle_get_settings(socket).await,
+        ("PUT", "/settings") => handle_put_settings(socket, body).await,
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
-        ("GET" | "POST", _) => write_text(socket, 404, "not found\n").await,
+        ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
+    }
+}
+
+/// `GET /settings` — render the current snapshot with `wifi.psk`
+/// redacted.
+async fn handle_get_settings(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await.clone();
+    let Some(config) = snapshot else {
+        return write_text(socket, 503, "config snapshot unavailable\n").await;
+    };
+    match stackchan_net::render_settings_json(&config, true) {
+        Ok(body) => write_json(socket, 200, &body).await,
+        Err(_) => write_text(socket, 500, "render failed\n").await,
+    }
+}
+
+/// `PUT /settings` — full replace, atomic SD writeback. Returns
+/// `{"reboot_required": true}` on success; the firmware doesn't
+/// re-bring-up Wi-Fi mid-flight (avoids dropping the operator's
+/// session when the SSID changes).
+async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let new_config = match stackchan_net::parse_settings_json(body) {
+        Ok(c) => c,
+        Err(e) => {
+            defmt::warn!(
+                "http: PUT /settings parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    let write_result =
+        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!(
+                "http: PUT /settings persisted (ssid={=str} hostname={=str}.local)",
+                new_config.wifi.ssid.as_str(),
+                new_config.mdns.hostname.as_str()
+            );
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
+            write_json(socket, 200, "{\"reboot_required\":true}\n").await
+        }
+        Some(Err(e)) => {
+            defmt::warn!("http: PUT /settings write failed ({})", e);
+            write_text(socket, 500, "config write failed\n").await
+        }
+        None => {
+            defmt::warn!("http: PUT /settings rejected (no SD mounted)");
+            write_text(socket, 503, "no SD card mounted\n").await
+        }
     }
 }
 

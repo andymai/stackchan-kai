@@ -18,13 +18,87 @@
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::Delay;
 use embedded_hal::digital::OutputPin;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use esp_hal::Blocking;
+use esp_hal::gpio::Output;
 use esp_hal::spi::master::Spi;
 
 use crate::sd_spi::SdSpiDevice;
+
+/// Concrete `Storage` instantiation used by the firmware. CS is the
+/// SD chip-select pin (GPIO4 on CoreS3).
+pub type FirmwareStorage = Storage<Output<'static>>;
+
+/// `Send` wrapper for [`FirmwareStorage`].
+///
+/// `FirmwareStorage` is `!Send` because its underlying
+/// [`crate::sd_spi::SdSpiDevice`] holds a `&'static RefCell<Spi>`
+/// (the SPI2 bus shared with the LCD), and `&RefCell<_>` is `!Send`
+/// for cross-thread aliasing reasons.
+///
+/// In this firmware those reasons don't apply: the embassy executor
+/// runs on a single core in a single thread, and bus access is
+/// already serialized at the `RefCellDevice` layer. Holding the
+/// storage in a static [`Mutex`] further enforces single-task access.
+///
+/// We document the invariant in this wrapper so the unsafe stays
+/// scoped to one place rather than leaking into every static-borrow
+/// call site.
+struct StorageHolder(Option<FirmwareStorage>);
+
+// SAFETY: single-core embassy executor — no cross-thread aliasing.
+// Bus access is serialized via `RefCellDevice` (LCD side) and via
+// the enclosing `Mutex` (storage side). See `StorageHolder` doc.
+#[allow(
+    unsafe_code,
+    clippy::non_send_fields_in_send_ty,
+    reason = "see StorageHolder doc for the single-core invariant"
+)]
+unsafe impl Send for StorageHolder {}
+
+/// Mounted SD-card storage, populated at boot when the card is
+/// present and FAT-mountable. `None` when the card is missing or
+/// the mount failed — `PUT /settings` returns `503` in that case.
+///
+/// Async mutex (yields under contention) because SD writes can take
+/// tens of ms and we don't want to hold the lock across a render
+/// frame. Access through [`install_storage`] / [`with_storage`].
+static SHARED_STORAGE: Mutex<CriticalSectionRawMutex, StorageHolder> =
+    Mutex::new(StorageHolder(None));
+
+/// Latest persisted [`stackchan_net::Config`].
+///
+/// Initialised at boot from the SD read (or
+/// [`stackchan_net::Config::default`] when the card is missing);
+/// updated on each successful `PUT /settings`. `GET /settings`
+/// reads from this to avoid re-reading the SD on every request.
+///
+/// `None` only during the brief window between firmware start and
+/// the boot path's first write — HTTP isn't accepting requests yet,
+/// so consumers see `Some(_)` for the lifetime of the run.
+pub static CONFIG_SNAPSHOT: Mutex<CriticalSectionRawMutex, Option<stackchan_net::Config>> =
+    Mutex::new(None);
+
+/// Move `storage` into [`SHARED_STORAGE`], replacing whatever was
+/// there. Called once from the boot path after a successful mount.
+pub async fn install_storage(storage: FirmwareStorage) {
+    SHARED_STORAGE.lock().await.0 = Some(storage);
+}
+
+/// Run `f` against the currently installed [`FirmwareStorage`], if
+/// any. Returns `None` when no SD is mounted — callers should map
+/// that to a `503 Service Unavailable` response.
+pub async fn with_storage<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut FirmwareStorage) -> R,
+{
+    let mut guard = SHARED_STORAGE.lock().await;
+    guard.0.as_mut().map(f)
+}
 
 /// Filename written to / read from the FAT root.
 const CONFIG_FILE: &str = "STACKCHAN.RON";

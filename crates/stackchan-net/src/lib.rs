@@ -49,10 +49,12 @@
 extern crate alloc;
 
 pub mod bare;
+pub mod bare_json;
 pub mod config;
 pub mod error;
 
 pub use bare::{parse_ron_bare, render_ron_bare};
+pub use bare_json::{parse_settings_json, render_settings_json};
 pub use config::{Config, MdnsConfig, TimeConfig, WifiConfig, validate};
 #[cfg(feature = "parse")]
 pub use config::{parse_ron, render_ron};

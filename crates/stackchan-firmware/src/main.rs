@@ -838,21 +838,32 @@ async fn main(spawner: Spawner) -> ! {
     // not fatal: the firmware logs a warn and uses `Config::default`.
     let sd_cs = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
     let net_config = match storage::Storage::mount(spi_bus, sd_cs) {
-        Ok(mut sd) => match sd.read_config() {
-            Ok(cfg) => {
-                storage::log_config_summary(&cfg);
-                cfg
-            }
-            Err(e) => {
-                defmt::warn!("SD: read /sd/STACKCHAN.RON failed ({}); using defaults", e);
-                stackchan_net::Config::default()
-            }
-        },
+        Ok(mut sd) => {
+            let cfg = match sd.read_config() {
+                Ok(c) => {
+                    storage::log_config_summary(&c);
+                    c
+                }
+                Err(e) => {
+                    defmt::warn!("SD: read /sd/STACKCHAN.RON failed ({}); using defaults", e);
+                    stackchan_net::Config::default()
+                }
+            };
+            // Park the mounted storage handle in the shared mutex so
+            // PUT /settings can write back without re-mounting, and
+            // mirror the read config into the snapshot so GET /settings
+            // sees what's actually persisted.
+            storage::install_storage(sd).await;
+            *storage::CONFIG_SNAPSHOT.lock().await = Some(cfg.clone());
+            cfg
+        }
         Err(e) => {
             defmt::warn!(
                 "SD: mount failed ({}); booting offline-first with defaults",
                 e
             );
+            // No SD ⇒ leave CONFIG_SNAPSHOT as None so GET /settings
+            // returns 503 (matches PUT /settings, which also 503s).
             stackchan_net::Config::default()
         }
     };
