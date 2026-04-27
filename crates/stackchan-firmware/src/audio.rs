@@ -153,11 +153,19 @@ pub struct SpeechSlot {
 /// [`SpeechSlot`]s; the TX feeder pops them and pulls samples through
 /// [`AudioSource::fill`].
 ///
-/// Capacity 4. Eviction policy when full is "drop incoming non-Critical;
-/// log Critical drops" — full-priority eviction (drop oldest non-Critical
-/// to make room for Critical) is a TODO once the v1 catalog grows past
-/// the no-overlap regime.
+/// Capacity 4. Eviction policy when full:
+/// - Incoming non-Critical → drop the incoming slot.
+/// - Incoming Critical → drain the queue, drop the oldest
+///   non-Critical to make room, re-enqueue the rest plus the
+///   incoming. If every queued slot is also Critical, drop the
+///   incoming with a warn log — there's nothing of lower priority
+///   to evict without losing equivalent urgency.
 pub static AUDIO_TX_QUEUE: Channel<CriticalSectionRawMutex, SpeechSlot, 4> = Channel::new();
+
+/// Hard cap on the eviction-buffer size — matches [`AUDIO_TX_QUEUE`]
+/// capacity. A `heapless::Vec` typed at this length lets the
+/// eviction path drain the queue without a heap alloc.
+const AUDIO_TX_QUEUE_CAPACITY: usize = 4;
 
 /// Discriminant of the [`Priority`] of the source currently playing —
 /// `0` (Background) when nothing is playing.
@@ -242,20 +250,68 @@ pub fn try_dispatch_utterance(utterance: &Utterance) -> Result<(), DispatchError
         priority: utterance.priority,
     };
 
+    // Fast path: queue had room.
+    let slot = match AUDIO_TX_QUEUE.try_send(slot) {
+        Ok(()) => {
+            update_preempt_after_enqueue(utterance.priority);
+            return Ok(());
+        }
+        Err(embassy_sync::channel::TrySendError::Full(rejected)) => rejected,
+    };
+
+    // Slow path: queue is full. Only `Critical` incoming attempts to
+    // evict; lower priorities preserve in-flight audio.
+    if slot.priority != Priority::Critical {
+        return Err(DispatchError::QueueFull);
+    }
+
+    // Drain FIFO — `try_receive` gives the oldest first — so we can
+    // pick the *oldest* non-Critical to drop. Capacity is bounded by
+    // [`AUDIO_TX_QUEUE_CAPACITY`]; the buffer never overflows.
+    let mut buffer: heapless::Vec<SpeechSlot, AUDIO_TX_QUEUE_CAPACITY> = heapless::Vec::new();
+    while let Ok(s) = AUDIO_TX_QUEUE.try_receive() {
+        // Push can't fail: queue cap == buffer cap.
+        let _ = buffer.push(s);
+    }
+    let Some(evict_idx) = buffer.iter().position(|s| s.priority != Priority::Critical) else {
+        // Every queued slot is Critical too — can't evict without
+        // losing equivalent urgency. Restore the queue and drop the
+        // incoming with a log line so the operator notices.
+        defmt::warn!("audio: queue saturated with Critical; incoming Critical dropped");
+        for s in buffer {
+            let _ = AUDIO_TX_QUEUE.try_send(s);
+        }
+        return Err(DispatchError::QueueFull);
+    };
+    let evicted = buffer.remove(evict_idx);
+    defmt::warn!(
+        "audio: evicting non-Critical (priority={=u8}) to make room for Critical",
+        evicted.priority as u8,
+    );
+    drop(evicted);
+    // Re-enqueue survivors in their original FIFO order, then the
+    // new Critical at the tail.
+    for s in buffer {
+        let _ = AUDIO_TX_QUEUE.try_send(s);
+    }
     AUDIO_TX_QUEUE
         .try_send(slot)
         .map_err(|_| DispatchError::QueueFull)?;
+    update_preempt_after_enqueue(Priority::Critical);
+    Ok(())
+}
 
-    // Set preempt only after the slot is queued. If we set it first
-    // and the send fails, the flag stays high — on the next DMA
-    // batch the TX loop would drop the in-flight source and promote
-    // whatever was already at the head of the (full) queue, which
-    // may be lower priority than what was just dropped.
+/// Set `AUDIO_TX_PREEMPT` if `new_priority` is strictly higher than
+/// what's currently playing. Must run *after* the slot is in the
+/// queue: if the flag is set before the slot is enqueueable, the TX
+/// loop drops the in-flight source and promotes whatever's already
+/// at the head of the queue — possibly lower priority than what was
+/// dropped.
+fn update_preempt_after_enqueue(new_priority: Priority) {
     let current = AUDIO_TX_CURRENT_PRIORITY.load(Ordering::Relaxed);
-    if (utterance.priority as u8) > current {
+    if (new_priority as u8) > current {
         AUDIO_TX_PREEMPT.store(true, Ordering::Relaxed);
     }
-    Ok(())
 }
 
 /// Microphone RMS sample, published per render tick.
