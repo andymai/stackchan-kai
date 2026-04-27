@@ -2,6 +2,9 @@
 //!
 //! ## Routes
 //!
+//! - `GET /` — operator dashboard. Self-contained HTML + JS embedded
+//!   at compile time via `include_bytes!`. Drives the live state via
+//!   `/state/stream` and POSTs to the control routes.
 //! - `GET /health` — uptime, firmware version, free heap (handy for
 //!   liveness checks and post-flash smoke tests).
 //! - `GET /state` — `AvatarSnapshot` JSON read non-destructively
@@ -68,6 +71,11 @@ const REQUEST_BUF_BYTES: usize = 1024;
 /// before any body bytes are read — the write surface only accepts
 /// short JSON object bodies.
 const MAX_BODY_BYTES: usize = 256;
+
+/// Self-contained operator dashboard, embedded at compile time.
+/// Loaded by `GET /` at the device root; uses the existing
+/// SSE / POST / PUT routes for live state and control.
+const DASHBOARD_HTML: &[u8] = include_bytes!("dashboard.html");
 
 /// Latest control-plane command.
 ///
@@ -210,6 +218,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         .map_err(|_| HttpError::Malformed)?;
 
     match (method, path) {
+        ("GET", "/" | "/index.html") => write_dashboard(socket).await,
         ("GET", "/health") => write_json(socket, 200, &health_body()).await,
         ("GET", "/state") => write_json(socket, 200, &state_body(snapshot::read())).await,
         ("GET", "/state/stream") => handle_state_stream(socket).await,
@@ -511,6 +520,25 @@ async fn write_text(socket: &mut TcpSocket<'_>, status: u16, body: &str) -> Resu
         .map_err(|_| HttpError::Write)?;
     socket
         .write_all(body.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
+}
+
+/// Serve [`DASHBOARD_HTML`] with `Content-Type: text/html` plus a
+/// short cache hint so reloads during development don't pile bytes
+/// through the LAN.
+async fn write_dashboard(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len}\r\nCache-Control: max-age=60\r\nConnection: close\r\n\r\n",
+        len = DASHBOARD_HTML.len(),
+    );
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket
+        .write_all(DASHBOARD_HTML)
         .await
         .map_err(|_| HttpError::Write)?;
     socket.flush().await.map_err(|_| HttpError::Write)

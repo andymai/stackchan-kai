@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stack-chan</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f4f4f5;
+  --fg: #1f2937;
+  --muted: #6b7280;
+  --card: #ffffff;
+  --border: #e5e7eb;
+  --accent: #2563eb;
+  --warn: #b45309;
+  --bad: #b91c1c;
+  --ok: #15803d;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0b0f17; --fg: #e5e7eb; --muted: #9ca3af; --card: #111827; --border: #1f2937; }
+}
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, sans-serif; margin: 0; padding: 16px; }
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 12px; }
+h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+section { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+section h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+.row { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: baseline; }
+.row dt { color: var(--muted); }
+.row dd { margin: 0; font-variant-numeric: tabular-nums; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+button { font: inherit; padding: 6px 10px; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:active { background: var(--accent); color: white; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+input[type=range] { width: 100%; }
+input[type=text], input[type=password] { font: inherit; padding: 4px 6px; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 4px; width: 100%; box-sizing: border-box; }
+label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.grid { display: grid; gap: 8px; }
+.grid-2 { grid-template-columns: 1fr 1fr; }
+.status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--border); padding: 6px 10px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity 0.2s; }
+.toast.show { opacity: 1; }
+.toast.bad { border-color: var(--bad); color: var(--bad); }
+small { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Stack-chan</h1>
+    <div class="status"><span class="dot" id="conn-dot"></span><span id="conn-label">connecting…</span></div>
+  </header>
+
+  <section>
+    <h2>State</h2>
+    <dl class="row">
+      <dt>Emotion</dt><dd id="state-emotion">—</dd>
+      <dt>Head pose</dt><dd id="state-pose">—</dd>
+      <dt>Battery</dt><dd id="state-battery">—</dd>
+      <dt>Wi-Fi</dt><dd id="state-wifi">—</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Emotion</h2>
+    <div class="btn-row" id="emotion-buttons">
+      <button data-emotion="neutral">Neutral</button>
+      <button data-emotion="happy">Happy</button>
+      <button data-emotion="sad">Sad</button>
+      <button data-emotion="sleepy">Sleepy</button>
+      <button data-emotion="surprised">Surprised</button>
+      <button data-emotion="angry">Angry</button>
+      <button id="reset-btn" style="margin-left:auto">Reset</button>
+    </div>
+    <small>Holds the emotion for 30 s, then autonomous behaviour resumes.</small>
+  </section>
+
+  <section>
+    <h2>Look-at</h2>
+    <div class="grid grid-2">
+      <label>Pan: <span id="pan-label">0°</span>
+        <input type="range" id="pan" min="-60" max="60" value="0" step="1">
+      </label>
+      <label>Tilt: <span id="tilt-label">0°</span>
+        <input type="range" id="tilt" min="-30" max="30" value="0" step="1">
+      </label>
+    </div>
+    <small>Sliders POST /look-at on release. Holds for 30 s.</small>
+  </section>
+
+  <section>
+    <h2>Settings</h2>
+    <form id="settings-form" class="grid">
+      <label>SSID <input type="text" name="ssid" id="set-ssid" autocomplete="off"></label>
+      <label>PSK <input type="password" name="psk" id="set-psk" autocomplete="off" placeholder="(unchanged — supply real key to overwrite)"></label>
+      <label>Country <input type="text" name="country" id="set-country" maxlength="2"></label>
+      <label>mDNS hostname <input type="text" name="hostname" id="set-hostname"></label>
+      <label>SNTP servers (comma-separated) <input type="text" name="sntp" id="set-sntp"></label>
+      <div class="btn-row">
+        <button type="submit">Save (reboot to apply)</button>
+        <button type="button" id="settings-reload">Reload</button>
+      </div>
+      <small>PSK shows as <code>***</code> in GET; submit blank to keep current PSK only by re-typing the real key. The server rejects <code>***</code>.</small>
+    </form>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const connDot = $("conn-dot");
+const connLabel = $("conn-label");
+const toastEl = $("toast");
+
+function setConn(state) {
+  connDot.classList.remove("ok", "bad");
+  if (state === "ok") { connDot.classList.add("ok"); connLabel.textContent = "live"; }
+  else if (state === "bad") { connDot.classList.add("bad"); connLabel.textContent = "disconnected"; }
+  else { connLabel.textContent = state; }
+}
+
+function toast(msg, bad) {
+  toastEl.textContent = msg;
+  toastEl.classList.toggle("bad", !!bad);
+  toastEl.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toastEl.classList.remove("show"), 2500);
+}
+
+function renderState(s) {
+  $("state-emotion").textContent = s.emotion;
+  const p = s.head_pose;
+  const a = s.head_actual;
+  let pose = `pan ${p.pan_deg.toFixed(1)}°, tilt ${p.tilt_deg.toFixed(1)}°`;
+  if (a) pose += ` (actual: ${a.pan_deg.toFixed(1)}°, ${a.tilt_deg.toFixed(1)}°)`;
+  $("state-pose").textContent = pose;
+  const b = s.battery;
+  $("state-battery").textContent = (b.percent != null ? `${b.percent}%` : "—") + (b.voltage_mv != null ? ` (${b.voltage_mv} mV)` : "");
+  const w = s.wifi;
+  $("state-wifi").textContent = w.connected ? `up @ ${w.ip || "—"}` : "down";
+}
+
+// --- SSE live state ---
+function connectStream() {
+  const es = new EventSource("/state/stream");
+  es.onopen = () => setConn("ok");
+  es.onerror = () => {
+    setConn("bad");
+    es.close();
+    setTimeout(connectStream, 1500);
+  };
+  es.onmessage = (ev) => {
+    try { renderState(JSON.parse(ev.data)); } catch (_) {}
+  };
+}
+connectStream();
+
+// --- Emotion buttons ---
+async function postJson(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body == null ? "" : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status}: ${text || res.statusText}`);
+  }
+}
+document.querySelectorAll("#emotion-buttons button[data-emotion]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    try {
+      await postJson("/emotion", { emotion: btn.dataset.emotion, hold_ms: 30000 });
+      toast(`emotion → ${btn.dataset.emotion}`);
+    } catch (e) { toast(e.message, true); }
+  });
+});
+$("reset-btn").addEventListener("click", async () => {
+  try { await postJson("/reset", null); toast("reset"); }
+  catch (e) { toast(e.message, true); }
+});
+
+// --- Look-at sliders ---
+const pan = $("pan");
+const tilt = $("tilt");
+const panLabel = $("pan-label");
+const tiltLabel = $("tilt-label");
+function refreshPoseLabels() {
+  panLabel.textContent = `${pan.value}°`;
+  tiltLabel.textContent = `${tilt.value}°`;
+}
+async function postLookAt() {
+  try {
+    await postJson("/look-at", {
+      pan_deg: Number(pan.value),
+      tilt_deg: Number(tilt.value),
+      hold_ms: 30000,
+    });
+    toast(`look-at ${pan.value}°, ${tilt.value}°`);
+  } catch (e) { toast(e.message, true); }
+}
+[pan, tilt].forEach((el) => {
+  el.addEventListener("input", refreshPoseLabels);
+  el.addEventListener("change", postLookAt);
+});
+
+// --- Settings form ---
+async function loadSettings() {
+  try {
+    const res = await fetch("/settings");
+    if (!res.ok) {
+      if (res.status === 503) toast("settings unavailable (no SD card)", true);
+      else toast(`GET /settings: ${res.status}`, true);
+      return;
+    }
+    const c = await res.json();
+    $("set-ssid").value = c.wifi.ssid;
+    $("set-psk").value = "";
+    $("set-psk").placeholder = c.wifi.psk === "***" ? "(redacted — type real key to overwrite)" : "";
+    $("set-country").value = c.wifi.country;
+    $("set-hostname").value = c.mdns.hostname;
+    $("set-sntp").value = c.time.sntp_servers.join(", ");
+  } catch (e) { toast(e.message, true); }
+}
+$("settings-reload").addEventListener("click", loadSettings);
+$("settings-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = {
+    wifi: {
+      ssid: $("set-ssid").value,
+      psk: $("set-psk").value,
+      country: $("set-country").value.toUpperCase(),
+    },
+    mdns: { hostname: $("set-hostname").value },
+    time: {
+      tz: "UTC",
+      sntp_servers: $("set-sntp").value.split(",").map((s) => s.trim()).filter(Boolean),
+    },
+  };
+  try {
+    const res = await fetch("/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status}: ${text || res.statusText}`);
+    }
+    toast("settings saved — reboot to apply");
+  } catch (e) { toast(e.message, true); }
+});
+loadSettings();
+</script>
+</body>
+</html>
