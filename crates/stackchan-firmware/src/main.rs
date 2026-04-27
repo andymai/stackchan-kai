@@ -69,7 +69,7 @@ use mipidsi::{
     options::{ColorInversion, ColorOrder},
 };
 use stackchan_core::{
-    Clock, Director, Entity, Face, HeadDriver, LedFrame,
+    Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
         AttentionFromTracking, Blink, Breath, DormancyFromActivity, EmotionCycle,
         EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
@@ -380,8 +380,27 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // Drain HTTP control-plane commands, if any. RemoteCommandModifier
         // (Phase::Cognition) consumes the slot, asserts emotion or
         // attention, and re-asserts each tick until the hold expires.
+        //
+        // `Speak` short-circuits the modifier round-trip — audio
+        // dispatch is firmware-only and the modifier graph would
+        // see it only as a no-op. Render the utterance and queue
+        // it directly here.
         if let Some(cmd) = net::http::REMOTE_COMMAND_SIGNAL.try_take() {
-            entity.input.remote_command = Some(cmd);
+            match cmd {
+                RemoteCommand::Speak {
+                    phrase,
+                    locale,
+                    priority,
+                } => {
+                    let utterance = Utterance::phrase(phrase)
+                        .with_locale(locale)
+                        .with_priority(priority);
+                    if let Err(e) = audio::try_dispatch_utterance(&utterance) {
+                        defmt::warn!("speak: dispatch failed ({})", e);
+                    }
+                }
+                other => entity.input.remote_command = Some(other),
+            }
         }
         // Drain the latest IMU reading.
         if let Some(m) = imu::IMU_SIGNAL.try_take() {
