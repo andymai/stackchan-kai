@@ -80,7 +80,7 @@ esp-alloc = { version = "0.9.0", features = ["defmt"] }
 esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "unstable"] }
 # embassy-net's TCP / UDP / DHCPv4 stack on top of smoltcp. 0.9.x
 # pairs with esp-radio 0.18 (both ride the embassy-sync 0.7 line).
-embassy-net = { version = "0.9", features = ["defmt", "proto-ipv4", "tcp", "udp", "dhcpv4", "medium-ethernet"] }
+embassy-net = { version = "0.9", features = ["defmt", "proto-ipv4", "tcp", "udp", "dhcpv4", "dns", "medium-ethernet"] }
 
 embassy-executor = { version = "0.9.1", features = ["defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt"] }

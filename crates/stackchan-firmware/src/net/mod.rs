@@ -6,5 +6,6 @@
 //! responsive even when there's no SSID configured or the AP is
 //! unreachable.
 
+pub mod sntp;
 pub mod stack;
 pub mod wifi;
