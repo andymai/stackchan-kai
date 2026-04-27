@@ -143,7 +143,7 @@ pub fn parse_look_at(body: &str) -> Result<RemoteCommand, JsonError> {
 /// Priority is not on the wire — the firmware fills
 /// [`Priority::Normal`] for every operator-driven request. Modifier-
 /// internal call sites that need elevated priority go through
-/// [`crate::audio::try_dispatch_utterance`] directly.
+/// the firmware's `audio::try_dispatch_utterance` directly.
 ///
 /// # Errors
 ///
@@ -250,13 +250,22 @@ impl<'a> Scanner<'a> {
     }
 
     /// Read a contiguous run of number-shaped bytes (`-`, digits,
-    /// `.`, `e`, `E`, `+`). The slice is parsed by the typed
-    /// `parse_*` helpers via [`core::str::FromStr`].
+    /// `.`, `e`, `E`). The slice is parsed by the typed `parse_*`
+    /// helpers via [`core::str::FromStr`].
+    ///
+    /// Rejects a leading `+`. `f32::from_str` would accept it but
+    /// RFC 8259 §6 (the JSON number production) doesn't allow one
+    /// — `u32::from_str` already rejects it, so without this gate
+    /// the wire surface would be inconsistent across the integer
+    /// and float fields.
     fn read_number(&mut self) -> Result<&'a str, JsonError> {
         self.skip_ws();
+        if self.peek() == Some(b'+') {
+            return Err(JsonError::BadValue);
+        }
         let start = self.pos;
         while let Some(b) = self.peek() {
-            let is_num = matches!(b, b'-' | b'+' | b'.' | b'0'..=b'9' | b'e' | b'E');
+            let is_num = matches!(b, b'-' | b'.' | b'0'..=b'9' | b'e' | b'E');
             if !is_num {
                 break;
             }
@@ -501,6 +510,17 @@ mod tests {
             parse_look_at(body),
             Err(JsonError::DuplicateKey("pan_deg"))
         ));
+    }
+
+    #[test]
+    fn look_at_rejects_leading_plus_on_floats() {
+        // RFC 8259 §6: JSON numbers don't allow a leading `+`.
+        // `f32::from_str` accepts `"+3.5"` whereas `u32::from_str`
+        // rejects `"+5"`, so the parser tightens the gate to keep
+        // the wire surface consistent across integer and float
+        // fields.
+        let body = r#"{"pan_deg":+3.5,"tilt_deg":0.0}"#;
+        assert!(matches!(parse_look_at(body), Err(JsonError::BadValue)));
     }
 
     #[test]
