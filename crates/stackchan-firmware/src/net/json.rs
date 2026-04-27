@@ -32,6 +32,10 @@ pub enum JsonError {
     MissingKey(&'static str),
     /// Unknown key — schemas are closed.
     UnknownKey,
+    /// Same key appeared twice. RFC 8259 leaves duplicates
+    /// implementation-defined; this server rejects rather than
+    /// silently choosing last-wins, so a typo doesn't pass.
+    DuplicateKey(&'static str),
     /// Value type doesn't match the schema (e.g. number where a
     /// string was expected).
     BadValue,
@@ -53,8 +57,18 @@ pub fn parse_set_emotion(body: &str) -> Result<RemoteCommand, JsonError> {
     let mut hold_ms: Option<u32> = None;
     visit_object(body, |key, scanner| {
         match key {
-            "emotion" => emotion = Some(parse_emotion(scanner)?),
-            "hold_ms" => hold_ms = Some(parse_u32(scanner)?),
+            "emotion" => {
+                if emotion.is_some() {
+                    return Err(JsonError::DuplicateKey("emotion"));
+                }
+                emotion = Some(parse_emotion(scanner)?);
+            }
+            "hold_ms" => {
+                if hold_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("hold_ms"));
+                }
+                hold_ms = Some(parse_u32(scanner)?);
+            }
             _ => return Err(JsonError::UnknownKey),
         }
         Ok(())
@@ -80,9 +94,24 @@ pub fn parse_look_at(body: &str) -> Result<RemoteCommand, JsonError> {
     let mut hold_ms: Option<u32> = None;
     visit_object(body, |key, scanner| {
         match key {
-            "pan_deg" => pan_deg = Some(parse_f32(scanner)?),
-            "tilt_deg" => tilt_deg = Some(parse_f32(scanner)?),
-            "hold_ms" => hold_ms = Some(parse_u32(scanner)?),
+            "pan_deg" => {
+                if pan_deg.is_some() {
+                    return Err(JsonError::DuplicateKey("pan_deg"));
+                }
+                pan_deg = Some(parse_f32(scanner)?);
+            }
+            "tilt_deg" => {
+                if tilt_deg.is_some() {
+                    return Err(JsonError::DuplicateKey("tilt_deg"));
+                }
+                tilt_deg = Some(parse_f32(scanner)?);
+            }
+            "hold_ms" => {
+                if hold_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("hold_ms"));
+                }
+                hold_ms = Some(parse_u32(scanner)?);
+            }
             _ => return Err(JsonError::UnknownKey),
         }
         Ok(())
@@ -373,6 +402,24 @@ mod tests {
         assert!(matches!(
             parse_set_emotion(body),
             Err(JsonError::Unterminated)
+        ));
+    }
+
+    #[test]
+    fn set_emotion_rejects_duplicate_key() {
+        let body = r#"{"emotion":"happy","emotion":"sad"}"#;
+        assert!(matches!(
+            parse_set_emotion(body),
+            Err(JsonError::DuplicateKey("emotion"))
+        ));
+    }
+
+    #[test]
+    fn look_at_rejects_duplicate_key() {
+        let body = r#"{"pan_deg":1.0,"tilt_deg":0.0,"pan_deg":2.0}"#;
+        assert!(matches!(
+            parse_look_at(body),
+            Err(JsonError::DuplicateKey("pan_deg"))
         ));
     }
 

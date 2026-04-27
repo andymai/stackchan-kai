@@ -155,9 +155,24 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws();
             match key.as_str() {
-                "wifi" => wifi = Some(self.parse_wifi()?),
-                "mdns" => mdns = Some(self.parse_mdns()?),
-                "time" => time = Some(self.parse_time()?),
+                "wifi" => {
+                    if wifi.is_some() {
+                        return Err(bare_err("duplicate top-level field", "wifi"));
+                    }
+                    wifi = Some(self.parse_wifi()?);
+                }
+                "mdns" => {
+                    if mdns.is_some() {
+                        return Err(bare_err("duplicate top-level field", "mdns"));
+                    }
+                    mdns = Some(self.parse_mdns()?);
+                }
+                "time" => {
+                    if time.is_some() {
+                        return Err(bare_err("duplicate top-level field", "time"));
+                    }
+                    time = Some(self.parse_time()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -189,9 +204,24 @@ impl<'a> Parser<'a> {
             self.skip_ws();
             let value = self.parse_string()?;
             match key.as_str() {
-                "ssid" => ssid = Some(value),
-                "psk" => psk = Some(value),
-                "country" => country = Some(value),
+                "ssid" => {
+                    if ssid.is_some() {
+                        return Err(bare_err("duplicate wifi field", "ssid"));
+                    }
+                    ssid = Some(value);
+                }
+                "psk" => {
+                    if psk.is_some() {
+                        return Err(bare_err("duplicate wifi field", "psk"));
+                    }
+                    psk = Some(value);
+                }
+                "country" => {
+                    if country.is_some() {
+                        return Err(bare_err("duplicate wifi field", "country"));
+                    }
+                    country = Some(value);
+                }
                 other => return Err(bare_err("unknown wifi field", other)),
             }
             self.skip_ws();
@@ -228,7 +258,12 @@ impl<'a> Parser<'a> {
             self.skip_ws();
             let value = self.parse_string()?;
             match key.as_str() {
-                "hostname" => hostname = Some(value),
+                "hostname" => {
+                    if hostname.is_some() {
+                        return Err(bare_err("duplicate mdns field", "hostname"));
+                    }
+                    hostname = Some(value);
+                }
                 other => return Err(bare_err("unknown mdns field", other)),
             }
             self.skip_ws();
@@ -256,8 +291,18 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws();
             match key.as_str() {
-                "tz" => tz = Some(self.parse_string()?),
-                "sntp_servers" => sntp_servers = Some(self.parse_string_list()?),
+                "tz" => {
+                    if tz.is_some() {
+                        return Err(bare_err("duplicate time field", "tz"));
+                    }
+                    tz = Some(self.parse_string()?);
+                }
+                "sntp_servers" => {
+                    if sntp_servers.is_some() {
+                        return Err(bare_err("duplicate time field", "sntp_servers"));
+                    }
+                    sntp_servers = Some(self.parse_string_list()?);
+                }
                 other => return Err(bare_err("unknown time field", other)),
             }
             self.skip_ws();
@@ -510,6 +555,32 @@ mod tests {
         // string parse rejects.
         let body = render_settings_json(&full_config(), true).unwrap();
         assert!(body.contains(&format!("\"psk\":\"{PSK_REDACTED}\"")));
+    }
+
+    #[test]
+    fn rejects_duplicate_top_level_field() {
+        let input = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"wifi":{"ssid":"x","psk":"y","country":"JP"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let err = parse_settings_json(input).unwrap_err();
+        match err {
+            ConfigError::BareParse(msg) => assert!(
+                msg.contains("duplicate top-level field"),
+                "expected duplicate-field message, got `{msg}`"
+            ),
+            other => panic!("expected BareParse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_nested_field() {
+        let input = r#"{"wifi":{"ssid":"a","ssid":"b","psk":"p","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let err = parse_settings_json(input).unwrap_err();
+        match err {
+            ConfigError::BareParse(msg) => assert!(
+                msg.contains("duplicate wifi field"),
+                "expected duplicate-wifi-field message, got `{msg}`"
+            ),
+            other => panic!("expected BareParse, got {other:?}"),
+        }
     }
 
     #[test]
