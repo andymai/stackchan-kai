@@ -11,6 +11,7 @@ host simulator and 14 driver crates.
 ## Pages
 
 - [Architecture overview](architecture) — the engine, the firmware's task graph, and how the host sim mirrors it.
+- [HTTP control plane](http) — LAN-scoped routes for live state, manual control, persistent config, and the embedded operator dashboard.
 - [Modifier authoring guide](modifiers) — adding a new behavior to the engine.
 - [Naming conventions](naming) — rules for `Intent` / `Modifier` / `Skill` / `ChirpKind` / `OverrideSource` names, with citations.
 - [Signal channels](signals) — the typed `Signal<…, T>` pattern that wires sensors to the render task.
