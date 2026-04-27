@@ -518,6 +518,10 @@ fn state_body(s: AvatarSnapshot) -> String {
 /// without any case translation. Pinning the mapping here also
 /// guards against a future non-unit `Emotion` variant whose `Debug`
 /// representation would otherwise inject `{` into the JSON string.
+///
+/// `Emotion` is `#[non_exhaustive]`; the wildcard returns `"unknown"`
+/// so a newly added variant surfaces on the dashboard as a missing
+/// mapping rather than silently aliasing to neutral.
 const fn emotion_str(e: Emotion) -> &'static str {
     match e {
         Emotion::Neutral => "neutral",
@@ -526,6 +530,7 @@ const fn emotion_str(e: Emotion) -> &'static str {
         Emotion::Sleepy => "sleepy",
         Emotion::Surprised => "surprised",
         Emotion::Angry => "angry",
+        _ => "unknown",
     }
 }
 
