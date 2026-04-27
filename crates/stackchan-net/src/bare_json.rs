@@ -21,18 +21,19 @@ use alloc::vec::Vec;
 use crate::config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
 use crate::error::ConfigError;
 
-/// Sentinel emitted by [`render_settings_json`] when `redact_psk = true`.
+/// Sentinel emitted by [`render_settings_json`] when `redact_secrets = true`.
 ///
-/// Rejected as a PSK value by [`parse_settings_json`] so a `GET → PUT`
-/// round trip can't accidentally persist the redacted placeholder as
-/// the real key (which would silently break Wi-Fi on next reboot).
+/// Doubles as a "preserve current value" marker on the input side:
+/// a `PUT /settings` body that echoes `"***"` back for the PSK
+/// keeps whatever's currently persisted instead of overwriting with
+/// the placeholder. Callers merge via [`merge_settings_with_current`]
+/// before writing back to disk.
 pub const PSK_REDACTED: &str = "***";
 
 /// Sentinel emitted in place of a non-empty `auth.token` on render.
 ///
-/// Keeps the secret out of `GET /settings` responses, and rejected
-/// as an input value by [`parse_settings_json`] for the same
-/// `GET → PUT` clobber reason as [`PSK_REDACTED`].
+/// Same `"preserve current value"` semantics on the input side as
+/// [`PSK_REDACTED`] — see [`merge_settings_with_current`].
 pub const TOKEN_REDACTED: &str = "***";
 
 /// Parse a schema-v1 JSON object into a [`Config`].
@@ -58,6 +59,47 @@ pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
     }
     validate(&config)?;
     Ok(config)
+}
+
+/// Substitute the redacted PSK / token sentinels in a parsed body
+/// with the values from `current`.
+///
+/// `PUT /settings` bodies may echo `"***"` back for [`PSK_REDACTED`]
+/// or [`TOKEN_REDACTED`]; this helper means "keep current value"
+/// rather than "overwrite with literal `***`."
+///
+/// Without this step, an operator who edits the hostname in the
+/// dashboard form (or via curl with the JSON returned by
+/// `GET /settings`) would unintentionally clobber the real PSK or
+/// token with the placeholder string. Anything other than the
+/// sentinel is taken at face value: an empty PSK clears the key
+/// (open-AP), an empty token disables auth, an explicit value
+/// overwrites.
+///
+/// Fields the wire format doesn't redact (`ssid`, `country`,
+/// `mdns.hostname`, `time.*`) pass through from `new` unchanged.
+#[must_use]
+pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
+    Config {
+        wifi: WifiConfig {
+            ssid: new.wifi.ssid,
+            psk: if new.wifi.psk == PSK_REDACTED {
+                current.wifi.psk.clone()
+            } else {
+                new.wifi.psk
+            },
+            country: new.wifi.country,
+        },
+        mdns: new.mdns,
+        time: new.time,
+        auth: AuthConfig {
+            token: if new.auth.token == TOKEN_REDACTED {
+                current.auth.token.clone()
+            } else {
+                new.auth.token
+            },
+        },
+    }
 }
 
 /// Render a [`Config`] to a compact JSON string.
@@ -258,12 +300,10 @@ impl<'a> Parser<'a> {
             }
         }
         let psk = psk.ok_or_else(|| bare_err("missing wifi.psk", ""))?;
-        if psk == PSK_REDACTED {
-            return Err(bare_err(
-                "wifi.psk is the redacted sentinel — supply the real key",
-                "",
-            ));
-        }
+        // Note: a literal `"***"` here is *not* an error — it's the
+        // "preserve current PSK" sentinel. The HTTP handler merges
+        // it against the current snapshot via
+        // [`merge_settings_with_current`] before writing back.
         Ok(WifiConfig {
             ssid: ssid.ok_or_else(|| bare_err("missing wifi.ssid", ""))?,
             psk,
@@ -373,12 +413,9 @@ impl<'a> Parser<'a> {
             }
         }
         let token = token.unwrap_or_default();
-        if token == TOKEN_REDACTED {
-            return Err(bare_err(
-                "auth.token is the redacted sentinel — supply the real token",
-                "",
-            ));
-        }
+        // `"***"` is the "preserve current token" sentinel; the
+        // HTTP handler merges via [`merge_settings_with_current`]
+        // before persisting.
         Ok(AuthConfig { token })
     }
 
@@ -635,27 +672,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_redacted_token_sentinel() {
-        // Same `GET → PUT` clobber pattern as PSK: a body that
-        // round-trips a real PSK but the redacted token must trip
-        // the auth.token guard. Hand-roll the JSON so we can pin the
-        // token-only redaction case — `render_settings_json(_, true)`
-        // would redact the PSK first and the parser would surface
-        // that error instead of reaching the token check.
+    fn parser_accepts_redacted_token_for_preserve_round_trip() {
+        // GET /settings emits `"token":"***"` for a configured token;
+        // a dashboard form that submits unchanged should send the same
+        // sentinel back, and the parser must accept it. Merge happens
+        // downstream via [`merge_settings_with_current`].
         let body = r#"{
             "wifi":{"ssid":"a","psk":"realkey","country":"US"},
             "mdns":{"hostname":"x"},
             "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
             "auth":{"token":"***"}
         }"#;
-        let err = parse_settings_json(body).unwrap_err();
-        match err {
-            ConfigError::BareParse(msg) => assert!(
-                msg.contains("auth.token") && msg.contains("redacted"),
-                "expected token-sentinel message, got `{msg}`"
-            ),
-            other => panic!("expected BareParse, got {other:?}"),
-        }
+        let parsed = parse_settings_json(body).unwrap();
+        assert_eq!(parsed.auth.token, TOKEN_REDACTED);
     }
 
     #[test]
@@ -670,20 +699,88 @@ mod tests {
     }
 
     #[test]
-    fn rejects_redacted_psk_sentinel() {
-        // GET /settings emits "psk":"***"; if an operator round-trips
-        // that through PUT /settings unchanged, the firmware would
-        // persist "***" as the real key and break Wi-Fi at next
-        // boot. parse_settings_json must catch it.
+    fn parser_accepts_redacted_psk_for_preserve_round_trip() {
+        // The redacted body emitted by `GET /settings` round-trips
+        // through the parser; the literal sentinel value flows
+        // through to the downstream merge step rather than tripping
+        // a 400.
         let body = render_settings_json(&full_config(), true).unwrap();
-        let err = parse_settings_json(&body).unwrap_err();
-        match err {
-            ConfigError::BareParse(msg) => assert!(
-                msg.contains("redacted"),
-                "expected redacted-sentinel message, got `{msg}`"
-            ),
-            other => panic!("expected BareParse, got {other:?}"),
-        }
+        let parsed = parse_settings_json(&body).unwrap();
+        assert_eq!(parsed.wifi.psk, PSK_REDACTED);
+        assert_eq!(parsed.auth.token, TOKEN_REDACTED);
+    }
+
+    #[test]
+    fn merge_substitutes_redacted_psk_with_current() {
+        let current = full_config(); // psk = "secret", token = "shared-secret"
+        let new = Config {
+            wifi: WifiConfig {
+                ssid: "newssid".to_string(),
+                psk: PSK_REDACTED.to_string(),
+                country: "JP".to_string(),
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.wifi.psk, "secret", "psk preserved from current");
+        assert_eq!(
+            merged.wifi.ssid, "newssid",
+            "non-secret fields pass through"
+        );
+        assert_eq!(merged.wifi.country, "JP");
+    }
+
+    #[test]
+    fn merge_substitutes_redacted_token_with_current() {
+        let current = full_config(); // token = "shared-secret"
+        let new = Config {
+            auth: AuthConfig {
+                token: TOKEN_REDACTED.to_string(),
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.auth.token, "shared-secret");
+    }
+
+    #[test]
+    fn merge_overwrites_explicit_value() {
+        let current = full_config();
+        let new = Config {
+            wifi: WifiConfig {
+                ssid: current.wifi.ssid.clone(),
+                psk: "new-psk".to_string(),
+                country: current.wifi.country.clone(),
+            },
+            auth: AuthConfig {
+                token: "new-token".to_string(),
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.wifi.psk, "new-psk");
+        assert_eq!(merged.auth.token, "new-token");
+    }
+
+    #[test]
+    fn merge_clears_to_empty_when_explicitly_empty() {
+        // An empty-string PSK or token isn't the redaction sentinel;
+        // it's a meaningful value (open AP / auth disabled) and must
+        // pass through.
+        let current = full_config();
+        let new = Config {
+            wifi: WifiConfig {
+                psk: String::new(),
+                ..current.wifi.clone()
+            },
+            auth: AuthConfig {
+                token: String::new(),
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert!(merged.wifi.psk.is_empty(), "empty PSK clears to empty");
+        assert!(merged.auth.token.is_empty(), "empty token disables auth");
     }
 
     #[test]

@@ -389,7 +389,7 @@ async fn handle_get_settings(socket: &mut TcpSocket<'_>) -> Result<(), HttpError
 /// re-bring-up Wi-Fi mid-flight (avoids dropping the operator's
 /// session when the SSID changes).
 async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
-    let new_config = match stackchan_net::parse_settings_json(body) {
+    let parsed_config = match stackchan_net::parse_settings_json(body) {
         Ok(c) => c,
         Err(e) => {
             defmt::warn!(
@@ -400,6 +400,17 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
             return write_text(socket, 400, &body).await;
         }
     };
+    // Substitute the `***` redaction sentinel for the persisted PSK
+    // and token so a dashboard form that submits unchanged secrets
+    // doesn't clobber them. With no current snapshot (the brief
+    // pre-storage-mount window), preserving against the default
+    // empty values is a no-op — the parsed body wins.
+    let snapshot_for_merge = crate::storage::CONFIG_SNAPSHOT
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_default();
+    let new_config = stackchan_net::merge_settings_with_current(parsed_config, &snapshot_for_merge);
     let write_result =
         crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
     match write_result {
