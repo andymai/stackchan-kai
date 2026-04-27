@@ -391,7 +391,7 @@ async fn handle_remote(
         Ok(cmd) => {
             defmt::info!("http: remote command {}", defmt::Debug2Format(&cmd));
             REMOTE_COMMAND_SIGNAL.signal(cmd);
-            write_text(socket, 204, "").await
+            write_no_content(socket).await
         }
         Err(e) => {
             defmt::warn!("http: bad request body ({})", e);
@@ -399,6 +399,20 @@ async fn handle_remote(
             write_text(socket, 400, &body).await
         }
     }
+}
+
+/// Write `204 No Content`. RFC 7230 says a 204 response "is always
+/// terminated by the first empty line after the header fields"; the
+/// general `write_text` helper would still emit `Content-Type` +
+/// `Content-Length: 0`, which is pedantically allowed but unusual.
+/// This helper omits both so the response is just headers + CRLF.
+async fn write_no_content(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let header = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
 }
 
 /// Parse the `Content-Length` header value out of a header block.
