@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.22.0...stackchan-firmware-v0.23.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** HTTP POST control plane (emotion, look-at, reset) ([#152](https://github.com/andymai/stackchan-kai/issues/152)) ([f2f9076](https://github.com/andymai/stackchan-kai/commit/f2f9076edb846f90381b75fbb991632f7331d8a0))
+
 ## [0.22.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.21.0...stackchan-firmware-v0.22.0) (2026-04-27)
 
 
