@@ -12,7 +12,7 @@
 //! generic byte helpers the firmware currently uses
 //! (`find_subsequence`, `split_once`, `trim_ascii`). The firmware's
 //! `net::http` module owns the higher-level state machine and maps
-//! [`ParseError`] into its own [`HttpError`] surface.
+//! [`ParseError`] into its own `HttpError` surface.
 
 /// Generic parse failure for the helpers that can fail. Kept unit-
 /// shaped because the firmware only ever needs to know whether the
