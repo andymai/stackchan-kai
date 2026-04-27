@@ -68,9 +68,13 @@ const HTTP_PORT: u16 = 80;
 const REQUEST_BUF_BYTES: usize = 1024;
 
 /// Cap on the `Content-Length` header. Anything larger is rejected
-/// before any body bytes are read — the write surface only accepts
-/// short JSON object bodies.
-const MAX_BODY_BYTES: usize = 256;
+/// before any body bytes are read.
+///
+/// Sized for `PUT /settings`: the full schema-v1 body with a 32-char
+/// SSID, 63-char WPA2 PSK, an `America/…` IANA tz label, and a few
+/// SNTP servers lands around 320 bytes; 1024 leaves room for future
+/// fields without forcing every operator update through a re-cap.
+const MAX_BODY_BYTES: usize = 1024;
 
 /// Self-contained operator dashboard, embedded at compile time.
 /// Loaded by `GET /` at the device root; uses the existing

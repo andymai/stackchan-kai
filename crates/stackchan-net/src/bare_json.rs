@@ -521,6 +521,47 @@ mod tests {
     }
 
     #[test]
+    fn maximal_payload_fits_under_http_body_cap() {
+        // Pin the upper bound on `PUT /settings` payloads. Numbers
+        // mirror real-world maxima:
+        //   - SSID: 32 chars (IEEE 802.11 limit)
+        //   - PSK: 63 chars (WPA2/3 PSK upper bound)
+        //   - hostname: 63 chars (RFC-952 / firmware validator)
+        //   - tz: long IANA label
+        //   - sntp_servers: 4 servers, 16 chars each (typical FQDN)
+        // Firmware caps the body at 1024 bytes; this test fails if a
+        // schema addition pushes legitimate payloads past that cap so
+        // we notice before users do.
+        let config = Config {
+            wifi: WifiConfig {
+                ssid: "x".repeat(32),
+                psk: "x".repeat(63),
+                country: "US".to_string(),
+            },
+            mdns: MdnsConfig {
+                hostname: "x".repeat(63),
+            },
+            time: TimeConfig {
+                tz: "America/Argentina/Buenos_Aires".to_string(),
+                sntp_servers: vec![
+                    "time1.google.com".to_string(),
+                    "time2.google.com".to_string(),
+                    "time3.google.com".to_string(),
+                    "time4.google.com".to_string(),
+                ],
+            },
+        };
+        let rendered = render_settings_json(&config, false).unwrap();
+        assert!(
+            rendered.len() < 1024,
+            "maximal payload exceeded firmware MAX_BODY_BYTES: {} bytes",
+            rendered.len()
+        );
+        let parsed = parse_settings_json(&rendered).unwrap();
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
     fn ron_parsed_config_round_trips_to_json() {
         // Pin: the bare RON parser and the bare JSON parser produce
         // structurally identical Config values for the same logical
