@@ -96,7 +96,7 @@ small { color: var(--muted); }
     <h2>Settings</h2>
     <form id="settings-form" class="grid">
       <label>SSID <input type="text" name="ssid" id="set-ssid" autocomplete="off"></label>
-      <label>PSK <input type="password" name="psk" id="set-psk" autocomplete="off" placeholder="(unchanged — supply real key to overwrite)"></label>
+      <label>PSK <input type="password" name="psk" id="set-psk" autocomplete="off" placeholder="(cleared = open AP)"></label>
       <label>Country <input type="text" name="country" id="set-country" maxlength="2"></label>
       <label>mDNS hostname <input type="text" name="hostname" id="set-hostname"></label>
       <label>SNTP servers (comma-separated) <input type="text" name="sntp" id="set-sntp"></label>
@@ -258,7 +258,7 @@ async function loadSettings() {
     $("set-country").value = c.wifi.country;
     $("set-hostname").value = c.mdns.hostname;
     $("set-sntp").value = c.time.sntp_servers.join(", ");
-    $("set-token").value = (c.auth && c.auth.token) || "";
+    $("set-token").value = c.auth.token;
     loadedTz = c.time.tz;
   } catch (e) { toast(e.message, true); }
 }
