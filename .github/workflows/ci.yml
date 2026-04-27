@@ -93,6 +93,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: esp-rs/xtensa-toolchain@v1.5
         with:
+          # Pin: `latest` resolves through GitHub's `/releases/latest`
+          # endpoint then re-fetches the paginated listing to find the
+          # asset, and the two queries can disagree when a release was
+          # just published — espup reports `version_not_found` on
+          # versions that exist. Pin a known-good toolchain so PR
+          # merges aren't held by upstream pagination weather.
+          version: 1.94.0.0
           default: true
           buildtargets: esp32s3
           ldproxy: false

@@ -53,7 +53,7 @@ use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use embedded_io_async::Write as AsyncWrite;
-use stackchan_core::RemoteCommand;
+use stackchan_core::{Emotion, RemoteCommand};
 
 use super::json::{self, JsonError};
 use super::snapshot::{self, AvatarSnapshot};
@@ -63,14 +63,23 @@ use super::wifi::LINK_READY;
 const HTTP_PORT: u16 = 80;
 
 /// Maximum request line + headers + body size we'll buffer before
-/// responding `400`. POST bodies for the current write surface are
-/// at most a few dozen bytes; 1 KiB is generous.
+/// responding `400`. Headers and body share this buffer, so the
+/// late-stage `filled >= REQUEST_BUF_BYTES` guard doubles as a
+/// header-overflow check.
 const REQUEST_BUF_BYTES: usize = 1024;
 
-/// Cap on the `Content-Length` header. Anything larger is rejected
-/// before any body bytes are read — the write surface only accepts
-/// short JSON object bodies.
-const MAX_BODY_BYTES: usize = 256;
+/// Cap on the `Content-Length` header. Bodies of this size or
+/// larger are rejected before any body bytes are read.
+///
+/// Equal to [`REQUEST_BUF_BYTES`] on purpose: the buffer holds
+/// headers + body together, so any `content_length` that hits the
+/// cap can't physically fit alongside the request line. Sized for
+/// `PUT /settings`: the full schema-v1 body with a 32-char SSID,
+/// 63-char WPA2 PSK, an `America/…` IANA tz label, and a few SNTP
+/// servers lands around 320 bytes; the 1024 ceiling leaves room
+/// for future fields without forcing every operator update through
+/// a re-cap.
+const MAX_BODY_BYTES: usize = 1024;
 
 /// Self-contained operator dashboard, embedded at compile time.
 /// Loaded by `GET /` at the device root; uses the existing
@@ -131,6 +140,11 @@ pub async fn http_worker(stack: Stack<'static>) -> ! {
         }
 
         if let Err(e) = serve_one(&mut socket).await {
+            // Best-effort status reply for parse-side failures so
+            // operators see `400`/`413`/`431` from curl instead of a
+            // bare connection reset. `Read`/`Write` skip — the socket
+            // is already broken.
+            write_status_for_error(&mut socket, &e).await;
             defmt::warn!("http: serve error ({})", defmt::Debug2Format(&e));
         }
 
@@ -198,7 +212,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         + path_start;
     let body_start = header_end + 4;
     let content_length = parse_content_length(&buf[line_end + 2..header_end])?;
-    if content_length > MAX_BODY_BYTES {
+    if content_length >= MAX_BODY_BYTES {
         return Err(HttpError::BodyTooLarge);
     }
     while filled < body_start + content_length {
@@ -382,7 +396,7 @@ async fn handle_remote(
         Ok(cmd) => {
             defmt::info!("http: remote command {}", defmt::Debug2Format(&cmd));
             REMOTE_COMMAND_SIGNAL.signal(cmd);
-            write_text(socket, 204, "").await
+            write_no_content(socket).await
         }
         Err(e) => {
             defmt::warn!("http: bad request body ({})", e);
@@ -390,6 +404,20 @@ async fn handle_remote(
             write_text(socket, 400, &body).await
         }
     }
+}
+
+/// Write `204 No Content`. RFC 7230 says a 204 response "is always
+/// terminated by the first empty line after the header fields"; the
+/// general `write_text` helper would still emit `Content-Type` +
+/// `Content-Length: 0`, which is pedantically allowed but unusual.
+/// This helper omits both so the response is just headers + CRLF.
+async fn write_no_content(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let header = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
 }
 
 /// Parse the `Content-Length` header value out of a header block.
@@ -476,17 +504,39 @@ fn state_body(s: AvatarSnapshot) -> String {
         .map_or_else(|| String::from("null"), |a| format!("\"{a}\""));
     format!(
         "{{\
-\"emotion\":\"{emotion:?}\",\
+\"emotion\":\"{emotion}\",\
 \"head_pose\":{{\"pan_deg\":{pan:.2},\"tilt_deg\":{tilt:.2}}},\
 \"head_actual\":{actual},\
 \"battery\":{{\"percent\":{pct},\"voltage_mv\":{mv}}},\
 \"wifi\":{{\"connected\":{connected},\"ip\":{ip}}}\
 }}\n",
-        emotion = s.emotion,
+        emotion = emotion_str(s.emotion),
         pan = s.head_pose.pan_deg,
         tilt = s.head_pose.tilt_deg,
         connected = s.wifi.connected,
     )
+}
+
+/// Render an [`Emotion`] as its lowercase wire name. The vocabulary
+/// is mirrored by [`super::json::parse_emotion`] — so a consumer can
+/// take an emotion from `GET /state` and `POST /emotion` it back
+/// without any case translation. Pinning the mapping here also
+/// guards against a future non-unit `Emotion` variant whose `Debug`
+/// representation would otherwise inject `{` into the JSON string.
+///
+/// `Emotion` is `#[non_exhaustive]`; the wildcard returns `"unknown"`
+/// so a newly added variant surfaces on the dashboard as a missing
+/// mapping rather than silently aliasing to neutral.
+const fn emotion_str(e: Emotion) -> &'static str {
+    match e {
+        Emotion::Neutral => "neutral",
+        Emotion::Happy => "happy",
+        Emotion::Sad => "sad",
+        Emotion::Sleepy => "sleepy",
+        Emotion::Surprised => "surprised",
+        Emotion::Angry => "angry",
+        _ => "unknown",
+    }
 }
 
 /// Write `status` + `body` as `application/json`.
@@ -525,12 +575,13 @@ async fn write_text(socket: &mut TcpSocket<'_>, status: u16, body: &str) -> Resu
     socket.flush().await.map_err(|_| HttpError::Write)
 }
 
-/// Serve [`DASHBOARD_HTML`] with `Content-Type: text/html` plus a
-/// short cache hint so reloads during development don't pile bytes
-/// through the LAN.
+/// Serve [`DASHBOARD_HTML`] with `Content-Type: text/html`. Cache is
+/// disabled so a freshly flashed firmware's dashboard JS shows up on
+/// the next reload — the payload is 10 KiB over LAN, so the saving
+/// from a longer max-age was never worth the staleness it caused.
 async fn write_dashboard(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len}\r\nCache-Control: max-age=60\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
         len = DASHBOARD_HTML.len(),
     );
     socket
@@ -551,11 +602,166 @@ const fn status_reason(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
         // 200 + everything else fall through; the server only emits
         // codes from this short list, so anything else here is a
         // programming bug.
         _ => "OK",
+    }
+}
+
+/// Best-effort: write a status response for a parse-side failure.
+/// `Read`/`Write` skip — the socket is already broken so any further
+/// write would just produce another `Write` error.
+async fn write_status_for_error(socket: &mut TcpSocket<'_>, err: &HttpError) {
+    let (status, body) = match err {
+        HttpError::Malformed => (400, "bad request\n"),
+        HttpError::BodyTooLarge => (413, "payload too large\n"),
+        HttpError::HeadersTooLarge => (431, "request header fields too large\n"),
+        HttpError::Read | HttpError::Write => return,
+    };
+    let _ = write_text(socket, status, body).await;
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "test-only: panic-on-mismatch for variant extraction"
+)]
+mod tests {
+    use super::*;
+    use stackchan_core::RemoteCommand;
+
+    /// Every `Emotion` variant must round-trip through `emotion_str`
+    /// and `parse_set_emotion` so a `GET /state` consumer can post
+    /// the value back without case translation, and so a future
+    /// non-unit `Emotion` variant can't silently inject `{` into the
+    /// JSON output.
+    #[test]
+    fn emotion_str_round_trips_through_parser() {
+        for variant in [
+            Emotion::Neutral,
+            Emotion::Happy,
+            Emotion::Sad,
+            Emotion::Sleepy,
+            Emotion::Surprised,
+            Emotion::Angry,
+        ] {
+            let wire = emotion_str(variant);
+            let body = alloc::format!(r#"{{"emotion":"{wire}"}}"#);
+            match super::json::parse_set_emotion(&body).unwrap() {
+                RemoteCommand::SetEmotion { emotion, .. } => assert_eq!(emotion, variant),
+                other => panic!("expected SetEmotion for `{wire}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn content_length_missing_defaults_to_zero() {
+        let headers = b"Host: stackchan.local\r\nUser-Agent: curl/8\r\n";
+        assert!(matches!(parse_content_length(headers), Ok(0)));
+    }
+
+    #[test]
+    fn content_length_is_case_insensitive() {
+        for raw in [
+            "Content-Length: 42\r\n",
+            "content-length: 42\r\n",
+            "CONTENT-LENGTH: 42\r\n",
+            "cOnTeNt-LeNgTh: 42\r\n",
+        ] {
+            assert!(
+                matches!(parse_content_length(raw.as_bytes()), Ok(42)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_length_trims_value_whitespace() {
+        let headers = b"Content-Length:    99\r\n";
+        assert!(matches!(parse_content_length(headers), Ok(99)));
+    }
+
+    #[test]
+    fn content_length_rejects_non_numeric() {
+        let headers = b"Content-Length: forty-two\r\n";
+        assert!(matches!(
+            parse_content_length(headers),
+            Err(HttpError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn content_length_rejects_signed_value() {
+        // `usize::from_str` doesn't accept a leading '+' or '-'; pin
+        // that the parser surfaces it as Malformed rather than 0.
+        for raw in ["Content-Length: +5\r\n", "Content-Length: -5\r\n"] {
+            assert!(
+                matches!(
+                    parse_content_length(raw.as_bytes()),
+                    Err(HttpError::Malformed)
+                ),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_length_rejects_overflow() {
+        // 2^64-ish — never fits in usize on 32- or 64-bit targets.
+        let headers = b"Content-Length: 99999999999999999999\r\n";
+        assert!(matches!(
+            parse_content_length(headers),
+            Err(HttpError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn content_length_first_match_wins_on_duplicates() {
+        // RFC 7230 forbids multiple Content-Length headers with
+        // different values; this server takes the first match. Pin
+        // the behavior so a future change is conscious.
+        let headers = b"Content-Length: 7\r\nContent-Length: 99\r\n";
+        assert!(matches!(parse_content_length(headers), Ok(7)));
+    }
+
+    #[test]
+    fn find_subsequence_locates_or_misses() {
+        assert_eq!(find_subsequence(b"abcdef", b"cd"), Some(2));
+        assert_eq!(find_subsequence(b"abcdef", b"xy"), None);
+        assert_eq!(find_subsequence(b"abc", b"abcd"), None);
+        // Zero-length needles aren't tested: `slice::windows(0)`
+        // panics, and the only caller passes the four-byte CRLF
+        // CRLF sentinel, so the case is unreachable.
+    }
+
+    #[test]
+    fn split_once_partitions_on_first_delim() {
+        assert_eq!(
+            split_once(b"key: value", b':'),
+            Some((b"key".as_slice(), b" value".as_slice()))
+        );
+        assert_eq!(
+            split_once(b"a:b:c", b':'),
+            Some((b"a".as_slice(), b"b:c".as_slice()))
+        );
+        assert_eq!(
+            split_once(b":empty", b':'),
+            Some((b"".as_slice(), b"empty".as_slice()))
+        );
+        assert_eq!(split_once(b"none", b':'), None);
+    }
+
+    #[test]
+    fn trim_ascii_strips_both_sides() {
+        assert_eq!(trim_ascii(b"  hello  "), b"hello");
+        assert_eq!(trim_ascii(b"\t\rkey\n "), b"key");
+        assert_eq!(trim_ascii(b"   "), b"");
+        assert_eq!(trim_ascii(b"clean"), b"clean");
     }
 }

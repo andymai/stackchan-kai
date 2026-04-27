@@ -176,10 +176,10 @@ pub static SNAPSHOT_PUBSUB: PubSubChannel<
 const PUBLISH_MIN_INTERVAL_MS: u64 = 100;
 
 /// Last-published-at instant, in `embassy_time::Instant` ticks.
-/// `0` is the sentinel for "never published"; the first call always
-/// publishes.
-static LAST_PUBLISH_MS: Mutex<CriticalSectionRawMutex, core::cell::Cell<u64>> =
-    Mutex::new(core::cell::Cell::new(0));
+/// `None` until the first publish; `Some(ms)` thereafter so the
+/// throttle gate doesn't have to reserve a magic value.
+static LAST_PUBLISH_MS: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<u64>>> =
+    Mutex::new(core::cell::Cell::new(None));
 
 /// Last-published snapshot value, used to suppress duplicate
 /// publishes when nothing visible changed between ticks.
@@ -199,7 +199,9 @@ static LAST_PUBLISHED: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<Av
 pub fn publish_if_changed() {
     let now_ms = EmbassyInstant::now().as_millis();
     let last_ms = LAST_PUBLISH_MS.lock(core::cell::Cell::get);
-    if last_ms != 0 && now_ms.saturating_sub(last_ms) < PUBLISH_MIN_INTERVAL_MS {
+    if let Some(last) = last_ms
+        && now_ms.saturating_sub(last) < PUBLISH_MIN_INTERVAL_MS
+    {
         return;
     }
     let current = read();
@@ -209,7 +211,7 @@ pub fn publish_if_changed() {
     if !changed {
         return;
     }
-    LAST_PUBLISH_MS.lock(|cell| cell.set(now_ms));
+    LAST_PUBLISH_MS.lock(|cell| cell.set(Some(now_ms)));
     LAST_PUBLISHED.lock(|cell| cell.set(Some(current)));
     let publisher = SNAPSHOT_PUBSUB.immediate_publisher();
     publisher.publish_immediate(current);
