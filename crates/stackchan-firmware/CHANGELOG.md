@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.25.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.24.0...stackchan-firmware-v0.25.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** bearer-token auth on PUT/POST routes ([#160](https://github.com/andymai/stackchan-kai/issues/160)) ([625538a](https://github.com/andymai/stackchan-kai/commit/625538a14e97cc7fd371efd4fa48af11f83133a0))
+* **firmware:** operator dashboard at GET / ([#157](https://github.com/andymai/stackchan-kai/issues/157)) ([0470c23](https://github.com/andymai/stackchan-kai/commit/0470c23ac2879620d1a3ade74452d140f2209038))
+* **firmware:** SSE GET /state/stream + concurrent HTTP workers ([#156](https://github.com/andymai/stackchan-kai/issues/156)) ([0c531ff](https://github.com/andymai/stackchan-kai/commit/0c531fff2a04bf055be0d3aa51c26e62a8fe6b69))
+
 ## [0.24.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.23.0...stackchan-firmware-v0.24.0) (2026-04-27)
 
 
