@@ -12,8 +12,8 @@ for what that means.
 
 The wire-format implementation is hand-rolled in
 [`crates/stackchan-firmware/src/net/http.rs`](https://github.com/andymai/stackchan-kai/tree/main/crates/stackchan-firmware/src/net/http.rs)
-— the surface is small enough that a 200-line request matcher beats
-pulling a full HTTP framework into the firmware target.
+— the surface is small enough that a hand-rolled request matcher
+beats pulling a full HTTP framework into the firmware target.
 
 ## Routes
 
@@ -162,7 +162,7 @@ the operator's HTTP session if the SSID changed. Reboot to apply.
 | 404  | Path not in the matcher                                             |
 | 405  | Method not allowed                                                  |
 | 500  | SD write failed during PUT `/settings`                              |
-| 503  | PUT `/settings` with no SD card mounted; SSE worker pool full       |
+| 503  | PUT `/settings` with no SD; GET `/settings` before the config snapshot is loaded; no free SSE subscriber slot |
 
 Error responses have `Content-Type: text/plain` with a single-line
 reason — operators triage from `defmt` boot logs, the HTTP body is
@@ -211,6 +211,7 @@ response close.
 
 `SSE_MAX_SUBSCRIBERS` in
 [`net/snapshot.rs`](https://github.com/andymai/stackchan-kai/tree/main/crates/stackchan-firmware/src/net/snapshot.rs)
-caps the concurrent SSE consumers. A 5th SSE connection gets `503
-stream slots exhausted`. The two constants are coupled — bumping
-concurrency requires raising both.
+caps the concurrent SSE consumers. An SSE connection that arrives
+when no subscriber slot is free gets `503 stream slots exhausted`
+back. The two constants are coupled — bumping concurrency requires
+raising both.
