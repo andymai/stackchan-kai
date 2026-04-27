@@ -19,6 +19,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
 use crate::error::ConfigError;
 
@@ -276,9 +277,18 @@ impl<'a> Parser<'a> {
                 return Err(bare_err("expected ',' or ')' in auth", ""));
             }
         }
-        Ok(AuthConfig {
-            token: token.unwrap_or_default(),
-        })
+        let token = token.unwrap_or_default();
+        // Symmetric with the JSON parser: a literal `***` on disk is
+        // almost certainly a copy-paste from `GET /settings`, not an
+        // intentional value. Catch it here so the operator gets a
+        // clear error instead of a silently-locked-out device.
+        if token == TOKEN_REDACTED {
+            return Err(bare_err(
+                "auth.token is the redacted sentinel — supply the real token",
+                "",
+            ));
+        }
+        Ok(AuthConfig { token })
     }
 
     /// Parse `[ "...", "...", ]` into a `Vec<String>`.

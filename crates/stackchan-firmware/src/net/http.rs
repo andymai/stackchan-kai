@@ -697,15 +697,47 @@ const fn status_reason(status: u16) -> &'static str {
 /// Best-effort: write a status response for a parse-side failure.
 /// `Read`/`Write` skip — the socket is already broken so any further
 /// write would just produce another `Write` error.
+///
+/// `Unauthorized` takes a slightly different path so the response
+/// carries the `WWW-Authenticate: Bearer` challenge required by RFC
+/// 6750 §3 on `401`.
 async fn write_status_for_error(socket: &mut TcpSocket<'_>, err: &HttpError) {
+    if matches!(err, HttpError::Unauthorized) {
+        let _ = write_unauthorized(socket).await;
+        return;
+    }
     let (status, body) = match err {
         HttpError::Malformed => (400, "bad request\n"),
         HttpError::BodyTooLarge => (413, "payload too large\n"),
         HttpError::HeadersTooLarge => (431, "request header fields too large\n"),
-        HttpError::Unauthorized => (401, "unauthorized\n"),
-        HttpError::Read | HttpError::Write => return,
+        HttpError::Read | HttpError::Write | HttpError::Unauthorized => return,
     };
     let _ = write_text(socket, status, body).await;
+}
+
+/// Write `401 Unauthorized` with the `WWW-Authenticate: Bearer`
+/// challenge header (RFC 6750 §3). Strict HTTP clients use the
+/// challenge to know which auth scheme to negotiate; without it
+/// they may treat the response as a hard failure.
+async fn write_unauthorized(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let body = "unauthorized\n";
+    let header = format!(
+        "HTTP/1.1 401 Unauthorized\r\n\
+         WWW-Authenticate: Bearer\r\n\
+         Content-Type: text/plain\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\r\n",
+        len = body.len(),
+    );
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket
+        .write_all(body.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
 }
 
 #[cfg(test)]

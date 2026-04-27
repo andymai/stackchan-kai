@@ -636,14 +636,23 @@ mod tests {
 
     #[test]
     fn rejects_redacted_token_sentinel() {
-        // Same `GET → PUT` clobber pattern as PSK: render emits
-        // `"***"`, parse must reject it.
-        let body = render_settings_json(&full_config(), true).unwrap();
-        let err = parse_settings_json(&body).unwrap_err();
+        // Same `GET → PUT` clobber pattern as PSK: a body that
+        // round-trips a real PSK but the redacted token must trip
+        // the auth.token guard. Hand-roll the JSON so we can pin the
+        // token-only redaction case — `render_settings_json(_, true)`
+        // would redact the PSK first and the parser would surface
+        // that error instead of reaching the token check.
+        let body = r#"{
+            "wifi":{"ssid":"a","psk":"realkey","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "auth":{"token":"***"}
+        }"#;
+        let err = parse_settings_json(body).unwrap_err();
         match err {
             ConfigError::BareParse(msg) => assert!(
-                msg.contains("redacted") && (msg.contains("psk") || msg.contains("token")),
-                "expected a redacted-sentinel message, got `{msg}`"
+                msg.contains("auth.token") && msg.contains("redacted"),
+                "expected token-sentinel message, got `{msg}`"
             ),
             other => panic!("expected BareParse, got {other:?}"),
         }
