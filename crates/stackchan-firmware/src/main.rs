@@ -493,6 +493,16 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // Publish the final pose to the head task.
         head::POSE_SIGNAL.signal(entity.motor.head_pose);
 
+        // Update the read-only avatar snapshot the HTTP `/state`
+        // handler reads. Per-frame is cheap (one mutex, one struct
+        // copy) and avoids a second consumer racing the existing
+        // latest-wins `Signal`s.
+        net::snapshot::update_avatar(
+            entity.mind.affect.emotion,
+            entity.motor.head_pose,
+            Some(entity.motor.head_pose_actual),
+        );
+
         // Render the LED ring from the same entity state.
         render_leds(&entity, now, &mut led_frame);
         leds::LED_FRAME_SIGNAL.signal(led_frame);
@@ -879,6 +889,9 @@ async fn main(spawner: Spawner) -> ! {
         net_config.time.sntp_servers.clone(),
     )) {
         defmt::panic!("spawn(sntp_task) failed: {}", defmt::Debug2Format(&e));
+    }
+    if let Err(e) = spawner.spawn(net::http::http_task(net_stack)) {
+        defmt::panic!("spawn(http_task) failed: {}", defmt::Debug2Format(&e));
     }
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
