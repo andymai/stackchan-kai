@@ -156,10 +156,13 @@ pub struct SpeechSlot {
 /// Capacity 4. Eviction policy when full:
 /// - Incoming non-Critical → drop the incoming slot.
 /// - Incoming Critical → drain the queue, drop the oldest
-///   non-Critical to make room, re-enqueue the rest plus the
-///   incoming. If every queued slot is also Critical, drop the
-///   incoming with a warn log — there's nothing of lower priority
-///   to evict without losing equivalent urgency.
+///   non-Critical to make room, then re-enqueue the new Critical
+///   *at the head* with the survivors behind it. The Critical
+///   then plays immediately when `AUDIO_TX_PREEMPT` fires rather
+///   than waiting through up to three survivor slots. If every
+///   queued slot is also Critical, drop the incoming with a warn
+///   log — there's nothing of lower priority to evict without
+///   losing equivalent urgency.
 pub static AUDIO_TX_QUEUE: Channel<CriticalSectionRawMutex, SpeechSlot, 4> = Channel::new();
 
 /// Hard cap on the eviction-buffer size — matches [`AUDIO_TX_QUEUE`]
@@ -289,14 +292,17 @@ pub fn try_dispatch_utterance(utterance: &Utterance) -> Result<(), DispatchError
         evicted.priority as u8,
     );
     drop(evicted);
-    // Re-enqueue survivors in their original FIFO order, then the
-    // new Critical at the tail.
-    for s in buffer {
-        let _ = AUDIO_TX_QUEUE.try_send(s);
-    }
+    // Enqueue the Critical at the head, then put the survivors
+    // back behind it. `update_preempt_after_enqueue` drops the
+    // in-flight source on the next TX fill, and the TX feeder
+    // promotes from the queue head — so the Critical plays
+    // immediately rather than after the survivor slots.
     AUDIO_TX_QUEUE
         .try_send(slot)
         .map_err(|_| DispatchError::QueueFull)?;
+    for s in buffer {
+        let _ = AUDIO_TX_QUEUE.try_send(s);
+    }
     update_preempt_after_enqueue(Priority::Critical);
     Ok(())
 }
