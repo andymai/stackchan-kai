@@ -6,6 +6,10 @@
 //!   liveness checks and post-flash smoke tests).
 //! - `GET /state` — `AvatarSnapshot` JSON read non-destructively
 //!   from `super::snapshot`.
+//! - `GET /state/stream` — Server-Sent Events stream of
+//!   `AvatarSnapshot` updates. Sends an initial event on connect,
+//!   then one event per change (throttled at the producer to ~10 Hz),
+//!   plus a `: heartbeat` SSE comment every 15 s.
 //! - `POST /emotion` — JSON `{"emotion": "...", "hold_ms": ...}`.
 //!   Sets affect + holds `mind.autonomy` against the autonomous
 //!   emotion drivers for `hold_ms` (default
@@ -38,9 +42,11 @@
 use alloc::format;
 use alloc::string::String;
 
+use embassy_futures::select::{Either, select};
 use embassy_net::Stack;
 use embassy_net::tcp::TcpSocket;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use embedded_io_async::Write as AsyncWrite;
@@ -48,7 +54,7 @@ use stackchan_core::RemoteCommand;
 
 use super::json::{self, JsonError};
 use super::snapshot::{self, AvatarSnapshot};
-use super::wifi::{WIFI_LINK_SIGNAL, WifiLinkState};
+use super::wifi::LINK_READY;
 
 /// Listening port. LAN-only; no auth.
 const HTTP_PORT: u16 = 80;
@@ -71,25 +77,39 @@ const MAX_BODY_BYTES: usize = 256;
 /// render task drains will overwrite the first.
 pub static REMOTE_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, RemoteCommand> = Signal::new();
 
-/// Embassy task — owns one TCP socket and serves requests one at a time.
-/// Re-binds the socket per accept so a misbehaving client can't wedge
-/// the listener.
-#[embassy_executor::task]
-pub async fn http_task(stack: Stack<'static>) -> ! {
+/// Number of concurrent HTTP worker tasks. Each worker holds its own
+/// rx/tx buffers and accepts one connection at a time.
+///
+/// Sized for: one long-lived `GET /state/stream` SSE client + a few
+/// short-lived requests in parallel. Bumping this requires a matching
+/// bump to [`super::snapshot::SSE_MAX_SUBSCRIBERS`] (each worker can
+/// hold one SSE subscriber at a time).
+pub const HTTP_WORKER_COUNT: usize = 4;
+
+/// Embassy worker task — one TCP socket per worker, accepts a
+/// connection, serves it, then loops back for the next accept.
+/// `pool_size` provides [`HTTP_WORKER_COUNT`] independent instances
+/// so multiple clients (including a long-lived SSE stream) can run
+/// in parallel.
+///
+/// Each worker's rx/tx buffers live on its own task stack — bumping
+/// `HTTP_WORKER_COUNT` linearly grows total buffer usage.
+#[embassy_executor::task(pool_size = HTTP_WORKER_COUNT)]
+pub async fn http_worker(stack: Stack<'static>) -> ! {
     let mut rx_buf = [0u8; 1024];
     let mut tx_buf = [0u8; 2048];
 
-    // Wait for the wifi task to publish a Connected state at least
-    // once. After that, every accept loop just keeps trying — embassy-net
+    // Gate on the latched LINK_READY flag — Signal::wait would race
+    // between workers (single stored waker), so we poll the atomic
+    // every 100 ms until the wifi task latches it on first connect.
+    // After that, every accept loop just keeps trying — embassy-net
     // returns errors quickly when the link is down, no busy spin.
-    loop {
-        if matches!(WIFI_LINK_SIGNAL.wait().await, WifiLinkState::Connected) {
-            break;
-        }
+    while !LINK_READY.load(core::sync::atomic::Ordering::Acquire) {
+        embassy_time::Timer::after(Duration::from_millis(100)).await;
     }
 
     defmt::info!(
-        "http: listening on 0.0.0.0:{=u16} (LAN-only, no auth)",
+        "http: worker listening on 0.0.0.0:{=u16} (LAN-only, no auth)",
         HTTP_PORT
     );
 
@@ -192,6 +212,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     match (method, path) {
         ("GET", "/health") => write_json(socket, 200, &health_body()).await,
         ("GET", "/state") => write_json(socket, 200, &state_body(snapshot::read())).await,
+        ("GET", "/state/stream") => handle_state_stream(socket).await,
         ("GET", "/settings") => handle_get_settings(socket).await,
         ("PUT", "/settings") => handle_put_settings(socket, body).await,
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
@@ -200,6 +221,92 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
     }
+}
+
+/// `GET /state/stream` — open an SSE stream of [`AvatarSnapshot`]
+/// events. The render task publishes throttled snapshots via
+/// [`super::snapshot::SNAPSHOT_PUBSUB`]; this handler subscribes,
+/// emits each new snapshot as `data: {json}\n\n`, and sends a
+/// `: heartbeat\n\n` SSE comment line every
+/// [`SSE_HEARTBEAT_SECS`] seconds so proxies and NAT idle timers
+/// don't tear the connection down.
+///
+/// Runs until the client disconnects or the socket times out.
+/// Returns an error from the loop when the write fails — the
+/// outer accept loop logs and re-binds.
+async fn handle_state_stream(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let Ok(mut subscriber) = snapshot::SNAPSHOT_PUBSUB.subscriber() else {
+        // All subscriber slots taken — every other worker is also
+        // streaming. Refuse politely.
+        return write_text(socket, 503, "stream slots exhausted\n").await;
+    };
+
+    // Disable the per-request inactivity timeout: SSE traffic is
+    // server→client only, and the client doesn't speak after the
+    // initial GET.
+    socket.set_timeout(None);
+
+    let header = "HTTP/1.1 200 OK\r\n\
+                  Content-Type: text/event-stream\r\n\
+                  Cache-Control: no-cache\r\n\
+                  Connection: keep-alive\r\n\r\n";
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+
+    // Initial event: send the current snapshot immediately so
+    // freshly-connected clients don't have to wait for the next
+    // render-tick change.
+    write_event(socket, &snapshot::read()).await?;
+
+    loop {
+        match select(
+            subscriber.next_message(),
+            embassy_time::Timer::after(Duration::from_secs(SSE_HEARTBEAT_SECS)),
+        )
+        .await
+        {
+            Either::First(WaitResult::Message(snap)) => write_event(socket, &snap).await?,
+            // `Lagged` means we missed N publishes. Skip them and
+            // wait for the next — a current snapshot is more useful
+            // than backfilling stale ones.
+            Either::First(WaitResult::Lagged(_)) => {}
+            Either::Second(()) => write_heartbeat(socket).await?,
+        }
+    }
+}
+
+/// SSE heartbeat interval. 15 s is a common default that keeps most
+/// reverse-proxy / NAT idle timers happy without bloating LAN
+/// traffic.
+const SSE_HEARTBEAT_SECS: u64 = 15;
+
+/// Write a single SSE `data: ...\n\n` event carrying the snapshot's
+/// JSON encoding.
+async fn write_event(socket: &mut TcpSocket<'_>, snap: &AvatarSnapshot) -> Result<(), HttpError> {
+    // `state_body` returns a JSON object terminated with `\n`; SSE
+    // wants a single `data: <line>` followed by a blank line, so we
+    // strip the trailing newline before formatting.
+    let body = state_body(*snap);
+    let trimmed = body.trim_end_matches('\n');
+    let event = format!("data: {trimmed}\n\n");
+    socket
+        .write_all(event.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
+}
+
+/// Write an SSE comment line (`: heartbeat\n\n`) to keep the
+/// connection alive across idle stretches. Comment lines are
+/// ignored by `EventSource` clients.
+async fn write_heartbeat(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    socket
+        .write_all(b": heartbeat\n\n")
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
 }
 
 /// `GET /settings` — render the current snapshot with `wifi.psk`
@@ -416,6 +523,8 @@ const fn status_reason(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        503 => "Service Unavailable",
         // 200 + everything else fall through; the server only emits
         // codes from this short list, so anything else here is a
         // programming bug.

@@ -513,6 +513,10 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
             entity.motor.head_pose,
             Some(entity.motor.head_pose_actual),
         );
+        // Push the latest snapshot to any connected SSE subscribers.
+        // Throttled internally so a 30 Hz render doesn't firehose
+        // GET /state/stream clients.
+        net::snapshot::publish_if_changed();
 
         // Render the LED ring from the same entity state.
         render_leds(&entity, now, &mut led_frame);
@@ -912,8 +916,10 @@ async fn main(spawner: Spawner) -> ! {
     )) {
         defmt::panic!("spawn(sntp_task) failed: {}", defmt::Debug2Format(&e));
     }
-    if let Err(e) = spawner.spawn(net::http::http_task(net_stack)) {
-        defmt::panic!("spawn(http_task) failed: {}", defmt::Debug2Format(&e));
+    for _ in 0..net::http::HTTP_WORKER_COUNT {
+        if let Err(e) = spawner.spawn(net::http::http_worker(net_stack)) {
+            defmt::panic!("spawn(http_worker) failed: {}", defmt::Debug2Format(&e));
+        }
     }
     if let Err(e) = spawner.spawn(net::mdns::mdns_task(
         net_stack,

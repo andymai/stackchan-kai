@@ -8,6 +8,7 @@
 //! connect, and on disconnection retries with exponential backoff.
 
 use alloc::string::String;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -16,7 +17,22 @@ use esp_radio::wifi::{ClientConfig, ModeConfig, WifiController, WifiEvent};
 
 /// Public link-state signal — downstream tasks (SNTP, HTTP, mDNS)
 /// `wait()` on it to gate their own startup against the connect.
+///
+/// `Signal` is single-consumer: it stores one waker, so multiple
+/// concurrent `.wait().await` callers will lose all but the
+/// last-registered. SNTP and mDNS each have a single instance and
+/// loop on the signal, so this works for them. Multi-instance
+/// consumers (the HTTP worker pool) must use [`LINK_READY`] instead.
 pub static WIFI_LINK_SIGNAL: Signal<CriticalSectionRawMutex, WifiLinkState> = Signal::new();
+
+/// Latched "link has been up at least once" flag.
+///
+/// Set the first time [`wifi_task`] observes a [`WifiLinkState::Connected`]
+/// transition; never cleared. Multiple consumers can read this
+/// concurrently without the single-waker contention that
+/// [`WIFI_LINK_SIGNAL`] has — used by the HTTP worker pool to gate
+/// each worker's first accept call.
+pub static LINK_READY: AtomicBool = AtomicBool::new(false);
 
 /// Coarse-grained Wi-Fi link state. Published on every transition.
 #[derive(Clone, Copy, Debug, defmt::Format)]
@@ -94,6 +110,7 @@ async fn connect_loop(mut controller: WifiController<'static>, ssid: String) -> 
             Ok(()) => {
                 defmt::info!("wifi: connected");
                 WIFI_LINK_SIGNAL.signal(WifiLinkState::Connected);
+                LINK_READY.store(true, Ordering::Release);
                 backoff_idx = 0;
                 // Park until the controller reports a disconnect.
                 controller.wait_for_event(WifiEvent::StaDisconnected).await;
