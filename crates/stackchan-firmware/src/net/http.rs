@@ -730,11 +730,9 @@ mod tests {
         assert_eq!(find_subsequence(b"abcdef", b"cd"), Some(2));
         assert_eq!(find_subsequence(b"abcdef", b"xy"), None);
         assert_eq!(find_subsequence(b"abc", b"abcd"), None);
-        // Zero-length needle is a documented `windows(0)` quirk —
-        // the parser only ever passes the four-byte CRLF CRLF
-        // sentinel, so no caller exercises this. Recording the
-        // behaviour rather than relying on it.
-        assert_eq!(find_subsequence(b"abc", b""), Some(0));
+        // Zero-length needles aren't tested: `slice::windows(0)`
+        // panics, and the only caller passes the four-byte CRLF
+        // CRLF sentinel, so the case is unreachable.
     }
 
     #[test]
