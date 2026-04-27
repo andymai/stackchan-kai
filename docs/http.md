@@ -170,11 +170,13 @@ $ curl http://stackchan.local/settings
  "auth":{"token":"***"}}
 ```
 
-`wifi.psk` and a non-empty `auth.token` are redacted to `***`. The
-server rejects PUT bodies that contain `***` for either field so a
-copy-paste round trip can't silently overwrite the real value with
-the redaction sentinel. An empty `auth.token` (= auth disabled)
-renders as `""` and round-trips losslessly.
+`wifi.psk` and a non-empty `auth.token` are redacted to `***`.
+On `PUT /settings`, the server treats either sentinel as **"keep
+current value"** rather than overwriting with the literal
+placeholder — so a `GET → mutate hostname → PUT` round trip
+preserves the secrets. An empty `""` value still means "clear"
+(open AP / auth disabled); only the literal `"***"` triggers the
+preserve substitution.
 
 ### `PUT /settings`
 
@@ -189,8 +191,14 @@ $ curl -X PUT http://stackchan.local/settings \
 {"reboot_required":true}
 ```
 
-Drop the `Authorization` header (and replace `auth.token` with `""`)
-to disable auth on a device that previously had it enabled.
+To disable auth on a device that previously had it enabled, send
+`auth.token = ""` (the explicit empty string, not the `***`
+sentinel) and drop the `Authorization` header on the PUT itself.
+
+Operators using curl who only want to update one field can echo
+the rest of the body back from `GET /settings` unchanged — the
+`***` sentinels for `wifi.psk` and `auth.token` will be merged
+against the persisted values rather than clobbering them.
 
 Full-replace. The server validates the body via
 `stackchan_net::validate` (rejects empty SSID, invalid country code,
@@ -208,7 +216,7 @@ the operator's HTTP session if the SSID changed. Reboot to apply.
 |------|---------------------------------------------------------------------|
 | 200  | GET responses, dashboard, successful PUT                            |
 | 204  | POST `/emotion` / `/look-at` / `/reset` on success                  |
-| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, redacted PSK or token sentinel, validation failure on PUT `/settings` |
+| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, validation failure on PUT `/settings` |
 | 401  | Write route called without a valid bearer token (when auth is enabled) |
 | 404  | Path not in the matcher                                             |
 | 405  | Method not allowed                                                  |
