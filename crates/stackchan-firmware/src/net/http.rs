@@ -63,17 +63,22 @@ use super::wifi::LINK_READY;
 const HTTP_PORT: u16 = 80;
 
 /// Maximum request line + headers + body size we'll buffer before
-/// responding `400`. POST bodies for the current write surface are
-/// at most a few dozen bytes; 1 KiB is generous.
+/// responding `400`. Headers and body share this buffer, so the
+/// late-stage `filled >= REQUEST_BUF_BYTES` guard doubles as a
+/// header-overflow check.
 const REQUEST_BUF_BYTES: usize = 1024;
 
-/// Cap on the `Content-Length` header. Anything larger is rejected
-/// before any body bytes are read.
+/// Cap on the `Content-Length` header. Bodies of this size or
+/// larger are rejected before any body bytes are read.
 ///
-/// Sized for `PUT /settings`: the full schema-v1 body with a 32-char
-/// SSID, 63-char WPA2 PSK, an `America/…` IANA tz label, and a few
-/// SNTP servers lands around 320 bytes; 1024 leaves room for future
-/// fields without forcing every operator update through a re-cap.
+/// Equal to [`REQUEST_BUF_BYTES`] on purpose: the buffer holds
+/// headers + body together, so any `content_length` that hits the
+/// cap can't physically fit alongside the request line. Sized for
+/// `PUT /settings`: the full schema-v1 body with a 32-char SSID,
+/// 63-char WPA2 PSK, an `America/…` IANA tz label, and a few SNTP
+/// servers lands around 320 bytes; the 1024 ceiling leaves room
+/// for future fields without forcing every operator update through
+/// a re-cap.
 const MAX_BODY_BYTES: usize = 1024;
 
 /// Self-contained operator dashboard, embedded at compile time.
@@ -207,7 +212,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         + path_start;
     let body_start = header_end + 4;
     let content_length = parse_content_length(&buf[line_end + 2..header_end])?;
-    if content_length > MAX_BODY_BYTES {
+    if content_length >= MAX_BODY_BYTES {
         return Err(HttpError::BodyTooLarge);
     }
     while filled < body_start + content_length {
