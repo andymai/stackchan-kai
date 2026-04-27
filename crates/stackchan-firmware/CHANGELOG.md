@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.18.0...stackchan-firmware-v0.19.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** esp-radio Wi-Fi station with offline-first retry ([#144](https://github.com/andymai/stackchan-kai/issues/144)) ([4638833](https://github.com/andymai/stackchan-kai/commit/463883365b50d31b7b3ee0808f136b881d0d4960))
+
 ## [0.18.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.17.2...stackchan-firmware-v0.18.0) (2026-04-26)
 
 
