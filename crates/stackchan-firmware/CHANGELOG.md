@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.25.0...stackchan-firmware-v0.26.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** POST /speak + audio queue eviction policy ([#163](https://github.com/andymai/stackchan-kai/issues/163)) ([9024675](https://github.com/andymai/stackchan-kai/commit/902467580c17c69190c6c148231bc057ce677c73))
+
 ## [0.25.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.24.0...stackchan-firmware-v0.25.0) (2026-04-27)
 
 
