@@ -21,8 +21,9 @@ use crate::error::ConfigError;
 ///
 /// Defaults are tuned for offline-first boot: an empty SSID is a
 /// no-op at the Wi-Fi layer, hostname `"stackchan"` is the canonical
-/// mDNS label, and `time` points at `pool.ntp.org` so SNTP picks up
-/// once Wi-Fi is configured.
+/// mDNS label, `time` points at `pool.ntp.org` so SNTP picks up
+/// once Wi-Fi is configured, and `auth.token` is empty so the HTTP
+/// control plane stays LAN-open until the operator opts in.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct Config {
@@ -32,6 +33,11 @@ pub struct Config {
     pub mdns: MdnsConfig,
     /// Timezone label + SNTP server list.
     pub time: TimeConfig,
+    /// HTTP control-plane authentication. Empty token = auth
+    /// disabled (current LAN-open behaviour); non-empty token gates
+    /// `PUT`/`POST` routes behind `Authorization: Bearer <token>`.
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub auth: AuthConfig,
 }
 
 /// Wi-Fi station credentials.
@@ -73,6 +79,19 @@ impl Default for MdnsConfig {
             hostname: "stackchan".to_string(),
         }
     }
+}
+
+/// HTTP control-plane authentication.
+///
+/// Default `token` is the empty string, which leaves the HTTP plane
+/// LAN-open (matching the offline-first stance for Wi-Fi). Setting
+/// a non-empty token requires `Authorization: Bearer <token>` on
+/// `PUT`/`POST` routes; reads stay unauthenticated.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct AuthConfig {
+    /// Shared-secret bearer token. Empty = auth disabled.
+    pub token: String,
 }
 
 /// Time / SNTP configuration.

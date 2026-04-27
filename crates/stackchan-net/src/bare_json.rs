@@ -18,7 +18,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::config::{Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+use crate::config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
 use crate::error::ConfigError;
 
 /// Sentinel emitted by [`render_settings_json`] when `redact_psk = true`.
@@ -27,6 +27,13 @@ use crate::error::ConfigError;
 /// round trip can't accidentally persist the redacted placeholder as
 /// the real key (which would silently break Wi-Fi on next reboot).
 pub const PSK_REDACTED: &str = "***";
+
+/// Sentinel emitted in place of a non-empty `auth.token` on render.
+///
+/// Keeps the secret out of `GET /settings` responses, and rejected
+/// as an input value by [`parse_settings_json`] for the same
+/// `GET → PUT` clobber reason as [`PSK_REDACTED`].
+pub const TOKEN_REDACTED: &str = "***";
 
 /// Parse a schema-v1 JSON object into a [`Config`].
 ///
@@ -55,16 +62,19 @@ pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
 
 /// Render a [`Config`] to a compact JSON string.
 ///
-/// `redact_psk = true` replaces `wifi.psk` with `"***"` so the
-/// output is safe to expose to unauthed callers (HTTP `GET /settings`
-/// passes `true`). `redact_psk = false` round-trips losslessly with
+/// `redact_secrets = true` replaces `wifi.psk` and any non-empty
+/// `auth.token` with `"***"` so the output is safe to expose to
+/// unauthed callers (HTTP `GET /settings` passes `true`). An empty
+/// token renders as `""` regardless — there's nothing to redact and
+/// the empty string is its own meaningful value (= auth disabled).
+/// `redact_secrets = false` round-trips losslessly with
 /// [`parse_settings_json`].
 ///
 /// # Errors
 ///
 /// Currently infallible — kept as `Result` for symmetry with
 /// [`crate::render_ron`].
-pub fn render_settings_json(config: &Config, redact_psk: bool) -> Result<String, ConfigError> {
+pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<String, ConfigError> {
     let mut out = String::new();
     out.push('{');
     out.push_str("\"wifi\":{");
@@ -73,7 +83,7 @@ pub fn render_settings_json(config: &Config, redact_psk: bool) -> Result<String,
     push_string_field(
         &mut out,
         "psk",
-        if redact_psk {
+        if redact_secrets {
             PSK_REDACTED
         } else {
             &config.wifi.psk
@@ -92,7 +102,14 @@ pub fn render_settings_json(config: &Config, redact_psk: bool) -> Result<String,
         }
         push_string_literal(&mut out, s);
     }
-    out.push_str("]}}");
+    out.push_str("]},\"auth\":{");
+    let token_view: &str = if redact_secrets && !config.auth.token.is_empty() {
+        TOKEN_REDACTED
+    } else {
+        &config.auth.token
+    };
+    push_string_field(&mut out, "token", token_view);
+    out.push_str("}}");
     Ok(out)
 }
 
@@ -145,6 +162,7 @@ impl<'a> Parser<'a> {
         let mut wifi: Option<WifiConfig> = None;
         let mut mdns: Option<MdnsConfig> = None;
         let mut time: Option<TimeConfig> = None;
+        let mut auth: Option<AuthConfig> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -173,6 +191,12 @@ impl<'a> Parser<'a> {
                     }
                     time = Some(self.parse_time()?);
                 }
+                "auth" => {
+                    if auth.is_some() {
+                        return Err(bare_err("duplicate top-level field", "auth"));
+                    }
+                    auth = Some(self.parse_auth()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -184,6 +208,10 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
+            // `auth` is optional for migration: bodies emitted before
+            // schema v1.1 don't have it, and the default empty token
+            // means "auth disabled."
+            auth: auth.unwrap_or_default(),
         })
     }
 
@@ -314,6 +342,44 @@ impl<'a> Parser<'a> {
             tz: tz.ok_or_else(|| bare_err("missing time.tz", ""))?,
             sntp_servers: sntp_servers.ok_or_else(|| bare_err("missing time.sntp_servers", ""))?,
         })
+    }
+
+    /// Parse the `"auth": { "token": ... }` block.
+    fn parse_auth(&mut self) -> Result<AuthConfig, ConfigError> {
+        self.expect_char('{')?;
+        let mut token: Option<String> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            let value = self.parse_string()?;
+            match key.as_str() {
+                "token" => {
+                    if token.is_some() {
+                        return Err(bare_err("duplicate auth field", "token"));
+                    }
+                    token = Some(value);
+                }
+                other => return Err(bare_err("unknown auth field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in auth", ""));
+            }
+        }
+        let token = token.unwrap_or_default();
+        if token == TOKEN_REDACTED {
+            return Err(bare_err(
+                "auth.token is the redacted sentinel — supply the real token",
+                "",
+            ));
+        }
+        Ok(AuthConfig { token })
     }
 
     /// Parse `[ "...", "...", ... ]` into a `Vec<String>`.
@@ -452,6 +518,9 @@ mod tests {
                 tz: "UTC".to_string(),
                 sntp_servers: vec!["pool.ntp.org".to_string(), "time.google.com".to_string()],
             },
+            auth: AuthConfig {
+                token: "shared-secret".to_string(),
+            },
         }
     }
 
@@ -530,6 +599,65 @@ mod tests {
             matches!(err, ConfigError::NoSntpServers),
             "expected NoSntpServers, got {err:?}"
         );
+    }
+
+    #[test]
+    fn render_redacts_token_when_requested() {
+        let original = full_config();
+        let rendered = render_settings_json(&original, true).unwrap();
+        assert!(
+            rendered.contains("\"token\":\"***\""),
+            "expected redacted token in: {rendered}"
+        );
+        assert!(
+            !rendered.contains("shared-secret"),
+            "token leaked through redaction: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_does_not_redact_empty_token() {
+        // An empty token is meaningful (= auth disabled); it should
+        // render as `""` even when `redact_secrets = true`, because
+        // `***` is the rejected sentinel and a no-auth device must
+        // be able to round-trip its (empty) token through GET → PUT.
+        let mut cfg = full_config();
+        cfg.auth.token = String::new();
+        let redacted = render_settings_json(&cfg, true).unwrap();
+        assert!(
+            redacted.contains("\"token\":\"\""),
+            "empty token should render as empty string: {redacted}"
+        );
+        // Round-trip via the lossless render to confirm parser side.
+        let lossless = render_settings_json(&cfg, false).unwrap();
+        let parsed = parse_settings_json(&lossless).unwrap();
+        assert_eq!(parsed.auth.token, "");
+    }
+
+    #[test]
+    fn rejects_redacted_token_sentinel() {
+        // Same `GET → PUT` clobber pattern as PSK: render emits
+        // `"***"`, parse must reject it.
+        let body = render_settings_json(&full_config(), true).unwrap();
+        let err = parse_settings_json(&body).unwrap_err();
+        match err {
+            ConfigError::BareParse(msg) => assert!(
+                msg.contains("redacted") && (msg.contains("psk") || msg.contains("token")),
+                "expected a redacted-sentinel message, got `{msg}`"
+            ),
+            other => panic!("expected BareParse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_auth_block_defaults_to_empty_token() {
+        // Schema-v1 bodies (rendered before auth was added) lack the
+        // `auth` field. The parser must fall back to the default empty
+        // token so existing operators don't get locked out on first
+        // boot of a firmware build that knows about auth.
+        let input = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.auth.token, "");
     }
 
     #[test]
@@ -620,6 +748,9 @@ mod tests {
                     "time3.google.com".to_string(),
                     "time4.google.com".to_string(),
                 ],
+            },
+            auth: AuthConfig {
+                token: "x".repeat(64),
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();
