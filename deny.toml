@@ -32,6 +32,9 @@ allow = [
     "ISC",
     "CC0-1.0",
     "Zlib",
+    # `smoltcp` and `managed`, pulled in transitively by embassy-net,
+    # ship under the BSD Zero Clause licence.
+    "0BSD",
 ]
 confidence-threshold = 0.8
 
