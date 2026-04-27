@@ -23,12 +23,14 @@ beats pulling a full HTTP framework into the firmware target.
 |--------|------------------|-----------------------------------------------------|
 | GET    | `/`              | Operator dashboard (HTML + JS, embedded in firmware) |
 | GET    | `/health`        | Uptime, firmware version, free heap                  |
-| GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi    |
+| GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
 | POST   | `/emotion`       | Set affect with hold timer                          |
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
 | POST   | `/speak`         | Play a baked phrase / chirp through the speaker      |
+| POST   | `/volume`        | Set output volume (0–100); persisted to SD           |
+| POST   | `/mute`          | Mute / un-mute output stage; persisted to SD         |
 | GET    | `/settings`      | Persisted config (PSK + token redacted)             |
 | PUT    | `/settings`      | Replace persisted config; atomic SD writeback        |
 
@@ -42,7 +44,8 @@ $ curl http://stackchan.local/state
 {"emotion":"Neutral","head_pose":{"pan_deg":0.00,"tilt_deg":0.00},
  "head_actual":{"pan_deg":0.10,"tilt_deg":-0.20},
  "battery":{"percent":78,"voltage_mv":3920},
- "wifi":{"connected":true,"ip":"192.168.1.42"}}
+ "wifi":{"connected":true,"ip":"192.168.1.42"},
+ "audio":{"volume_pct":50,"muted":false}}
 ```
 
 `GET /state/stream` opens a Server-Sent Events stream. The server
@@ -154,6 +157,42 @@ or evict an in-flight operator request.
 
 `POST /speak` is gated by [auth](#auth) when a token is configured.
 
+### `POST /volume`
+
+```
+$ curl -X POST http://stackchan.local/volume \
+       -H 'Content-Type: application/json' \
+       -d '{"level":75}'
+```
+
+| Field | Type | Required | Notes                                      |
+|-------|------|----------|--------------------------------------------|
+| level | u8   | yes      | Output volume as a percentile, `0..=100`.  |
+
+Persistent — the new value is written atomically to
+`/sd/STACKCHAN.RON` (same writeback path as `PUT /settings`) and
+mirrored into the live `audio.volume_pct` field surfaced on
+`GET /state`. The firmware then signals the audio task, which calls
+`Aw88298::set_volume_db` with the linear-in-dB mapping (`0% → -36
+dB`, `100% → 0 dB`). Persist-then-apply ordering: a failed SD write
+leaves the amp at its current level instead of partially applying.
+
+### `POST /mute`
+
+```
+$ curl -X POST http://stackchan.local/mute \
+       -H 'Content-Type: application/json' \
+       -d '{"muted":true}'
+```
+
+| Field | Type | Required | Notes                                                      |
+|-------|------|----------|------------------------------------------------------------|
+| muted | bool | yes      | `true` = mute output stage, `false` = un-mute.             |
+
+Persistent. Mute is independent of volume so unmuting restores the
+prior level — `volume = 0` is "audible but very quiet"; `muted =
+true` is the actual-silence path.
+
 ## Persistent config
 
 The boot config lives at `/sd/STACKCHAN.RON` in the schema described
@@ -167,7 +206,8 @@ $ curl http://stackchan.local/settings
 {"wifi":{"ssid":"my-net","psk":"***","country":"US"},
  "mdns":{"hostname":"stackchan"},
  "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
- "auth":{"token":"***"}}
+ "auth":{"token":"***"},
+ "audio":{"volume_pct":50,"muted":false}}
 ```
 
 `wifi.psk` and a non-empty `auth.token` are redacted to `***`.
@@ -187,7 +227,8 @@ $ curl -X PUT http://stackchan.local/settings \
        -d '{"wifi":{"ssid":"new-net","psk":"realkey","country":"US"},
             "mdns":{"hostname":"stackchan"},
             "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
-            "auth":{"token":"s3cret"}}'
+            "auth":{"token":"s3cret"},
+            "audio":{"volume_pct":50,"muted":false}}'
 {"reboot_required":true}
 ```
 
@@ -216,7 +257,7 @@ the operator's HTTP session if the SSID changed. Reboot to apply.
 |------|---------------------------------------------------------------------|
 | 200  | GET responses, dashboard, successful PUT                            |
 | 204  | POST `/emotion` / `/look-at` / `/reset` on success                  |
-| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, validation failure on PUT `/settings` |
+| 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, `volume.level > 100`, validation failure on PUT `/settings` |
 | 401  | Write route called without a valid bearer token (when auth is enabled) |
 | 404  | Path not in the matcher                                             |
 | 405  | Method not allowed                                                  |
@@ -238,6 +279,9 @@ no framework, no external CDN. The dashboard:
 - Subscribes to `/state/stream` for live state.
 - Has a button per emotion (POST `/emotion` with a 30 s hold).
 - Renders pan/tilt sliders that POST `/look-at` on release.
+- Volume slider (POST `/volume` with a 250 ms client-side debounce
+  so dragging doesn't burn an SD write per pointer move) and a mute
+  toggle (POST `/mute`).
 - Loads `/settings` into an editable form; submits PUT `/settings`
   on save and surfaces the `reboot_required` hint via toast.
 

@@ -15,6 +15,7 @@ use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::Instant as EmbassyInstant;
 use stackchan_core::Emotion;
 use stackchan_core::head::Pose;
+use stackchan_net::config::AudioConfig;
 
 /// Battery snapshot — published by the power task.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -52,6 +53,11 @@ pub struct AvatarSnapshot {
     pub battery: BatterySnapshot,
     /// Wi-Fi link state.
     pub wifi: WifiSnapshot,
+    /// Persisted audio settings (volume + mute) currently applied to
+    /// the AW88298. Mirrored from `CONFIG_SNAPSHOT.audio` on every
+    /// successful `POST /volume` / `POST /mute` so the dashboard's
+    /// SSE stream picks up the change without a full settings re-fetch.
+    pub audio: AudioConfig,
 }
 
 impl AvatarSnapshot {
@@ -77,6 +83,7 @@ impl AvatarSnapshot {
             && actual_eq
             && self.battery == other.battery
             && self.wifi == other.wifi
+            && self.audio == other.audio
     }
 }
 
@@ -88,6 +95,10 @@ impl Default for AvatarSnapshot {
             head_actual: None,
             battery: BatterySnapshot::default(),
             wifi: WifiSnapshot::default(),
+            audio: AudioConfig {
+                volume_pct: 50,
+                muted: false,
+            },
         }
     }
 }
@@ -109,6 +120,10 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
         wifi: WifiSnapshot {
             connected: false,
             ip: None,
+        },
+        audio: AudioConfig {
+            volume_pct: 50,
+            muted: false,
         },
     }));
 
@@ -141,6 +156,18 @@ pub fn update_wifi(connected: bool, ip: Option<Ipv4Addr>) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
         s.wifi = WifiSnapshot { connected, ip };
+        cell.set(s);
+    });
+}
+
+/// Replace the audio (volume / mute) fields. Called once at boot
+/// from the persisted config, and again after each successful
+/// `POST /volume` or `POST /mute` so the SSE stream surfaces the
+/// change.
+pub fn update_audio(audio: AudioConfig) {
+    AVATAR_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        s.audio = audio;
         cell.set(s);
     });
 }

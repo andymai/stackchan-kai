@@ -878,6 +878,11 @@ async fn main(spawner: Spawner) -> ! {
             // sees what's actually persisted.
             storage::install_storage(sd).await;
             *storage::CONFIG_SNAPSHOT.lock().await = Some(cfg.clone());
+            // Mirror persisted audio settings into the live snapshot
+            // so `GET /state` shows the right volume / mute on the
+            // first request — and so the SSE stream stays consistent
+            // with what the amp actually applies at boot.
+            net::snapshot::update_audio(cfg.audio);
             cfg
         }
         Err(e) => {

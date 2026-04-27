@@ -93,6 +93,17 @@ small { color: var(--muted); }
   </section>
 
   <section>
+    <h2>Audio</h2>
+    <label>Volume: <span id="volume-label">—</span>
+      <input type="range" id="volume" min="0" max="100" value="50" step="1">
+    </label>
+    <div class="btn-row">
+      <button type="button" id="mute-btn">Mute</button>
+    </div>
+    <small>Slider POSTs /volume after a brief debounce. Mute is independent of volume so unmuting restores the prior level. Both persist to STACKCHAN.RON.</small>
+  </section>
+
+  <section>
     <h2>Settings</h2>
     <form id="settings-form" class="grid">
       <label>SSID <input type="text" name="ssid" id="set-ssid" autocomplete="off"></label>
@@ -146,6 +157,7 @@ function renderState(s) {
   $("state-battery").textContent = (b.percent != null ? `${b.percent}%` : "—") + (b.voltage_mv != null ? ` (${b.voltage_mv} mV)` : "");
   const w = s.wifi;
   $("state-wifi").textContent = w.connected ? `up @ ${w.ip || "—"}` : "down";
+  if (s.audio) syncAudioUi(s.audio);
 }
 
 // --- SSE live state ---
@@ -235,6 +247,55 @@ async function postLookAt() {
   el.addEventListener("change", postLookAt);
 });
 
+// --- Audio (volume + mute) ---
+// Track whether the slider is mid-drag so SSE-driven updates don't
+// fight the operator's input. Without this, a snapshot from the
+// device would jerk the slider back to the persisted value while
+// the user is still dragging it.
+const volumeEl = $("volume");
+const volumeLabel = $("volume-label");
+const muteBtn = $("mute-btn");
+let volumeDragging = false;
+let lastKnownMuted = false;
+function syncAudioUi(audio) {
+  if (!volumeDragging) {
+    volumeEl.value = String(audio.volume_pct);
+    volumeLabel.textContent = `${audio.volume_pct}%`;
+  }
+  lastKnownMuted = !!audio.muted;
+  muteBtn.textContent = audio.muted ? "Unmute" : "Mute";
+  muteBtn.classList.toggle("active", audio.muted);
+}
+// Debounce the slider POST so dragging doesn't burn an SD write per
+// pointer move. 250 ms matches the dashboard's general latency feel
+// — the operator stops moving briefly, the persist + amp apply lands
+// well inside the next visible state-stream tick.
+let volumeDebounceTimer = null;
+function scheduleVolumePost() {
+  if (volumeDebounceTimer != null) clearTimeout(volumeDebounceTimer);
+  volumeDebounceTimer = setTimeout(async () => {
+    volumeDebounceTimer = null;
+    const level = Number(volumeEl.value);
+    try {
+      await postJson("/volume", { level });
+      toast(`volume → ${level}%`);
+    } catch (e) { toast(e.message, true); }
+  }, 250);
+}
+volumeEl.addEventListener("pointerdown", () => { volumeDragging = true; });
+volumeEl.addEventListener("pointerup", () => { volumeDragging = false; });
+volumeEl.addEventListener("input", () => {
+  volumeLabel.textContent = `${volumeEl.value}%`;
+  scheduleVolumePost();
+});
+muteBtn.addEventListener("click", async () => {
+  const next = !lastKnownMuted;
+  try {
+    await postJson("/mute", { muted: next });
+    toast(next ? "muted" : "unmuted");
+  } catch (e) { toast(e.message, true); }
+});
+
 // --- Settings form ---
 // Hold non-editable fields loaded from GET /settings so they round-trip
 // on PUT instead of being clobbered by hard-coded defaults.
@@ -277,6 +338,13 @@ $("settings-form").addEventListener("submit", async (ev) => {
       sntp_servers: $("set-sntp").value.split(",").map((s) => s.trim()).filter(Boolean),
     },
     auth: { token: $("set-token").value },
+    // Echo the current audio block back so a settings save doesn't
+    // reset volume/mute to defaults. The slider + mute button are
+    // the operator-facing control for those.
+    audio: {
+      volume_pct: Number(volumeEl.value),
+      muted: lastKnownMuted,
+    },
   };
   // After a successful save, mirror the new token into localStorage
   // so the dashboard's next write request authenticates against the

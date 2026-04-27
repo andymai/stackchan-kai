@@ -18,9 +18,12 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::fmt::Write as _;
 
 use crate::bare_json::TOKEN_REDACTED;
-use crate::config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+use crate::config::{
+    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate,
+};
 use crate::error::ConfigError;
 
 /// Parse a schema-v1 RON document into a [`Config`] without using `serde` or `ron`.
@@ -78,6 +81,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     push_field(&mut out, "        token", &config.auth.token);
     out.push_str("    ),\n");
 
+    out.push_str("    audio: (\n");
+    let _ = writeln!(out, "        volume_pct: {},", config.audio.volume_pct);
+    let _ = writeln!(out, "        muted: {},", config.audio.muted);
+    out.push_str("    ),\n");
+
     out.push_str(")\n");
     Ok(out)
 }
@@ -125,6 +133,7 @@ impl<'a> Parser<'a> {
         let mut mdns: Option<MdnsConfig> = None;
         let mut time: Option<TimeConfig> = None;
         let mut auth: Option<AuthConfig> = None;
+        let mut audio: Option<AudioConfig> = None;
 
         loop {
             self.skip_ws_and_comments();
@@ -140,6 +149,7 @@ impl<'a> Parser<'a> {
                 "mdns" => mdns = Some(self.parse_mdns()?),
                 "time" => time = Some(self.parse_time()?),
                 "auth" => auth = Some(self.parse_auth()?),
+                "audio" => audio = Some(self.parse_audio()?),
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -153,10 +163,12 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
-            // `auth` is optional for migration: SD cards written before
-            // schema v1.1 don't have it, and an empty token means
-            // "auth disabled," matching the offline-first stance.
+            // `auth` and `audio` are optional for migration: SD cards
+            // written before each block landed lack them, and the
+            // defaults (empty token = auth disabled; volume_pct = 50,
+            // muted = false) match the firmware's prior behaviour.
             auth: auth.unwrap_or_default(),
+            audio: audio.unwrap_or_default(),
         })
     }
 
@@ -289,6 +301,79 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(AuthConfig { token })
+    }
+
+    /// Parse the `audio: (volume_pct, muted)` block. Volume is an
+    /// integer literal (RON `u8`), mute is a bare `true` / `false`.
+    fn parse_audio(&mut self) -> Result<AudioConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut volume_pct: Option<u8> = None;
+        let mut muted: Option<bool> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "volume_pct" => volume_pct = Some(self.parse_u8()?),
+                "muted" => muted = Some(self.parse_bool()?),
+                other => return Err(bare_err("unknown audio field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in audio", ""));
+            }
+        }
+        let defaults = AudioConfig::default();
+        Ok(AudioConfig {
+            volume_pct: volume_pct.unwrap_or(defaults.volume_pct),
+            muted: muted.unwrap_or(defaults.muted),
+        })
+    }
+
+    /// Parse a contiguous run of decimal digits as a `u8`. Used for
+    /// `audio.volume_pct`. Range gating is left to [`validate`] so the
+    /// out-of-range surface lands on `ConfigError::InvalidVolumePct`
+    /// (with the offending value) rather than a generic `BareParse`.
+    fn parse_u8(&mut self) -> Result<u8, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected unsigned integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        // Parse as u16 first so 0..=255 + a few extra digits land on
+        // BareParse cleanly rather than wrapping silently. Then cast
+        // down — the validator catches > 100 on the audio path.
+        let parsed: u16 = digits
+            .parse()
+            .map_err(|_| bare_err("not a u8 literal", digits))?;
+        if parsed > u16::from(u8::MAX) {
+            return Err(bare_err("u8 literal out of range", digits));
+        }
+        self.input = rest;
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(parsed as u8)
+    }
+
+    /// Parse a bare `true` or `false` literal.
+    fn parse_bool(&mut self) -> Result<bool, ConfigError> {
+        if self.input.starts_with("true") {
+            self.advance("true".len());
+            Ok(true)
+        } else if self.input.starts_with("false") {
+            self.advance("false".len());
+            Ok(false)
+        } else {
+            Err(bare_err("expected boolean literal", ""))
+        }
     }
 
     /// Parse `[ "...", "...", ]` into a `Vec<String>`.
@@ -574,6 +659,63 @@ mod tests {
         let reparsed = parse_ron_bare(&rendered).unwrap();
         assert_eq!(cfg, reparsed);
         assert_eq!(reparsed.auth.token, "abc-123");
+    }
+
+    #[test]
+    fn missing_audio_block_defaults_to_50_unmuted() {
+        let cfg = parse_ron_bare(FIXTURE).unwrap();
+        assert_eq!(cfg.audio.volume_pct, 50);
+        assert!(!cfg.audio.muted);
+    }
+
+    #[test]
+    fn parses_audio_block_with_explicit_values() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                audio: ( volume_pct: 75, muted: true ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert_eq!(cfg.audio.volume_pct, 75);
+        assert!(cfg.audio.muted);
+    }
+
+    #[test]
+    fn round_trips_with_audio_block() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                audio: ( volume_pct: 33, muted: true ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        let rendered = render_ron_bare(&cfg).unwrap();
+        let reparsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(cfg, reparsed);
+        assert_eq!(reparsed.audio.volume_pct, 33);
+        assert!(reparsed.audio.muted);
+    }
+
+    #[test]
+    fn audio_volume_above_100_fails_validate() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                audio: ( volume_pct: 200, muted: false ),
+            )
+        "#;
+        let err = parse_ron_bare(s).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidVolumePct(200)),
+            "got {err:?}"
+        );
     }
 
     #[test]

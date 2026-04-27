@@ -17,8 +17,11 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::fmt::Write as _;
 
-use crate::config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+use crate::config::{
+    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate,
+};
 use crate::error::ConfigError;
 
 /// Sentinel emitted by [`render_settings_json`] when `redact_secrets = true`.
@@ -77,7 +80,8 @@ pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
 /// overwrites.
 ///
 /// Fields the wire format doesn't redact (`ssid`, `country`,
-/// `mdns.hostname`, `time.*`) pass through from `new` unchanged.
+/// `mdns.hostname`, `time.*`, `audio.*`) pass through from `new`
+/// unchanged.
 #[must_use]
 pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
     Config {
@@ -99,6 +103,7 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
                 new.auth.token
             },
         },
+        audio: new.audio,
     }
 }
 
@@ -151,6 +156,12 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         &config.auth.token
     };
     push_string_field(&mut out, "token", token_view);
+    out.push_str("},\"audio\":{");
+    let _ = write!(
+        out,
+        "\"volume_pct\":{},\"muted\":{}",
+        config.audio.volume_pct, config.audio.muted
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -205,6 +216,7 @@ impl<'a> Parser<'a> {
         let mut mdns: Option<MdnsConfig> = None;
         let mut time: Option<TimeConfig> = None;
         let mut auth: Option<AuthConfig> = None;
+        let mut audio: Option<AudioConfig> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -239,6 +251,12 @@ impl<'a> Parser<'a> {
                     }
                     auth = Some(self.parse_auth()?);
                 }
+                "audio" => {
+                    if audio.is_some() {
+                        return Err(bare_err("duplicate top-level field", "audio"));
+                    }
+                    audio = Some(self.parse_audio()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -250,10 +268,12 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
-            // `auth` is optional for migration: bodies emitted before
-            // schema v1.1 don't have it, and the default empty token
-            // means "auth disabled."
+            // `auth` and `audio` are optional for migration: bodies
+            // emitted before each block landed don't have them, and
+            // the defaults (empty token = auth disabled; volume_pct
+            // = 50, muted = false) match prior behaviour.
             auth: auth.unwrap_or_default(),
+            audio: audio.unwrap_or_default(),
         })
     }
 
@@ -419,6 +439,89 @@ impl<'a> Parser<'a> {
         Ok(AuthConfig { token })
     }
 
+    /// Parse the `"audio": { "volume_pct": <int>, "muted": <bool> }` block.
+    /// Both fields are optional on the wire for forward-compat — a
+    /// body that omits one keeps the default. The validator catches
+    /// out-of-range `volume_pct` after parse with
+    /// `ConfigError::InvalidVolumePct`.
+    fn parse_audio(&mut self) -> Result<AudioConfig, ConfigError> {
+        self.expect_char('{')?;
+        let mut volume_pct: Option<u8> = None;
+        let mut muted: Option<bool> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            match key.as_str() {
+                "volume_pct" => {
+                    if volume_pct.is_some() {
+                        return Err(bare_err("duplicate audio field", "volume_pct"));
+                    }
+                    volume_pct = Some(self.parse_u8()?);
+                }
+                "muted" => {
+                    if muted.is_some() {
+                        return Err(bare_err("duplicate audio field", "muted"));
+                    }
+                    muted = Some(self.parse_bool()?);
+                }
+                other => return Err(bare_err("unknown audio field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in audio", ""));
+            }
+        }
+        let defaults = AudioConfig::default();
+        Ok(AudioConfig {
+            volume_pct: volume_pct.unwrap_or(defaults.volume_pct),
+            muted: muted.unwrap_or(defaults.muted),
+        })
+    }
+
+    /// Parse a contiguous run of decimal digits as `u8`. Out-of-range
+    /// (>100) values pass parse but trip
+    /// `ConfigError::InvalidVolumePct` in `validate` so the operator
+    /// gets the exact offending value back.
+    fn parse_u8(&mut self) -> Result<u8, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected unsigned integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let parsed: u16 = digits
+            .parse()
+            .map_err(|_| bare_err("not a u8 literal", digits))?;
+        if parsed > u16::from(u8::MAX) {
+            return Err(bare_err("u8 literal out of range", digits));
+        }
+        self.input = rest;
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(parsed as u8)
+    }
+
+    /// Parse a bare JSON `true` / `false` literal.
+    fn parse_bool(&mut self) -> Result<bool, ConfigError> {
+        if self.input.starts_with("true") {
+            self.advance("true".len());
+            Ok(true)
+        } else if self.input.starts_with("false") {
+            self.advance("false".len());
+            Ok(false)
+        } else {
+            Err(bare_err("expected boolean literal", ""))
+        }
+    }
+
     /// Parse `[ "...", "...", ... ]` into a `Vec<String>`.
     fn parse_string_list(&mut self) -> Result<Vec<String>, ConfigError> {
         self.expect_char('[')?;
@@ -557,6 +660,10 @@ mod tests {
             },
             auth: AuthConfig {
                 token: "shared-secret".to_string(),
+            },
+            audio: AudioConfig {
+                volume_pct: 33,
+                muted: true,
             },
         }
     }
@@ -858,6 +965,10 @@ mod tests {
             auth: AuthConfig {
                 token: "x".repeat(64),
             },
+            audio: AudioConfig {
+                volume_pct: 100,
+                muted: false,
+            },
         };
         let rendered = render_settings_json(&config, false).unwrap();
         assert!(
@@ -867,6 +978,86 @@ mod tests {
         );
         let parsed = parse_settings_json(&rendered).unwrap();
         assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn missing_audio_block_defaults_to_50_unmuted() {
+        let input = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.audio.volume_pct, 50);
+        assert!(!parsed.audio.muted);
+    }
+
+    #[test]
+    fn parses_audio_block_with_explicit_values() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "audio":{"volume_pct":75,"muted":true}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.audio.volume_pct, 75);
+        assert!(parsed.audio.muted);
+    }
+
+    #[test]
+    fn audio_block_round_trips() {
+        let original = full_config();
+        let rendered = render_settings_json(&original, false).unwrap();
+        let parsed = parse_settings_json(&rendered).unwrap();
+        assert_eq!(parsed.audio, original.audio);
+    }
+
+    #[test]
+    fn audio_volume_above_100_fails_validate() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "audio":{"volume_pct":200,"muted":false}
+        }"#;
+        let err = parse_settings_json(input).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidVolumePct(200)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn audio_rejects_duplicate_field() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "audio":{"volume_pct":50,"volume_pct":75,"muted":false}
+        }"#;
+        let err = parse_settings_json(input).unwrap_err();
+        match err {
+            ConfigError::BareParse(msg) => assert!(
+                msg.contains("duplicate audio field"),
+                "expected duplicate-audio-field, got `{msg}`"
+            ),
+            other => panic!("expected BareParse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_passes_audio_through_unchanged() {
+        // Audio has no redaction, so merge should always take the
+        // `new` value verbatim — operators who tweak hostname via PUT
+        // /settings should still get their volume/mute echo correctly.
+        let current = full_config(); // volume 33, muted true
+        let new = Config {
+            audio: AudioConfig {
+                volume_pct: 80,
+                muted: false,
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.audio.volume_pct, 80);
+        assert!(!merged.audio.muted);
     }
 
     #[test]

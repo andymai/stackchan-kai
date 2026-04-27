@@ -110,6 +110,7 @@ RON config parse + validation. Host crate; firmware wraps with `Debug2Format` fo
 - `InvalidHostname(String)` — `mdns.hostname` failed RFC-952 subset (alphanumerics + hyphen, must start with letter, no trailing hyphen, length 1-63).
 - `NoSntpServers` — `time.sntp_servers` empty. Firmware needs at least one candidate.
 - `EmptySntpServer(usize)` — a `time.sntp_servers` entry was empty / whitespace-only. The `usize` carries the offending index. Caught at parse time so the firmware's "try in order" loop doesn't burn its full per-server timeout on an unresolvable hostname before falling back.
+- `InvalidVolumePct(u8)` — `audio.volume_pct` was outside `0..=100`. The wire format is a percentile; the firmware maps it linearly across the AW88298 dB range. The `u8` carries the offending value.
 
 ### `stackchan_tts::RenderError`
 Speech-backend rendering. Returned from `SpeechBackend::render` when a

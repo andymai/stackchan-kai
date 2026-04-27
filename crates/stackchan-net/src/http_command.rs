@@ -51,6 +51,10 @@ pub enum JsonError {
     UnknownPhrase,
     /// Locale string didn't match any [`Locale`] variant.
     UnknownLocale,
+    /// `audio.volume_pct` value outside the documented `0..=100`
+    /// range. Carries the offending value so the firmware's `400`
+    /// response body is self-describing.
+    VolumeOutOfRange(u16),
 }
 
 /// Parse a `POST /emotion` body into a [`RemoteCommand::SetEmotion`].
@@ -175,6 +179,66 @@ pub fn parse_speak(body: &str) -> Result<RemoteCommand, JsonError> {
         locale: locale.unwrap_or(Locale::En),
         priority: Priority::Normal,
     })
+}
+
+/// Parse a `POST /volume` body into a percentile value (`0..=100`).
+///
+/// Required: `level` (integer 0..=100). No optional fields.
+///
+/// Returns the raw percentile so the firmware route handler can
+/// build the persisted `AudioConfig` against the current snapshot
+/// without taking a dependency on this crate's `Config` type.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys,
+/// unknown keys, malformed JSON shape, or `level > 100`.
+pub fn parse_volume(body: &str) -> Result<u8, JsonError> {
+    let mut level: Option<u16> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "level" => {
+                if level.is_some() {
+                    return Err(JsonError::DuplicateKey("level"));
+                }
+                level = Some(parse_u16(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    let level = level.ok_or(JsonError::MissingKey("level"))?;
+    if level > 100 {
+        return Err(JsonError::VolumeOutOfRange(level));
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    Ok(level as u8)
+}
+
+/// Parse a `POST /mute` body into a `bool`.
+///
+/// Required: `muted` (boolean). No optional fields.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys,
+/// unknown keys, malformed JSON shape, or non-boolean `muted`
+/// values.
+pub fn parse_mute(body: &str) -> Result<bool, JsonError> {
+    let mut muted: Option<bool> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "muted" => {
+                if muted.is_some() {
+                    return Err(JsonError::DuplicateKey("muted"));
+                }
+                muted = Some(parse_bool(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    muted.ok_or(JsonError::MissingKey("muted"))
 }
 
 /// Single-pass byte cursor over the body. Each parse helper advances
@@ -365,12 +429,41 @@ fn parse_u32(scanner: &mut Scanner<'_>) -> Result<u32, JsonError> {
         .map_err(|_| JsonError::BadValue)
 }
 
+/// Parse a contiguous number-shaped run as a `u16`. Used by the
+/// volume parser so a wildly out-of-range value (e.g. `5000`) flows
+/// through to [`JsonError::VolumeOutOfRange`] with the original
+/// value rather than collapsing to a generic `BadValue`.
+fn parse_u16(scanner: &mut Scanner<'_>) -> Result<u16, JsonError> {
+    scanner
+        .read_number()?
+        .parse::<u16>()
+        .map_err(|_| JsonError::BadValue)
+}
+
 /// Parse a contiguous number-shaped run as an `f32`.
 fn parse_f32(scanner: &mut Scanner<'_>) -> Result<f32, JsonError> {
     scanner
         .read_number()?
         .parse::<f32>()
         .map_err(|_| JsonError::BadValue)
+}
+
+/// Parse a bare JSON `true` / `false` literal at the current scanner
+/// position. The body parsers consume `true` / `false` directly —
+/// `read_string` would reject them and `read_number` would treat the
+/// leading `t` / `f` as garbage, so this helper covers the boolean
+/// shape explicitly.
+fn parse_bool(scanner: &mut Scanner<'_>) -> Result<bool, JsonError> {
+    scanner.skip_ws();
+    if scanner.bytes[scanner.pos..].starts_with(b"true") {
+        scanner.pos += 4;
+        Ok(true)
+    } else if scanner.bytes[scanner.pos..].starts_with(b"false") {
+        scanner.pos += 5;
+        Ok(false)
+    } else {
+        Err(JsonError::BadValue)
+    }
 }
 
 #[cfg(test)]
@@ -619,5 +712,99 @@ mod tests {
     fn speak_rejects_unknown_key() {
         let body = r#"{"phrase":"wake_chirp","priority":"normal"}"#;
         assert!(matches!(parse_speak(body), Err(JsonError::UnknownKey)));
+    }
+
+    #[test]
+    fn volume_accepts_in_range() {
+        for pct in [0u8, 1, 50, 99, 100] {
+            let body = alloc::format!(r#"{{"level":{pct}}}"#);
+            assert_eq!(parse_volume(&body).unwrap(), pct, "pct={pct}");
+        }
+    }
+
+    #[test]
+    fn volume_rejects_above_100() {
+        let body = r#"{"level":101}"#;
+        assert!(matches!(
+            parse_volume(body),
+            Err(JsonError::VolumeOutOfRange(101))
+        ));
+    }
+
+    #[test]
+    fn volume_rejects_far_above_range_with_original_value() {
+        // Pin: a wildly out-of-range value (e.g. fat-finger 5000)
+        // surfaces as VolumeOutOfRange(5000), not a generic BadValue.
+        let body = r#"{"level":5000}"#;
+        assert!(matches!(
+            parse_volume(body),
+            Err(JsonError::VolumeOutOfRange(5000))
+        ));
+    }
+
+    #[test]
+    fn volume_rejects_missing_level() {
+        let body = r"{}";
+        assert!(matches!(
+            parse_volume(body),
+            Err(JsonError::MissingKey("level"))
+        ));
+    }
+
+    #[test]
+    fn volume_rejects_unknown_key() {
+        let body = r#"{"level":50,"db":-12}"#;
+        assert!(matches!(parse_volume(body), Err(JsonError::UnknownKey)));
+    }
+
+    #[test]
+    fn volume_rejects_duplicate_level() {
+        let body = r#"{"level":50,"level":75}"#;
+        assert!(matches!(
+            parse_volume(body),
+            Err(JsonError::DuplicateKey("level"))
+        ));
+    }
+
+    #[test]
+    fn volume_rejects_string_value() {
+        let body = r#"{"level":"50"}"#;
+        assert!(matches!(parse_volume(body), Err(JsonError::BadValue)));
+    }
+
+    #[test]
+    fn mute_accepts_both_booleans() {
+        assert!(parse_mute(r#"{"muted":true}"#).unwrap());
+        assert!(!parse_mute(r#"{"muted":false}"#).unwrap());
+    }
+
+    #[test]
+    fn mute_rejects_missing_field() {
+        let body = r"{}";
+        assert!(matches!(
+            parse_mute(body),
+            Err(JsonError::MissingKey("muted"))
+        ));
+    }
+
+    #[test]
+    fn mute_rejects_non_boolean_value() {
+        let body = r#"{"muted":1}"#;
+        assert!(matches!(parse_mute(body), Err(JsonError::BadValue)));
+    }
+
+    #[test]
+    fn mute_rejects_duplicate_muted() {
+        let body = r#"{"muted":true,"muted":false}"#;
+        assert!(matches!(
+            parse_mute(body),
+            Err(JsonError::DuplicateKey("muted"))
+        ));
+    }
+
+    #[test]
+    fn mute_rejects_unknown_key() {
+        let body = r#"{"muted":true,"hold_ms":1000}"#;
+        assert!(matches!(parse_mute(body), Err(JsonError::UnknownKey)));
     }
 }
