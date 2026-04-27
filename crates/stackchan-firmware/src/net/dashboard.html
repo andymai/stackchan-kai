@@ -212,6 +212,9 @@ async function postLookAt() {
 });
 
 // --- Settings form ---
+// Hold non-editable fields loaded from GET /settings so they round-trip
+// on PUT instead of being clobbered by hard-coded defaults.
+let loadedTz = "UTC";
 async function loadSettings() {
   try {
     const res = await fetch("/settings");
@@ -227,6 +230,7 @@ async function loadSettings() {
     $("set-country").value = c.wifi.country;
     $("set-hostname").value = c.mdns.hostname;
     $("set-sntp").value = c.time.sntp_servers.join(", ");
+    loadedTz = c.time.tz;
   } catch (e) { toast(e.message, true); }
 }
 $("settings-reload").addEventListener("click", loadSettings);
@@ -240,7 +244,7 @@ $("settings-form").addEventListener("submit", async (ev) => {
     },
     mdns: { hostname: $("set-hostname").value },
     time: {
-      tz: "UTC",
+      tz: loadedTz,
       sntp_servers: $("set-sntp").value.split(",").map((s) => s.trim()).filter(Boolean),
     },
   };
