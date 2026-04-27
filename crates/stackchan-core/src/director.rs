@@ -202,6 +202,8 @@ pub enum Field {
     TapPending,
     /// `entity.input.remote_pending`
     RemotePending,
+    /// `entity.input.remote_command`
+    RemoteCommand,
 }
 
 impl Field {
@@ -248,6 +250,7 @@ impl Field {
         Self::IsSpeaking,
         Self::TapPending,
         Self::RemotePending,
+        Self::RemoteCommand,
     ];
 
     /// Coarse grouping for human-readable reports.
@@ -288,7 +291,7 @@ impl Field {
             | Self::Engagement
             | Self::Dormancy => FieldGroup::Mind,
             Self::ChirpRequest | Self::UtteranceRequest | Self::IsSpeaking => FieldGroup::Voice,
-            Self::TapPending | Self::RemotePending => FieldGroup::Input,
+            Self::TapPending | Self::RemotePending | Self::RemoteCommand => FieldGroup::Input,
         }
     }
 
@@ -394,6 +397,7 @@ impl Field {
             Self::IsSpeaking => before.voice.is_speaking != after.voice.is_speaking,
             Self::TapPending => before.input.tap_pending != after.input.tap_pending,
             Self::RemotePending => before.input.remote_pending != after.input.remote_pending,
+            Self::RemoteCommand => before.input.remote_command != after.input.remote_command,
         }
     }
 }
@@ -801,7 +805,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            39,
+            40,
             "update Field::ALL when adding variants"
         );
     }

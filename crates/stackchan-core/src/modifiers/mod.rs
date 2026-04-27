@@ -68,6 +68,13 @@
 //!   1. [`AttentionFromTracking`] — reads `perception.tracking`,
 //!      writes `mind.attention=Tracking{target}` after sustained
 //!      camera motion; releases after the quiet window.
+//!   2. [`RemoteCommandModifier`] — drains
+//!      `entity.input.remote_command` set by an external control
+//!      plane (firmware HTTP), holds emotion + autonomy
+//!      ([`crate::RemoteCommand::SetEmotion`]) or attention
+//!      ([`crate::RemoteCommand::LookAt`]) for a configurable
+//!      window, and re-asserts each tick so cooperative cognition
+//!      modifiers cannot stomp the operator's hold.
 //!
 //! Empty phases today (slots reserved for v2.x):
 //! [`crate::director::Phase::Perception`],
@@ -96,6 +103,7 @@ mod intent_from_loud;
 mod lost_target_search;
 mod microsaccade_from_attention;
 mod mouth_from_audio;
+mod remote_command;
 mod style_from_emotion;
 mod style_from_intent;
 
@@ -151,5 +159,6 @@ pub use microsaccade_from_attention::{
 pub use mouth_from_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthFromAudio,
 };
+pub use remote_command::RemoteCommandModifier;
 pub use style_from_emotion::StyleFromEmotion;
 pub use style_from_intent::{PETTING_BLUSH_BUMP, StyleFromIntent};

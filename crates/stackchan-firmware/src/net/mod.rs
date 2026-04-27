@@ -7,6 +7,7 @@
 //! unreachable.
 
 pub mod http;
+pub mod json;
 pub mod mdns;
 pub mod snapshot;
 pub mod sntp;
