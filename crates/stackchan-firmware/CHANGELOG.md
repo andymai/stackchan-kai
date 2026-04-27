@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.20.0...stackchan-firmware-v0.21.0) (2026-04-27)
+
+
+### Features
+
+* **firmware:** minimal HTTP control plane (GET /health, GET /state) ([#148](https://github.com/andymai/stackchan-kai/issues/148)) ([997f99c](https://github.com/andymai/stackchan-kai/commit/997f99c4ff42baea63d057fa72cc5fcb01c24ca8))
+
 ## [0.20.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.19.0...stackchan-firmware-v0.20.0) (2026-04-27)
 
 
