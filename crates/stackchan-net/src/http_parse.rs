@@ -81,10 +81,16 @@ pub fn parse_bearer_token(headers: &[u8]) -> Option<&str> {
             continue;
         }
         let value = trim_ascii(value);
-        let scheme_end = value.iter().position(|&b| b == b' ')?;
+        let Some(scheme_end) = value.iter().position(|&b| b == b' ') else {
+            // Header is malformed (no scheme/token split). Skip and
+            // see if a later `Authorization` line carries Bearer.
+            continue;
+        };
         let (scheme, rest) = value.split_at(scheme_end);
         if !scheme.eq_ignore_ascii_case(b"bearer") {
-            return None;
+            // Non-Bearer scheme (Basic, Digest, …). Don't bail —
+            // the request might also carry a Bearer line we'd miss.
+            continue;
         }
         let token = trim_ascii(rest);
         return core::str::from_utf8(token).ok();
@@ -99,6 +105,14 @@ pub fn parse_bearer_token(headers: &[u8]) -> Option<&str> {
 /// loop can't reveal a prefix of the expected token. Length mismatch
 /// returns immediately — leaking the token *length* is acceptable;
 /// the operator chose it.
+///
+/// The accumulator update is wrapped in [`core::hint::black_box`] on
+/// each iteration. Without it, LLVM can prove that `diff` doesn't
+/// escape the function and is free to short-circuit the loop on
+/// first non-zero XOR, defeating the constant-time property. This
+/// isn't as strong as the inline-assembly approach `subtle` takes,
+/// but the threat model is LAN-scoped jitter swamping any
+/// nanosecond-level timing window — a barrier suffices.
 #[must_use]
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -106,18 +120,22 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     }
     let mut diff: u8 = 0;
     for (&x, &y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
+        diff = core::hint::black_box(diff | (x ^ y));
     }
-    diff == 0
+    core::hint::black_box(diff) == 0
 }
 
 /// Index of the first occurrence of `needle` in `haystack`, or `None`.
 ///
-/// `needle` must be non-empty — `slice::windows(0)` panics. The
-/// firmware's only caller passes the four-byte CRLF CRLF sentinel,
-/// so the constraint is upheld at every call site.
+/// Returns `None` for an empty `needle`. The underlying
+/// `slice::windows(0)` panics, and as a public crate API this would
+/// be a footgun for downstream callers — a vacuous "found at every
+/// position" result isn't useful, and a panic is worse than `None`.
 #[must_use]
 pub fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
@@ -246,6 +264,24 @@ mod tests {
     }
 
     #[test]
+    fn bearer_token_skips_past_non_bearer_scheme() {
+        // RFC 9110 §11.6.2 lets a request carry multiple
+        // `Authorization`-like fields; if the first is `Basic` or
+        // `Digest`, the parser must keep scanning for a Bearer
+        // line rather than giving up.
+        let headers = b"Authorization: Basic dXNlcjpwYXNz\r\nAuthorization: Bearer real-token\r\n";
+        assert_eq!(parse_bearer_token(headers), Some("real-token"));
+    }
+
+    #[test]
+    fn bearer_token_skips_malformed_header_to_find_valid_one() {
+        // A first `Authorization` with no scheme/token split (no
+        // space) is malformed — keep scanning rather than bailing.
+        let headers = b"Authorization: malformed\r\nAuthorization: Bearer ok\r\n";
+        assert_eq!(parse_bearer_token(headers), Some("ok"));
+    }
+
+    #[test]
     fn ct_eq_reports_equality_and_diff() {
         assert!(ct_eq(b"abc", b"abc"));
         assert!(!ct_eq(b"abc", b"abd"));
@@ -259,6 +295,14 @@ mod tests {
         assert_eq!(find_subsequence(b"abcdef", b"cd"), Some(2));
         assert_eq!(find_subsequence(b"abcdef", b"xy"), None);
         assert_eq!(find_subsequence(b"abc", b"abcd"), None);
+    }
+
+    #[test]
+    fn find_subsequence_returns_none_for_empty_needle() {
+        // `slice::windows(0)` panics; the public API caps that off
+        // by returning `None` instead of letting the panic escape.
+        assert_eq!(find_subsequence(b"abc", b""), None);
+        assert_eq!(find_subsequence(b"", b""), None);
     }
 
     #[test]
