@@ -116,10 +116,45 @@ const FULL_SCALE_SQ: f32 = 32768.0 * 32768.0;
 /// plenty of headroom for the embassy scheduler's worst-case latency.
 const TX_DMA_BYTES: usize = 4 * 1024;
 
-/// AW88298 attenuation, in dB, applied at TX bring-up. -18 dB is
-/// audible-but-not-startling for a 1 W desktop speaker; combined with
-/// a -12 dBFS digital tone the boot greeting plays at ≈ -30 dB.
-const BOOT_VOLUME_DB: i8 = -18;
+/// Wire-side minimum dB for the percentile mapping. `volume_pct = 0`
+/// lands here; the mute path (`audio.muted = true` / `POST /mute`)
+/// is the actual-silence channel.
+const VOLUME_PCT_MIN_DB: i8 = -36;
+/// Wire-side maximum dB for the percentile mapping. `volume_pct =
+/// 100` lands here (full-scale, no attenuation).
+const VOLUME_PCT_MAX_DB: i8 = 0;
+
+/// Linear-in-dB mapping of the wire-format `volume_pct` (0..=100) to
+/// AW88298 attenuation.
+///
+/// dB is already logarithmic in amplitude, so linear interpolation
+/// across the dB range gives the perceptual taper without a curve
+/// table. Values above 100 saturate at the max — the parser rejects
+/// them, but the firmware-side helper stays robust if a future
+/// caller bypasses the gate.
+#[must_use]
+pub fn volume_pct_to_db(pct: u8) -> i8 {
+    let pct = i32::from(pct.min(100));
+    let span = i32::from(VOLUME_PCT_MAX_DB) - i32::from(VOLUME_PCT_MIN_DB);
+    let scaled = i32::from(VOLUME_PCT_MIN_DB) + (span * pct / 100);
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        scaled as i8
+    }
+}
+
+/// Latest-wins request to apply a new volume to the AW88298.
+///
+/// Driven by the HTTP `POST /volume` route after the persisted
+/// update succeeds, and by the boot path once the SD config snapshot
+/// is loaded. The amp-control half of [`run_audio_task`] drains this
+/// and calls `Aw88298::set_volume_db` with the mapped dB value.
+pub static AUDIO_VOLUME_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+
+/// Latest-wins request to mute / un-mute the AW88298. Symmetric with
+/// [`AUDIO_VOLUME_SIGNAL`]: HTTP `POST /mute` writes after
+/// persistence, the amp-control loop applies via `set_muted`.
+pub static AUDIO_MUTE_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 /// AW88298 settle delay between starting TX DMA (with a buffer of
 /// zeros = digital silence) and lifting `HMUTE`. Lets the codec lock
@@ -545,19 +580,29 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
 
     // AW88298 output-stage bring-up. With TX DMA not yet started, the
     // TX line carries no clocked data — the codec is on standby. We
-    // pre-configure volume so the un-mute step doesn't go straight to
-    // the chip's reset default, then start TX (silent zeros from the
-    // freshly-allocated DMA buffer), settle, and finally lift HMUTE.
-    if let Err(e) = amp.set_volume_db(BOOT_VOLUME_DB).await {
+    // pre-configure volume from the persisted config (or the audio
+    // default if no SD card / snapshot isn't loaded yet) so the
+    // un-mute step doesn't go straight to the chip's reset default,
+    // then start TX (silent zeros from the freshly-allocated DMA
+    // buffer), settle, and finally lift HMUTE — unless the persisted
+    // state asks the device to stay muted.
+    let boot_audio = crate::storage::CONFIG_SNAPSHOT
+        .lock()
+        .await
+        .as_ref()
+        .map_or_else(stackchan_net::config::AudioConfig::default, |cfg| cfg.audio);
+    let boot_volume_db = volume_pct_to_db(boot_audio.volume_pct);
+    if let Err(e) = amp.set_volume_db(boot_volume_db).await {
         defmt::warn!(
             "audio: AW88298 set_volume_db({=i8}) failed ({:?}); continuing at init default",
-            BOOT_VOLUME_DB,
+            boot_volume_db,
             defmt::Debug2Format(&e)
         );
     } else {
         defmt::debug!(
-            "audio: AW88298 volume set to {=i8} dB (boot default)",
-            BOOT_VOLUME_DB
+            "audio: AW88298 volume set to {=i8} dB (boot, from persisted volume_pct={=u8})",
+            boot_volume_db,
+            boot_audio.volume_pct
         );
     }
 
@@ -577,11 +622,18 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
 
     Timer::after(Duration::from_millis(u64::from(TX_SETTLE_MS))).await;
 
-    if let Err(e) = amp.set_muted(false).await {
+    // Honour the persisted mute state at boot. The default-config
+    // path keeps the prior shipping behaviour (`muted = false` →
+    // un-mute on boot); operators who set `audio.muted = true` get
+    // a silent boot until they un-mute over HTTP.
+    if let Err(e) = amp.set_muted(boot_audio.muted).await {
         defmt::warn!(
-            "audio: AW88298 un-mute failed ({:?}); speaker stays muted",
+            "audio: AW88298 set_muted({=bool}) failed ({:?}); speaker stays at chip-reset state",
+            boot_audio.muted,
             defmt::Debug2Format(&e)
         );
+    } else if boot_audio.muted {
+        defmt::info!("audio: AW88298 muted at boot (persisted audio.muted = true)");
     } else {
         defmt::info!("audio: AW88298 un-muted — speaker live");
     }
@@ -594,12 +646,49 @@ pub async fn run_audio_task(mut p: AudioPeripherals) -> ! {
         RMS_WINDOW_SAMPLES,
     );
 
-    // Both halves are `-> !`, so `join` itself never resolves; the
-    // trailing `park_forever` is unreachable but keeps the function
-    // body trivially `-> !` without leaning on never-type coercion.
-    embassy_futures::join::join(
+    // All three halves are `-> !`, so `join3` itself never resolves;
+    // the trailing `park_forever` is unreachable but keeps the
+    // function body trivially `-> !` without leaning on never-type
+    // coercion. The amp-control half stays in this function so the
+    // `amp` binding lives past init — moving it to a separate
+    // embassy task would require an alternate I²C bus path.
+    embassy_futures::join::join3(
         run_rms_loop(&mut rx_transfer),
         run_tx_loop(&mut tx_transfer),
+        async {
+            loop {
+                use embassy_futures::select::{Either, select};
+                match select(AUDIO_VOLUME_SIGNAL.wait(), AUDIO_MUTE_SIGNAL.wait()).await {
+                    Either::First(pct) => {
+                        let db = volume_pct_to_db(pct);
+                        if let Err(e) = amp.set_volume_db(db).await {
+                            defmt::warn!(
+                                "audio: runtime set_volume_db({=i8}) failed ({:?})",
+                                db,
+                                defmt::Debug2Format(&e)
+                            );
+                        } else {
+                            defmt::info!(
+                                "audio: volume → {=u8}% ({=i8} dB) via runtime signal",
+                                pct,
+                                db
+                            );
+                        }
+                    }
+                    Either::Second(muted) => {
+                        if let Err(e) = amp.set_muted(muted).await {
+                            defmt::warn!(
+                                "audio: runtime set_muted({=bool}) failed ({:?})",
+                                muted,
+                                defmt::Debug2Format(&e)
+                            );
+                        } else {
+                            defmt::info!("audio: muted → {=bool} via runtime signal", muted);
+                        }
+                    }
+                }
+            }
+        },
     )
     .await;
     park_forever().await

@@ -38,6 +38,11 @@ pub struct Config {
     /// `PUT`/`POST` routes behind `Authorization: Bearer <token>`.
     #[cfg_attr(feature = "parse", serde(default))]
     pub auth: AuthConfig,
+    /// Audio output: persistent volume + mute state. Mirrored to the
+    /// AW88298 amplifier on boot and on every `POST /volume` / `POST
+    /// /mute` write.
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub audio: AudioConfig,
 }
 
 /// Wi-Fi station credentials.
@@ -92,6 +97,44 @@ impl Default for MdnsConfig {
 pub struct AuthConfig {
     /// Shared-secret bearer token. Empty = auth disabled.
     pub token: String,
+}
+
+/// Audio output configuration — persistent volume + mute state.
+///
+/// `volume_pct` is on the wire as an integer 0..=100 to keep the
+/// operator-facing surface intuitive; the firmware maps it linearly
+/// across the AW88298's dB range when applying to the amp. `0` is
+/// audible-but-quiet, not silent — explicit `muted: true` is the
+/// actual-silence path. Default `volume_pct = 50` lands at roughly
+/// the chip's prior compile-time boot default; default `muted =
+/// false` matches the behaviour the firmware shipped with before
+/// runtime audio control existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct AudioConfig {
+    /// Output volume as a percentile (0..=100). Mapped linearly over
+    /// dB by the firmware before being written to the amp.
+    pub volume_pct: u8,
+    /// Whether the output stage is muted. Independent of
+    /// `volume_pct` so unmuting restores the prior level.
+    pub muted: bool,
+}
+
+impl AudioConfig {
+    /// Const-evaluable default. Exposed so static initializers (e.g.
+    /// the firmware's `AvatarSnapshot` constant) can reference the
+    /// canonical defaults without duplicating the literals — `Default`
+    /// itself isn't `const`-evaluable.
+    pub const DEFAULT: Self = Self {
+        volume_pct: 50,
+        muted: false,
+    };
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Time / SNTP configuration.
@@ -190,6 +233,9 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
     {
         return Err(ConfigError::EmptySntpServer(idx));
     }
+    if config.audio.volume_pct > 100 {
+        return Err(ConfigError::InvalidVolumePct(config.audio.volume_pct));
+    }
     Ok(())
 }
 
@@ -233,6 +279,29 @@ mod tests {
         assert_eq!(c.mdns.hostname, "stackchan");
         assert_eq!(c.time.tz, "UTC");
         assert_eq!(c.time.sntp_servers, vec!["pool.ntp.org".to_string()]);
+        assert_eq!(c.audio.volume_pct, 50);
+        assert!(!c.audio.muted);
+    }
+
+    #[test]
+    fn validate_rejects_volume_above_100() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.audio.volume_pct = 101;
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidVolumePct(101))
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_volume_at_boundaries() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        for pct in [0u8, 1, 50, 99, 100] {
+            c.audio.volume_pct = pct;
+            assert!(validate(&c).is_ok(), "expected pct={pct} to pass");
+        }
     }
 
     #[test]

@@ -71,6 +71,12 @@ pub enum ConfigError {
     #[error("time.sntp_servers[{0}] is empty or whitespace-only")]
     EmptySntpServer(usize),
 
+    /// `audio.volume_pct` was outside `0..=100`. The wire format is
+    /// a percentile; the firmware maps it linearly across the AW88298
+    /// dB range. The `u8` carries the offending value.
+    #[error("audio.volume_pct must be 0..=100; got {0}")]
+    InvalidVolumePct(u8),
+
     /// Hand-rolled bare parser failure (firmware-side path that
     /// avoids `serde + ron`). Carries a short reason string in lieu
     /// of `ron`'s line/col `SpannedError` — the firmware logs this

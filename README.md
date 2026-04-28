@@ -87,6 +87,7 @@ and the firmware exposes a LAN-only HTTP control plane:
 - `GET /` — operator dashboard, single-page HTML embedded in the binary
 - `GET /state/stream` — live state via Server-Sent Events
 - `POST /emotion`, `/look-at`, `/reset`, `/speak` — manual override
+- `POST /volume`, `/mute` — persistent audio control (atomic SD writeback)
 - `GET` / `PUT /settings` — persistent config with atomic SD writeback
 - Bearer-token auth on writes; constant-time compare; LAN-scoped (no TLS)
 

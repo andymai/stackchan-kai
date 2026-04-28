@@ -280,6 +280,8 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
+        ("POST", "/volume") => handle_post_volume(socket, body).await,
+        ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
     }
@@ -420,6 +422,10 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
                 new_config.wifi.ssid.as_str(),
                 new_config.mdns.hostname.as_str()
             );
+            // Mirror the audio block into the live snapshot so the
+            // SSE stream picks up volume / mute changes from a full
+            // settings PUT without waiting for a reboot.
+            snapshot::update_audio(new_config.audio);
             *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
             write_json(socket, 200, "{\"reboot_required\":true}\n").await
         }
@@ -429,6 +435,99 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
         }
         None => {
             defmt::warn!("http: PUT /settings rejected (no SD mounted)");
+            write_text(socket, 503, "no SD card mounted\n").await
+        }
+    }
+}
+
+/// `POST /volume` — parse `{"level": 0..=100}`, persist to
+/// `STACKCHAN.RON`, signal the audio task to apply via the AW88298.
+///
+/// Persist-then-signal ordering: a failed SD write leaves the amp
+/// at its current level rather than partially applying. Mirrors the
+/// shape of [`handle_put_settings`], including the clone-and-drop of
+/// the `CONFIG_SNAPSHOT` mutex before the SD write — the mutex is
+/// also taken by the auth gate, `GET /settings`, and the boot
+/// audio-init path, so holding it across an SD write would stall
+/// every concurrent request for the full write duration.
+async fn handle_post_volume(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let level = match json::parse_volume(body) {
+        Ok(p) => p,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /volume parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
+        return write_text(socket, 503, "config snapshot unavailable\n").await;
+    };
+    let mut new_config = current;
+    new_config.audio.volume_pct = level;
+    let write_result =
+        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!("http: POST /volume persisted (level={=u8})", level);
+            snapshot::update_audio(new_config.audio);
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
+            crate::audio::AUDIO_VOLUME_SIGNAL.signal(level);
+            write_no_content(socket).await
+        }
+        Some(Err(e)) => {
+            defmt::warn!("http: POST /volume write failed ({})", e);
+            write_text(socket, 500, "config write failed\n").await
+        }
+        None => {
+            defmt::warn!("http: POST /volume rejected (no SD mounted)");
+            write_text(socket, 503, "no SD card mounted\n").await
+        }
+    }
+}
+
+/// `POST /mute` — parse `{"muted": <bool>}`, persist to
+/// `STACKCHAN.RON`, signal the audio task to apply via the AW88298.
+///
+/// Symmetric with [`handle_post_volume`]; mute is a separate boolean
+/// (not `volume = 0`) so unmuting restores the prior level. Same
+/// snapshot-mutex hygiene applies — clone the current snapshot, drop
+/// the lock, then re-acquire only to install the new value.
+async fn handle_post_mute(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let muted = match json::parse_mute(body) {
+        Ok(m) => m,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /mute parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
+        return write_text(socket, 503, "config snapshot unavailable\n").await;
+    };
+    let mut new_config = current;
+    new_config.audio.muted = muted;
+    let write_result =
+        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!("http: POST /mute persisted (muted={=bool})", muted);
+            snapshot::update_audio(new_config.audio);
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
+            crate::audio::AUDIO_MUTE_SIGNAL.signal(muted);
+            write_no_content(socket).await
+        }
+        Some(Err(e)) => {
+            defmt::warn!("http: POST /mute write failed ({})", e);
+            write_text(socket, 500, "config write failed\n").await
+        }
+        None => {
+            defmt::warn!("http: POST /mute rejected (no SD mounted)");
             write_text(socket, 503, "no SD card mounted\n").await
         }
     }
@@ -512,12 +611,15 @@ fn state_body(s: AvatarSnapshot) -> String {
 \"head_pose\":{{\"pan_deg\":{pan:.2},\"tilt_deg\":{tilt:.2}}},\
 \"head_actual\":{actual},\
 \"battery\":{{\"percent\":{pct},\"voltage_mv\":{mv}}},\
-\"wifi\":{{\"connected\":{connected},\"ip\":{ip}}}\
+\"wifi\":{{\"connected\":{connected},\"ip\":{ip}}},\
+\"audio\":{{\"volume_pct\":{volume_pct},\"muted\":{muted}}}\
 }}\n",
         emotion = s.emotion.wire_str(),
         pan = s.head_pose.pan_deg,
         tilt = s.head_pose.tilt_deg,
         connected = s.wifi.connected,
+        volume_pct = s.audio.volume_pct,
+        muted = s.audio.muted,
     )
 }
 
