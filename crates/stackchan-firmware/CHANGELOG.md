@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.30.0...stackchan-firmware-v0.31.0) (2026-04-28)
+
+
+### Features
+
+* **firmware:** BLE pairing + bonding + LCD passkey overlay ([#174](https://github.com/andymai/stackchan-kai/issues/174)) ([88cb303](https://github.com/andymai/stackchan-kai/commit/88cb30300067ca18508956c11dcbc8df801aa1b6))
+
 ## [0.30.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.29.0...stackchan-firmware-v0.30.0) (2026-04-28)
 
 
