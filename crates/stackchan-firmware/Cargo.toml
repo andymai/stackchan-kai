@@ -91,7 +91,12 @@ esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "ble", 
 # `bt-hci ^0.6` (matches esp-radio 0.17). 0.6.0 jumps to `bt-hci 0.8`
 # and pairs with esp-radio 0.18 — bump together when we move the
 # wider toolchain.
-trouble-host = { version = "0.5.1", default-features = false, features = ["defmt", "peripheral", "gatt", "derive", "default-packet-pool"] }
+#
+# `security` enables LE Secure Connections pairing + bonding. Pulls
+# in `p256` + `aes` + `cmac` + `rand_chacha` (~50 KB code on this
+# target). Required for the BLE provisioning service to gate writes
+# behind a paired peer.
+trouble-host = { version = "0.5.1", default-features = false, features = ["defmt", "peripheral", "gatt", "derive", "default-packet-pool", "security"] }
 # embassy-net's TCP / UDP / DHCPv4 stack on top of smoltcp. 0.9.x
 # pairs with esp-radio 0.18 (both ride the embassy-sync 0.7 line).
 embassy-net = { version = "0.9", features = ["defmt", "proto-ipv4", "tcp", "udp", "dhcpv4", "dns", "multicast", "medium-ethernet"] }

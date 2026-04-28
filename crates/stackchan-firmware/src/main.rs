@@ -37,11 +37,14 @@ use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_graphics::{
+    Drawable,
     draw_target::DrawTarget,
     geometry::{Point as EgPoint, Size},
+    mono_font::{MonoTextStyle, ascii::FONT_10X20},
     pixelcolor::Rgb565,
     pixelcolor::raw::RawU16,
-    primitives::Rectangle,
+    primitives::{Primitive, PrimitiveStyleBuilder, Rectangle},
+    text::{Alignment, Text},
 };
 // `RefCellDevice` shares the SPI2 bus between the LCD and the SD card
 // client. Single-core embassy + cooperative scheduling means the
@@ -219,6 +222,10 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut handling = Handling::new();
     let mut intent_from_body_touch = IntentFromBodyTouch::new();
     let mut last_rendered: Option<Face> = None;
+    // Last on-screen pairing passkey. Tracked separately from
+    // `last_rendered` so a passkey transition forces a redraw even
+    // when the avatar face is bit-equal across frames.
+    let mut last_passkey: Option<u32> = None;
     // Last instant TX was observed playing. Drives the post-playback
     // tail of the audio_rms gate so the mic doesn't pick up the
     // speaker's residual response immediately after a chirp ends.
@@ -570,29 +577,70 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
                 }
             }
             last_rendered = None;
-        } else if last_rendered
-            .as_ref()
-            .is_none_or(|prev| *prev != entity.face)
-        {
+        } else {
+            // Avatar mode: redraw whenever the face changed OR the BLE
+            // pairing passkey transitioned (visible/hidden/different).
             // Compare faces directly: `Face` has `PartialEq` derived on
             // every visual field. Non-visual state (pose, sensors,
             // mind, events, tick) lives elsewhere on `Entity` and so
             // can't trigger spurious blits — `IdleHeadDrift` mutates
             // `motor.head_pose`, which is invisible to this dirty
             // check by construction.
-            //
-            // Draw is Infallible on `Framebuffer`; the `let _ =`
-            // discards the `Result<(), Infallible>` without
-            // triggering unwrap lints.
-            let _ = entity.face.draw(&mut fb);
-            match display.fill_contiguous(&canvas, fb.as_slice().iter().copied()) {
-                Ok(()) => last_rendered = Some(entity.face),
-                Err(e) => defmt::error!("render: blit failed: {}", defmt::Debug2Format(&e)),
+            let current_passkey = ble::read_passkey();
+            let face_changed = last_rendered
+                .as_ref()
+                .is_none_or(|prev| *prev != entity.face);
+            let passkey_changed = current_passkey != last_passkey;
+            if face_changed || passkey_changed {
+                // Draw is Infallible on `Framebuffer`; the `let _ =`
+                // discards the `Result<(), Infallible>` without
+                // triggering unwrap lints.
+                let _ = entity.face.draw(&mut fb);
+                if let Some(passkey) = current_passkey {
+                    draw_passkey_overlay(&mut fb, passkey);
+                }
+                match display.fill_contiguous(&canvas, fb.as_slice().iter().copied()) {
+                    Ok(()) => {
+                        last_rendered = Some(entity.face);
+                        last_passkey = current_passkey;
+                    }
+                    Err(e) => defmt::error!("render: blit failed: {}", defmt::Debug2Format(&e)),
+                }
             }
         }
 
         ticker.next().await;
     }
+}
+
+/// Draw a transient pairing-passkey banner across the top of the
+/// framebuffer. Called by the render task while a BLE central is in
+/// the middle of LE Secure Connections pairing — the user reads the
+/// number off the LCD and types it on the phone. Cleared on
+/// `PairingComplete` / `PairingFailed` / `Disconnected` (see
+/// `crate::ble::clear_passkey`).
+///
+/// Layout: black 32-px-tall band at y=0..32 with the 6-digit code
+/// centered in white `FONT_10X20`. Sits above the eyes regardless of
+/// the avatar's current expression — operator-priority chrome, not
+/// part of the modifier-driven render.
+fn draw_passkey_overlay(fb: &mut Framebuffer, passkey: u32) {
+    use core::fmt::Write as _;
+    let banner = Rectangle::new(EgPoint::new(0, 0), Size::new(FB_WIDTH, 32));
+    let bg = PrimitiveStyleBuilder::new()
+        .fill_color(Rgb565::new(0, 0, 0))
+        .build();
+    if banner.into_styled(bg).draw(fb).is_err() {
+        return;
+    }
+    let mut buf: heapless::String<8> = heapless::String::new();
+    if write!(&mut buf, "{passkey:06}").is_err() {
+        return;
+    }
+    #[allow(clippy::cast_possible_wrap)]
+    let center = EgPoint::new(FB_WIDTH as i32 / 2, 22);
+    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::new(0xFF, 0x3F, 0xFF));
+    let _ = Text::with_alignment(buf.as_str(), center, style, Alignment::Center).draw(fb);
 }
 
 /// 50 Hz head-update task. Consumes [`head::POSE_SIGNAL`] and commands
@@ -895,6 +943,19 @@ async fn main(spawner: Spawner) -> ! {
             stackchan_net::Config::default()
         }
     };
+    // Cryptographic-grade entropy for BLE Secure Connections pairing.
+    // `TrngSource` mixes the ESP32-S3's RNG block with ADC1 noise; once
+    // active, `Trng::try_new()` succeeds anywhere in the firmware.
+    // Parked in a `StaticCell` so the entropy source lives forever —
+    // dropping it would silently downgrade `Trng` reads to plain RNG
+    // (which esp-hal explicitly does not assert as cryptographic).
+    #[allow(clippy::items_after_statements)]
+    static TRNG_SOURCE: StaticCell<esp_hal::rng::TrngSource<'static>> = StaticCell::new();
+    let _trng_source = TRNG_SOURCE.init(esp_hal::rng::TrngSource::new(
+        peripherals.RNG,
+        peripherals.ADC1,
+    ));
+
     // Bring up the radio + Wi-Fi station + embassy-net TCP/IP stack.
     // `esp_rtos::start` ran at boot (line above), which `esp_radio::init`
     // requires before claiming the WIFI peripheral. Both the

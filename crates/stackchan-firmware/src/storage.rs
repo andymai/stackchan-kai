@@ -112,6 +112,20 @@ const STAGING_FILE: &str = "STACKCHAN.NEW";
 /// grows.
 const MAX_CONFIG_BYTES: u32 = 4096;
 
+/// Filename for persisted BLE bonds. Binary format defined in
+/// `crate::ble::bonds`.
+const BONDS_FILE: &str = "BONDS.BIN";
+
+/// Staging filename for atomic bond writes — same dance as the
+/// config file: write to `BONDS.NEW`, copy onto `BONDS.BIN`, delete
+/// the staging file.
+const BONDS_STAGING_FILE: &str = "BONDS.NEW";
+
+/// Cap on the bonds blob. trouble-host's `BI_COUNT` is 10 bonds;
+/// our record format is ~50 bytes per bond. 1 KiB leaves generous
+/// headroom for future record-layout additions.
+const MAX_BONDS_BYTES: u32 = 1024;
+
 /// Storage / FAT errors. Logged via `defmt::Format` at the firmware
 /// boundary; the operator triages from the boot log.
 #[derive(Debug, defmt::Format)]
@@ -259,6 +273,60 @@ where
         let rendered = stackchan_net::render_ron_bare(config).map_err(|_| StorageError::Decode)?;
         self.write_file(STAGING_FILE, rendered.as_bytes())?;
         self.copy_then_delete(STAGING_FILE, CONFIG_FILE)?;
+        Ok(())
+    }
+
+    /// Read the full BLE bonds blob from `/sd/BONDS.BIN`. Returns
+    /// `Ok(empty)` if the file is missing — that's the first-boot
+    /// state, not an error. Layout is opaque here; the BLE module
+    /// owns the byte format.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial read,
+    /// [`StorageError::TooLarge`] if the file exceeds
+    /// [`MAX_BONDS_BYTES`].
+    pub fn read_bonds(&mut self) -> Result<Vec<u8>, StorageError> {
+        let mut volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let mut root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(mut file) = root.open_file_in_dir(BONDS_FILE, Mode::ReadOnly) else {
+            return Ok(Vec::new());
+        };
+        let len = file.length();
+        if len > MAX_BONDS_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = len as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
+    /// Atomically replace `/sd/BONDS.BIN` with `data`. Same staging-
+    /// then-copy dance the config writeback uses; mid-write power
+    /// loss leaves the previous bonds file intact.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying write failure,
+    /// [`StorageError::TooLarge`] if `data` exceeds
+    /// [`MAX_BONDS_BYTES`].
+    pub fn write_bonds(&mut self, data: &[u8]) -> Result<(), StorageError> {
+        if u32::try_from(data.len()).is_ok_and(|n| n > MAX_BONDS_BYTES) {
+            return Err(StorageError::TooLarge);
+        }
+        // `usize` exceeding `u32::MAX` would also be too large; the
+        // 32→32 cast above misses that on 64-bit hosts. The doctest
+        // path runs on 64-bit, so guard explicitly.
+        if data.len() > MAX_BONDS_BYTES as usize {
+            return Err(StorageError::TooLarge);
+        }
+        self.write_file(BONDS_STAGING_FILE, data)?;
+        self.copy_then_delete(BONDS_STAGING_FILE, BONDS_FILE)?;
         Ok(())
     }
 
