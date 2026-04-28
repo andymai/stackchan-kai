@@ -95,10 +95,7 @@ impl Default for AvatarSnapshot {
             head_actual: None,
             battery: BatterySnapshot::default(),
             wifi: WifiSnapshot::default(),
-            audio: AudioConfig {
-                volume_pct: 50,
-                muted: false,
-            },
+            audio: AudioConfig::DEFAULT,
         }
     }
 }
@@ -121,10 +118,7 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
             connected: false,
             ip: None,
         },
-        audio: AudioConfig {
-            volume_pct: 50,
-            muted: false,
-        },
+        audio: AudioConfig::DEFAULT,
     }));
 
 /// Replace the avatar/head fields. Called per render tick.

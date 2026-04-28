@@ -256,7 +256,7 @@ the operator's HTTP session if the SSID changed. Reboot to apply.
 | Code | Where it shows up                                                  |
 |------|---------------------------------------------------------------------|
 | 200  | GET responses, dashboard, successful PUT                            |
-| 204  | POST `/emotion` / `/look-at` / `/reset` on success                  |
+| 204  | POST `/emotion` / `/look-at` / `/reset` / `/volume` / `/mute` on success |
 | 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, `volume.level > 100`, validation failure on PUT `/settings` |
 | 401  | Write route called without a valid bearer token (when auth is enabled) |
 | 404  | Path not in the matcher                                             |

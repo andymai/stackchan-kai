@@ -445,7 +445,11 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
 ///
 /// Persist-then-signal ordering: a failed SD write leaves the amp
 /// at its current level rather than partially applying. Mirrors the
-/// shape of [`handle_put_settings`] but for a single field.
+/// shape of [`handle_put_settings`], including the clone-and-drop of
+/// the `CONFIG_SNAPSHOT` mutex before the SD write — the mutex is
+/// also taken by the auth gate, `GET /settings`, and the boot
+/// audio-init path, so holding it across an SD write would stall
+/// every concurrent request for the full write duration.
 async fn handle_post_volume(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let level = match json::parse_volume(body) {
         Ok(p) => p,
@@ -458,8 +462,7 @@ async fn handle_post_volume(socket: &mut TcpSocket<'_>, body: &str) -> Result<()
             return write_text(socket, 400, &body).await;
         }
     };
-    let mut snapshot_guard = crate::storage::CONFIG_SNAPSHOT.lock().await;
-    let Some(current) = snapshot_guard.clone() else {
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
         return write_text(socket, 503, "config snapshot unavailable\n").await;
     };
     let mut new_config = current;
@@ -470,8 +473,7 @@ async fn handle_post_volume(socket: &mut TcpSocket<'_>, body: &str) -> Result<()
         Some(Ok(())) => {
             defmt::info!("http: POST /volume persisted (level={=u8})", level);
             snapshot::update_audio(new_config.audio);
-            *snapshot_guard = Some(new_config);
-            drop(snapshot_guard);
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
             crate::audio::AUDIO_VOLUME_SIGNAL.signal(level);
             write_no_content(socket).await
         }
@@ -490,7 +492,9 @@ async fn handle_post_volume(socket: &mut TcpSocket<'_>, body: &str) -> Result<()
 /// `STACKCHAN.RON`, signal the audio task to apply via the AW88298.
 ///
 /// Symmetric with [`handle_post_volume`]; mute is a separate boolean
-/// (not `volume = 0`) so unmuting restores the prior level.
+/// (not `volume = 0`) so unmuting restores the prior level. Same
+/// snapshot-mutex hygiene applies — clone the current snapshot, drop
+/// the lock, then re-acquire only to install the new value.
 async fn handle_post_mute(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let muted = match json::parse_mute(body) {
         Ok(m) => m,
@@ -503,8 +507,7 @@ async fn handle_post_mute(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
             return write_text(socket, 400, &body).await;
         }
     };
-    let mut snapshot_guard = crate::storage::CONFIG_SNAPSHOT.lock().await;
-    let Some(current) = snapshot_guard.clone() else {
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
         return write_text(socket, 503, "config snapshot unavailable\n").await;
     };
     let mut new_config = current;
@@ -515,8 +518,7 @@ async fn handle_post_mute(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
         Some(Ok(())) => {
             defmt::info!("http: POST /mute persisted (muted={=bool})", muted);
             snapshot::update_audio(new_config.audio);
-            *snapshot_guard = Some(new_config);
-            drop(snapshot_guard);
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
             crate::audio::AUDIO_MUTE_SIGNAL.signal(muted);
             write_no_content(socket).await
         }

@@ -120,12 +120,20 @@ pub struct AudioConfig {
     pub muted: bool,
 }
 
+impl AudioConfig {
+    /// Const-evaluable default. Exposed so static initializers (e.g.
+    /// the firmware's `AvatarSnapshot` constant) can reference the
+    /// canonical defaults without duplicating the literals — `Default`
+    /// itself isn't `const`-evaluable.
+    pub const DEFAULT: Self = Self {
+        volume_pct: 50,
+        muted: false,
+    };
+}
+
 impl Default for AudioConfig {
     fn default() -> Self {
-        Self {
-            volume_pct: 50,
-            muted: false,
-        }
+        Self::DEFAULT
     }
 }
 
