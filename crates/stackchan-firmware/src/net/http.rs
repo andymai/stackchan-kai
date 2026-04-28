@@ -30,8 +30,12 @@
 //!   as JSON, with `wifi.psk` and `auth.token` redacted.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
 //!   Validates, writes back atomically to `/sd/STACKCHAN.RON`, and
-//!   responds `{"reboot_required": true}`. Wi-Fi keeps using the
-//!   boot-time config; reboot to apply.
+//!   responds `{"reboot_required": false}`. On any change to the
+//!   `wifi` block, signals [`super::wifi::WIFI_RECONFIG`] so the
+//!   wifi task drops the current link and reconnects with the new
+//!   credentials — no reboot needed. Other persisted blocks
+//!   (mDNS hostname, SNTP servers, audio) only take effect on the
+//!   next boot.
 //!
 //! ## Auth
 //!
@@ -71,7 +75,7 @@ use stackchan_net::http_parse::{
 };
 
 use super::snapshot::{self, AvatarSnapshot};
-use super::wifi::LINK_READY;
+use super::wifi::{LINK_READY, WIFI_RECONFIG, WifiCreds};
 
 /// Listening port. LAN-only; write routes are gated on the
 /// configured `auth.token` (empty = no auth).
@@ -387,9 +391,13 @@ async fn handle_get_settings(socket: &mut TcpSocket<'_>) -> Result<(), HttpError
 }
 
 /// `PUT /settings` — full replace, atomic SD writeback. Returns
-/// `{"reboot_required": true}` on success; the firmware doesn't
-/// re-bring-up Wi-Fi mid-flight (avoids dropping the operator's
-/// session when the SSID changes).
+/// `{"reboot_required": false}` on success.
+///
+/// On a change to `wifi.ssid` or `wifi.psk` (compared against the
+/// current `CONFIG_SNAPSHOT`), signals [`WIFI_RECONFIG`] so the
+/// wifi task drops the link and reconnects with the new creds.
+/// Operators changing the AP from the dashboard now see a brief
+/// link blip rather than needing to power-cycle the device.
 async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let parsed_config = match stackchan_net::parse_settings_json(body) {
         Ok(c) => c,
@@ -422,12 +430,26 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
                 new_config.wifi.ssid.as_str(),
                 new_config.mdns.hostname.as_str()
             );
+            // Soft-reconnect Wi-Fi only when the credentials actually
+            // changed. Comparing against the pre-merge snapshot avoids
+            // a needless link drop when the dashboard re-PUTs the
+            // same body (e.g. the user only changed mDNS hostname,
+            // which can't be applied without a reboot anyway).
+            let wifi_changed = new_config.wifi.ssid != snapshot_for_merge.wifi.ssid
+                || new_config.wifi.psk != snapshot_for_merge.wifi.psk;
+            if wifi_changed {
+                defmt::info!("http: PUT /settings triggered Wi-Fi soft reconnect");
+                WIFI_RECONFIG.signal(WifiCreds {
+                    ssid: new_config.wifi.ssid.clone(),
+                    psk: new_config.wifi.psk.clone(),
+                });
+            }
             // Mirror the audio block into the live snapshot so the
             // SSE stream picks up volume / mute changes from a full
             // settings PUT without waiting for a reboot.
             snapshot::update_audio(new_config.audio);
             *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
-            write_json(socket, 200, "{\"reboot_required\":true}\n").await
+            write_json(socket, 200, "{\"reboot_required\":false}\n").await
         }
         Some(Err(e)) => {
             defmt::warn!("http: PUT /settings write failed ({})", e);
