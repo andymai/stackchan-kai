@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.28.0...stackchan-firmware-v0.29.0) (2026-04-28)
+
+
+### Features
+
+* **firmware:** BLE peripheral with read-only GATT ([#172](https://github.com/andymai/stackchan-kai/issues/172)) ([865813b](https://github.com/andymai/stackchan-kai/commit/865813b2b174b18aa5b257d5f31aa1af35402dc3))
+
 ## [0.28.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.27.0...stackchan-firmware-v0.28.0) (2026-04-28)
 
 
