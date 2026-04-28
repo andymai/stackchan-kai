@@ -9,7 +9,7 @@
 //! doc comments. Our own struct/field doc comments below stay
 //! authoritative for the human-facing surface.
 //!
-//! The server exposes three services beyond the auto-built GAP:
+//! The server exposes four services beyond the auto-built GAP:
 //!
 //! 1. **Device Information `0x180A`** — manufacturer / model /
 //!    firmware-revision strings. Populated at boot and never mutated.
@@ -18,6 +18,21 @@
 //!    `8a1c0001-7b3f-4d52-9c6e-5f5ba1e5cf01`) — emotion characteristic
 //!    (`8a1c0002-…`), `read + notify`, one byte using
 //!    [`stackchan_core::Emotion::wire_byte`].
+//! 4. **Provisioning custom service** (`8a1c0010-…`) — writeable SSID
+//!    + PSK characteristics. Writing the PSK commits the staged SSID
+//!    + new PSK through the same atomic SD-writeback path that `PUT
+//!      /settings` uses, then signals
+//!      [`crate::net::wifi::WIFI_RECONFIG`] so the wifi task soft-
+//!      reconnects without a reboot.
+//!
+//! ## Security
+//!
+//! The provisioning service is **unauthenticated** in this PR — any
+//! BLE central in radio range can write SSID/PSK and reconfigure the
+//! device. PR3 adds passkey display + LE Secure Connections bonding
+//! and gates these writes to bonded peers only. Until then, the
+//! `defmt::warn!` on every PSK commit is the loud reminder that this
+//! is provisional.
 //!
 //! DIS characteristic types are `heapless::String<N>` rather than
 //! `&'static str` because trouble-host's `AsGatt for &'static str`
@@ -28,6 +43,7 @@
 
 #![allow(missing_docs)]
 
+use alloc::string::String as AString;
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
@@ -40,6 +56,8 @@ use trouble_host::Address;
 use trouble_host::prelude::*;
 
 use crate::net::snapshot;
+use crate::net::wifi::{WIFI_RECONFIG, WifiCreds};
+use crate::storage::{CONFIG_SNAPSHOT, with_storage};
 
 /// Manufacturer string for DIS. Stack-chan rides the M5Stack CoreS3.
 const DIS_MANUFACTURER: &str = "M5Stack";
@@ -55,6 +73,13 @@ const DIS_FIRMWARE_REVISION: &str = env!("CARGO_PKG_VERSION");
 /// than enough for `M5Stack`, `Stack-chan CoreS3`, and any
 /// foreseeable cargo version string.
 const DIS_FIELD_CAP: usize = 32;
+
+/// SSID storage cap. The 802.11 spec caps SSIDs at 32 bytes.
+const PROV_SSID_CAP: usize = 32;
+
+/// PSK storage cap. WPA2-PSK ASCII is 8–63 chars; 64 bytes leaves a
+/// byte of slack for an opaque trailing byte.
+const PROV_PSK_CAP: usize = 64;
 
 /// Maximum simultaneous BLE centrals. One phone at a time is plenty.
 const CONNECTIONS_MAX: usize = 1;
@@ -89,6 +114,9 @@ pub struct StackchanServer {
     /// Stack-chan custom service — emotion characteristic, notified
     /// on transition.
     pub stackchan: StackchanService,
+    /// Wi-Fi provisioning service — writeable SSID + PSK. Commits +
+    /// soft-reconnects on PSK write.
+    pub provisioning: ProvisioningService,
 }
 
 #[allow(missing_docs)]
@@ -117,6 +145,24 @@ pub struct StackchanService {
     /// transition.
     #[characteristic(uuid = "8a1c0002-7b3f-4d52-9c6e-5f5ba1e5cf01", read, notify, value = 0)]
     pub emotion: u8,
+}
+
+#[allow(missing_docs)]
+#[gatt_service(uuid = "8a1c0010-7b3f-4d52-9c6e-5f5ba1e5cf01")]
+pub struct ProvisioningService {
+    /// Staged SSID. `read + write`: a phone app can pre-fill the
+    /// current value, replace it, and the new bytes are held in the
+    /// GATT table until the PSK characteristic write triggers commit.
+    /// 32-byte cap matches the 802.11 SSID limit.
+    #[characteristic(uuid = "8a1c0011-7b3f-4d52-9c6e-5f5ba1e5cf01", read, write)]
+    pub ssid: HString<PROV_SSID_CAP>,
+    /// Pre-shared key. `write`-only — read access would let any
+    /// scanner exfiltrate the network secret. Writing this character-
+    /// istic triggers commit: the staged SSID + new PSK are persisted
+    /// to `STACKCHAN.RON`, then `WIFI_RECONFIG` is signaled so the
+    /// wifi task soft-reconnects without a reboot.
+    #[characteristic(uuid = "8a1c0012-7b3f-4d52-9c6e-5f5ba1e5cf01", write)]
+    pub psk: HString<PROV_PSK_CAP>,
 }
 
 /// Run the BLE peripheral for the firmware lifetime.
@@ -164,13 +210,14 @@ pub async fn run_ble_peripheral<C: Controller>(
     };
 
     populate_dis(&server);
+    populate_provisioning_ssid(&server).await;
 
     let advertise_serve = async {
         loop {
             match advertise(local_name, &mut peripheral, &server).await {
                 Ok(conn) => {
                     defmt::info!("ble: peer connected");
-                    let events = gatt_events_task(&conn);
+                    let events = gatt_events_task(&server, &conn);
                     let notify = notify_task(&server, &conn);
                     let _ = select(events, notify).await;
                     defmt::info!("ble: peer disconnected");
@@ -267,20 +314,35 @@ async fn advertise<'values, 'server, C: Controller>(
 /// event to be `accept()`ed — the reply path runs the ATT response
 /// back to the central. Without this loop, reads would silently time
 /// out from the peer's view.
-async fn gatt_events_task<P: PacketPool>(conn: &GattConnection<'_, '_, P>) {
+///
+/// On a write to the provisioning PSK characteristic, fires the
+/// commit path — the staged SSID + new PSK get persisted to
+/// `STACKCHAN.RON` and the wifi task gets nudged to soft-reconnect.
+async fn gatt_events_task<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+) {
+    let psk_handle = server.provisioning.psk.handle;
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
                 defmt::info!("ble: gatt disconnect ({})", defmt::Debug2Format(&reason));
                 return;
             }
-            GattConnectionEvent::Gatt { event } => match event.accept() {
-                Ok(reply) => reply.send().await,
-                Err(e) => defmt::warn!(
-                    "ble: gatt event accept failed ({})",
-                    defmt::Debug2Format(&e)
-                ),
-            },
+            GattConnectionEvent::Gatt { event } => {
+                let is_psk_write =
+                    matches!(&event, GattEvent::Write(w) if w.handle() == psk_handle);
+                match event.accept() {
+                    Ok(reply) => reply.send().await,
+                    Err(e) => defmt::warn!(
+                        "ble: gatt event accept failed ({})",
+                        defmt::Debug2Format(&e)
+                    ),
+                }
+                if is_psk_write {
+                    commit_provisioning(server).await;
+                }
+            }
             _ => {}
         }
     }
@@ -345,5 +407,115 @@ async fn notify_task<P: PacketPool>(
         }
 
         Timer::after(BATTERY_NOTIFY_PERIOD).await;
+    }
+}
+
+/// Pre-fill the SSID characteristic value with the currently-persisted
+/// network name so a phone reading it sees the active config rather
+/// than an empty string. The PSK is intentionally not pre-filled —
+/// the characteristic is write-only.
+async fn populate_provisioning_ssid(server: &StackchanServer<'_>) {
+    let snap_ssid = match CONFIG_SNAPSHOT.lock().await.as_ref() {
+        Some(cfg) => cfg.wifi.ssid.clone(),
+        None => return,
+    };
+    let mut s: HString<PROV_SSID_CAP> = HString::new();
+    if s.push_str(snap_ssid.as_str()).is_err() {
+        defmt::warn!(
+            "ble: persisted SSID exceeds {=usize} bytes; not pre-filling",
+            PROV_SSID_CAP
+        );
+        return;
+    }
+    if let Err(e) = server.set(&server.provisioning.ssid, &s) {
+        defmt::warn!("ble: provisioning SSID set ({})", defmt::Debug2Format(&e));
+    }
+}
+
+/// Commit a provisioning write: take the staged SSID + just-written
+/// PSK from the GATT table, validate, persist atomically, signal the
+/// wifi task to soft-reconnect, then clear the PSK from the table so
+/// a memory dump of the BLE stack doesn't leak the secret.
+///
+/// Failures are logged but never panic — a malformed write should
+/// just be a no-op so the next correct write can succeed.
+async fn commit_provisioning(server: &StackchanServer<'_>) {
+    defmt::warn!(
+        "ble: provisioning commit (UNAUTHENTICATED — pairing pending). \
+         Anyone in BLE range can reconfigure Wi-Fi until that lands."
+    );
+
+    // Read staged SSID + new PSK from the GATT table. trouble-host
+    // wrote both into the table when their respective Write events
+    // were accepted.
+    let staged_ssid: HString<PROV_SSID_CAP> = match server.get(&server.provisioning.ssid) {
+        Ok(v) => v,
+        Err(e) => {
+            defmt::warn!("ble: prov: ssid get failed ({})", defmt::Debug2Format(&e));
+            return;
+        }
+    };
+    let new_psk: HString<PROV_PSK_CAP> = match server.get(&server.provisioning.psk) {
+        Ok(v) => v,
+        Err(e) => {
+            defmt::warn!("ble: prov: psk get failed ({})", defmt::Debug2Format(&e));
+            return;
+        }
+    };
+
+    if staged_ssid.trim().is_empty() {
+        defmt::warn!("ble: prov: empty SSID — write SSID before PSK to commit");
+        return;
+    }
+
+    // Build a new Config from the persisted snapshot, mutating only
+    // the wifi block. Any other settings (mDNS hostname, SNTP, audio)
+    // stay untouched, mirroring the conservative-update shape of
+    // PUT /settings's merge step.
+    //
+    // Snapshot is cloned out-of-line so the mutex guard drops before
+    // the subsequent `with_storage` call (also under a mutex) — both
+    // mutexes touch the SD via the boot path, so holding both at once
+    // would risk a re-entrant deadlock if storage internals ever grew
+    // a CONFIG_SNAPSHOT touch.
+    let snapshot_value = CONFIG_SNAPSHOT.lock().await.clone();
+    let Some(mut new_config) = snapshot_value else {
+        defmt::warn!("ble: prov: no config snapshot — boot config not yet read");
+        return;
+    };
+    new_config.wifi.ssid = AString::from(staged_ssid.as_str());
+    new_config.wifi.psk = AString::from(new_psk.as_str());
+
+    let write_result = with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!(
+                "ble: prov: persisted (ssid={=str})",
+                new_config.wifi.ssid.as_str()
+            );
+            *CONFIG_SNAPSHOT.lock().await = Some(new_config.clone());
+            WIFI_RECONFIG.signal(WifiCreds {
+                ssid: new_config.wifi.ssid,
+                psk: new_config.wifi.psk,
+            });
+        }
+        Some(Err(e)) => {
+            defmt::warn!("ble: prov: write_config failed ({})", e);
+        }
+        None => {
+            defmt::warn!("ble: prov: no SD mounted — cannot persist");
+        }
+    }
+
+    // Clear the PSK from the GATT table. The central just wrote it
+    // and could theoretically read it back if `read` were enabled
+    // (it isn't), but a future maintenance change to the macro
+    // attributes shouldn't accidentally start leaking secrets.
+    let empty: HString<PROV_PSK_CAP> = HString::new();
+    if let Err(e) = server.set(&server.provisioning.psk, &empty) {
+        defmt::warn!(
+            "ble: prov: psk-clear table set ({})",
+            defmt::Debug2Format(&e)
+        );
     }
 }
