@@ -199,7 +199,41 @@ pub async fn run_ble_peripheral<C: Controller>(
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+
+    // SMP needs ~32 bytes of cryptographic entropy. The chip's TRNG
+    // gives us that. `try_new` requires the global `TrngSource` to be
+    // active (set up in main.rs at boot); on failure we panic — the
+    // BLE peripheral is not safe to bring up without a real entropy
+    // source for ECDH key generation.
+    let mut trng = match esp_hal::rng::Trng::try_new() {
+        Ok(t) => t,
+        Err(e) => defmt::panic!(
+            "ble: TRNG unavailable ({}) — TrngSource not initialised",
+            defmt::Debug2Format(&e)
+        ),
+    };
+
+    let stack = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .set_random_generator_seed(&mut trng)
+        .set_io_capabilities(IoCapabilities::DisplayOnly);
+
+    // Re-register persisted bonds before any central can start
+    // pairing — a freshly-rebooted device should resume an existing
+    // bond rather than asking for a re-pair on every reconnect.
+    for bond in super::bonds::load_all().await {
+        if let Err(e) = stack.add_bond_information(bond) {
+            defmt::warn!(
+                "ble: bonds: add_bond_information rejected ({})",
+                defmt::Debug2Format(&e)
+            );
+        }
+    }
+    defmt::info!(
+        "ble: bonds: {=usize} persisted bond(s) registered",
+        stack.get_bond_information().len()
+    );
+
     let Host {
         mut peripheral,
         runner,
@@ -222,9 +256,17 @@ pub async fn run_ble_peripheral<C: Controller>(
             match advertise(local_name, &mut peripheral, &server).await {
                 Ok(conn) => {
                     defmt::info!("ble: peer connected");
-                    let events = gatt_events_task(&server, &conn);
+                    let events = gatt_events_task(&stack, &server, &conn);
                     let notify = notify_task(&server, &conn);
                     let _ = select(events, notify).await;
+                    // `gatt_events_task`'s `Disconnected` arm is the
+                    // only place that calls `clear_passkey()` — but
+                    // `notify_task` can win the select on an error
+                    // path and drop `gatt_events_task` mid-pairing,
+                    // leaving the 6-digit code painted on the LCD
+                    // forever. Clear here as a belt-and-braces safety
+                    // net regardless of which branch returned.
+                    super::clear_passkey();
                     defmt::info!("ble: peer disconnected");
                 }
                 Err(e) => {
@@ -320,10 +362,19 @@ async fn advertise<'values, 'server, C: Controller>(
 /// back to the central. Without this loop, reads would silently time
 /// out from the peer's view.
 ///
+/// Also handles the BLE security event surface:
+///
+/// - `PassKeyDisplay` — latch the 6-digit code into [`crate::ble::PASSKEY_DISPLAY`]
+///   so the render task overlays it on the LCD.
+/// - `PairingComplete { bond: Some(_) }` — persist the new bond list
+///   to SD via [`crate::ble::bonds`].
+/// - `PairingFailed` — clear the on-screen passkey, log the reason.
+///
 /// On a write to the provisioning PSK characteristic, fires the
-/// commit path — the staged SSID + new PSK get persisted to
-/// `STACKCHAN.RON` and the wifi task gets nudged to soft-reconnect.
+/// commit path — but only if the link is currently encrypted.
+/// Pre-pairing writes get rejected with a warn and a no-op.
 async fn gatt_events_task<P: PacketPool>(
+    stack: &Stack<'_, impl Controller, P>,
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
 ) {
@@ -332,6 +383,7 @@ async fn gatt_events_task<P: PacketPool>(
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
                 defmt::info!("ble: gatt disconnect ({})", defmt::Debug2Format(&reason));
+                super::clear_passkey();
                 return;
             }
             GattConnectionEvent::Gatt { event } => {
@@ -358,8 +410,32 @@ async fn gatt_events_task<P: PacketPool>(
                     }
                 };
                 if is_psk_write && accepted_ok {
-                    commit_provisioning(server).await;
+                    commit_provisioning(server, conn).await;
                 }
+            }
+            GattConnectionEvent::PassKeyDisplay(passkey) => {
+                let value = passkey.value();
+                defmt::info!("ble: passkey display: {=u32:06}", value);
+                super::show_passkey(value);
+            }
+            GattConnectionEvent::PairingComplete {
+                security_level,
+                bond,
+            } => {
+                super::clear_passkey();
+                defmt::info!(
+                    "ble: pairing complete (level={}, bonded={})",
+                    defmt::Debug2Format(&security_level),
+                    bond.is_some()
+                );
+                if bond.is_some() {
+                    let snapshot = stack.get_bond_information();
+                    super::bonds::save_all(&snapshot).await;
+                }
+            }
+            GattConnectionEvent::PairingFailed(e) => {
+                super::clear_passkey();
+                defmt::warn!("ble: pairing failed ({})", defmt::Debug2Format(&e));
             }
             _ => {}
         }
@@ -455,13 +531,43 @@ async fn populate_provisioning_ssid(server: &StackchanServer<'_>) {
 /// wifi task to soft-reconnect, then clear the PSK from the table so
 /// a memory dump of the BLE stack doesn't leak the secret.
 ///
+/// Gated on the connection's security level: unencrypted writes are
+/// rejected with a warn. The trouble-host attribute server doesn't
+/// enforce per-characteristic security in 0.5.1, so this app-layer
+/// check is the load-bearing gate — moving it would let any nearby
+/// BLE central reconfigure Wi-Fi without pairing.
+///
 /// Failures are logged but never panic — a malformed write should
 /// just be a no-op so the next correct write can succeed.
-async fn commit_provisioning(server: &StackchanServer<'_>) {
-    defmt::warn!(
-        "ble: provisioning commit (UNAUTHENTICATED — pairing pending). \
-         Anyone in BLE range can reconfigure Wi-Fi until that lands."
-    );
+async fn commit_provisioning<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+) {
+    let level = match conn.raw().security_level() {
+        Ok(l) => l,
+        Err(e) => {
+            defmt::warn!(
+                "ble: prov: security_level query failed ({}); rejecting write",
+                defmt::Debug2Format(&e)
+            );
+            return;
+        }
+    };
+    // Require *authenticated* encryption (passkey-confirmed bond),
+    // not bare `level.encrypted()`. Plain `Encrypted` is the
+    // outcome of JustWorks pairing, which a central can force by
+    // advertising `NoInputNoOutput` capabilities — the user never
+    // sees a passkey, and there's no MITM protection. Allowing it
+    // through here would let a phone next to the desk reconfigure
+    // Wi-Fi without ever asking the user to confirm a code.
+    if level != SecurityLevel::EncryptedAuthenticated {
+        defmt::warn!(
+            "ble: prov: write rejected — link not authenticated (level={}). \
+             Pair the central with passkey confirmation before provisioning.",
+            defmt::Debug2Format(&level)
+        );
+        return;
+    }
 
     // Read staged SSID + new PSK from the GATT table. trouble-host
     // wrote both into the table when their respective Write events
