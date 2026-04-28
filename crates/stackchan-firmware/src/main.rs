@@ -626,9 +626,15 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 /// part of the modifier-driven render.
 fn draw_passkey_overlay(fb: &mut Framebuffer, passkey: u32) {
     use core::fmt::Write as _;
+    use embedded_graphics::pixelcolor::RgbColor;
     let banner = Rectangle::new(EgPoint::new(0, 0), Size::new(FB_WIDTH, 32));
+    // `Rgb565::new(r, g, b)` takes raw component values bounded by
+    // their bit widths (R: 0..=31, G: 0..=63, B: 0..=31). Use the
+    // named constants instead of literal byte values so we can't
+    // accidentally over-saturate or pick the wrong tint when the
+    // intent is just black-and-white chrome.
     let bg = PrimitiveStyleBuilder::new()
-        .fill_color(Rgb565::new(0, 0, 0))
+        .fill_color(Rgb565::BLACK)
         .build();
     if banner.into_styled(bg).draw(fb).is_err() {
         return;
@@ -639,7 +645,7 @@ fn draw_passkey_overlay(fb: &mut Framebuffer, passkey: u32) {
     }
     #[allow(clippy::cast_possible_wrap)]
     let center = EgPoint::new(FB_WIDTH as i32 / 2, 22);
-    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::new(0xFF, 0x3F, 0xFF));
+    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
     let _ = Text::with_alignment(buf.as_str(), center, style, Alignment::Center).draw(fb);
 }
 

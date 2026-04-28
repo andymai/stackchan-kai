@@ -259,6 +259,14 @@ pub async fn run_ble_peripheral<C: Controller>(
                     let events = gatt_events_task(&stack, &server, &conn);
                     let notify = notify_task(&server, &conn);
                     let _ = select(events, notify).await;
+                    // `gatt_events_task`'s `Disconnected` arm is the
+                    // only place that calls `clear_passkey()` — but
+                    // `notify_task` can win the select on an error
+                    // path and drop `gatt_events_task` mid-pairing,
+                    // leaving the 6-digit code painted on the LCD
+                    // forever. Clear here as a belt-and-braces safety
+                    // net regardless of which branch returned.
+                    super::clear_passkey();
                     defmt::info!("ble: peer disconnected");
                 }
                 Err(e) => {

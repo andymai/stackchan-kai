@@ -95,7 +95,7 @@ fn encode(bonds: &[BondInformation]) -> Vec<u8> {
     out.push(0); // reserved
     out.push(0); // reserved
 
-    for bond in bonds.iter().take(MAX_BONDS) {
+    for (i, bond) in bonds.iter().take(MAX_BONDS).enumerate() {
         let ltk_bytes = bond.ltk.0.to_le_bytes();
         out.extend_from_slice(&ltk_bytes);
 
@@ -114,7 +114,11 @@ fn encode(bonds: &[BondInformation]) -> Vec<u8> {
         out.push(u8::from(bond.is_bonded));
         out.extend_from_slice(&[0u8; 3]); // reserved
 
-        debug_assert_eq!(out.len() % RECORD_LEN, HEADER_LEN % RECORD_LEN);
+        // Tighter per-iteration check: each loop body must emit
+        // exactly RECORD_LEN bytes. The earlier modulo form was
+        // always true by algebra and couldn't catch a missing
+        // field.
+        debug_assert_eq!(out.len(), HEADER_LEN + (i + 1) * RECORD_LEN);
     }
 
     debug_assert_eq!(out.len(), total);
