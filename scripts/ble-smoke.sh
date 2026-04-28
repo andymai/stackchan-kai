@@ -75,7 +75,9 @@ scan_output=$(
 )
 
 # Print everything matching the target prefix; sort by MAC for stability.
-hits=$(echo "$scan_output" | grep -E "Device [0-9A-F:]{17} ${TARGET_NAME_PREFIX}" | sort -u)
+# Case-insensitive: BlueZ on Debian/Ubuntu/Pi OS sometimes emits lowercase
+# MACs (`aa:bb:cc:…`) where Fedora emits uppercase. `-i` covers both.
+hits=$(echo "$scan_output" | grep -Ei "Device [0-9A-F:]{17} ${TARGET_NAME_PREFIX}" | sort -u)
 
 if [ -z "$hits" ]; then
     echo "ble-smoke: no advertisers matching '${TARGET_NAME_PREFIX}' seen in ${SCAN_SECS}s."

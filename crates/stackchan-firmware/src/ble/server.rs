@@ -131,6 +131,14 @@ pub async fn run_ble_peripheral<C: Controller>(
     address_bytes: [u8; 6],
     local_name: &'static str,
 ) -> ! {
+    // BLE static random address requires bits 47:46 == 0b11 (Core
+    // Spec Vol 6, Part B, §1.3.2.1). `Address::random` doesn't
+    // enforce this, and a typical ESP32 OUI starts with `0x24`
+    // which clears those bits — the controller silently rejects
+    // the address on most units. `bt-hci` stores the address
+    // little-endian, so the MSB lives at index 5.
+    let mut address_bytes = address_bytes;
+    address_bytes[5] |= 0xC0;
     let address = Address::random(address_bytes);
     defmt::info!(
         "ble: address={=[u8; 6]:02x} name={=str}",
@@ -302,9 +310,21 @@ async fn notify_task<P: PacketPool>(
                 defmt::Debug2Format(&e)
             );
         }
+        // Notify failures here cover two cases: (1) the central
+        // hasn't subscribed via CCCD yet (common in the first few
+        // seconds after connect; trouble-host returns an error
+        // because there's no notify destination), and (2) the
+        // connection actually dropped. We don't try to distinguish:
+        // a real disconnect surfaces in `gatt_events_task`'s
+        // `Disconnected` arm, which terminates the outer
+        // `select(events, notify)`. Returning here on every error
+        // would race that path and end the connection on the first
+        // pre-subscription tick — the Greptile P2.
         if let Err(e) = battery_handle.notify(conn, &battery_pct).await {
-            defmt::info!("ble: battery notify ended ({})", defmt::Debug2Format(&e));
-            return;
+            defmt::trace!(
+                "ble: battery notify skipped ({}) — peer not subscribed?",
+                defmt::Debug2Format(&e)
+            );
         }
 
         let emotion_byte = snap.emotion.wire_byte();
@@ -317,8 +337,10 @@ async fn notify_task<P: PacketPool>(
         if last_emotion != Some(snap.emotion) {
             last_emotion = Some(snap.emotion);
             if let Err(e) = emotion_handle.notify(conn, &emotion_byte).await {
-                defmt::info!("ble: emotion notify ended ({})", defmt::Debug2Format(&e));
-                return;
+                defmt::trace!(
+                    "ble: emotion notify skipped ({}) — peer not subscribed?",
+                    defmt::Debug2Format(&e)
+                );
             }
         }
 
