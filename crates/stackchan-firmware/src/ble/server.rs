@@ -553,10 +553,17 @@ async fn commit_provisioning<P: PacketPool>(
             return;
         }
     };
-    if !level.encrypted() {
+    // Require *authenticated* encryption (passkey-confirmed bond),
+    // not bare `level.encrypted()`. Plain `Encrypted` is the
+    // outcome of JustWorks pairing, which a central can force by
+    // advertising `NoInputNoOutput` capabilities — the user never
+    // sees a passkey, and there's no MITM protection. Allowing it
+    // through here would let a phone next to the desk reconfigure
+    // Wi-Fi without ever asking the user to confirm a code.
+    if level != SecurityLevel::EncryptedAuthenticated {
         defmt::warn!(
-            "ble: prov: write rejected — link not encrypted (level={}). \
-             Pair the central before provisioning.",
+            "ble: prov: write rejected — link not authenticated (level={}). \
+             Pair the central with passkey confirmation before provisioning.",
             defmt::Debug2Format(&level)
         );
         return;

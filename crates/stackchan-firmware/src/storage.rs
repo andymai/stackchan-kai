@@ -316,12 +316,11 @@ where
     /// [`StorageError::TooLarge`] if `data` exceeds
     /// [`MAX_BONDS_BYTES`].
     pub fn write_bonds(&mut self, data: &[u8]) -> Result<(), StorageError> {
-        if u32::try_from(data.len()).is_ok_and(|n| n > MAX_BONDS_BYTES) {
-            return Err(StorageError::TooLarge);
-        }
-        // `usize` exceeding `u32::MAX` would also be too large; the
-        // 32→32 cast above misses that on 64-bit hosts. The doctest
-        // path runs on 64-bit, so guard explicitly.
+        // `usize > MAX_BONDS_BYTES as usize` is the strictly-stronger
+        // form: covers both targets where `usize` is 32 bits (firmware,
+        // matches u32 semantics) and 64 bits (host doctests, where a
+        // length above `u32::MAX` would have silently bypassed an
+        // earlier `try_from`-based guard).
         if data.len() > MAX_BONDS_BYTES as usize {
             return Err(StorageError::TooLarge);
         }
