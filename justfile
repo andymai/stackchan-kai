@@ -298,3 +298,10 @@ si12t-bench:
 # <phrase>` args to bake one entry; no args bakes everything.
 bake-tts *args:
     bash scripts/bake-tts.sh {{args}}
+
+# BLE smoke: scan for an advertised stack-chan and verify the GATT
+# table can be read end-to-end. Optional first arg: device-name prefix
+# (default `stackchan-`). Falls back to a printed manual procedure
+# if BlueZ + a powered adapter aren't available — agent-friendly.
+ble-smoke *args:
+    bash scripts/ble-smoke.sh {{args}}

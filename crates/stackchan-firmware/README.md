@@ -27,6 +27,7 @@ modifier pipeline at ~30 FPS.
 - `src/head.rs` — embassy task: `stackchan_core::Pose` → SCServo commands
 - `src/imu.rs` — BMI270 task publishing accel/gyro samples on `IMU_SIGNAL`
 - `src/touch.rs` / `src/ir.rs` / `src/ambient.rs` / `src/button.rs` / `src/leds.rs` / `src/wallclock.rs` / `src/power.rs` — per-peripheral tasks
+- `src/ble/` — BLE peripheral. `mod.rs` re-exports the task entry point; `server.rs` declares the GATT server (Device Information / Battery / Stack-chan custom emotion service) via the `trouble-host` macros and runs the advertise / accept / serve loop; `task.rs` pins the controller type for `embassy_executor::task` spawn
 - `src/audio.rs` — I²S0 + codec bring-up, then RX RMS loop (publishing on `AUDIO_RMS_SIGNAL`) + TX feeder (silence between trigger-driven clips) running concurrently via `embassy_futures::join`. Exposes `AUDIO_TX_PLAYING` so the render loop can gate `audio_rms` against speaker self-trigger
 - `src/camera.rs` — `LCD_CAM` + DMA bring-up + always-on capture loop. Each frame is published on `CAMERA_FRAME_SIGNAL` for the LCD preview AND fed through `tracker::Tracker::step`, with the result on `CAMERA_TRACKING_SIGNAL`. `CAMERA_MODE_SIGNAL` is now display-only (preview vs avatar)
 - `examples/bench.rs` — calibration bench, flashed via `just bench`
@@ -98,6 +99,16 @@ The boot config schema (Wi-Fi credentials, mDNS hostname, SNTP
 servers) lives in [`stackchan-net`](../stackchan-net/README.md) and
 round-trips between the SD-card RON file and the HTTP `/settings`
 JSON.
+
+In parallel, the device advertises a BLE peripheral named
+`stackchan-XXXXXX` (last three MAC bytes) so a phone or laptop on the
+same physical radio can read battery percent and current emotion
+without joining the LAN. Services exposed: Device Information
+(`0x180A` — manufacturer / model / firmware revision), Battery
+(`0x180F`), and a custom Stack-chan service whose emotion
+characteristic notifies on transition. Wi-Fi and BLE share the radio
+via `esp-radio`'s coex scheduler; expect a small Wi-Fi airtime tax
+when a BLE central is connected.
 
 ## I²C Bus Sharing
 

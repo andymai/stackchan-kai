@@ -25,8 +25,8 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, audio, board, body_touch, button, camera, clock, framebuffer, head, imu, ir, leds,
-    net, power, storage, touch, tracking_trace, wallclock, watchdog,
+    ambient, audio, ble, board, body_touch, button, camera, clock, framebuffer, head, imu, ir,
+    leds, net, power, storage, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -950,6 +950,49 @@ async fn main(spawner: Spawner) -> ! {
         net_config.mdns.hostname.clone(),
     )) {
         defmt::panic!("spawn(mdns_task) failed: {}", defmt::Debug2Format(&e));
+    }
+
+    // BLE peripheral. Shares the same `&'static esp_radio::Controller`
+    // as Wi-Fi — coex (enabled via the `coex` feature on `esp-radio`)
+    // schedules airtime between the two stacks. The BLE address +
+    // local name are derived from the chip's eFuse MAC so a single
+    // device shows up consistently across reboots, and matches the
+    // discovery handle visible on the LAN over mDNS.
+    #[allow(clippy::items_after_statements)]
+    static BLE_NAME: StaticCell<heapless::String<32>> = StaticCell::new();
+    let ble_mac = esp_hal::efuse::Efuse::mac_address();
+    let ble_name: &'static str = {
+        use core::fmt::Write as _;
+        let mut s: heapless::String<32> = heapless::String::new();
+        // 16 bytes total — well under the 22-byte BLE GAP-name cap.
+        if let Err(e) = write!(
+            &mut s,
+            "stackchan-{:02x}{:02x}{:02x}",
+            ble_mac[3], ble_mac[4], ble_mac[5]
+        ) {
+            defmt::panic!("ble: name format failed: {}", defmt::Debug2Format(&e));
+        }
+        BLE_NAME.init(s).as_str()
+    };
+    let ble_connector = match esp_radio::ble::controller::BleConnector::new(
+        radio,
+        peripherals.BT,
+        esp_radio::ble::Config::default(),
+    ) {
+        Ok(c) => c,
+        Err(e) => defmt::panic!(
+            "ble: BleConnector::new failed ({})",
+            defmt::Debug2Format(&e)
+        ),
+    };
+    let ble_controller: trouble_host::prelude::ExternalController<_, 20> =
+        trouble_host::prelude::ExternalController::new(ble_connector);
+    if let Err(e) = spawner.spawn(ble::ble_task(ble::BleTaskConfig {
+        controller: ble_controller,
+        address_bytes: ble_mac,
+        local_name: ble_name,
+    })) {
+        defmt::panic!("spawn(ble_task) failed: {}", defmt::Debug2Format(&e));
     }
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
