@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.27.0...stackchan-firmware-v0.28.0) (2026-04-28)
+
+
+### Features
+
+* **firmware:** POST /volume + POST /mute (persisted) ([#170](https://github.com/andymai/stackchan-kai/issues/170)) ([f27d2e1](https://github.com/andymai/stackchan-kai/commit/f27d2e1e047371a382386562a14df76540945b09))
+
 ## [0.27.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.26.0...stackchan-firmware-v0.27.0) (2026-04-27)
 
 
