@@ -81,6 +81,11 @@ const PROV_SSID_CAP: usize = 32;
 /// byte of slack for an opaque trailing byte.
 const PROV_PSK_CAP: usize = 64;
 
+/// Minimum WPA2-PSK length in characters. The 802.11 spec rejects
+/// passphrases shorter than this — committing one would just stick
+/// the wifi task in a retry-backoff loop.
+const PROV_PSK_MIN: usize = 8;
+
 /// Maximum simultaneous BLE centrals. One phone at a time is plenty.
 const CONNECTIONS_MAX: usize = 1;
 
@@ -332,14 +337,27 @@ async fn gatt_events_task<P: PacketPool>(
             GattConnectionEvent::Gatt { event } => {
                 let is_psk_write =
                     matches!(&event, GattEvent::Write(w) if w.handle() == psk_handle);
-                match event.accept() {
-                    Ok(reply) => reply.send().await,
-                    Err(e) => defmt::warn!(
-                        "ble: gatt event accept failed ({})",
-                        defmt::Debug2Format(&e)
-                    ),
-                }
-                if is_psk_write {
+                // Only fire commit when the write was actually
+                // applied to the GATT table. A failed `accept()`
+                // means trouble-host did not store the new bytes,
+                // and `server.get(&psk)` would return stale or
+                // empty data — committing on that path would
+                // persist the wrong PSK (or treat an empty PSK as
+                // an open-AP credential).
+                let accepted_ok = match event.accept() {
+                    Ok(reply) => {
+                        reply.send().await;
+                        true
+                    }
+                    Err(e) => {
+                        defmt::warn!(
+                            "ble: gatt event accept failed ({})",
+                            defmt::Debug2Format(&e)
+                        );
+                        false
+                    }
+                };
+                if is_psk_write && accepted_ok {
                     commit_provisioning(server).await;
                 }
             }
@@ -465,6 +483,19 @@ async fn commit_provisioning(server: &StackchanServer<'_>) {
 
     if staged_ssid.trim().is_empty() {
         defmt::warn!("ble: prov: empty SSID — write SSID before PSK to commit");
+        return;
+    }
+    // Reject below-spec PSKs at the BLE boundary so they never reach
+    // the SD card or the wifi task. Committing a 1–7 char PSK would
+    // just thrash the radio on a retry loop. Empty PSK is allowed
+    // for provisioning an open AP (which the 802.11 driver will
+    // accept).
+    if !new_psk.is_empty() && new_psk.len() < PROV_PSK_MIN {
+        defmt::warn!(
+            "ble: prov: PSK too short ({=usize} bytes; need {=usize}+)",
+            new_psk.len(),
+            PROV_PSK_MIN
+        );
         return;
     }
 
