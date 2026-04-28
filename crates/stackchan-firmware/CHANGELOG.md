@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.29.0...stackchan-firmware-v0.30.0) (2026-04-28)
+
+
+### Features
+
+* **firmware:** BLE Wi-Fi provisioning + soft reconnect ([#176](https://github.com/andymai/stackchan-kai/issues/176)) ([b1f348f](https://github.com/andymai/stackchan-kai/commit/b1f348f1b4f04dc7f9f011ca2badd47d6c852e51))
+
 ## [0.29.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.28.0...stackchan-firmware-v0.29.0) (2026-04-28)
 
 
