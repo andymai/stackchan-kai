@@ -46,6 +46,12 @@ embedded-sdmmc = { version = "0.8", default-features = false, features = ["defmt
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
 heapless = "0.8"
+# trouble-host 0.5 implements `AsGatt` on `heapless::String<N>` from
+# the 0.9 line; the rest of the firmware still rides 0.8 (transitive
+# pin via `embassy-net`'s smoltcp). Aliased so the two versions can
+# coexist in the dep graph without resolver-time conflict — only the
+# BLE module reaches for `heapless_09`.
+heapless_09 = { package = "heapless", version = "0.9" }
 embedded-graphics = { workspace = true }
 # `embedded_hal::spi::SpiDevice` (sync) is what `embedded-sdmmc 0.8`
 # wants from the SD client wrapper. The async equivalent is also
@@ -72,12 +78,20 @@ esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "psram", "unstable
 esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp-radio", "esp32s3"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
-# Wi-Fi station-mode driver. `esp-radio` replaces `esp-wifi` on the
+# Wi-Fi + BLE radio driver. `esp-radio` replaces `esp-wifi` on the
 # esp-hal 1.0 release line. Pinned to 0.17.x because 0.18 requires
 # esp-hal ~1.1.0-rc.0 which would force a wider toolchain bump.
 # `unstable` is required because esp-hal itself runs with `unstable`
-# enabled here.
-esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "unstable"] }
+# enabled here. `ble` enables the on-chip BLE controller (HCI behind
+# the `BleConnector` Transport); `coex` lets Wi-Fi STA and BLE share
+# the radio at the cost of ~10–15% Wi-Fi throughput. The bt-hci
+# version pin (^0.6) cascades into the trouble-host 0.5.x line.
+esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "ble", "coex", "unstable"] }
+# BLE host stack. 0.5.1 is the trouble-host release pinned to
+# `bt-hci ^0.6` (matches esp-radio 0.17). 0.6.0 jumps to `bt-hci 0.8`
+# and pairs with esp-radio 0.18 — bump together when we move the
+# wider toolchain.
+trouble-host = { version = "0.5.1", default-features = false, features = ["defmt", "peripheral", "gatt", "derive", "default-packet-pool"] }
 # embassy-net's TCP / UDP / DHCPv4 stack on top of smoltcp. 0.9.x
 # pairs with esp-radio 0.18 (both ride the embassy-sync 0.7 line).
 embassy-net = { version = "0.9", features = ["defmt", "proto-ipv4", "tcp", "udp", "dhcpv4", "dns", "multicast", "medium-ethernet"] }
