@@ -325,10 +325,10 @@ impl Tracker {
 
     /// Most-recently commanded (smoothed) target pose. Equal to the
     /// internal accumulator when [`TrackerConfig::target_smoothing_alpha`]
-    /// is `1.0`; otherwise a single-pole EMA of it. Returns
-    /// [`Self::published_pose`], not [`Self::target_pose`] — the
-    /// internal field of that name is the EMA's input, while
-    /// callers of this getter want the EMA's output.
+    /// is `1.0`; otherwise a single-pole EMA of it. Returns the
+    /// `published_pose` field, not the internal `target_pose`
+    /// accumulator — the field of that name is the EMA's input,
+    /// while callers of this getter want the EMA's output.
     #[must_use]
     #[allow(
         clippy::misnamed_getters,
