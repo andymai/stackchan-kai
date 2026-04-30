@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.32.0...stackchan-firmware-v0.33.0) (2026-04-30)
+
+
+### Features
+
+* **firmware:** camera-mode toggle via HTTP + BLE control planes ([#186](https://github.com/andymai/stackchan-kai/issues/186)) ([f2dcfae](https://github.com/andymai/stackchan-kai/commit/f2dcfae6b8fd1c168af7411b7bfb9a059247fb97))
+
 ## [0.32.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.31.0...stackchan-firmware-v0.32.0) (2026-04-30)
 
 
