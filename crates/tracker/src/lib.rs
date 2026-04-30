@@ -351,10 +351,15 @@ impl Tracker {
         if alpha >= 1.0 {
             self.published_pose = self.target_pose;
         } else {
+            // Both inputs are already inside `Pose::clamped`'s safe
+            // range (the accumulator + every published_pose update
+            // route through it), and convex combinations of points
+            // in the safe range stay in the safe range — no extra
+            // clamp needed here.
             let inv = 1.0 - alpha;
             let pan = inv * self.published_pose.pan_deg + alpha * self.target_pose.pan_deg;
             let tilt = inv * self.published_pose.tilt_deg + alpha * self.target_pose.tilt_deg;
-            self.published_pose = Pose::new(pan, tilt).clamped();
+            self.published_pose = Pose::new(pan, tilt);
         }
         self.published_pose
     }
