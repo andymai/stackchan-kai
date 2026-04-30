@@ -35,11 +35,12 @@
 //!    [`stackchan_net::ble_command`] and signals
 //!    [`crate::net::http::REMOTE_COMMAND_SIGNAL`], the same channel
 //!    the HTTP control plane drives.
-//! 7. **View service** (`8a1c0040-…`) — display-mode toggles. Today
-//!    just the camera-mode flag (`8a1c0041-…`, `read + write +
-//!    notify`) that mirrors HTTP `POST /camera/mode`. Updates write
-//!    the avatar snapshot directly + signal the render task; no SD
-//!    writeback (camera mode is intentionally ephemeral).
+//! 7. **View service** (`8a1c0040-…`) — display + capture
+//!    triggers. Camera-mode flag (`8a1c0041-…`, `read + write +
+//!    notify`) mirrors HTTP `POST /camera/mode`; camera-capture
+//!    (`8a1c0042-…`, `write`-only, any 1-byte trigger) mirrors HTTP
+//!    `POST /camera/capture` and signals the camera task to persist
+//!    the latest frame to `/sd/CAPTURE.565`.
 //!
 //! ## Security
 //!
@@ -248,6 +249,12 @@ pub struct ViewService {
         value = 0
     )]
     pub camera_mode: u8,
+    /// Camera-capture trigger. `write`-only — any 1-byte write
+    /// signals the camera task to write the latest QVGA RGB565 frame
+    /// to `/sd/CAPTURE.565`. Decoded via
+    /// [`stackchan_net::ble_command::decode_camera_capture`].
+    #[characteristic(uuid = "8a1c0042-7b3f-4d52-9c6e-5f5ba1e5cf01", write, value = 0)]
+    pub camera_capture: u8,
 }
 
 #[allow(missing_docs)]
@@ -477,6 +484,8 @@ struct WriteHandles {
     speak: u16,
     /// View camera-mode toggle.
     camera_mode: u16,
+    /// View camera-capture trigger.
+    camera_capture: u16,
 }
 
 impl WriteHandles {
@@ -493,6 +502,7 @@ impl WriteHandles {
             reset: server.avatar.reset.handle,
             speak: server.avatar.speak.handle,
             camera_mode: server.view.camera_mode.handle,
+            camera_capture: server.view.camera_capture.handle,
         }
     }
 }
@@ -518,6 +528,9 @@ enum WriteAction {
     /// [`crate::net::snapshot::update_camera_mode`] +
     /// [`CAMERA_MODE_SIGNAL`].
     CameraMode(bool),
+    /// Signal the camera task to persist the latest frame to
+    /// `/sd/CAPTURE.565`.
+    CameraCapture,
 }
 
 /// Decision the dispatcher takes for one Gatt event.
@@ -664,7 +677,8 @@ fn decide_write<P: PacketPool>(
         || handle == handles.look_at
         || handle == handles.reset
         || handle == handles.speak
-        || handle == handles.camera_mode;
+        || handle == handles.camera_mode
+        || handle == handles.camera_capture;
     if !is_control {
         return WriteDecision::Default;
     }
@@ -685,6 +699,8 @@ fn decide_write<P: PacketPool>(
         ble_command::decode_speak(data).map(WriteAction::Remote)
     } else if handle == handles.camera_mode {
         ble_command::decode_camera_mode(data).map(WriteAction::CameraMode)
+    } else if handle == handles.camera_capture {
+        ble_command::decode_camera_capture(data).map(|()| WriteAction::CameraCapture)
     } else {
         // Unreachable on the strength of the `is_control` gate above
         // — every handle counted there must have a decode arm here.
@@ -756,6 +772,10 @@ async fn apply_write_action<P: PacketPool>(
             defmt::info!("ble: camera_mode → {=bool}", active);
             snapshot::update_camera_mode(active);
             CAMERA_MODE_SIGNAL.signal(active);
+        }
+        WriteAction::CameraCapture => {
+            defmt::info!("ble: camera_capture → signal queued");
+            crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
         }
     }
 }

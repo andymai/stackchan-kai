@@ -61,6 +61,8 @@ pub const VOLUME_LEN: usize = 1;
 pub const MUTE_LEN: usize = 1;
 /// Expected payload length for the camera-mode characteristic.
 pub const CAMERA_MODE_LEN: usize = 1;
+/// Expected payload length for the camera-capture trigger.
+pub const CAMERA_CAPTURE_LEN: usize = 1;
 /// Expected payload length for the reset characteristic.
 pub const RESET_LEN: usize = 1;
 /// Expected payload length for the emotion-write characteristic
@@ -207,6 +209,18 @@ pub fn decode_camera_mode(payload: &[u8]) -> Result<bool, BleError> {
 ///   than [`RESET_LEN`] bytes.
 pub const fn decode_reset(payload: &[u8]) -> Result<(), BleError> {
     expect_len(payload, RESET_LEN)
+}
+
+/// Decode the camera-capture trigger payload (any 1-byte value
+/// triggers a capture; the firmware snapshots the latest frame and
+/// writes it to `/sd/CAPTURE.565`).
+///
+/// # Errors
+///
+/// - [`BleError::BadLength`] when the central writes anything other
+///   than [`CAMERA_CAPTURE_LEN`] bytes.
+pub const fn decode_camera_capture(payload: &[u8]) -> Result<(), BleError> {
+    expect_len(payload, CAMERA_CAPTURE_LEN)
 }
 
 /// Decode the emotion-write payload into a [`RemoteCommand::SetEmotion`].
@@ -487,6 +501,30 @@ mod tests {
         );
         assert_eq!(
             decode_reset(&[1, 2]),
+            Err(BleError::BadLength {
+                expected: 1,
+                actual: 2
+            })
+        );
+    }
+
+    #[test]
+    fn camera_capture_accepts_any_single_byte() {
+        assert!(decode_camera_capture(&[0]).is_ok());
+        assert!(decode_camera_capture(&[0xFF]).is_ok());
+    }
+
+    #[test]
+    fn camera_capture_rejects_wrong_length() {
+        assert_eq!(
+            decode_camera_capture(&[]),
+            Err(BleError::BadLength {
+                expected: 1,
+                actual: 0
+            })
+        );
+        assert_eq!(
+            decode_camera_capture(&[1, 2]),
             Err(BleError::BadLength {
                 expected: 1,
                 actual: 2

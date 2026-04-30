@@ -193,6 +193,46 @@ Persistent. Mute is independent of volume so unmuting restores the
 prior level — `volume = 0` is "audible but very quiet"; `muted =
 true` is the actual-silence path.
 
+### `POST /camera/mode`
+
+```
+$ curl -X POST http://stackchan.local/camera/mode \
+       -H 'Content-Type: application/json' \
+       -d '{"enabled":true}'
+```
+
+| Field   | Type | Required | Notes                                                |
+|---------|------|----------|------------------------------------------------------|
+| enabled | bool | yes      | `true` = LCD shows camera preview, `false` = avatar. |
+
+Display-only — tracking still runs in either mode. Ephemeral (no
+SD writeback); a power-cycle returns to avatar. Mirrored on the
+BLE view service (`8a1c0041-…`).
+
+### `POST /camera/capture`
+
+```
+$ curl -X POST http://stackchan.local/camera/capture
+```
+
+Empty body. Signals the camera task to write the latest QVGA
+RGB565 frame to `/sd/CAPTURE.565` (320 × 240 × 2 = 153 600 bytes,
+big-endian); each capture overwrites the previous file. Returns
+`202 Accepted` immediately — the SD write happens asynchronously
+and stalls render for ~200 ms during the SPI burst. Mirrored on
+the BLE view service (`8a1c0042-…`).
+
+Decode example (Python):
+
+```python
+import numpy as np
+raw = np.fromfile('CAPTURE.565', dtype='>u2').reshape(240, 320)
+r = ((raw >> 11) & 0x1F) * 255 // 31
+g = ((raw >>  5) & 0x3F) * 255 // 63
+b = ((raw      ) & 0x1F) * 255 // 31
+img = np.dstack([r, g, b]).astype('u1')
+```
+
 ## Persistent config
 
 The boot config lives at `/sd/STACKCHAN.RON` in the schema described

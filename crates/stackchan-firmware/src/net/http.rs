@@ -30,6 +30,10 @@
 //!   LCD between camera preview and avatar; tracking continues in
 //!   either mode. Ephemeral (no SD writeback); a power-cycle returns
 //!   to avatar.
+//! - `POST /camera/capture` — empty body. Signals the camera task to
+//!   write the latest QVGA RGB565 frame to `/sd/CAPTURE.565`; returns
+//!   `202 Accepted`. The SD write happens asynchronously inside the
+//!   camera task and stalls render for ~200 ms during the SPI burst.
 //! - `GET /settings` — current persisted [`stackchan_net::Config`]
 //!   as JSON, with `wifi.psk` and `auth.token` redacted.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
@@ -291,6 +295,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/volume") => handle_post_volume(socket, body).await,
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
+        ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
     }
@@ -553,6 +558,17 @@ async fn handle_post_camera_mode(socket: &mut TcpSocket<'_>, body: &str) -> Resu
     crate::camera::CAMERA_MODE_SIGNAL.signal(active);
     defmt::info!("http: POST /camera/mode → {=bool}", active);
     write_no_content(socket).await
+}
+
+/// `POST /camera/capture` — empty body, signals the camera task to
+/// snapshot the latest frame and persist it to `/sd/CAPTURE.565`.
+/// The actual SD write happens out-of-band (a few hundred ms later
+/// inside the camera task), so this returns `202 Accepted` rather
+/// than blocking the HTTP worker on the SPI write.
+async fn handle_post_camera_capture(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
+    defmt::info!("http: POST /camera/capture → signal queued");
+    write_text(socket, 202, "capture queued\n").await
 }
 
 /// Apply a parsed remote command (or surface the parser error to the
