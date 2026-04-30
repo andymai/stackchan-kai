@@ -35,6 +35,11 @@
 //!    [`stackchan_net::ble_command`] and signals
 //!    [`crate::net::http::REMOTE_COMMAND_SIGNAL`], the same channel
 //!    the HTTP control plane drives.
+//! 7. **View service** (`8a1c0040-…`) — display-mode toggles. Today
+//!    just the camera-mode flag (`8a1c0041-…`, `read + write +
+//!    notify`) that mirrors HTTP `POST /camera/mode`. Updates write
+//!    the avatar snapshot directly + signal the render task; no SD
+//!    writeback (camera mode is intentionally ephemeral).
 //!
 //! ## Security
 //!
@@ -69,6 +74,7 @@ use trouble_host::Address;
 use trouble_host::prelude::*;
 
 use crate::audio::AudioPersistOutcome;
+use crate::camera::CAMERA_MODE_SIGNAL;
 use crate::net::http::REMOTE_COMMAND_SIGNAL;
 use crate::net::snapshot;
 use crate::net::wifi::{WIFI_RECONFIG, WifiCreds};
@@ -144,6 +150,10 @@ pub struct StackchanServer {
     /// (write only). Mirrors HTTP `POST /emotion`, `/look-at`,
     /// `/reset`, `/speak`.
     pub avatar: AvatarControlService,
+    /// View service — display-related toggles. Currently exposes
+    /// camera-mode (read + write + notify); future entries may add
+    /// LCD brightness / render mode. Mirrors HTTP `POST /camera/mode`.
+    pub view: ViewService,
 }
 
 #[allow(missing_docs)]
@@ -220,6 +230,24 @@ pub struct AvatarControlService {
     /// [`stackchan_net::ble_command::decode_speak`].
     #[characteristic(uuid = "8a1c0034-7b3f-4d52-9c6e-5f5ba1e5cf01", write, value = [0u8; SPEAK_LEN])]
     pub speak: [u8; SPEAK_LEN],
+}
+
+#[allow(missing_docs)]
+#[gatt_service(uuid = "8a1c0040-7b3f-4d52-9c6e-5f5ba1e5cf01")]
+pub struct ViewService {
+    /// LCD display-mode toggle. `0 = avatar`, `1 = camera preview`.
+    /// `read + write + notify`. Decoded via
+    /// [`stackchan_net::ble_command::decode_camera_mode`]; writes
+    /// route through [`crate::net::snapshot::update_camera_mode`] +
+    /// [`crate::camera::CAMERA_MODE_SIGNAL`].
+    #[characteristic(
+        uuid = "8a1c0041-7b3f-4d52-9c6e-5f5ba1e5cf01",
+        read,
+        write,
+        notify,
+        value = 0
+    )]
+    pub camera_mode: u8,
 }
 
 #[allow(missing_docs)]
@@ -320,7 +348,7 @@ pub async fn run_ble_peripheral<C: Controller>(
 
     populate_dis(&server);
     populate_provisioning_ssid(&server).await;
-    populate_audio_state(&server);
+    populate_read_state(&server);
 
     let advertise_serve = async {
         loop {
@@ -447,6 +475,8 @@ struct WriteHandles {
     reset: u16,
     /// Avatar speak trigger.
     speak: u16,
+    /// View camera-mode toggle.
+    camera_mode: u16,
 }
 
 impl WriteHandles {
@@ -462,6 +492,7 @@ impl WriteHandles {
             look_at: server.avatar.look_at.handle,
             reset: server.avatar.reset.handle,
             speak: server.avatar.speak.handle,
+            camera_mode: server.view.camera_mode.handle,
         }
     }
 }
@@ -483,6 +514,10 @@ enum WriteAction {
     /// Forward a synthesised reset onto [`REMOTE_COMMAND_SIGNAL`].
     /// Reset has no decoded payload but needs the same dispatch shape.
     RemoteReset,
+    /// Apply a new camera-mode flag via
+    /// [`crate::net::snapshot::update_camera_mode`] +
+    /// [`CAMERA_MODE_SIGNAL`].
+    CameraMode(bool),
 }
 
 /// Decision the dispatcher takes for one Gatt event.
@@ -628,7 +663,8 @@ fn decide_write<P: PacketPool>(
         || handle == handles.emotion_write
         || handle == handles.look_at
         || handle == handles.reset
-        || handle == handles.speak;
+        || handle == handles.speak
+        || handle == handles.camera_mode;
     if !is_control {
         return WriteDecision::Default;
     }
@@ -647,6 +683,8 @@ fn decide_write<P: PacketPool>(
         ble_command::decode_reset(data).map(|()| WriteAction::RemoteReset)
     } else if handle == handles.speak {
         ble_command::decode_speak(data).map(WriteAction::Remote)
+    } else if handle == handles.camera_mode {
+        ble_command::decode_camera_mode(data).map(WriteAction::CameraMode)
     } else {
         // Unreachable on the strength of the `is_control` gate above
         // — every handle counted there must have a decode arm here.
@@ -684,6 +722,7 @@ const fn att_error_for(err: &BleError) -> AttErrorCode {
             AttErrorCode::OUT_OF_RANGE
         }
         BleError::BadMuteByte(_)
+        | BleError::BadCameraModeByte(_)
         | BleError::UnknownEmotion(_)
         | BleError::UnknownLocale(_)
         | BleError::UnknownPhrase(_) => AttErrorCode::VALUE_NOT_ALLOWED,
@@ -712,6 +751,11 @@ async fn apply_write_action<P: PacketPool>(
         WriteAction::RemoteReset => {
             defmt::info!("ble: remote reset");
             REMOTE_COMMAND_SIGNAL.signal(stackchan_core::RemoteCommand::Reset);
+        }
+        WriteAction::CameraMode(active) => {
+            defmt::info!("ble: camera_mode → {=bool}", active);
+            snapshot::update_camera_mode(active);
+            CAMERA_MODE_SIGNAL.signal(active);
         }
     }
 }
@@ -767,9 +811,11 @@ async fn notify_task<P: PacketPool>(
     let emotion_handle = server.stackchan.emotion;
     let volume_handle = server.audio.volume;
     let mute_handle = server.audio.mute;
+    let camera_mode_handle = server.view.camera_mode;
     let mut last_emotion: Option<Emotion> = None;
     let mut last_volume: Option<u8> = None;
     let mut last_mute: Option<bool> = None;
+    let mut last_camera_mode: Option<bool> = None;
 
     loop {
         let snap = snapshot::read();
@@ -831,6 +877,18 @@ async fn notify_task<P: PacketPool>(
             &mut last_mute,
             snap.audio.muted,
             &mute_byte,
+        )
+        .await;
+
+        let camera_mode_byte = ble_command::encode_camera_mode(snap.camera_mode);
+        notify_if_changed(
+            server,
+            conn,
+            &camera_mode_handle,
+            "camera_mode",
+            &mut last_camera_mode,
+            snap.camera_mode,
+            &camera_mode_byte,
         )
         .await;
 
@@ -897,11 +955,12 @@ async fn populate_provisioning_ssid(server: &StackchanServer<'_>) {
     }
 }
 
-/// Pre-fill the audio service's volume + mute characteristics with
-/// the persisted config so a phone reading them at connect time sees
-/// the active values rather than zeros. The notify loop later catches
-/// any change made between this snapshot and the central's read.
-fn populate_audio_state(server: &StackchanServer<'_>) {
+/// Pre-fill read-side characteristic values from the avatar snapshot
+/// so a phone reading them at connect time sees current state rather
+/// than zeros. Covers the audio service (volume + mute) and the view
+/// service (`camera_mode`). The notify loop later catches any change
+/// made between this snapshot and the central's read.
+fn populate_read_state(server: &StackchanServer<'_>) {
     let snap = snapshot::read();
     if let Err(e) = server.set(&server.audio.volume, &snap.audio.volume_pct) {
         defmt::warn!(
@@ -913,6 +972,13 @@ fn populate_audio_state(server: &StackchanServer<'_>) {
     if let Err(e) = server.set(&server.audio.mute, &mute_byte) {
         defmt::warn!(
             "ble: audio mute initial set failed ({})",
+            defmt::Debug2Format(&e)
+        );
+    }
+    let camera_mode_byte = ble_command::encode_camera_mode(snap.camera_mode);
+    if let Err(e) = server.set(&server.view.camera_mode, &camera_mode_byte) {
+        defmt::warn!(
+            "ble: view camera_mode initial set failed ({})",
             defmt::Debug2Format(&e)
         );
     }

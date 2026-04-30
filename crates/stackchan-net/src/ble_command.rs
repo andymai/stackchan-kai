@@ -59,6 +59,8 @@ pub const LOOK_AT_RANGE_CENTI_DEG: i16 = 18_000;
 pub const VOLUME_LEN: usize = 1;
 /// Expected payload length for the mute characteristic.
 pub const MUTE_LEN: usize = 1;
+/// Expected payload length for the camera-mode characteristic.
+pub const CAMERA_MODE_LEN: usize = 1;
 /// Expected payload length for the reset characteristic.
 pub const RESET_LEN: usize = 1;
 /// Expected payload length for the emotion-write characteristic
@@ -125,6 +127,9 @@ pub enum BleError {
     /// Mute byte was neither `0` nor `1`. Maps to ATT `VALUE_NOT_ALLOWED`
     /// (0x13) — strict so a buggy client surfaces fast.
     BadMuteByte(u8),
+    /// Camera-mode byte was neither `0` nor `1`. Maps to ATT
+    /// `VALUE_NOT_ALLOWED` — same posture as [`Self::BadMuteByte`].
+    BadCameraModeByte(u8),
     /// Emotion byte didn't match any [`EMOTION_*`](EMOTION_NEUTRAL)
     /// constant. Maps to ATT `VALUE_NOT_ALLOWED`.
     UnknownEmotion(u8),
@@ -173,6 +178,24 @@ pub fn decode_mute(payload: &[u8]) -> Result<bool, BleError> {
         0 => Ok(false),
         1 => Ok(true),
         b => Err(BleError::BadMuteByte(b)),
+    }
+}
+
+/// Decode the camera-mode write payload into a `bool` (`true` =
+/// LCD shows camera preview, `false` = LCD shows avatar).
+///
+/// # Errors
+///
+/// - [`BleError::BadLength`] when the central writes anything other
+///   than [`CAMERA_MODE_LEN`] bytes.
+/// - [`BleError::BadCameraModeByte`] for any byte that isn't `0`
+///   or `1`.
+pub fn decode_camera_mode(payload: &[u8]) -> Result<bool, BleError> {
+    expect_len(payload, CAMERA_MODE_LEN)?;
+    match payload[0] {
+        0 => Ok(false),
+        1 => Ok(true),
+        b => Err(BleError::BadCameraModeByte(b)),
     }
 }
 
@@ -274,6 +297,16 @@ pub const fn encode_emotion(emotion: Emotion) -> u8 {
 #[must_use]
 pub const fn encode_mute(muted: bool) -> u8 {
     if muted { 1 } else { 0 }
+}
+
+/// Encode the camera-mode flag as the single byte the camera-mode
+/// characteristic publishes on read / notify.
+///
+/// Same `0`/`1` shape as [`encode_mute`]; kept distinct so a future
+/// encoding change to one flag doesn't accidentally migrate the other.
+#[must_use]
+pub const fn encode_camera_mode(active: bool) -> u8 {
+    if active { 1 } else { 0 }
 }
 
 /// Reject a payload whose length doesn't match the characteristic's
@@ -399,6 +432,42 @@ mod tests {
     fn mute_rejects_non_boolean_byte() {
         assert_eq!(decode_mute(&[2]), Err(BleError::BadMuteByte(2)));
         assert_eq!(decode_mute(&[0xFF]), Err(BleError::BadMuteByte(0xFF)));
+    }
+
+    #[test]
+    fn camera_mode_round_trips_both_booleans() {
+        assert!(!decode_camera_mode(&[encode_camera_mode(false)]).unwrap());
+        assert!(decode_camera_mode(&[encode_camera_mode(true)]).unwrap());
+    }
+
+    #[test]
+    fn camera_mode_rejects_non_boolean_byte() {
+        assert_eq!(
+            decode_camera_mode(&[2]),
+            Err(BleError::BadCameraModeByte(2))
+        );
+        assert_eq!(
+            decode_camera_mode(&[0x10]),
+            Err(BleError::BadCameraModeByte(0x10))
+        );
+    }
+
+    #[test]
+    fn camera_mode_rejects_wrong_length() {
+        assert_eq!(
+            decode_camera_mode(&[]),
+            Err(BleError::BadLength {
+                expected: 1,
+                actual: 0
+            })
+        );
+        assert_eq!(
+            decode_camera_mode(&[0, 1]),
+            Err(BleError::BadLength {
+                expected: 1,
+                actual: 2
+            })
+        );
     }
 
     #[test]

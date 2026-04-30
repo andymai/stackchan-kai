@@ -241,6 +241,34 @@ pub fn parse_mute(body: &str) -> Result<bool, JsonError> {
     muted.ok_or(JsonError::MissingKey("muted"))
 }
 
+/// Parse a `POST /camera/mode` body into a `bool`. Drives the
+/// LCD display-mode toggle (`true` = camera preview, `false` =
+/// avatar). Display-only — tracking still runs in either mode.
+///
+/// Required: `enabled` (boolean). No optional fields.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys,
+/// unknown keys, malformed JSON shape, or non-boolean `enabled`
+/// values.
+pub fn parse_camera_mode(body: &str) -> Result<bool, JsonError> {
+    let mut enabled: Option<bool> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "enabled" => {
+                if enabled.is_some() {
+                    return Err(JsonError::DuplicateKey("enabled"));
+                }
+                enabled = Some(parse_bool(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    enabled.ok_or(JsonError::MissingKey("enabled"))
+}
+
 /// Single-pass byte cursor over the body. Each parse helper advances
 /// past the value it consumes (without consuming the trailing comma
 /// or `}` — those belong to [`visit_object`]).
@@ -806,5 +834,43 @@ mod tests {
     fn mute_rejects_unknown_key() {
         let body = r#"{"muted":true,"hold_ms":1000}"#;
         assert!(matches!(parse_mute(body), Err(JsonError::UnknownKey)));
+    }
+
+    #[test]
+    fn camera_mode_accepts_both_booleans() {
+        assert!(parse_camera_mode(r#"{"enabled":true}"#).unwrap());
+        assert!(!parse_camera_mode(r#"{"enabled":false}"#).unwrap());
+    }
+
+    #[test]
+    fn camera_mode_rejects_missing_field() {
+        assert!(matches!(
+            parse_camera_mode(r"{}"),
+            Err(JsonError::MissingKey("enabled"))
+        ));
+    }
+
+    #[test]
+    fn camera_mode_rejects_non_boolean_value() {
+        assert!(matches!(
+            parse_camera_mode(r#"{"enabled":1}"#),
+            Err(JsonError::BadValue)
+        ));
+    }
+
+    #[test]
+    fn camera_mode_rejects_duplicate_key() {
+        assert!(matches!(
+            parse_camera_mode(r#"{"enabled":true,"enabled":false}"#),
+            Err(JsonError::DuplicateKey("enabled"))
+        ));
+    }
+
+    #[test]
+    fn camera_mode_rejects_unknown_key() {
+        assert!(matches!(
+            parse_camera_mode(r#"{"enabled":true,"hold_ms":1000}"#),
+            Err(JsonError::UnknownKey)
+        ));
     }
 }

@@ -58,6 +58,13 @@ pub struct AvatarSnapshot {
     /// successful `POST /volume` / `POST /mute` so the dashboard's
     /// SSE stream picks up the change without a full settings re-fetch.
     pub audio: AudioConfig,
+    /// Whether the LCD is currently showing the camera preview
+    /// (`true`) instead of the avatar (`false`). Display-only —
+    /// tracking still runs in either mode. Updated by every producer
+    /// of [`crate::camera::CAMERA_MODE_SIGNAL`] (button long-press,
+    /// HTTP `POST /camera/mode`, BLE view-service write) before the
+    /// signal fires, so the snapshot stays canonical.
+    pub camera_mode: bool,
 }
 
 impl AvatarSnapshot {
@@ -84,6 +91,7 @@ impl AvatarSnapshot {
             && self.battery == other.battery
             && self.wifi == other.wifi
             && self.audio == other.audio
+            && self.camera_mode == other.camera_mode
     }
 }
 
@@ -96,6 +104,7 @@ impl Default for AvatarSnapshot {
             battery: BatterySnapshot::default(),
             wifi: WifiSnapshot::default(),
             audio: AudioConfig::DEFAULT,
+            camera_mode: false,
         }
     }
 }
@@ -119,6 +128,7 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
             ip: None,
         },
         audio: AudioConfig::DEFAULT,
+        camera_mode: false,
     }));
 
 /// Replace the avatar/head fields. Called per render tick.
@@ -162,6 +172,21 @@ pub fn update_audio(audio: AudioConfig) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
         s.audio = audio;
+        cell.set(s);
+    });
+}
+
+/// Replace the camera-mode field.
+///
+/// Called by every producer of [`crate::camera::CAMERA_MODE_SIGNAL`]
+/// (button long-press, HTTP `POST /camera/mode`, BLE view-service
+/// write) so the snapshot flips before the signal fires — `GET
+/// /state` and BLE notify clients see the new value without waiting
+/// for the render loop to drain the signal.
+pub fn update_camera_mode(active: bool) {
+    AVATAR_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        s.camera_mode = active;
         cell.set(s);
     });
 }

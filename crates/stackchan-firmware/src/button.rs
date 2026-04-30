@@ -103,6 +103,7 @@ pub async fn run_button_loop<I: AsyncI2c>(bus: I) -> ! {
                         "AXP2101 button: long-press → camera_mode={=bool}",
                         state.camera_active,
                     );
+                    crate::net::snapshot::update_camera_mode(state.camera_active);
                     CAMERA_MODE_SIGNAL.signal(state.camera_active);
                     long_press_fired = true;
                 }
