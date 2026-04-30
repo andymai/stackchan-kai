@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.12.2...stackchan-sim-v0.13.0) (2026-04-30)
+
+
+### Features
+
+* **firmware:** BLE control-plane writes for audio + avatar ([#179](https://github.com/andymai/stackchan-kai/issues/179)) ([a290eb0](https://github.com/andymai/stackchan-kai/commit/a290eb0cd75a505844b9263c6cabaaaae8e84515))
+
 ## [0.12.2](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.12.1...stackchan-sim-v0.12.2) (2026-04-28)
 
 ## [0.12.1](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.12.0...stackchan-sim-v0.12.1) (2026-04-27)

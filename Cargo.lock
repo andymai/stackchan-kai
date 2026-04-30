@@ -4659,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4718,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "eframe",
  "embedded-graphics",
