@@ -119,6 +119,20 @@ pub struct TrackerConfig {
     /// Mirror vertically. Use when the image is upside-down relative
     /// to the head's tilt direction.
     pub flip_y: bool,
+    /// Single-pole low-pass blend on the *published* target pose.
+    /// `1.0` (default) is a no-op — the published value matches the
+    /// internal P-gain accumulator one-for-one. Lower values add
+    /// inertia: `next = alpha * raw + (1 - alpha) * prev`. Useful for
+    /// taming residual centroid jitter that the per-step P-gain still
+    /// passes through.
+    ///
+    /// Stacks with the engine-side smoothing in
+    /// `stackchan_core::modifiers::HeadFromAttention` (which applies
+    /// its own α=0.22 EMA to the operator-visible head pose). Most
+    /// operators won't need to lower this; benches sometimes do for
+    /// cleaner visualisations. Clamped to `[0.05, 1.0]` at use sites
+    /// to avoid the "head freezes forever" degenerate case at α=0.
+    pub target_smoothing_alpha: f32,
 }
 
 impl TrackerConfig {
@@ -165,6 +179,7 @@ impl TrackerConfig {
         idle_step_deg: 1.0,
         flip_x: false,
         flip_y: false,
+        target_smoothing_alpha: 1.0,
     };
 }
 
@@ -265,9 +280,17 @@ pub struct Tracker {
     /// frames ago. The temporal filter is `popcount(bits & mask) >=
     /// temporal_required` where `mask = (1 << temporal_window) - 1`.
     fire_history: [u8; MAX_BLOCKS],
-    /// Running commanded target pose. Always inside the [`Pose::clamped`]
-    /// safe range.
+    /// Internal P-gain accumulator. Each tracking step nudges this by
+    /// the per-axis delta computed from the centroid offset; idle
+    /// slew also operates on it. Always inside the [`Pose::clamped`]
+    /// safe range. **Not** the value emitted in [`Outcome::target`] —
+    /// see [`Self::published_pose`].
     target_pose: Pose,
+    /// Smoothed copy of [`Self::target_pose`] published in
+    /// [`Outcome::target`] and via [`Self::target_pose`]. EMA with
+    /// [`TrackerConfig::target_smoothing_alpha`]; identical to
+    /// `target_pose` when alpha is `1.0` (the default).
+    published_pose: Pose,
     /// Accumulated time since motion was last detected, in
     /// milliseconds. Saturates at `u32::MAX`.
     idle_ms: u32,
@@ -289,6 +312,7 @@ impl Tracker {
             have_prev: false,
             fire_history: [0; MAX_BLOCKS],
             target_pose: Pose::NEUTRAL,
+            published_pose: Pose::NEUTRAL,
             idle_ms: 0,
         }
     }
@@ -299,10 +323,40 @@ impl Tracker {
         &self.config
     }
 
-    /// Most-recently commanded target pose.
+    /// Most-recently commanded (smoothed) target pose. Equal to the
+    /// internal accumulator when [`TrackerConfig::target_smoothing_alpha`]
+    /// is `1.0`; otherwise a single-pole EMA of it. Returns
+    /// [`Self::published_pose`], not [`Self::target_pose`] — the
+    /// internal field of that name is the EMA's input, while
+    /// callers of this getter want the EMA's output.
     #[must_use]
+    #[allow(
+        clippy::misnamed_getters,
+        reason = "the `target pose` exposed to consumers is the smoothed (published) value; \
+                  the internal `target_pose` field is the unsmoothed accumulator that \
+                  feeds the EMA. Renaming the field would touch every step branch for no \
+                  reader-facing benefit."
+    )]
     pub const fn target_pose(&self) -> Pose {
-        self.target_pose
+        self.published_pose
+    }
+
+    /// Refresh [`Self::published_pose`] from [`Self::target_pose`] via
+    /// the configured EMA, then return it. Called once per
+    /// `Outcome` construction so smoothing keeps converging during
+    /// `Holding` / `Returning` even when the accumulator hasn't moved.
+    /// `α >= 1.0` (the default) is a one-for-one copy.
+    const fn publish(&mut self) -> Pose {
+        let alpha = self.config.target_smoothing_alpha.clamp(0.05, 1.0);
+        if alpha >= 1.0 {
+            self.published_pose = self.target_pose;
+        } else {
+            let inv = 1.0 - alpha;
+            let pan = inv * self.published_pose.pan_deg + alpha * self.target_pose.pan_deg;
+            let tilt = inv * self.published_pose.tilt_deg + alpha * self.target_pose.tilt_deg;
+            self.published_pose = Pose::new(pan, tilt).clamped();
+        }
+        self.published_pose
     }
 
     /// Forget the previous frame and reset the target to `NEUTRAL`.
@@ -310,6 +364,7 @@ impl Tracker {
     pub const fn reset(&mut self) {
         self.have_prev = false;
         self.target_pose = Pose::NEUTRAL;
+        self.published_pose = Pose::NEUTRAL;
         self.idle_ms = 0;
         // Reset the per-cell history so a re-entry starts fresh
         // (matches "the next step reports Warmup" contract).
@@ -358,7 +413,7 @@ impl Tracker {
                 fired_cells: 0,
                 centroid: None,
                 motion: Motion::Warmup,
-                target: self.target_pose,
+                target: self.publish(),
                 candidates: heapless::Vec::new(),
                 face_present: false,
                 face_centroid: None,
@@ -383,7 +438,7 @@ impl Tracker {
                 fired_cells: 0,
                 centroid: None,
                 motion: Motion::Warmup,
-                target: self.target_pose,
+                target: self.publish(),
                 candidates: heapless::Vec::new(),
                 face_present: false,
                 face_centroid: None,
@@ -441,7 +496,7 @@ impl Tracker {
                 fired_cells,
                 centroid: None,
                 motion: Motion::GlobalEvent,
-                target: self.target_pose,
+                target: self.publish(),
                 candidates: heapless::Vec::new(),
                 face_present: false,
                 face_centroid: None,
@@ -521,7 +576,7 @@ impl Tracker {
             fired_cells: valid_cells,
             centroid: Some((nx, ny)),
             motion: Motion::Tracking,
-            target: self.target_pose,
+            target: self.publish(),
             candidates,
             face_present: false,
             face_centroid: None,
@@ -538,7 +593,7 @@ impl Tracker {
                 fired_cells,
                 centroid: None,
                 motion: Motion::Holding,
-                target: self.target_pose,
+                target: self.publish(),
                 candidates: heapless::Vec::new(),
                 face_present: false,
                 face_centroid: None,
@@ -554,7 +609,7 @@ impl Tracker {
             fired_cells,
             centroid: None,
             motion: Motion::Returning,
-            target: self.target_pose,
+            target: self.publish(),
             candidates: heapless::Vec::new(),
             face_present: false,
             face_centroid: None,
@@ -907,6 +962,103 @@ mod tests {
         t.reset();
         let out = t.step(&f, 33);
         assert_eq!(out.motion, Motion::Warmup);
+    }
+
+    #[test]
+    fn default_alpha_publishes_accumulator_one_for_one() {
+        // DEFAULT alpha = 1.0 → published_pose mirrors the internal
+        // target_pose accumulator on every step, no inertia. Pin
+        // because every existing tuning assumes this behaviour.
+        let mut t = Tracker::new(TrackerConfig::DEFAULT);
+        t.target_pose = Pose::new(10.0, 5.0);
+        let f = flat_frame(64);
+        let _ = t.step(&f, 33); // warmup populates prev grid
+        let out = t.step(&f, 33);
+        assert!(
+            (out.target.pan_deg - t.target_pose.pan_deg).abs() < f32::EPSILON,
+            "alpha=1.0 should publish target_pose verbatim; got {} vs {}",
+            out.target.pan_deg,
+            t.target_pose.pan_deg
+        );
+        assert!(
+            (out.target.tilt_deg - t.target_pose.tilt_deg).abs() < f32::EPSILON,
+            "alpha=1.0 should publish target_pose verbatim; got {} vs {}",
+            out.target.tilt_deg,
+            t.target_pose.tilt_deg
+        );
+    }
+
+    #[test]
+    fn alpha_below_one_smooths_published_toward_target_over_frames() {
+        // With alpha=0.5 each step halves the gap to target_pose.
+        // After 4 steps the published_pose should be within ~6 % of
+        // the target (1 - 0.5^4 = 0.9375).
+        let mut cfg = TrackerConfig::DEFAULT;
+        cfg.target_smoothing_alpha = 0.5;
+        let mut t = Tracker::new(cfg);
+        t.target_pose = Pose::new(20.0, 0.0); // accumulator anchor
+        let f = flat_frame(64);
+        let _ = t.step(&f, 33); // warmup; publishes once
+
+        let after_warmup = t.target_pose();
+        // After warmup publish: 0.5 * 0 + 0.5 * 20 = 10.0 (one EMA step).
+        assert!(
+            (after_warmup.pan_deg - 10.0).abs() < 0.01,
+            "expected ~10.0 after first publish, got {}",
+            after_warmup.pan_deg
+        );
+
+        // Three more no-motion steps. Each Holding-path call invokes
+        // publish() and shrinks the gap by half: 10 → 15 → 17.5 → 18.75.
+        for _ in 0..3 {
+            let _ = t.step(&f, 33);
+        }
+        let pan = t.target_pose().pan_deg;
+        assert!(
+            (pan - 18.75).abs() < 0.01,
+            "expected ~18.75 after 4 EMA steps at alpha=0.5, got {pan}"
+        );
+    }
+
+    #[test]
+    fn alpha_clamped_so_smoothing_never_stalls_at_zero() {
+        // alpha = 0.0 would make published_pose immune to any change
+        // in target_pose forever (a UX bug masquerading as a config
+        // value). The publish() guard clamps to 0.05 so the EMA
+        // converges, slowly. Pin: pan reaches at least 1° within
+        // 50 steps from a 20° accumulator.
+        let mut cfg = TrackerConfig::DEFAULT;
+        cfg.target_smoothing_alpha = 0.0;
+        let mut t = Tracker::new(cfg);
+        t.target_pose = Pose::new(20.0, 0.0);
+        let f = flat_frame(64);
+        let _ = t.step(&f, 33); // warmup → first publish
+        for _ in 0..49 {
+            let _ = t.step(&f, 33);
+        }
+        let pan = t.target_pose().pan_deg;
+        assert!(
+            pan > 1.0,
+            "alpha clamped at 0.05 should let EMA progress; pan = {pan} after 50 steps"
+        );
+    }
+
+    #[test]
+    fn reset_zeros_published_pose() {
+        // After a reset, both the accumulator and the published
+        // (smoothed) value should land at NEUTRAL — no leftover
+        // inertia from the previous run.
+        let mut cfg = TrackerConfig::DEFAULT;
+        cfg.target_smoothing_alpha = 0.5;
+        let mut t = Tracker::new(cfg);
+        t.target_pose = Pose::new(15.0, 8.0);
+        let f = flat_frame(64);
+        let _ = t.step(&f, 33);
+        assert!(t.target_pose().pan_deg.abs() > 0.0);
+
+        t.reset();
+        assert_eq!(t.target_pose(), Pose::NEUTRAL);
+        assert_eq!(t.target_pose, Pose::NEUTRAL);
     }
 
     #[test]
