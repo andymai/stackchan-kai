@@ -247,8 +247,18 @@ $ curl http://stackchan.local/settings
  "mdns":{"hostname":"stackchan"},
  "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
  "auth":{"token":"***"},
- "audio":{"volume_pct":50,"muted":false}}
+ "audio":{"volume_pct":50,"muted":false},
+ "tracker":{"fov_h_deg":62.0,"fov_v_deg":49.0,"target_smoothing_alpha":1.0,
+            "flip_x":false,"flip_y":false}}
 ```
+
+`tracker` carries the operator-tunable subset of the firmware
+tracker config: physical lens FOV (`fov_h_deg` / `fov_v_deg`),
+EMA smoothing on the published target (`target_smoothing_alpha`,
+`1.0` = pass-through, lower = more inertia), and centroid
+orientation flips for non-standard mountings. Algorithm tuning
+(P-gain, block thresholds, dead zones) stays compile-time. Changes
+take effect on next boot — same as `mdns.hostname` / `time.*`.
 
 `wifi.psk` and a non-empty `auth.token` are redacted to `***`.
 On `PUT /settings`, the server treats either sentinel as **"keep
@@ -268,7 +278,9 @@ $ curl -X PUT http://stackchan.local/settings \
             "mdns":{"hostname":"stackchan"},
             "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
             "auth":{"token":"s3cret"},
-            "audio":{"volume_pct":50,"muted":false}}'
+            "audio":{"volume_pct":50,"muted":false},
+            "tracker":{"fov_h_deg":62.0,"fov_v_deg":49.0,"target_smoothing_alpha":1.0,
+                       "flip_x":false,"flip_y":false}}'
 {"reboot_required":true}
 ```
 

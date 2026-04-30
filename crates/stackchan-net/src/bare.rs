@@ -22,7 +22,7 @@ use core::fmt::Write as _;
 
 use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{
-    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate,
+    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -86,6 +86,18 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     let _ = writeln!(out, "        muted: {},", config.audio.muted);
     out.push_str("    ),\n");
 
+    out.push_str("    tracker: (\n");
+    let _ = writeln!(out, "        fov_h_deg: {},", config.tracker.fov_h_deg);
+    let _ = writeln!(out, "        fov_v_deg: {},", config.tracker.fov_v_deg);
+    let _ = writeln!(
+        out,
+        "        target_smoothing_alpha: {},",
+        config.tracker.target_smoothing_alpha
+    );
+    let _ = writeln!(out, "        flip_x: {},", config.tracker.flip_x);
+    let _ = writeln!(out, "        flip_y: {},", config.tracker.flip_y);
+    out.push_str("    ),\n");
+
     out.push_str(")\n");
     Ok(out)
 }
@@ -134,6 +146,7 @@ impl<'a> Parser<'a> {
         let mut time: Option<TimeConfig> = None;
         let mut auth: Option<AuthConfig> = None;
         let mut audio: Option<AudioConfig> = None;
+        let mut tracker: Option<TrackerSettings> = None;
 
         loop {
             self.skip_ws_and_comments();
@@ -150,6 +163,7 @@ impl<'a> Parser<'a> {
                 "time" => time = Some(self.parse_time()?),
                 "auth" => auth = Some(self.parse_auth()?),
                 "audio" => audio = Some(self.parse_audio()?),
+                "tracker" => tracker = Some(self.parse_tracker()?),
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -163,12 +177,13 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
-            // `auth` and `audio` are optional for migration: SD cards
-            // written before each block landed lack them, and the
-            // defaults (empty token = auth disabled; volume_pct = 50,
-            // muted = false) match the firmware's prior behaviour.
+            // `auth`, `audio`, and `tracker` are optional for
+            // migration: SD cards written before each block landed
+            // lack them, and the defaults match the firmware's prior
+            // hard-coded behaviour.
             auth: auth.unwrap_or_default(),
             audio: audio.unwrap_or_default(),
+            tracker: tracker.unwrap_or_default(),
         })
     }
 
@@ -335,6 +350,54 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse the `tracker: (...)` block. Five fields, all optional;
+    /// missing fields fall back to [`TrackerSettings::DEFAULT`] so a
+    /// SD card written before this block existed reproduces the
+    /// pre-runtime-config tracker behaviour exactly.
+    fn parse_tracker(&mut self) -> Result<TrackerSettings, ConfigError> {
+        self.expect_char('(')?;
+        // `pan_fov` / `tilt_fov` rather than `fov_h_deg` / `fov_v_deg`
+        // for the locals — clippy's `similar_names` flags the latter
+        // as too close. The struct fields keep the on-the-wire names.
+        let mut pan_fov: Option<f32> = None;
+        let mut tilt_fov: Option<f32> = None;
+        let mut alpha: Option<f32> = None;
+        let mut flip_x: Option<bool> = None;
+        let mut flip_y: Option<bool> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "fov_h_deg" => pan_fov = Some(self.parse_f32()?),
+                "fov_v_deg" => tilt_fov = Some(self.parse_f32()?),
+                "target_smoothing_alpha" => {
+                    alpha = Some(self.parse_f32()?);
+                }
+                "flip_x" => flip_x = Some(self.parse_bool()?),
+                "flip_y" => flip_y = Some(self.parse_bool()?),
+                other => return Err(bare_err("unknown tracker field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in tracker", ""));
+            }
+        }
+        let defaults = TrackerSettings::DEFAULT;
+        Ok(TrackerSettings {
+            fov_h_deg: pan_fov.unwrap_or(defaults.fov_h_deg),
+            fov_v_deg: tilt_fov.unwrap_or(defaults.fov_v_deg),
+            target_smoothing_alpha: alpha.unwrap_or(defaults.target_smoothing_alpha),
+            flip_x: flip_x.unwrap_or(defaults.flip_x),
+            flip_y: flip_y.unwrap_or(defaults.flip_y),
+        })
+    }
+
     /// Parse a contiguous run of decimal digits as a `u8`. Used for
     /// `audio.volume_pct`. Range gating is left to [`validate`] so the
     /// out-of-range surface lands on `ConfigError::InvalidVolumePct`
@@ -361,6 +424,36 @@ impl<'a> Parser<'a> {
         self.input = rest;
         #[allow(clippy::cast_possible_truncation)]
         Ok(parsed as u8)
+    }
+
+    /// Parse a contiguous run of number-shaped bytes as `f32`. Used
+    /// for the tracker block's `fov_h_deg` / `fov_v_deg` /
+    /// `target_smoothing_alpha`. Accepts a leading `-`, decimal point,
+    /// and exponent — delegated to `f32::from_str` for the heavy
+    /// lifting. Range checks live in [`validate`].
+    fn parse_f32(&mut self) -> Result<f32, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b == b'-' || b == b'+' || b == b'.' || b == b'e' || b == b'E' || b.is_ascii_digit() {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return Err(bare_err("expected float literal", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let parsed: f32 = digits
+            .parse()
+            .map_err(|_| bare_err("not an f32 literal", digits))?;
+        if !parsed.is_finite() {
+            return Err(bare_err("f32 literal is non-finite", digits));
+        }
+        self.input = rest;
+        Ok(parsed)
     }
 
     /// Parse a bare `true` or `false` literal.

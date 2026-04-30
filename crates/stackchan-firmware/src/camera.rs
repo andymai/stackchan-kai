@@ -371,9 +371,14 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     const CASCADE_PERIOD: u8 = 8;
 
     // Tracker: block-grid motion analysis on each captured frame.
-    // Defaults are tuned in the `tracker` crate; tweak via
-    // `TrackerConfig` here if on-device tuning calls for it.
-    let mut tracker = Tracker::new(TrackerConfig::DEFAULT);
+    // Algorithm tuning (P-gain, block thresholds, dead zones, ...)
+    // stays compile-time in `TrackerConfig::DEFAULT`. The
+    // operator-tunable subset (lens FOV, EMA smoothing, orientation
+    // flips) is overlaid from the persisted `STACKCHAN.RON` so a
+    // calibration change doesn't need a re-flash. Falls back to the
+    // tracker crate defaults when no SD config is loaded yet.
+    let tracker_config = build_tracker_config().await;
+    let mut tracker = Tracker::new(tracker_config);
     let mut last_step_at = Instant::now();
     // Cascade scratch lives in PSRAM (~120 KiB) and is reused for
     // every frame. `Box::leak` hands us a `&'static mut` view that
@@ -698,6 +703,33 @@ fn log_capture_stats(buffer_idx: usize, frame: &[u8]) {
         }
     }
     defmt::info!("camera: thumbnail (RGB565, 32x24): {=[?]}", thumb);
+}
+
+/// Compose a runtime [`TrackerConfig`] from
+/// [`TrackerConfig::DEFAULT`] plus the operator-tunable overlay
+/// from `STACKCHAN.RON` (lens FOV, EMA smoothing, orientation
+/// flips). Returns the bare default if no config snapshot is
+/// available yet (e.g. no SD card mounted).
+async fn build_tracker_config() -> TrackerConfig {
+    let mut cfg = TrackerConfig::DEFAULT;
+    if let Some(snap) = crate::storage::CONFIG_SNAPSHOT.lock().await.as_ref() {
+        cfg.fov_h_deg = snap.tracker.fov_h_deg;
+        cfg.fov_v_deg = snap.tracker.fov_v_deg;
+        cfg.target_smoothing_alpha = snap.tracker.target_smoothing_alpha;
+        cfg.flip_x = snap.tracker.flip_x;
+        cfg.flip_y = snap.tracker.flip_y;
+        defmt::info!(
+            "camera: tracker overlay applied (fov_h={=f32} fov_v={=f32} alpha={=f32} flip_x={=bool} flip_y={=bool})",
+            cfg.fov_h_deg,
+            cfg.fov_v_deg,
+            cfg.target_smoothing_alpha,
+            cfg.flip_x,
+            cfg.flip_y,
+        );
+    } else {
+        defmt::info!("camera: tracker overlay skipped — no SD config snapshot");
+    }
+    cfg
 }
 
 /// Persist a captured frame to `/sd/CAPTURE.565`. Logs success

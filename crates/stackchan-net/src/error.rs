@@ -77,6 +77,20 @@ pub enum ConfigError {
     #[error("audio.volume_pct must be 0..=100; got {0}")]
     InvalidVolumePct(u8),
 
+    /// `tracker.fov_h_deg` or `tracker.fov_v_deg` was non-finite,
+    /// non-positive, or larger than 180°. Lens FOVs outside that
+    /// range can't be physical; the carried `f32` is the offending
+    /// value.
+    #[error("tracker FOV must be a finite value in (0.0, 180.0]; got {0}")]
+    InvalidFovDeg(f32),
+
+    /// `tracker.target_smoothing_alpha` was outside `[0.05, 1.0]`.
+    /// Below 0.05 effectively freezes the published target;
+    /// above 1.0 has no defined meaning for an EMA. The carried
+    /// `f32` is the offending value.
+    #[error("tracker.target_smoothing_alpha must be in [0.05, 1.0]; got {0}")]
+    InvalidSmoothingAlpha(f32),
+
     /// Hand-rolled bare parser failure (firmware-side path that
     /// avoids `serde + ron`). Carries a short reason string in lieu
     /// of `ron`'s line/col `SpannedError` — the firmware logs this

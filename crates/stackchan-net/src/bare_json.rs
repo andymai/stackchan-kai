@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use crate::config::{
-    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate,
+    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -80,8 +80,8 @@ pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
 /// overwrites.
 ///
 /// Fields the wire format doesn't redact (`ssid`, `country`,
-/// `mdns.hostname`, `time.*`, `audio.*`) pass through from `new`
-/// unchanged.
+/// `mdns.hostname`, `time.*`, `audio.*`, `tracker.*`) pass through
+/// from `new` unchanged.
 #[must_use]
 pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
     Config {
@@ -104,6 +104,7 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
             },
         },
         audio: new.audio,
+        tracker: new.tracker,
     }
 }
 
@@ -162,6 +163,18 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         "\"volume_pct\":{},\"muted\":{}",
         config.audio.volume_pct, config.audio.muted
     );
+    out.push_str("},\"tracker\":{");
+    let _ = write!(
+        out,
+        "\"fov_h_deg\":{fov_h:?},\"fov_v_deg\":{fov_v:?},\
+         \"target_smoothing_alpha\":{alpha:?},\
+         \"flip_x\":{flip_x},\"flip_y\":{flip_y}",
+        fov_h = config.tracker.fov_h_deg,
+        fov_v = config.tracker.fov_v_deg,
+        alpha = config.tracker.target_smoothing_alpha,
+        flip_x = config.tracker.flip_x,
+        flip_y = config.tracker.flip_y,
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -217,6 +230,7 @@ impl<'a> Parser<'a> {
         let mut time: Option<TimeConfig> = None;
         let mut auth: Option<AuthConfig> = None;
         let mut audio: Option<AudioConfig> = None;
+        let mut tracker: Option<TrackerSettings> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -257,6 +271,12 @@ impl<'a> Parser<'a> {
                     }
                     audio = Some(self.parse_audio()?);
                 }
+                "tracker" => {
+                    if tracker.is_some() {
+                        return Err(bare_err("duplicate top-level field", "tracker"));
+                    }
+                    tracker = Some(self.parse_tracker()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -268,12 +288,13 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
-            // `auth` and `audio` are optional for migration: bodies
-            // emitted before each block landed don't have them, and
-            // the defaults (empty token = auth disabled; volume_pct
-            // = 50, muted = false) match prior behaviour.
+            // `auth`, `audio`, `tracker` are optional for migration:
+            // bodies emitted before each block landed don't have them,
+            // and the defaults match the firmware's prior hard-coded
+            // behaviour.
             auth: auth.unwrap_or_default(),
             audio: audio.unwrap_or_default(),
+            tracker: tracker.unwrap_or_default(),
         })
     }
 
@@ -484,6 +505,109 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse the `"tracker": { ... }` block. All five fields are
+    /// optional on the wire; missing fields fall back to
+    /// [`TrackerSettings::DEFAULT`]. Range validation lives in the
+    /// `validate` pass after parse so out-of-range values surface
+    /// with the exact offending number via `ConfigError::Invalid…`.
+    fn parse_tracker(&mut self) -> Result<TrackerSettings, ConfigError> {
+        self.expect_char('{')?;
+        // See `bare::parse_tracker` for the local-naming rationale.
+        let mut pan_fov: Option<f32> = None;
+        let mut tilt_fov: Option<f32> = None;
+        let mut alpha: Option<f32> = None;
+        let mut flip_x: Option<bool> = None;
+        let mut flip_y: Option<bool> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            match key.as_str() {
+                "fov_h_deg" => {
+                    if pan_fov.is_some() {
+                        return Err(bare_err("duplicate tracker field", "fov_h_deg"));
+                    }
+                    pan_fov = Some(self.parse_f32()?);
+                }
+                "fov_v_deg" => {
+                    if tilt_fov.is_some() {
+                        return Err(bare_err("duplicate tracker field", "fov_v_deg"));
+                    }
+                    tilt_fov = Some(self.parse_f32()?);
+                }
+                "target_smoothing_alpha" => {
+                    if alpha.is_some() {
+                        return Err(bare_err(
+                            "duplicate tracker field",
+                            "target_smoothing_alpha",
+                        ));
+                    }
+                    alpha = Some(self.parse_f32()?);
+                }
+                "flip_x" => {
+                    if flip_x.is_some() {
+                        return Err(bare_err("duplicate tracker field", "flip_x"));
+                    }
+                    flip_x = Some(self.parse_bool()?);
+                }
+                "flip_y" => {
+                    if flip_y.is_some() {
+                        return Err(bare_err("duplicate tracker field", "flip_y"));
+                    }
+                    flip_y = Some(self.parse_bool()?);
+                }
+                other => return Err(bare_err("unknown tracker field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in tracker", ""));
+            }
+        }
+        let defaults = TrackerSettings::DEFAULT;
+        Ok(TrackerSettings {
+            fov_h_deg: pan_fov.unwrap_or(defaults.fov_h_deg),
+            fov_v_deg: tilt_fov.unwrap_or(defaults.fov_v_deg),
+            target_smoothing_alpha: alpha.unwrap_or(defaults.target_smoothing_alpha),
+            flip_x: flip_x.unwrap_or(defaults.flip_x),
+            flip_y: flip_y.unwrap_or(defaults.flip_y),
+        })
+    }
+
+    /// Parse a JSON number into `f32`. Accepts the standard
+    /// `[-]?digits[.digits][e[+-]?digits]` shape; rejects
+    /// `NaN` / `inf` so the firmware's tracker init never sees a
+    /// non-finite value (the `validate` step also checks, but the
+    /// parser surfaces the error closer to the source byte).
+    fn parse_f32(&mut self) -> Result<f32, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b == b'-' || b == b'+' || b == b'.' || b == b'e' || b == b'E' || b.is_ascii_digit() {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return Err(bare_err("expected float literal", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let parsed: f32 = digits
+            .parse()
+            .map_err(|_| bare_err("not an f32 literal", digits))?;
+        if !parsed.is_finite() {
+            return Err(bare_err("f32 literal is non-finite", digits));
+        }
+        self.input = rest;
+        Ok(parsed)
+    }
+
     /// Parse a contiguous run of decimal digits as `u8`. Out-of-range
     /// (>100) values pass parse but trip
     /// `ConfigError::InvalidVolumePct` in `validate` so the operator
@@ -664,6 +788,13 @@ mod tests {
             audio: AudioConfig {
                 volume_pct: 33,
                 muted: true,
+            },
+            tracker: TrackerSettings {
+                fov_h_deg: 60.0,
+                fov_v_deg: 45.0,
+                target_smoothing_alpha: 0.4,
+                flip_x: true,
+                flip_y: false,
             },
         }
     }
@@ -969,6 +1100,7 @@ mod tests {
                 volume_pct: 100,
                 muted: false,
             },
+            tracker: TrackerSettings::DEFAULT,
         };
         let rendered = render_settings_json(&config, false).unwrap();
         assert!(
