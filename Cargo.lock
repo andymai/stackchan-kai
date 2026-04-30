@@ -4659,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -5009,7 +5009,7 @@ dependencies = [
 
 [[package]]
 name = "tracker"
-version = "0.11.5"
+version = "0.12.0"
 dependencies = [
  "heapless 0.8.0",
  "libm",
