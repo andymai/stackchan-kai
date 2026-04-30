@@ -40,6 +40,11 @@ shape of the on-disk config and the RON file `PUT /settings` round-trips.
   (no `serde`, no `ron` — see the module doc for why)
 - `src/bare_json.rs` — hand-rolled JSON parser/renderer used by the
   firmware HTTP control plane on `GET /settings` / `PUT /settings`
+- `src/http_command.rs` — JSON body parsers for `POST /emotion`,
+  `/look-at`, `/speak`, `/volume`, `/mute`
+- `src/ble_command.rs` — fixed-length wire-format codecs for the
+  BLE audio + avatar control characteristics, with stable byte
+  mappings for `Emotion` / `PhraseId` / `Locale`
 - `src/error.rs` — `ConfigError` (parse / serialize / validation variants)
 - `tests/golden_config.rs` + `tests/fixtures/*.ron` — round-trip and
   validation coverage against hand-written fixtures
@@ -58,7 +63,8 @@ propagates a `ConfigError` up to a panic — it logs and uses defaults.
 - OTA manifests — firmware updates are a separate concern.
 - Captive portal / soft-AP setup flow — first-boot UX deferred.
 - Persona / character data — belongs to the AI tier (deferred).
-- BLE pairing config — out of scope.
+- BLE pairing-key serialisation — owned by the firmware
+  `crate::ble::bonds` module, not this crate.
 
 ## Security note
 
