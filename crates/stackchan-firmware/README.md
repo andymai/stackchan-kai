@@ -107,14 +107,15 @@ joining the LAN. Services exposed: Device Information (`0x180A` —
 manufacturer / model / firmware revision), Battery (`0x180F`), a
 Stack-chan custom service for emotion read+notify, a Wi-Fi
 provisioning service for SSID + PSK writes, an audio service
-(`8a1c0020-...`) for volume + mute read+write+notify, and an avatar
+(`8a1c0020-...`) for volume + mute read+write+notify, an avatar
 control service (`8a1c0030-...`) for emotion / look-at / reset /
-speak writes. Control writes require an authenticated bond
-(passkey-confirmed pairing). The notify task diffs the avatar
-snapshot every tick so subscribed centrals see HTTP-side changes
-without explicit polling. Wi-Fi and BLE share the radio via
-`esp-radio`'s coex scheduler; expect a small Wi-Fi airtime tax when
-a BLE central is connected.
+speak writes, and a view service (`8a1c0040-...`) for the LCD
+camera-preview / avatar toggle. Control writes require an
+authenticated bond (passkey-confirmed pairing). The notify task
+diffs the avatar snapshot every tick so subscribed centrals see
+HTTP-side changes without explicit polling. Wi-Fi and BLE share the
+radio via `esp-radio`'s coex scheduler; expect a small Wi-Fi airtime
+tax when a BLE central is connected.
 
 ## I²C Bus Sharing
 
