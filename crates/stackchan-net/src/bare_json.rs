@@ -578,34 +578,13 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse a JSON number into `f32`. Accepts the standard
-    /// `[-]?digits[.digits][e[+-]?digits]` shape; rejects
-    /// `NaN` / `inf` so the firmware's tracker init never sees a
-    /// non-finite value (the `validate` step also checks, but the
-    /// parser surfaces the error closer to the source byte).
+    /// Parse a JSON number into `f32`. Delegates to
+    /// [`crate::bare::scan_f32`] so the RON and JSON parsers consume
+    /// the identical grammar (and so a leading `+` is rejected
+    /// uniformly — RFC 8259 §6 disallows it, and the RON path also
+    /// has no use for it).
     fn parse_f32(&mut self) -> Result<f32, ConfigError> {
-        let bytes = self.input.as_bytes();
-        let mut end = 0;
-        while end < bytes.len() {
-            let b = bytes[end];
-            if b == b'-' || b == b'+' || b == b'.' || b == b'e' || b == b'E' || b.is_ascii_digit() {
-                end += 1;
-            } else {
-                break;
-            }
-        }
-        if end == 0 {
-            return Err(bare_err("expected float literal", ""));
-        }
-        let (digits, rest) = self.input.split_at(end);
-        let parsed: f32 = digits
-            .parse()
-            .map_err(|_| bare_err("not an f32 literal", digits))?;
-        if !parsed.is_finite() {
-            return Err(bare_err("f32 literal is non-finite", digits));
-        }
-        self.input = rest;
-        Ok(parsed)
+        crate::bare::scan_f32(&mut self.input)
     }
 
     /// Parse a contiguous run of decimal digits as `u8`. Out-of-range
@@ -1131,6 +1110,27 @@ mod tests {
         let parsed = parse_settings_json(input).unwrap();
         assert_eq!(parsed.audio.volume_pct, 75);
         assert!(parsed.audio.muted);
+    }
+
+    #[test]
+    fn tracker_fov_rejects_leading_plus() {
+        // RFC 8259 §6 disallows a leading `+` on JSON numbers; the
+        // shared `scan_f32` helper rejects it for both the RON and
+        // JSON parsers. Pin: a `+62.0` lands on `BareParse`, not
+        // silently sneaks through to `f32::from_str`.
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "tracker":{"fov_h_deg":+62.0,"fov_v_deg":49.0,
+                       "target_smoothing_alpha":1.0,
+                       "flip_x":false,"flip_y":false}
+        }"#;
+        let err = parse_settings_json(input).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::BareParse(_)),
+            "expected BareParse on leading-plus, got {err:?}"
+        );
     }
 
     #[test]

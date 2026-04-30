@@ -428,32 +428,11 @@ impl<'a> Parser<'a> {
 
     /// Parse a contiguous run of number-shaped bytes as `f32`. Used
     /// for the tracker block's `fov_h_deg` / `fov_v_deg` /
-    /// `target_smoothing_alpha`. Accepts a leading `-`, decimal point,
-    /// and exponent — delegated to `f32::from_str` for the heavy
-    /// lifting. Range checks live in [`validate`].
+    /// `target_smoothing_alpha`. Delegates to [`scan_f32`] so the
+    /// JSON parser in [`crate::bare_json`] consumes the identical
+    /// grammar — single source of truth for number-shape recognition.
     fn parse_f32(&mut self) -> Result<f32, ConfigError> {
-        let bytes = self.input.as_bytes();
-        let mut end = 0;
-        while end < bytes.len() {
-            let b = bytes[end];
-            if b == b'-' || b == b'+' || b == b'.' || b == b'e' || b == b'E' || b.is_ascii_digit() {
-                end += 1;
-            } else {
-                break;
-            }
-        }
-        if end == 0 {
-            return Err(bare_err("expected float literal", ""));
-        }
-        let (digits, rest) = self.input.split_at(end);
-        let parsed: f32 = digits
-            .parse()
-            .map_err(|_| bare_err("not an f32 literal", digits))?;
-        if !parsed.is_finite() {
-            return Err(bare_err("f32 literal is non-finite", digits));
-        }
-        self.input = rest;
-        Ok(parsed)
+        scan_f32(&mut self.input)
     }
 
     /// Parse a bare `true` or `false` literal.
@@ -604,6 +583,49 @@ impl<'a> Parser<'a> {
             Err(bare_err("expected char", &c.to_string()))
         }
     }
+}
+
+/// Read a contiguous run of number-shaped bytes off the front of
+/// `input` and parse it as `f32`.
+///
+/// Accepted grammar: optional leading `-`, decimal digits, optional
+/// fractional part (`.digits`), optional exponent (`e[-]?digits` or
+/// `E[-]?digits`). A leading `+` is **rejected** — neither RFC 8259
+/// (JSON) nor the RON subset this crate emits ever produces one, so
+/// accepting it would let inputs round-trip through to f32 in
+/// shapes the rest of the pipeline never expects.
+///
+/// On success the consumed prefix is sliced off `*input` and the
+/// parsed value is returned. Non-finite parses (`inf`, `NaN`) are
+/// rejected even though they're not normally producible by the
+/// grammar, as belt-and-braces.
+///
+/// Shared between [`Parser::parse_f32`] (RON) and
+/// [`crate::bare_json::Parser::parse_f32`] (JSON) so the two wire
+/// formats can never disagree on which byte sequences are numbers.
+pub(crate) fn scan_f32(input: &mut &str) -> Result<f32, ConfigError> {
+    let bytes = input.as_bytes();
+    let mut end = 0;
+    while end < bytes.len() {
+        let b = bytes[end];
+        if b == b'-' || b == b'.' || b == b'e' || b == b'E' || b.is_ascii_digit() {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
+        return Err(bare_err("expected float literal", ""));
+    }
+    let (digits, rest) = input.split_at(end);
+    let parsed: f32 = digits
+        .parse()
+        .map_err(|_| bare_err("not an f32 literal", digits))?;
+    if !parsed.is_finite() {
+        return Err(bare_err("f32 literal is non-finite", digits));
+    }
+    *input = rest;
+    Ok(parsed)
 }
 
 /// Build a `BareParse` error. The format-arg pattern keeps the

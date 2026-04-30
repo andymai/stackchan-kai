@@ -162,10 +162,11 @@ impl Default for AudioConfig {
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct TrackerSettings {
     /// Camera horizontal field of view in degrees. GC0308 with the
-    /// CoreS3 lens is roughly 62°. Range: 1..=180.
+    /// CoreS3 lens is roughly 62°. Range: `(0, 180]` — must be
+    /// strictly positive and at most 180°.
     pub fov_h_deg: f32,
     /// Camera vertical field of view in degrees. ~49° on the same
-    /// lens. Range: 1..=180.
+    /// lens. Range: `(0, 180]` — same gate as `fov_h_deg`.
     pub fov_v_deg: f32,
     /// Single-pole EMA on the published target pose. `1.0` is the
     /// pass-through default; lower values add inertia. Range:
