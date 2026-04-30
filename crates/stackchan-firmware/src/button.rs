@@ -46,15 +46,6 @@ const POLL_PERIOD_MS: u64 = 50;
 /// `SYS_CTL[2]`.
 pub const LONG_PRESS_MS: u64 = 600;
 
-/// Camera-mode toggle state. The button task is the sole producer
-/// of [`CAMERA_MODE_SIGNAL`] from user input, so it owns the
-/// "currently active" tracking that the toggle gesture inverts.
-/// Starts `false` (avatar mode), matching the firmware's boot state.
-struct ModeState {
-    /// `true` when camera-mode is currently active.
-    camera_active: bool,
-}
-
 /// Enable the press- and release-edge IRQs, then loop forever
 /// classifying each press as either a short tap or a long press.
 pub async fn run_button_loop<I: AsyncI2c>(bus: I) -> ! {
@@ -72,9 +63,6 @@ pub async fn run_button_loop<I: AsyncI2c>(bus: I) -> ! {
         LONG_PRESS_MS,
     );
 
-    let mut state = ModeState {
-        camera_active: false,
-    };
     let mut press_started: Option<Instant> = None;
     let mut long_press_fired = false;
     let mut ticker = Ticker::every(Duration::from_millis(POLL_PERIOD_MS));
@@ -98,13 +86,16 @@ pub async fn run_button_loop<I: AsyncI2c>(bus: I) -> ! {
                     && !long_press_fired
                     && started.elapsed().as_millis() >= LONG_PRESS_MS
                 {
-                    state.camera_active = !state.camera_active;
-                    defmt::info!(
-                        "AXP2101 button: long-press → camera_mode={=bool}",
-                        state.camera_active,
-                    );
-                    crate::net::snapshot::update_camera_mode(state.camera_active);
-                    CAMERA_MODE_SIGNAL.signal(state.camera_active);
+                    // Read the canonical state from the snapshot rather
+                    // than tracking a local mirror — HTTP `POST
+                    // /camera/mode` and the BLE view-service write also
+                    // flip this field, and a stale local would invert
+                    // their value on the next long-press, swallowing
+                    // the user's button press.
+                    let next = !crate::net::snapshot::read().camera_mode;
+                    defmt::info!("AXP2101 button: long-press → camera_mode={=bool}", next);
+                    crate::net::snapshot::update_camera_mode(next);
+                    CAMERA_MODE_SIGNAL.signal(next);
                     long_press_fired = true;
                 }
 
