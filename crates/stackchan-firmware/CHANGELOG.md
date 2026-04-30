@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.33.0...stackchan-firmware-v0.34.0) (2026-04-30)
+
+
+### Features
+
+* **firmware:** camera capture-to-SD via HTTP + BLE triggers ([#188](https://github.com/andymai/stackchan-kai/issues/188)) ([fd84d79](https://github.com/andymai/stackchan-kai/commit/fd84d79a77691d9fde164b5a8f7fbb98a2c5701c))
+
 ## [0.33.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.32.0...stackchan-firmware-v0.33.0) (2026-04-30)
 
 
