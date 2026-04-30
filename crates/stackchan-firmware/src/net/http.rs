@@ -484,30 +484,7 @@ async fn handle_post_volume(socket: &mut TcpSocket<'_>, body: &str) -> Result<()
             return write_text(socket, 400, &body).await;
         }
     };
-    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
-        return write_text(socket, 503, "config snapshot unavailable\n").await;
-    };
-    let mut new_config = current;
-    new_config.audio.volume_pct = level;
-    let write_result =
-        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
-    match write_result {
-        Some(Ok(())) => {
-            defmt::info!("http: POST /volume persisted (level={=u8})", level);
-            snapshot::update_audio(new_config.audio);
-            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
-            crate::audio::AUDIO_VOLUME_SIGNAL.signal(level);
-            write_no_content(socket).await
-        }
-        Some(Err(e)) => {
-            defmt::warn!("http: POST /volume write failed ({})", e);
-            write_text(socket, 500, "config write failed\n").await
-        }
-        None => {
-            defmt::warn!("http: POST /volume rejected (no SD mounted)");
-            write_text(socket, 503, "no SD card mounted\n").await
-        }
-    }
+    audio_persist_to_http(socket, crate::audio::persist_volume(level).await).await
 }
 
 /// `POST /mute` — parse `{"muted": <bool>}`, persist to
@@ -529,29 +506,24 @@ async fn handle_post_mute(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
             return write_text(socket, 400, &body).await;
         }
     };
-    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
-        return write_text(socket, 503, "config snapshot unavailable\n").await;
-    };
-    let mut new_config = current;
-    new_config.audio.muted = muted;
-    let write_result =
-        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
-    match write_result {
-        Some(Ok(())) => {
-            defmt::info!("http: POST /mute persisted (muted={=bool})", muted);
-            snapshot::update_audio(new_config.audio);
-            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
-            crate::audio::AUDIO_MUTE_SIGNAL.signal(muted);
-            write_no_content(socket).await
+    audio_persist_to_http(socket, crate::audio::persist_mute(muted).await).await
+}
+
+/// Map an [`crate::audio::AudioPersistOutcome`] to its HTTP response.
+/// Shared by `POST /volume` and `POST /mute` so the two routes always
+/// surface the same status codes for matching outcomes.
+async fn audio_persist_to_http(
+    socket: &mut TcpSocket<'_>,
+    outcome: crate::audio::AudioPersistOutcome,
+) -> Result<(), HttpError> {
+    use crate::audio::AudioPersistOutcome;
+    match outcome {
+        AudioPersistOutcome::Persisted => write_no_content(socket).await,
+        AudioPersistOutcome::NoSnapshot => {
+            write_text(socket, 503, "config snapshot unavailable\n").await
         }
-        Some(Err(e)) => {
-            defmt::warn!("http: POST /mute write failed ({})", e);
-            write_text(socket, 500, "config write failed\n").await
-        }
-        None => {
-            defmt::warn!("http: POST /mute rejected (no SD mounted)");
-            write_text(socket, 503, "no SD card mounted\n").await
-        }
+        AudioPersistOutcome::NoStorage => write_text(socket, 503, "no SD card mounted\n").await,
+        AudioPersistOutcome::WriteFailed => write_text(socket, 500, "config write failed\n").await,
     }
 }
 

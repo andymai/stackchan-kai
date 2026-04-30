@@ -4724,6 +4724,7 @@ dependencies = [
  "embedded-graphics",
  "heapless 0.8.0",
  "stackchan-core",
+ "stackchan-net",
 ]
 
 [[package]]

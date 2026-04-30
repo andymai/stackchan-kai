@@ -156,6 +156,89 @@ pub static AUDIO_VOLUME_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::ne
 /// persistence, the amp-control loop applies via `set_muted`.
 pub static AUDIO_MUTE_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
+/// Result of a persisted audio-setting change. Returned by
+/// [`persist_volume`] / [`persist_mute`] so the HTTP and BLE
+/// control planes can map the outcome onto their own protocol's
+/// success / error encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+pub enum AudioPersistOutcome {
+    /// Config was written, [`crate::net::snapshot`] updated, and the
+    /// audio task signaled to apply the new value.
+    Persisted,
+    /// `CONFIG_SNAPSHOT` was empty — the boot config hasn't been
+    /// loaded yet. HTTP maps to `503`. BLE writes have already
+    /// completed their ATT `WRITE_RSP` by the time the persist runs,
+    /// so the central sees a successful write; the firmware logs
+    /// loudly via `defmt::warn!` so the failure is visible on the
+    /// monitor.
+    NoSnapshot,
+    /// No SD card mounted. Same status mapping as [`Self::NoSnapshot`].
+    NoStorage,
+    /// SD write failed. HTTP maps to `500`. Same caveat as
+    /// [`Self::NoSnapshot`] for BLE — the ATT `WRITE_RSP` is already
+    /// out, so the central sees success while the firmware-side log
+    /// records the failure.
+    WriteFailed,
+}
+
+/// Persist a new volume percentile and signal the audio task.
+///
+/// Mirrors the snapshot-mutex hygiene of the HTTP `POST /volume`
+/// path: clone the current snapshot, drop the lock, write to SD,
+/// then re-acquire only to install the updated value. Holding the
+/// snapshot lock across the SD write would stall every concurrent
+/// request that touches `CONFIG_SNAPSHOT` (auth gate, `GET
+/// /settings`, BLE provisioning) for the full write duration.
+pub async fn persist_volume(level: u8) -> AudioPersistOutcome {
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
+        return AudioPersistOutcome::NoSnapshot;
+    };
+    let mut new_config = current;
+    new_config.audio.volume_pct = level;
+    let write_result =
+        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!("audio: volume persisted (level={=u8})", level);
+            crate::net::snapshot::update_audio(new_config.audio);
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
+            AUDIO_VOLUME_SIGNAL.signal(level);
+            AudioPersistOutcome::Persisted
+        }
+        Some(Err(e)) => {
+            defmt::warn!("audio: volume write failed ({})", e);
+            AudioPersistOutcome::WriteFailed
+        }
+        None => AudioPersistOutcome::NoStorage,
+    }
+}
+
+/// Persist a new mute flag and signal the audio task. Symmetric with
+/// [`persist_volume`].
+pub async fn persist_mute(muted: bool) -> AudioPersistOutcome {
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
+        return AudioPersistOutcome::NoSnapshot;
+    };
+    let mut new_config = current;
+    new_config.audio.muted = muted;
+    let write_result =
+        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!("audio: mute persisted (muted={=bool})", muted);
+            crate::net::snapshot::update_audio(new_config.audio);
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
+            AUDIO_MUTE_SIGNAL.signal(muted);
+            AudioPersistOutcome::Persisted
+        }
+        Some(Err(e)) => {
+            defmt::warn!("audio: mute write failed ({})", e);
+            AudioPersistOutcome::WriteFailed
+        }
+        None => AudioPersistOutcome::NoStorage,
+    }
+}
+
 /// AW88298 settle delay between starting TX DMA (with a buffer of
 /// zeros = digital silence) and lifting `HMUTE`. Lets the codec lock
 /// onto the I²S clock domain before the output stage goes live so the
