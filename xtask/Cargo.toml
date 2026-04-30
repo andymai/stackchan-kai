@@ -12,4 +12,4 @@ publish = false
 workspace = true
 
 [dependencies]
-roxmltree = "0.20"
+roxmltree = "0.21"
