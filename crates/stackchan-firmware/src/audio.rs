@@ -166,14 +166,18 @@ pub enum AudioPersistOutcome {
     /// audio task signaled to apply the new value.
     Persisted,
     /// `CONFIG_SNAPSHOT` was empty — the boot config hasn't been
-    /// loaded yet. HTTP maps to `503`, BLE maps to
-    /// `WRITE_REQUEST_REJECTED`.
+    /// loaded yet. HTTP maps to `503`. BLE writes have already
+    /// completed their ATT `WRITE_RSP` by the time the persist runs,
+    /// so the central sees a successful write; the firmware logs
+    /// loudly via `defmt::warn!` so the failure is visible on the
+    /// monitor.
     NoSnapshot,
     /// No SD card mounted. Same status mapping as [`Self::NoSnapshot`].
     NoStorage,
-    /// SD write failed. HTTP maps to `500`, BLE maps to
-    /// `UNLIKELY_ERROR`. The error is logged via `defmt` at the
-    /// callsite that surfaced it.
+    /// SD write failed. HTTP maps to `500`. Same caveat as
+    /// [`Self::NoSnapshot`] for BLE — the ATT `WRITE_RSP` is already
+    /// out, so the central sees success while the firmware-side log
+    /// records the failure.
     WriteFailed,
 }
 

@@ -645,11 +645,20 @@ fn decide_write<P: PacketPool>(
         ble_command::decode_look_at(data).map(WriteAction::Remote)
     } else if handle == handles.reset {
         ble_command::decode_reset(data).map(|()| WriteAction::RemoteReset)
-    } else {
-        // handles.speak by elimination, but match explicitly so adding
-        // a control characteristic without wiring a decoder fails fast.
-        debug_assert_eq!(handle, handles.speak);
+    } else if handle == handles.speak {
         ble_command::decode_speak(data).map(WriteAction::Remote)
+    } else {
+        // Unreachable on the strength of the `is_control` gate above
+        // — every handle counted there must have a decode arm here.
+        // If a future control characteristic is added to `is_control`
+        // without a matching decode branch, log loudly and reject the
+        // write rather than silently mishandling it. (`debug_assert!`
+        // is the wrong tool: it compiles out in release.)
+        defmt::error!(
+            "ble: control write dispatch missing decode arm (handle={=u16:04x})",
+            handle
+        );
+        return WriteDecision::Reject(AttErrorCode::UNLIKELY_ERROR);
     };
     match result {
         Ok(action) => WriteDecision::Accept(action),

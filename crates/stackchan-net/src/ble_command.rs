@@ -222,7 +222,7 @@ pub fn decode_look_at(payload: &[u8]) -> Result<RemoteCommand, BleError> {
     let pan_centi = i16::from_le_bytes([payload[0], payload[1]]);
     let tilt_centi = i16::from_le_bytes([payload[2], payload[3]]);
     let hold_ms = u16::from_le_bytes([payload[4], payload[5]]);
-    if !pan_in_range(pan_centi) || !pan_in_range(tilt_centi) {
+    if !axis_in_range(pan_centi) || !axis_in_range(tilt_centi) {
         return Err(BleError::LookAtOutOfRange {
             pan: pan_centi,
             tilt: tilt_centi,
@@ -300,9 +300,10 @@ const fn resolve_hold(hold_ms: u16) -> u32 {
     }
 }
 
-/// Bounds check for a signed centi-degree axis used by look-at writes.
-/// Rejects anything outside <code>±[LOOK_AT_RANGE_CENTI_DEG]</code>.
-const fn pan_in_range(centi: i16) -> bool {
+/// Bounds check for either pan or tilt — both axes share the same
+/// wire-level range gate. Rejects anything outside
+/// <code>±[LOOK_AT_RANGE_CENTI_DEG]</code>.
+const fn axis_in_range(centi: i16) -> bool {
     centi >= -LOOK_AT_RANGE_CENTI_DEG && centi <= LOOK_AT_RANGE_CENTI_DEG
 }
 
@@ -533,6 +534,24 @@ mod tests {
             decode_look_at(&payload),
             Err(BleError::LookAtOutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn look_at_rejects_tilt_out_of_range() {
+        // Tilt rides the same gate as pan but through a separate
+        // axis_in_range call — pin both axes so a future split (e.g.
+        // the asymmetric servo travel of MAX_TILT_DEG / MIN_TILT_DEG)
+        // can't drop tilt validation by accident.
+        let mut payload = [0u8; LOOK_AT_LEN];
+        let bad_tilt: i16 = LOOK_AT_RANGE_CENTI_DEG + 1;
+        payload[2..4].copy_from_slice(&bad_tilt.to_le_bytes());
+        match decode_look_at(&payload) {
+            Err(BleError::LookAtOutOfRange { pan, tilt }) => {
+                assert_eq!(pan, 0);
+                assert_eq!(tilt, bad_tilt);
+            }
+            other => panic!("expected LookAtOutOfRange, got {other:?}"),
+        }
     }
 
     #[test]
