@@ -29,6 +29,11 @@ heapless = "0.8"
 # OpenGL rendering and the bundled default fonts.
 eframe = { version = "0.34", optional = true }
 
+[dev-dependencies]
+# Used by `tests/ble_remote_command.rs` to round-trip raw BLE
+# characteristic payloads through the same decoder the firmware uses.
+stackchan-net = { path = "../stackchan-net", default-features = false }
+
 [features]
 # Default: lib-only, no GUI dep tree.
 default = []

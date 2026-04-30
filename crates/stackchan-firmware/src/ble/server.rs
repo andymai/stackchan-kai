@@ -9,7 +9,7 @@
 //! doc comments. Our own struct/field doc comments below stay
 //! authoritative for the human-facing surface.
 //!
-//! The server exposes four services beyond the auto-built GAP:
+//! The server exposes the following services beyond the auto-built GAP:
 //!
 //! 1. **Device Information `0x180A`** — manufacturer / model /
 //!    firmware-revision strings. Populated at boot and never mutated.
@@ -24,15 +24,27 @@
 //!      /settings` uses, then signals
 //!      [`crate::net::wifi::WIFI_RECONFIG`] so the wifi task soft-
 //!      reconnects without a reboot.
+//! 5. **Audio service** (`8a1c0020-…`) — volume + mute, both
+//!    `read + write + notify`. Writes route through
+//!    [`crate::audio::persist_volume`] / [`crate::audio::persist_mute`]
+//!    so HTTP `POST /volume` / `POST /mute` and the BLE write share
+//!    one persistence implementation.
+//! 6. **Avatar control service** (`8a1c0030-…`) — `write`-only
+//!    characteristics for emotion, look-at, reset, and speak. Each
+//!    write decodes a fixed-length payload via
+//!    [`stackchan_net::ble_command`] and signals
+//!    [`crate::net::http::REMOTE_COMMAND_SIGNAL`], the same channel
+//!    the HTTP control plane drives.
 //!
 //! ## Security
 //!
-//! The provisioning service is **unauthenticated** in this PR — any
-//! BLE central in radio range can write SSID/PSK and reconfigure the
-//! device. PR3 adds passkey display + LE Secure Connections bonding
-//! and gates these writes to bonded peers only. Until then, the
-//! `defmt::warn!` on every PSK commit is the loud reminder that this
-//! is provisional.
+//! Control writes (audio + avatar services) and provisioning writes
+//! both require an `EncryptedAuthenticated` link (passkey-confirmed
+//! bond). Centrals that haven't paired get an
+//! `INSUFFICIENT_AUTHENTICATION` reject for control writes; the
+//! provisioning path additionally validates payload contents at
+//! commit time and silently no-ops on auth failure (legacy from the
+//! initial provisioning PR).
 //!
 //! DIS characteristic types are `heapless::String<N>` rather than
 //! `&'static str` because trouble-host's `AsGatt for &'static str`
@@ -52,9 +64,12 @@ use embassy_time::{Duration, Timer};
 // 0.8. Reach explicitly for the alias so the right impl is picked.
 use heapless_09::String as HString;
 use stackchan_core::Emotion;
+use stackchan_net::ble_command::{self, BleError, EMOTION_WRITE_LEN, LOOK_AT_LEN, SPEAK_LEN};
 use trouble_host::Address;
 use trouble_host::prelude::*;
 
+use crate::audio::AudioPersistOutcome;
+use crate::net::http::REMOTE_COMMAND_SIGNAL;
 use crate::net::snapshot;
 use crate::net::wifi::{WIFI_RECONFIG, WifiCreds};
 use crate::storage::{CONFIG_SNAPSHOT, with_storage};
@@ -122,6 +137,13 @@ pub struct StackchanServer {
     /// Wi-Fi provisioning service — writeable SSID + PSK. Commits +
     /// soft-reconnects on PSK write.
     pub provisioning: ProvisioningService,
+    /// Audio service — volume + mute (read + write + notify). Mirrors
+    /// HTTP `POST /volume` / `POST /mute`.
+    pub audio: AudioService,
+    /// Avatar control service — emotion / look-at / reset / speak
+    /// (write only). Mirrors HTTP `POST /emotion`, `/look-at`,
+    /// `/reset`, `/speak`.
+    pub avatar: AvatarControlService,
 }
 
 #[allow(missing_docs)]
@@ -150,6 +172,54 @@ pub struct StackchanService {
     /// transition.
     #[characteristic(uuid = "8a1c0002-7b3f-4d52-9c6e-5f5ba1e5cf01", read, notify, value = 0)]
     pub emotion: u8,
+}
+
+#[allow(missing_docs)]
+#[gatt_service(uuid = "8a1c0020-7b3f-4d52-9c6e-5f5ba1e5cf01")]
+pub struct AudioService {
+    /// Volume percentile (`0..=100`). `read + write + notify`.
+    /// Decoded via [`stackchan_net::ble_command::decode_volume`];
+    /// writes route through [`crate::audio::persist_volume`].
+    #[characteristic(
+        uuid = "8a1c0021-7b3f-4d52-9c6e-5f5ba1e5cf01",
+        read,
+        write,
+        notify,
+        value = 0
+    )]
+    pub volume: u8,
+    /// Mute flag (`0 = un-muted`, `1 = muted`). `read + write + notify`.
+    /// Decoded via [`stackchan_net::ble_command::decode_mute`];
+    /// writes route through [`crate::audio::persist_mute`].
+    #[characteristic(
+        uuid = "8a1c0022-7b3f-4d52-9c6e-5f5ba1e5cf01",
+        read,
+        write,
+        notify,
+        value = 0
+    )]
+    pub mute: u8,
+}
+
+#[allow(missing_docs)]
+#[gatt_service(uuid = "8a1c0030-7b3f-4d52-9c6e-5f5ba1e5cf01")]
+pub struct AvatarControlService {
+    /// Emotion override. 3-byte payload (`u8` emotion + `u16 LE`
+    /// `hold_ms`). See [`stackchan_net::ble_command::decode_emotion_write`].
+    #[characteristic(uuid = "8a1c0031-7b3f-4d52-9c6e-5f5ba1e5cf01", write, value = [0u8; EMOTION_WRITE_LEN])]
+    pub emotion_write: [u8; EMOTION_WRITE_LEN],
+    /// Look-at override. 6-byte payload (two `i16 LE` centi-degrees +
+    /// `u16 LE` `hold_ms`). See [`stackchan_net::ble_command::decode_look_at`].
+    #[characteristic(uuid = "8a1c0032-7b3f-4d52-9c6e-5f5ba1e5cf01", write, value = [0u8; LOOK_AT_LEN])]
+    pub look_at: [u8; LOOK_AT_LEN],
+    /// Reset trigger. Any 1-byte write clears active emotion / look-at
+    /// holds. See [`stackchan_net::ble_command::decode_reset`].
+    #[characteristic(uuid = "8a1c0033-7b3f-4d52-9c6e-5f5ba1e5cf01", write, value = 0)]
+    pub reset: u8,
+    /// Speak trigger. 2-byte payload (`u8` phrase + `u8` locale). See
+    /// [`stackchan_net::ble_command::decode_speak`].
+    #[characteristic(uuid = "8a1c0034-7b3f-4d52-9c6e-5f5ba1e5cf01", write, value = [0u8; SPEAK_LEN])]
+    pub speak: [u8; SPEAK_LEN],
 }
 
 #[allow(missing_docs)]
@@ -250,6 +320,7 @@ pub async fn run_ble_peripheral<C: Controller>(
 
     populate_dis(&server);
     populate_provisioning_ssid(&server).await;
+    populate_audio_state(&server);
 
     let advertise_serve = async {
         loop {
@@ -357,10 +428,79 @@ async fn advertise<'values, 'server, C: Controller>(
     Ok(conn)
 }
 
+/// Cached write-characteristic handles, looked up once per connection
+/// so the per-event dispatch is a handful of integer compares.
+struct WriteHandles {
+    /// Provisioning PSK write — kept here so the dispatch routes
+    /// straight into [`commit_provisioning`] without a separate
+    /// pattern match.
+    psk: u16,
+    /// Audio volume write.
+    volume: u16,
+    /// Audio mute write.
+    mute: u16,
+    /// Avatar emotion-write characteristic.
+    emotion_write: u16,
+    /// Avatar look-at write.
+    look_at: u16,
+    /// Avatar reset trigger.
+    reset: u16,
+    /// Avatar speak trigger.
+    speak: u16,
+}
+
+impl WriteHandles {
+    /// Snapshot the write handles from the freshly-built server.
+    /// Cheap — each field is one `u16` copy from a fixed offset
+    /// inside the macro-emitted server struct.
+    const fn new(server: &StackchanServer<'_>) -> Self {
+        Self {
+            psk: server.provisioning.psk.handle,
+            volume: server.audio.volume.handle,
+            mute: server.audio.mute.handle,
+            emotion_write: server.avatar.emotion_write.handle,
+            look_at: server.avatar.look_at.handle,
+            reset: server.avatar.reset.handle,
+            speak: server.avatar.speak.handle,
+        }
+    }
+}
+
+/// Action performed after a write has been accepted at the ATT layer.
+/// Decoded from the wire payload up front so the post-accept handler
+/// is a straight signal/persist call without re-parsing.
+enum WriteAction {
+    /// Provisioning-PSK commit (existing flow): read SSID + PSK back
+    /// from the GATT table, validate, persist, signal Wi-Fi reconfig.
+    ProvisioningPsk,
+    /// Apply a new volume percentile via [`crate::audio::persist_volume`].
+    Volume(u8),
+    /// Apply a new mute flag via [`crate::audio::persist_mute`].
+    Mute(bool),
+    /// Forward a parsed [`stackchan_core::RemoteCommand`] onto
+    /// [`REMOTE_COMMAND_SIGNAL`] — handles emotion / look-at / reset / speak.
+    Remote(stackchan_core::RemoteCommand),
+    /// Forward a synthesised reset onto [`REMOTE_COMMAND_SIGNAL`].
+    /// Reset has no decoded payload but needs the same dispatch shape.
+    RemoteReset,
+}
+
+/// Decision the dispatcher takes for one Gatt event.
+enum WriteDecision {
+    /// Non-write event, or write to an unknown handle. Fall through
+    /// to default accept-and-discard semantics.
+    Default,
+    /// Accept the write, then perform [`WriteAction`].
+    Accept(WriteAction),
+    /// Reject the write with an ATT error code. The central sees the
+    /// error; the GATT table is not modified.
+    Reject(AttErrorCode),
+}
+
 /// Drains GATT events for one connection. trouble-host requires every
-/// event to be `accept()`ed — the reply path runs the ATT response
-/// back to the central. Without this loop, reads would silently time
-/// out from the peer's view.
+/// event to be `accept()` (or `reject()`)-ed — the reply path runs the
+/// ATT response back to the central. Without this loop, reads would
+/// silently time out from the peer's view.
 ///
 /// Also handles the BLE security event surface:
 ///
@@ -370,15 +510,18 @@ async fn advertise<'values, 'server, C: Controller>(
 ///   to SD via [`crate::ble::bonds`].
 /// - `PairingFailed` — clear the on-screen passkey, log the reason.
 ///
-/// On a write to the provisioning PSK characteristic, fires the
-/// commit path — but only if the link is currently encrypted.
-/// Pre-pairing writes get rejected with a warn and a no-op.
+/// Control writes (audio + avatar services) require an
+/// `EncryptedAuthenticated` link; unauthenticated writes are rejected
+/// with `INSUFFICIENT_AUTHENTICATION` so the GATT table never holds
+/// bytes from an unpaired peer. Provisioning-PSK writes use the
+/// pre-existing accept-then-commit flow; their security check lives
+/// in `commit_provisioning`.
 async fn gatt_events_task<P: PacketPool>(
     stack: &Stack<'_, impl Controller, P>,
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
 ) {
-    let psk_handle = server.provisioning.psk.handle;
+    let handles = WriteHandles::new(server);
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
@@ -387,31 +530,7 @@ async fn gatt_events_task<P: PacketPool>(
                 return;
             }
             GattConnectionEvent::Gatt { event } => {
-                let is_psk_write =
-                    matches!(&event, GattEvent::Write(w) if w.handle() == psk_handle);
-                // Only fire commit when the write was actually
-                // applied to the GATT table. A failed `accept()`
-                // means trouble-host did not store the new bytes,
-                // and `server.get(&psk)` would return stale or
-                // empty data — committing on that path would
-                // persist the wrong PSK (or treat an empty PSK as
-                // an open-AP credential).
-                let accepted_ok = match event.accept() {
-                    Ok(reply) => {
-                        reply.send().await;
-                        true
-                    }
-                    Err(e) => {
-                        defmt::warn!(
-                            "ble: gatt event accept failed ({})",
-                            defmt::Debug2Format(&e)
-                        );
-                        false
-                    }
-                };
-                if is_psk_write && accepted_ok {
-                    commit_provisioning(server, conn).await;
-                }
+                dispatch_gatt_event(server, conn, &handles, event).await;
             }
             GattConnectionEvent::PassKeyDisplay(passkey) => {
                 let value = passkey.value();
@@ -442,19 +561,206 @@ async fn gatt_events_task<P: PacketPool>(
     }
 }
 
-/// Periodic battery notify (1 Hz) + change-driven emotion notify.
+/// Dispatch one Gatt event: decide accept/reject for known writes,
+/// fall through to default accept for everything else, then run any
+/// post-accept action (signal + persist).
+async fn dispatch_gatt_event<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    handles: &WriteHandles,
+    event: GattEvent<'_, '_, P>,
+) {
+    let decision = match &event {
+        GattEvent::Write(w) => decide_write(handles, conn, w.handle(), w.data()),
+        _ => WriteDecision::Default,
+    };
+
+    match decision {
+        WriteDecision::Reject(err) => match event.reject(err) {
+            Ok(reply) => reply.send().await,
+            Err(e) => defmt::warn!("ble: gatt reject failed ({})", defmt::Debug2Format(&e)),
+        },
+        WriteDecision::Default => match event.accept() {
+            Ok(reply) => reply.send().await,
+            Err(e) => defmt::warn!("ble: gatt accept failed ({})", defmt::Debug2Format(&e)),
+        },
+        WriteDecision::Accept(action) => {
+            // Only fire the post-accept action when the ATT reply
+            // actually went out — a failed `accept()` means the
+            // attribute server didn't store any new bytes, so calling
+            // e.g. `commit_provisioning` against a stale GATT table
+            // would persist the wrong value.
+            let accepted = match event.accept() {
+                Ok(reply) => {
+                    reply.send().await;
+                    true
+                }
+                Err(e) => {
+                    defmt::warn!("ble: gatt accept failed ({})", defmt::Debug2Format(&e));
+                    false
+                }
+            };
+            if !accepted {
+                return;
+            }
+            apply_write_action(server, conn, action).await;
+        }
+    }
+}
+
+/// Inspect a write event and decide whether to accept, reject, or
+/// pass through. For known control writes (audio + avatar services),
+/// require an authenticated link and decode the payload via
+/// [`stackchan_net::ble_command`]. For everything else (including
+/// the existing provisioning SSID write), keep the historical
+/// accept-and-store-into-the-GATT-table behaviour.
+fn decide_write<P: PacketPool>(
+    handles: &WriteHandles,
+    conn: &GattConnection<'_, '_, P>,
+    handle: u16,
+    data: &[u8],
+) -> WriteDecision {
+    if handle == handles.psk {
+        return WriteDecision::Accept(WriteAction::ProvisioningPsk);
+    }
+    let is_control = handle == handles.volume
+        || handle == handles.mute
+        || handle == handles.emotion_write
+        || handle == handles.look_at
+        || handle == handles.reset
+        || handle == handles.speak;
+    if !is_control {
+        return WriteDecision::Default;
+    }
+    if !is_authenticated(conn) {
+        return WriteDecision::Reject(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
+    }
+    let result = if handle == handles.volume {
+        ble_command::decode_volume(data).map(WriteAction::Volume)
+    } else if handle == handles.mute {
+        ble_command::decode_mute(data).map(WriteAction::Mute)
+    } else if handle == handles.emotion_write {
+        ble_command::decode_emotion_write(data).map(WriteAction::Remote)
+    } else if handle == handles.look_at {
+        ble_command::decode_look_at(data).map(WriteAction::Remote)
+    } else if handle == handles.reset {
+        ble_command::decode_reset(data).map(|()| WriteAction::RemoteReset)
+    } else {
+        // handles.speak by elimination, but match explicitly so adding
+        // a control characteristic without wiring a decoder fails fast.
+        debug_assert_eq!(handle, handles.speak);
+        ble_command::decode_speak(data).map(WriteAction::Remote)
+    };
+    match result {
+        Ok(action) => WriteDecision::Accept(action),
+        Err(e) => {
+            defmt::warn!(
+                "ble: control write rejected (handle={=u16:04x}, {})",
+                handle,
+                defmt::Debug2Format(&e)
+            );
+            WriteDecision::Reject(att_error_for(&e))
+        }
+    }
+}
+
+/// Map a [`BleError`] from the wire-format codec to the ATT error
+/// code the central sees. Bad length → `INVALID_ATTRIBUTE_VALUE_LENGTH`,
+/// numeric range overruns → `OUT_OF_RANGE`, unknown enum bytes →
+/// `VALUE_NOT_ALLOWED`.
+const fn att_error_for(err: &BleError) -> AttErrorCode {
+    match err {
+        BleError::BadLength { .. } => AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH,
+        BleError::VolumeOutOfRange(_) | BleError::LookAtOutOfRange { .. } => {
+            AttErrorCode::OUT_OF_RANGE
+        }
+        BleError::BadMuteByte(_)
+        | BleError::UnknownEmotion(_)
+        | BleError::UnknownLocale(_)
+        | BleError::UnknownPhrase(_) => AttErrorCode::VALUE_NOT_ALLOWED,
+    }
+}
+
+/// Run the post-accept side of a control write — signal the relevant
+/// firmware sink and (for audio writes) persist to SD.
+async fn apply_write_action<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    action: WriteAction,
+) {
+    match action {
+        WriteAction::ProvisioningPsk => commit_provisioning(server, conn).await,
+        WriteAction::Volume(level) => {
+            log_audio_outcome("volume", crate::audio::persist_volume(level).await);
+        }
+        WriteAction::Mute(muted) => {
+            log_audio_outcome("mute", crate::audio::persist_mute(muted).await);
+        }
+        WriteAction::Remote(cmd) => {
+            defmt::info!("ble: remote command {}", defmt::Debug2Format(&cmd));
+            REMOTE_COMMAND_SIGNAL.signal(cmd);
+        }
+        WriteAction::RemoteReset => {
+            defmt::info!("ble: remote reset");
+            REMOTE_COMMAND_SIGNAL.signal(stackchan_core::RemoteCommand::Reset);
+        }
+    }
+}
+
+/// Whether the connection is currently encrypted *and* authenticated
+/// (passkey-confirmed bond). Plain `Encrypted` is the `JustWorks`
+/// outcome — any nearby central can force that without the user
+/// confirming a code, so it doesn't gate control writes.
+fn is_authenticated<P: PacketPool>(conn: &GattConnection<'_, '_, P>) -> bool {
+    matches!(
+        conn.raw().security_level(),
+        Ok(SecurityLevel::EncryptedAuthenticated)
+    )
+}
+
+/// Single-line log for an audio persist outcome. Keeps the dispatch
+/// arm a one-liner and centralises the warn-vs-info branching.
+fn log_audio_outcome(field: &str, outcome: AudioPersistOutcome) {
+    match outcome {
+        AudioPersistOutcome::Persisted => {
+            defmt::info!("ble: {} persisted", field);
+        }
+        AudioPersistOutcome::NoSnapshot => {
+            defmt::warn!(
+                "ble: {} write — config snapshot unavailable, dropping",
+                field
+            );
+        }
+        AudioPersistOutcome::NoStorage => {
+            defmt::warn!("ble: {} write — no SD mounted, dropping", field);
+        }
+        AudioPersistOutcome::WriteFailed => {
+            defmt::warn!("ble: {} write — SD persist failed, dropping", field);
+        }
+    }
+}
+
+/// Periodic battery notify (1 Hz) + snapshot-diff change notifies for
+/// emotion / volume / mute.
 ///
-/// Reads the snapshot every tick. Battery percent always notifies so
-/// first-time subscribers see a value within a second. Emotion notifies
-/// only on transition — the value barely changes at steady state, so
-/// notifying every tick would waste airtime and flicker in nRF Connect.
+/// Battery percent always notifies so first-time subscribers see a
+/// value within a second. The other characteristics notify only on
+/// transition — at steady state they barely change, and pushing a
+/// tick whenever nothing moved would waste airtime and flicker in
+/// nRF Connect. Reading the [`AvatarSnapshot`] each tick is the
+/// single source of truth: it's already updated from the audio task
+/// on persist + the render task on emotion change, so BLE just diffs.
 async fn notify_task<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
 ) {
     let battery_handle = server.battery.level;
     let emotion_handle = server.stackchan.emotion;
+    let volume_handle = server.audio.volume;
+    let mute_handle = server.audio.mute;
     let mut last_emotion: Option<Emotion> = None;
+    let mut last_volume: Option<u8> = None;
+    let mut last_mute: Option<bool> = None;
 
     loop {
         let snap = snapshot::read();
@@ -484,23 +790,79 @@ async fn notify_task<P: PacketPool>(
         }
 
         let emotion_byte = snap.emotion.wire_byte();
-        if let Err(e) = server.set(&emotion_handle, &emotion_byte) {
-            defmt::warn!(
-                "ble: emotion table set failed ({})",
-                defmt::Debug2Format(&e)
-            );
-        }
-        if last_emotion != Some(snap.emotion) {
-            last_emotion = Some(snap.emotion);
-            if let Err(e) = emotion_handle.notify(conn, &emotion_byte).await {
-                defmt::trace!(
-                    "ble: emotion notify skipped ({}) — peer not subscribed?",
-                    defmt::Debug2Format(&e)
-                );
-            }
-        }
+        notify_if_changed(
+            server,
+            conn,
+            &emotion_handle,
+            "emotion",
+            &mut last_emotion,
+            snap.emotion,
+            &emotion_byte,
+        )
+        .await;
+
+        let volume_byte = snap.audio.volume_pct;
+        notify_if_changed(
+            server,
+            conn,
+            &volume_handle,
+            "volume",
+            &mut last_volume,
+            volume_byte,
+            &volume_byte,
+        )
+        .await;
+
+        let mute_byte = ble_command::encode_mute(snap.audio.muted);
+        notify_if_changed(
+            server,
+            conn,
+            &mute_handle,
+            "mute",
+            &mut last_mute,
+            snap.audio.muted,
+            &mute_byte,
+        )
+        .await;
 
         Timer::after(BATTERY_NOTIFY_PERIOD).await;
+    }
+}
+
+/// Update the GATT table value and emit a notify only when the
+/// snapshot field changed since the last tick. Caller passes the
+/// observed-state cache (`last`), the new state value (`current`),
+/// and the byte payload to set + notify (already encoded).
+async fn notify_if_changed<T, V, P>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    handle: &Characteristic<V>,
+    field: &str,
+    last: &mut Option<T>,
+    current: T,
+    bytes: &V,
+) where
+    T: Copy + PartialEq,
+    V: trouble_host::prelude::FromGatt,
+    P: PacketPool,
+{
+    if let Err(e) = server.set(handle, bytes) {
+        defmt::warn!(
+            "ble: {} table set failed ({})",
+            field,
+            defmt::Debug2Format(&e)
+        );
+    }
+    if *last == Some(current) {
+        return;
+    }
+    *last = Some(current);
+    if let Err(e) = handle.notify(conn, bytes).await {
+        defmt::trace!(
+            "ble: {} notify skipped ({}) — peer not subscribed?",
+            field,
+            defmt::Debug2Format(&e)
+        );
     }
 }
 
@@ -523,6 +885,27 @@ async fn populate_provisioning_ssid(server: &StackchanServer<'_>) {
     }
     if let Err(e) = server.set(&server.provisioning.ssid, &s) {
         defmt::warn!("ble: provisioning SSID set ({})", defmt::Debug2Format(&e));
+    }
+}
+
+/// Pre-fill the audio service's volume + mute characteristics with
+/// the persisted config so a phone reading them at connect time sees
+/// the active values rather than zeros. The notify loop later catches
+/// any change made between this snapshot and the central's read.
+fn populate_audio_state(server: &StackchanServer<'_>) {
+    let snap = snapshot::read();
+    if let Err(e) = server.set(&server.audio.volume, &snap.audio.volume_pct) {
+        defmt::warn!(
+            "ble: audio volume initial set failed ({})",
+            defmt::Debug2Format(&e)
+        );
+    }
+    let mute_byte = ble_command::encode_mute(snap.audio.muted);
+    if let Err(e) = server.set(&server.audio.mute, &mute_byte) {
+        defmt::warn!(
+            "ble: audio mute initial set failed ({})",
+            defmt::Debug2Format(&e)
+        );
     }
 }
 

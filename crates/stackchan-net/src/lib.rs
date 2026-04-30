@@ -50,6 +50,7 @@ extern crate alloc;
 
 pub mod bare;
 pub mod bare_json;
+pub mod ble_command;
 pub mod config;
 pub mod error;
 pub mod http_command;
