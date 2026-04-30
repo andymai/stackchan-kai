@@ -116,12 +116,13 @@ pub const PIXEL_CLOCK_HZ: u32 = 20_000_000;
 /// signalled last, matching the user's intent.
 pub static CAMERA_MODE_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
-/// Capture-still trigger published by the render task.
+/// Capture-still trigger.
 ///
-/// The render task signals this when the user taps in camera mode
-/// (a tap-while-camera-mode = "save this frame"). The camera task
-/// snapshots the most recently completed buffer and emits a stats +
-/// thumbnail-strip log over RTT. No flash storage; capture is RTT-only.
+/// Three producers: a tap in camera-mode (render task), HTTP `POST
+/// /camera/capture`, and the BLE view-service capture characteristic.
+/// On each request the camera task snapshots the most recently
+/// completed buffer and (a) emits a stats + thumbnail-strip log over
+/// RTT, and (b) writes the raw RGB565 frame to `/sd/CAPTURE.565`.
 pub static CAMERA_CAPTURE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Most-recently completed camera frame as a static slice.
@@ -545,9 +546,14 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
             });
 
             // Honour any pending capture request — log frame stats +
-            // a 32×24 RGB565 thumbnail strip over RTT.
+            // a 32×24 RGB565 thumbnail strip over RTT, then persist
+            // the raw frame to `/sd/CAPTURE.565`. The SD write blocks
+            // the executor for ~200 ms; render will skip a few frames
+            // during the write, which is acceptable for an
+            // operator-triggered debug action.
             if CAMERA_CAPTURE_REQUEST.try_take().is_some() {
                 log_capture_stats(active_idx, view);
+                save_capture_to_sd(view).await;
             }
         }
 
@@ -692,6 +698,21 @@ fn log_capture_stats(buffer_idx: usize, frame: &[u8]) {
         }
     }
     defmt::info!("camera: thumbnail (RGB565, 32x24): {=[?]}", thumb);
+}
+
+/// Persist a captured frame to `/sd/CAPTURE.565`. Logs success
+/// (with byte count + filename) or the failure mode the operator
+/// needs to act on (no SD mounted, SPI/FAT error). Never panics.
+async fn save_capture_to_sd(frame: &[u8]) {
+    let result = crate::storage::with_storage(|s| s.write_capture(frame)).await;
+    match result {
+        Some(Ok(())) => defmt::info!(
+            "camera: capture saved to /sd/CAPTURE.565 ({=usize} bytes raw RGB565 BE)",
+            frame.len()
+        ),
+        Some(Err(e)) => defmt::warn!("camera: capture write failed ({})", e),
+        None => defmt::warn!("camera: capture skipped — no SD mounted"),
+    }
 }
 
 /// Park the task forever. Used when init fails irrecoverably so the

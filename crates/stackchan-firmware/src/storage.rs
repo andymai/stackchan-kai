@@ -126,6 +126,13 @@ const BONDS_STAGING_FILE: &str = "BONDS.NEW";
 /// headroom for future record-layout additions.
 const MAX_BONDS_BYTES: u32 = 1024;
 
+/// Filename for the operator-triggered camera capture. Single fixed
+/// name (no rotation) so each capture overwrites the previous —
+/// the workflow is "trigger, eject SD, view, repeat", not a
+/// timestamped archive. Raw QVGA RGB565, big-endian, 320×240×2 =
+/// 153 600 bytes; convertible with a one-line numpy reshape.
+const CAPTURE_FILE: &str = "CAPTURE.565";
+
 /// Storage / FAT errors. Logged via `defmt::Format` at the firmware
 /// boundary; the operator triages from the boot log.
 #[derive(Debug, defmt::Format)]
@@ -304,6 +311,20 @@ where
         let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
         buf.truncate(n);
         Ok(buf)
+    }
+
+    /// Truncate-write the operator-triggered camera capture into
+    /// `/sd/CAPTURE.565`. No staging dance — a half-written capture
+    /// is just a half-written capture; the next trigger overwrites
+    /// it. The atomicity that matters for `STACKCHAN.RON` /
+    /// `BONDS.BIN` (boot must read a complete file) doesn't apply
+    /// here.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying SPI / FAT failure.
+    pub fn write_capture(&mut self, frame: &[u8]) -> Result<(), StorageError> {
+        self.write_file(CAPTURE_FILE, frame)
     }
 
     /// Atomically replace `/sd/BONDS.BIN` with `data`. Same staging-
