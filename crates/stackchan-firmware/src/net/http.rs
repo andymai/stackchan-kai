@@ -26,6 +26,10 @@
 //!   Renders a [`stackchan_core::voice::PhraseId`] from the baked
 //!   catalog and queues it on the audio TX path. Fire-and-forget;
 //!   no avatar-state hold timer.
+//! - `POST /camera/mode` — JSON `{"enabled": <bool>}`. Flips the
+//!   LCD between camera preview and avatar; tracking continues in
+//!   either mode. Ephemeral (no SD writeback); a power-cycle returns
+//!   to avatar.
 //! - `GET /settings` — current persisted [`stackchan_net::Config`]
 //!   as JSON, with `wifi.psk` and `auth.token` redacted.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
@@ -286,6 +290,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("POST", "/volume") => handle_post_volume(socket, body).await,
         ("POST", "/mute") => handle_post_mute(socket, body).await,
+        ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
     }
@@ -527,6 +532,29 @@ async fn audio_persist_to_http(
     }
 }
 
+/// `POST /camera/mode` — parse `{"enabled": <bool>}`, update the
+/// avatar snapshot, and signal the render task to flip the LCD.
+/// Display-only — tracking continues in either mode. No SD writeback;
+/// camera mode is intentionally ephemeral so a power-cycle returns
+/// to avatar view.
+async fn handle_post_camera_mode(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let active = match json::parse_camera_mode(body) {
+        Ok(a) => a,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /camera/mode parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    snapshot::update_camera_mode(active);
+    crate::camera::CAMERA_MODE_SIGNAL.signal(active);
+    defmt::info!("http: POST /camera/mode → {=bool}", active);
+    write_no_content(socket).await
+}
+
 /// Apply a parsed remote command (or surface the parser error to the
 /// client). On success: signal the render task and respond `204 No
 /// Content`. On parse failure: respond `400 Bad Request` with a
@@ -606,7 +634,8 @@ fn state_body(s: AvatarSnapshot) -> String {
 \"head_actual\":{actual},\
 \"battery\":{{\"percent\":{pct},\"voltage_mv\":{mv}}},\
 \"wifi\":{{\"connected\":{connected},\"ip\":{ip}}},\
-\"audio\":{{\"volume_pct\":{volume_pct},\"muted\":{muted}}}\
+\"audio\":{{\"volume_pct\":{volume_pct},\"muted\":{muted}}},\
+\"camera_mode\":{camera_mode}\
 }}\n",
         emotion = s.emotion.wire_str(),
         pan = s.head_pose.pan_deg,
@@ -614,6 +643,7 @@ fn state_body(s: AvatarSnapshot) -> String {
         connected = s.wifi.connected,
         volume_pct = s.audio.volume_pct,
         muted = s.audio.muted,
+        camera_mode = s.camera_mode,
     )
 }
 
