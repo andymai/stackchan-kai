@@ -40,12 +40,18 @@ For each step:
 5. **Dead zone + P-gain + slew clamp.** Centroid is converted to a pan
    / tilt delta via the configured camera FOV; small offsets pass
    through the dead zone untouched, the rest are scaled by `p_gain`
-   and clamped to `±max_step_deg`.
+   and clamped to `±max_step_deg`. Result feeds the internal
+   accumulator pose.
 6. **Idle timeout.** After `idle_timeout_ms` of no motion the target
    pose slews back toward `Pose::NEUTRAL` at `idle_step_deg` per step.
 7. **`Pose::clamped`.** Final assignment routes through the
    stackchan-core safe-range clamp (asymmetric tilt — see
    `stackchan_core::head`).
+8. **Optional EMA on the published target.** A single-pole
+   `target_smoothing_alpha` on `TrackerConfig` blends the accumulator
+   into the value emitted in `Outcome.target` and surfaced via
+   `Tracker::target_pose()`. Default `1.0` is a no-op; lower values
+   add inertia on top of the per-step P-gain.
 
 ## Sign Conventions
 
