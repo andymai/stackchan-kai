@@ -26,4 +26,4 @@ micromath = "2"
 # `heapless::Vec` backs the `App` registry's modifier + skill storage
 # without an allocator. Capacity is fixed at compile time (see
 # `MODIFIER_CAP`/`SKILL_CAP` in `app.rs`); embedded-friendly.
-heapless = "0.8"
+heapless = "0.9"
