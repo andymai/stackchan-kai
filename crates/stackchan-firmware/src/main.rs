@@ -72,7 +72,7 @@ use mipidsi::{
     options::{ColorInversion, ColorOrder},
 };
 use stackchan_core::{
-    Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
+    Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
         AttentionFromTracking, Blink, Breath, DormancyFromActivity, EmotionCycle,
         EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
@@ -478,6 +478,14 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // modifier — see `crate::director` for the full pipeline.
         director.run(&mut entity, now);
         tracking_trace.observe(&entity, now);
+
+        // Hint the camera task about Listening attention so it can
+        // widen face detection past motion-only candidates: a still
+        // speaker (voice fires while they sit motionless) gets a
+        // frame-centre cascade scan instead of an Idle engagement and
+        // the head turns toward them rather than just tilting up.
+        camera::LISTENING_HINT_SIGNAL
+            .signal(matches!(entity.mind.attention, Attention::Listening { .. }));
 
         // Drain speech intents raised this tick. Two parallel paths
         // during the chirp → utterance migration:
