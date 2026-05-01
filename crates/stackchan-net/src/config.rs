@@ -24,7 +24,7 @@ use crate::error::ConfigError;
 /// mDNS label, `time` points at `pool.ntp.org` so SNTP picks up
 /// once Wi-Fi is configured, and `auth.token` is empty so the HTTP
 /// control plane stays LAN-open until the operator opts in.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct Config {
     /// Wi-Fi station credentials and regulatory country code.
@@ -43,6 +43,12 @@ pub struct Config {
     /// /mute` write.
     #[cfg_attr(feature = "parse", serde(default))]
     pub audio: AudioConfig,
+    /// Camera-tracker tuning: lens FOV, target smoothing, and
+    /// orientation flips. Applied to the firmware tracker at boot;
+    /// changes via `PUT /settings` take effect on the next boot
+    /// (mirrors the mDNS / SNTP / audio-init pattern).
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub tracker: TrackerSettings,
 }
 
 /// Wi-Fi station credentials.
@@ -132,6 +138,61 @@ impl AudioConfig {
 }
 
 impl Default for AudioConfig {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Operator-tunable subset of `tracker::TrackerConfig`.
+///
+/// These are the fields most likely to need adjustment in the field
+/// rather than at compile time. Lens FOV varies between hardware
+/// revisions, smoothing is a taste call, and orientation flips depend
+/// on physical mounting.
+///
+/// The full `tracker::TrackerConfig` algorithm tuning (P-gain, block
+/// thresholds, dead zones, idle behaviour, ...) stays compile-time
+/// only — operators shouldn't need it, and exposing it would balloon
+/// the schema for marginal value.
+///
+/// Defaults match `tracker::TrackerConfig::DEFAULT` so a missing
+/// `tracker:` block reproduces the firmware's pre-runtime-config
+/// behaviour exactly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct TrackerSettings {
+    /// Camera horizontal field of view in degrees. GC0308 with the
+    /// CoreS3 lens is roughly 62°. Range: `(0, 180]` — must be
+    /// strictly positive and at most 180°.
+    pub fov_h_deg: f32,
+    /// Camera vertical field of view in degrees. ~49° on the same
+    /// lens. Range: `(0, 180]` — same gate as `fov_h_deg`.
+    pub fov_v_deg: f32,
+    /// Single-pole EMA on the published target pose. `1.0` is the
+    /// pass-through default; lower values add inertia. Range:
+    /// 0.05..=1.0 (clamped at the use site as defence-in-depth).
+    pub target_smoothing_alpha: f32,
+    /// Mirror the centroid horizontally before mapping to pan. Set
+    /// when the camera is mounted left-right reversed relative to the
+    /// head's pan direction.
+    pub flip_x: bool,
+    /// Mirror vertically. Set when the camera image is upside-down
+    /// relative to the head's tilt direction.
+    pub flip_y: bool,
+}
+
+impl TrackerSettings {
+    /// Const-evaluable default mirroring `tracker::TrackerConfig::DEFAULT`.
+    pub const DEFAULT: Self = Self {
+        fov_h_deg: 62.0,
+        fov_v_deg: 49.0,
+        target_smoothing_alpha: 1.0,
+        flip_x: false,
+        flip_y: false,
+    };
+}
+
+impl Default for TrackerSettings {
     fn default() -> Self {
         Self::DEFAULT
     }
@@ -236,7 +297,33 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
     if config.audio.volume_pct > 100 {
         return Err(ConfigError::InvalidVolumePct(config.audio.volume_pct));
     }
+    if !is_valid_fov_deg(config.tracker.fov_h_deg) {
+        return Err(ConfigError::InvalidFovDeg(config.tracker.fov_h_deg));
+    }
+    if !is_valid_fov_deg(config.tracker.fov_v_deg) {
+        return Err(ConfigError::InvalidFovDeg(config.tracker.fov_v_deg));
+    }
+    if !is_valid_smoothing_alpha(config.tracker.target_smoothing_alpha) {
+        return Err(ConfigError::InvalidSmoothingAlpha(
+            config.tracker.target_smoothing_alpha,
+        ));
+    }
     Ok(())
+}
+
+/// True iff `deg` is a finite positive value within `(0, 180]`. Lens
+/// FOVs outside that range can't be physical; rejecting at the
+/// validator catches typos before they reach the camera task.
+fn is_valid_fov_deg(deg: f32) -> bool {
+    deg.is_finite() && deg > 0.0 && deg <= 180.0
+}
+
+/// True iff `alpha` is a finite value in `[0.05, 1.0]`. Lower than
+/// 0.05 effectively freezes the published target for tens of seconds,
+/// which is a UX bug; higher than 1.0 has no defined meaning for an
+/// EMA. Matches the runtime clamp inside `Tracker::publish`.
+fn is_valid_smoothing_alpha(alpha: f32) -> bool {
+    alpha.is_finite() && (0.05..=1.0).contains(&alpha)
 }
 
 /// True iff `s` is exactly two uppercase ASCII letters (ISO-3166
