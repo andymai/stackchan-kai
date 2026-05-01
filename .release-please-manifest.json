@@ -9,7 +9,7 @@
   "crates/ir-nec": "0.8.0",
   "crates/ltr553": "0.8.0",
   "crates/scservo": "0.6.0",
-  "crates/stackchan-firmware": "0.34.1",
+  "crates/stackchan-firmware": "0.35.0",
   "crates/aw88298": "0.4.0",
   "crates/es7210": "0.4.0",
   "crates/gc0308": "0.6.0",

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.34.1...stackchan-firmware-v0.35.0) (2026-05-01)
+
+
+### Features
+
+* **net:** operator-tunable tracker FOV via PUT /settings ([#192](https://github.com/andymai/stackchan-kai/issues/192)) ([ce51d58](https://github.com/andymai/stackchan-kai/commit/ce51d588e62769cb2c613af51eb47214454a2754))
+
 ## [0.34.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.34.0...stackchan-firmware-v0.34.1) (2026-04-30)
 
 ## [0.34.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.33.0...stackchan-firmware-v0.34.0) (2026-04-30)
