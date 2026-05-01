@@ -136,10 +136,12 @@ pub static CAMERA_CAPTURE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal:
 /// `Idle`, so the head only does the cocked-up listening tilt and
 /// never turns toward them.
 ///
-/// `Signal` semantics (latest-wins) match the use: stale values lose
-/// to the next tick. A missing value (`try_take` returns `None` —
-/// happens only before the first render tick) is treated as
-/// "not listening," which is the safe default.
+/// `Signal` semantics (latest-wins) match the use, but `try_take`
+/// *consumes* the value — and the camera task ticks independently of
+/// the render task, so a fresh `try_take` between two render publishes
+/// would read `None`. The camera task therefore shadows the hint in a
+/// local boolean and only updates it when `try_take` returns `Some`,
+/// preserving the last-known state across frames.
 pub static LISTENING_HINT_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 /// Most-recently completed camera frame as a static slice.
@@ -411,6 +413,12 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
     // the full 30 FPS cadence (otherwise face_present would flicker
     // at the cascade period and never accumulate hits).
     let mut last_face: Option<FaceDetection> = None;
+    // Last observed value of `LISTENING_HINT_SIGNAL`. Updated only
+    // when `try_take` returns `Some` — the camera task and render
+    // task tick independently, so a `try_take` between two render
+    // publishes would otherwise read `None` and silently drop the
+    // hint to `false` mid-listening-session.
+    let mut is_listening: bool = false;
 
     loop {
         // Pick the buffer to fill on this iteration; the OTHER one
@@ -523,7 +531,10 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
             // statically less than u16::MAX (320, 240), so the cast is
             // safe — `u16::try_from` would panic-or-error on values
             // that the binary's compile-time constants make impossible.
-            let listening = LISTENING_HINT_SIGNAL.try_take().unwrap_or(false);
+            if let Some(hint) = LISTENING_HINT_SIGNAL.try_take() {
+                is_listening = hint;
+            }
+            let listening = is_listening;
             let scoring_frame = cascade_phase == 0;
             cascade_phase = (cascade_phase + 1) % CASCADE_PERIOD;
             let scan_centroid = outcome
