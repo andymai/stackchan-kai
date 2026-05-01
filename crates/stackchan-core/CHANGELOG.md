@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.17.0...stackchan-core-v0.18.0) (2026-05-01)
+
+
+### Features
+
+* **firmware:** voice-gated frame-centre face cascade ([#194](https://github.com/andymai/stackchan-kai/issues/194)) ([ae13d18](https://github.com/andymai/stackchan-kai/commit/ae13d1888e7b97a21d9a55a93f3e84a4d5f641e3))
+
 ## [0.17.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.16.0...stackchan-core-v0.17.0) (2026-04-28)
 
 
