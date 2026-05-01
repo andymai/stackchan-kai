@@ -125,6 +125,23 @@ pub static CAMERA_MODE_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::n
 /// RTT, and (b) writes the raw RGB565 frame to `/sd/CAPTURE.565`.
 pub static CAMERA_CAPTURE_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// Listening-attention hint, render task → camera task.
+///
+/// Republished after every director tick: `true` while
+/// `entity.mind.attention` is `Listening`. The camera task widens face
+/// detection on the strength of this hint — when no motion candidate
+/// is present and listening is active, it scans the cascade around the
+/// frame centre instead of skipping. Without this widening a still
+/// speaker (voice fires but they're not moving) leaves engagement at
+/// `Idle`, so the head only does the cocked-up listening tilt and
+/// never turns toward them.
+///
+/// `Signal` semantics (latest-wins) match the use: stale values lose
+/// to the next tick. A missing value (`try_take` returns `None` —
+/// happens only before the first render tick) is treated as
+/// "not listening," which is the safe default.
+pub static LISTENING_HINT_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
 /// Most-recently completed camera frame as a static slice.
 ///
 /// The camera task copies each just-filled DMA buffer into one of two
@@ -484,48 +501,64 @@ pub async fn run_camera_task(p: CameraPeripherals) -> ! {
             last_step_at = now;
             let outcome = tracker.step(view, dt_ms);
 
-            // Motion-gated face cascade. Two layers of gating:
+            // Face cascade gating. Three layers:
             //
-            // 1. Run only if there's at least one motion candidate
-            //    to score (cheap reject for static scenes).
+            // 1. Pick a scan ROI centroid:
+            //    - Motion candidate present → scan around the largest
+            //      blob (the moving thing is the most likely face).
+            //    - No motion but `listening` → scan the frame centre
+            //      so a still speaker is detected during voice
+            //      attention (otherwise engagement stays Idle and the
+            //      head only does the cocked-up listening tilt).
+            //    - Otherwise → skip; let `last_face` go stale via the
+            //      cascade-period miss path.
             // 2. Run only every `CASCADE_PERIOD`-th camera frame
             //    (cooperative time-share so the cascade's ~80–120 ms
             //    cost amortises across multiple 33 ms frames).
-            //
-            // On intervening frames we replay `last_face` so engagement
-            // hysteresis sees a stable face signal across the full
-            // capture cadence. `last_face` is cleared whenever the
-            // cascade runs and finds no face, OR when motion drops
-            // (no candidate to score = the user moved out of frame).
+            // 3. On intervening frames replay `last_face` so the
+            //    engagement state machine sees a stable face signal
+            //    across the full capture cadence.
             //
             // FRAME_WIDTH/HEIGHT are u32 const QVGA dims; they're
             // statically less than u16::MAX (320, 240), so the cast is
             // safe — `u16::try_from` would panic-or-error on values
             // that the binary's compile-time constants make impossible.
+            let listening = LISTENING_HINT_SIGNAL.try_take().unwrap_or(false);
             let scoring_frame = cascade_phase == 0;
             cascade_phase = (cascade_phase + 1) % CASCADE_PERIOD;
-            if outcome.candidates.is_empty() {
-                // No motion → no candidate → forget the last face;
-                // engagement releases through the natural miss path.
-                last_face = None;
-            } else if scoring_frame {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "FRAME_WIDTH=320, FRAME_HEIGHT=240; both fit u16 trivially"
-                )]
-                let det = outcome.candidates.first().and_then(|c| {
-                    FRONTAL_FACE.scan_around_centroid(
+            let scan_centroid = outcome
+                .candidates
+                .first()
+                .map(|c| c.centroid)
+                .or_else(|| listening.then_some((0.0, 0.0)));
+            match (scan_centroid, scoring_frame) {
+                (Some(centroid), true) => {
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "FRAME_WIDTH=320, FRAME_HEIGHT=240; both fit u16 trivially"
+                    )]
+                    let det = FRONTAL_FACE.scan_around_centroid(
                         view,
                         FRAME_WIDTH as u16,
                         FRAME_HEIGHT as u16,
-                        c.centroid,
+                        centroid,
                         CASCADE_ROI_DIM,
                         cascade_scratch,
-                    )
-                });
-                last_face = det;
+                    );
+                    last_face = det;
+                }
+                (Some(_), false) => {
+                    // Mid-cascade-period: keep `last_face` from the
+                    // previous scoring frame so engagement hysteresis
+                    // sees a stable signal.
+                }
+                (None, _) => {
+                    // No motion and not listening → forget the last
+                    // face; engagement releases through the natural
+                    // miss path.
+                    last_face = None;
+                }
             }
-            // Else: keep `last_face` from the previous scoring frame.
 
             // Translate the firmware-side per-blob list into the
             // engine-side mirror type. Both are heapless::Vec with

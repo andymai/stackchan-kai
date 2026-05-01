@@ -546,6 +546,52 @@ mod tests {
     }
 
     #[test]
+    fn listening_attention_with_engaged_face_turns_head_toward_face() {
+        // The voice-attention path: a still speaker triggers `Listening`
+        // while the firmware-side cascade (widened during listening) has
+        // locked their face. The head must drive toward the face yaw —
+        // not fall through to the tilt-only listening pose.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        entity.mind.attention = listening(0);
+        entity.mind.engagement = Engagement::Locked {
+            // -0.5 × HALF_FOV_H_DEG (31°) → the face is left-of-centre.
+            centroid: (-0.5_f32, 0.0_f32),
+            at: Instant::from_millis(0),
+        };
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+
+        // Pan must come from the face centroid, not from the tilt-only
+        // Listening fallback (which would leave pan_deg at 0).
+        assert!(
+            entity.motor.head_pose.pan_deg < -1.0,
+            "Listening + locked face must yaw toward the face (got pan_deg = {})",
+            entity.motor.head_pose.pan_deg,
+        );
+    }
+
+    #[test]
+    fn listening_attention_without_engagement_falls_back_to_tilt() {
+        // Regression guard for the no-face-locked path: when listening
+        // fires but the camera has no face, head goes through the
+        // existing tilt-only ease (no yaw contribution).
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+        entity.mind.attention = listening(0);
+        // Engagement stays at default (Idle, no centroid).
+        // First tick anchors `listen_since`; second tick (one full ease
+        // window later) reaches peak bias.
+        entity.tick.now = Instant::from_millis(0);
+        m.update(&mut entity);
+        entity.tick.now = Instant::from_millis(LISTEN_HEAD_EASE_MS);
+        m.update(&mut entity);
+
+        assert_eq!(entity.motor.head_pose.pan_deg, 0.0);
+        assert_eq!(entity.motor.head_pose.tilt_deg, LISTEN_HEAD_TILT_DEG);
+    }
+
+    #[test]
     fn engaged_releasing_state_keeps_face_target() {
         // Releasing must keep driving the head toward the last-known
         // face centroid for the search beat — the lost-target
