@@ -45,7 +45,7 @@ embedded-sdmmc = { version = "0.8", default-features = false, features = ["defmt
 # `heapless::Vec` for the per-frame multi-target candidate list
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
-heapless = "0.8"
+heapless = "0.9"
 # trouble-host 0.5 implements `AsGatt` on `heapless::String<N>` from
 # the 0.9 line; the rest of the firmware still rides 0.8 (transitive
 # pin via `embassy-net`'s smoltcp). Aliased so the two versions can
