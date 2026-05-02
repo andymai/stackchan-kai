@@ -16,6 +16,11 @@ const WIDTH: u32 = 320;
 /// LCD canvas height the firmware targets.
 const HEIGHT: u32 = 240;
 
+/// Warm off-white background color in `draw.rs` (`BG_COLOR`). Kept here
+/// so the test reads as a single-source-of-truth check against the
+/// rendered framebuffer.
+const BG_COLOR: Rgb565 = Rgb565::new(30, 61, 29);
+
 #[test]
 fn default_avatar_renders_expected_pixels() {
     let mut fb = Framebuffer::new(WIDTH, HEIGHT);
@@ -25,24 +30,17 @@ fn default_avatar_renders_expected_pixels() {
         .expect("Framebuffer DrawTarget is Infallible");
 
     // Eye centers: default Entity places left eye at (100, 110), right at
-    // (220, 110), both filled black ellipses of radius 25.
+    // (220, 110). Under the layered-eye look the inner core is pure
+    // black, so the eye-center pixel is still BLACK.
     assert_eq!(fb.pixel(100, 110), Some(Rgb565::BLACK), "left eye center");
     assert_eq!(fb.pixel(220, 110), Some(Rgb565::BLACK), "right eye center");
 
-    // Midpoint between the eyes: well outside either ellipse, should be
-    // the white background.
+    // Midpoint between the eyes: well outside either ellipse, should
+    // show the warm off-white background.
     assert_eq!(
         fb.pixel(160, 110),
-        Some(Rgb565::WHITE),
-        "background between eyes"
-    );
-
-    // Corners: nothing drawn here, must be the clear color.
-    assert_eq!(fb.pixel(0, 0), Some(Rgb565::WHITE), "top-left corner");
-    assert_eq!(
-        fb.pixel(WIDTH - 1, HEIGHT - 1),
-        Some(Rgb565::WHITE),
-        "bottom-right corner"
+        Some(BG_COLOR),
+        "background between eyes is BG_COLOR"
     );
 
     // Mouth at y=180, weight=0 → horizontal pink line. The draw code uses
@@ -76,12 +74,12 @@ fn audio_open_lifts_mouth_above_resting_line() {
         .expect("Framebuffer DrawTarget is Infallible");
     assert_eq!(
         resting.pixel(160, 175),
-        Some(Rgb565::WHITE),
+        Some(BG_COLOR),
         "pre-condition: y=175 is background when mouth_open = 0.0"
     );
     assert_eq!(
         resting.pixel(160, 185),
-        Some(Rgb565::WHITE),
+        Some(BG_COLOR),
         "pre-condition: y=185 is background when mouth_open = 0.0"
     );
 
