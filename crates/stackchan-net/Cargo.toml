@@ -33,7 +33,7 @@ stackchan-core = { path = "../stackchan-core" }
 serde = { version = "1", default-features = false, features = ["alloc", "derive"], optional = true }
 # RON (Rusty Object Notation). Optional behind `parse`. Same reason
 # as `serde` — host-only.
-ron = { version = "0.10", default-features = false, optional = true }
+ron = { version = "0.12", default-features = false, optional = true }
 # Typed errors without `std`. Always on — not parse-gated. Firmware
 # wraps with `defmt::Debug2Format`.
 thiserror = { version = "2", default-features = false }
