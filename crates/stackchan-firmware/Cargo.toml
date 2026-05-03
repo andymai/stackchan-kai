@@ -41,7 +41,7 @@ stackchan-net = { path = "../stackchan-net", default-features = false }
 # in `sd_spi.rs` provides the SD-side adapter (with GPIO35 OE flip).
 # Sync (blocking); SD I/O happens at boot + during `PUT /settings`,
 # never during steady-state render.
-embedded-sdmmc = { version = "0.8", default-features = false, features = ["defmt-log"] }
+embedded-sdmmc = { version = "0.9", default-features = false, features = ["defmt-log"] }
 # `heapless::Vec` for the per-frame multi-target candidate list
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
@@ -53,7 +53,7 @@ heapless = "0.8"
 # BLE module reaches for `heapless_09`.
 heapless_09 = { package = "heapless", version = "0.9" }
 embedded-graphics = { workspace = true }
-# `embedded_hal::spi::SpiDevice` (sync) is what `embedded-sdmmc 0.8`
+# `embedded_hal::spi::SpiDevice` (sync) is what `embedded-sdmmc`
 # wants from the SD client wrapper. The async equivalent is also
 # imported below for shared-bus I²C and other tasks.
 embedded-hal = { workspace = true }
