@@ -221,7 +221,7 @@ where
         // Force card init by querying capacity. Returns once the SD
         // has answered ACMD41 and entered the data state.
         sd_card.num_bytes().map_err(|_| StorageError::CardInit)?;
-        let mut mgr = VolumeManager::new(sd_card, EpochTime);
+        let mgr = VolumeManager::new(sd_card, EpochTime);
         // Probe FAT volume 0 and immediately drop the handle — we
         // re-open per call so callers don't have to thread lifetimes.
         // Explicit `drop` so the borrow on `mgr` ends before we move
@@ -242,12 +242,12 @@ where
     /// [`StorageError::TooLarge`] if the file exceeds `MAX_CONFIG_BYTES`,
     /// [`StorageError::NotUtf8`] / [`StorageError::Decode`] on parse failure.
     pub fn read_config(&mut self) -> Result<stackchan_net::Config, StorageError> {
-        let mut volume = self
+        let volume = self
             .mgr
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
-        let mut root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
-        let mut file = root
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let file = root
             .open_file_in_dir(CONFIG_FILE, Mode::ReadOnly)
             .map_err(|_| StorageError::FileNotFound)?;
 
@@ -294,12 +294,12 @@ where
     /// [`StorageError::TooLarge`] if the file exceeds
     /// [`MAX_BONDS_BYTES`].
     pub fn read_bonds(&mut self) -> Result<Vec<u8>, StorageError> {
-        let mut volume = self
+        let volume = self
             .mgr
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
-        let mut root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
-        let Ok(mut file) = root.open_file_in_dir(BONDS_FILE, Mode::ReadOnly) else {
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(BONDS_FILE, Mode::ReadOnly) else {
             return Ok(Vec::new());
         };
         let len = file.length();
@@ -351,13 +351,13 @@ where
     }
 
     /// Truncate-write `data` into `name`.
-    fn write_file(&mut self, name: &str, data: &[u8]) -> Result<(), StorageError> {
-        let mut volume = self
+    fn write_file(&self, name: &str, data: &[u8]) -> Result<(), StorageError> {
+        let volume = self
             .mgr
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
-        let mut root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
-        let mut file = root
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let file = root
             .open_file_in_dir(name, Mode::ReadWriteCreateOrTruncate)
             .map_err(|_| StorageError::Write)?;
         file.write(data).map_err(|_| StorageError::Write)?;
@@ -366,19 +366,19 @@ where
     }
 
     /// Copy `from`'s bytes into `to` (truncating any prior `to`),
-    /// then delete `from`. embedded-sdmmc 0.8 has no first-class
-    /// rename, so we do the copy-and-delete dance — the cost is
-    /// the file's read+write twice, which for the schema-v1 config
-    /// (<1 KiB) is negligible.
-    fn copy_then_delete(&mut self, from: &str, to: &str) -> Result<(), StorageError> {
-        let mut volume = self
+    /// then delete `from`. embedded-sdmmc has no first-class rename,
+    /// so we do the copy-and-delete dance — the cost is the file's
+    /// read+write twice, which for the schema-v1 config (<1 KiB) is
+    /// negligible.
+    fn copy_then_delete(&self, from: &str, to: &str) -> Result<(), StorageError> {
+        let volume = self
             .mgr
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
-        let mut root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
 
         let staged: Vec<u8> = {
-            let mut src = root
+            let src = root
                 .open_file_in_dir(from, Mode::ReadOnly)
                 .map_err(|_| StorageError::Write)?;
             let len = src.length();
@@ -392,7 +392,7 @@ where
         };
 
         {
-            let mut dst = root
+            let dst = root
                 .open_file_in_dir(to, Mode::ReadWriteCreateOrTruncate)
                 .map_err(|_| StorageError::Write)?;
             dst.write(&staged).map_err(|_| StorageError::Write)?;
