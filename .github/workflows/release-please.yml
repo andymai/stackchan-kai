@@ -56,7 +56,7 @@ jobs:
           app-id: ${{ secrets.RELEASE_KUN_APP_ID }}
           private-key: ${{ secrets.RELEASE_KUN_APP_PRIVATE_KEY }}
 
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           config-file: release-please-config.json
