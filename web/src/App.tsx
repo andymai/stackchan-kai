@@ -75,11 +75,7 @@ function onKeyDown(ev: KeyboardEvent) {
     return;
   }
   if (k === "m") {
-    // Mute button is the only button literal "Mute" or "Unmute".
-    const btn = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      /^(mute|unmute)$/i.test(b.textContent?.trim() ?? ""),
-    );
-    btn?.click();
+    document.querySelector<HTMLButtonElement>('button[data-shortcut="mute"]')?.click();
     ev.preventDefault();
   }
 }

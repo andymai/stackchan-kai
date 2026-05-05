@@ -41,8 +41,8 @@ export function Emotion() {
           Reset
         </button>
       </div>
-      <label style="margin-top:8px">
-        Hold: <span>{holdSec()} s</span>
+      <div style="margin-top:8px;font-size:12px;color:var(--muted)">
+        <span>Hold: {holdSec()} s</span>
         <div class="btn-row" style="margin-top:4px">
           <For each={HOLD_PRESETS_S}>
             {(v) => (
@@ -56,7 +56,7 @@ export function Emotion() {
             )}
           </For>
         </div>
-      </label>
+      </div>
       <small>Keys 1-6 fire the emotion at the configured hold; R resets, M toggles mute.</small>
     </section>
   );

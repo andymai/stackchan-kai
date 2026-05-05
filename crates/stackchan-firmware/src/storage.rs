@@ -329,8 +329,9 @@ where
 
     /// Delete every operator-visible file the firmware writes:
     /// `STACKCHAN.RON`, the staging file, `BONDS.BIN`, the bonds
-    /// staging file, and the camera capture. Best-effort — missing
-    /// files are not an error (a fresh device has none of them).
+    /// staging file, and the camera capture. Missing files are not
+    /// an error (a fresh device has none of them); SPI / FAT failures
+    /// are.
     ///
     /// Used by `POST /factory-reset`. After a successful wipe the
     /// caller is expected to trigger a soft reset; the boot path then
@@ -338,13 +339,17 @@ where
     ///
     /// # Errors
     ///
-    /// [`StorageError::Volume`] if the FAT volume can't be opened.
+    /// [`StorageError::Volume`] if the FAT volume can't be opened,
+    /// [`StorageError::Write`] if any present file fails to delete
+    /// (so the caller knows the wipe was partial and can decide
+    /// whether to skip the reboot).
     pub fn factory_reset(&mut self) -> Result<(), StorageError> {
         let volume = self
             .mgr
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
         let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let mut first_error: Option<StorageError> = None;
         for name in [
             CONFIG_FILE,
             STAGING_FILE,
@@ -352,9 +357,23 @@ where
             BONDS_STAGING_FILE,
             CAPTURE_FILE,
         ] {
-            let _ = root.delete_file_in_dir(name);
+            // FileNotFound is the expected case for any file the
+            // operator never wrote — keep going. Anything else is a
+            // real I/O failure that the caller needs to see.
+            if let Err(e) = root.delete_file_in_dir(name)
+                && !matches!(e, embedded_sdmmc::Error::NotFound)
+            {
+                defmt::warn!(
+                    "factory_reset: delete '{=str}' failed ({})",
+                    name,
+                    defmt::Debug2Format(&e),
+                );
+                if first_error.is_none() {
+                    first_error = Some(StorageError::Write);
+                }
+            }
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Atomically replace `/sd/BONDS.BIN` with `data`. Same staging-

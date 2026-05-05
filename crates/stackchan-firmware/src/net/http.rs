@@ -531,11 +531,15 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
     // doesn't clobber them. With no current snapshot (the brief
     // pre-storage-mount window), preserving against the default
     // empty values is a no-op — the parsed body wins.
-    let snapshot_for_merge = crate::storage::CONFIG_SNAPSHOT
-        .lock()
-        .await
-        .clone()
-        .unwrap_or_default();
+    //
+    // Track whether the snapshot was actually populated so the
+    // reboot-required diff doesn't compare against a synthesized
+    // default (which would falsely flag every first-boot PUT as
+    // requiring reboot just because the new value differs from the
+    // struct default).
+    let prior_snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await.clone();
+    let had_prior_snapshot = prior_snapshot.is_some();
+    let snapshot_for_merge = prior_snapshot.unwrap_or_default();
     let new_config = stackchan_net::merge_settings_with_current(parsed_config, &snapshot_for_merge);
     let write_result =
         crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
@@ -565,7 +569,12 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
             // SSE stream picks up volume / mute changes from a full
             // settings PUT without waiting for a reboot.
             snapshot::update_audio(new_config.audio);
-            let reboot_required = requires_reboot(&snapshot_for_merge, &new_config);
+            // First-boot PUT (no prior snapshot) can't have changed
+            // anything that was already running — every field in the
+            // synthesised default was never live, so reboot_required
+            // is unconditionally false.
+            let reboot_required =
+                had_prior_snapshot && requires_reboot(&snapshot_for_merge, &new_config);
             *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
             let body = format!("{{\"reboot_required\":{reboot_required}}}\n");
             write_json(socket, 200, &body).await
@@ -735,13 +744,34 @@ async fn handle_post_factory_reset(
     }
 }
 
-/// Look for a `"confirm":"erase"` pair anywhere in the body. The
-/// hand-rolled parsers in `stackchan-net` are JSON-aware, but the
-/// match here is loose on purpose — we only care whether the operator
-/// typed the magic string, not whether it sits at exactly the right
-/// JSON depth.
+/// Look for a `"confirm":"erase"` key/value pair anywhere in the
+/// body. The hand-rolled parsers in `stackchan-net` are JSON-aware,
+/// but the match here is loose on purpose — we only care whether the
+/// operator typed the magic key/value sequence, not whether it sits
+/// at exactly the right JSON depth.
+///
+/// Tolerates whitespace between the colon and the value (`"confirm"
+/// : "erase"`) but requires the two tokens to be paired — an unrelated
+/// `"erase"` somewhere else in the body, with `"confirm"` mapped to a
+/// different value, will not pass.
 fn body_confirms_erase(body: &str) -> bool {
-    body.contains("\"confirm\"") && body.contains("\"erase\"")
+    // Find `"confirm"` occurrences and check that the next non-space
+    // token is `:"erase"` (allowing optional whitespace either side
+    // of the colon).
+    let key = "\"confirm\"";
+    let mut search = body;
+    while let Some(idx) = search.find(key) {
+        let after = &search[idx + key.len()..];
+        let trimmed = after.trim_start();
+        if let Some(rest) = trimmed.strip_prefix(':') {
+            let v = rest.trim_start();
+            if v.starts_with("\"erase\"") {
+                return true;
+            }
+        }
+        search = &search[idx + key.len()..];
+    }
+    false
 }
 
 /// Apply a parsed remote command (or surface the parser error to the
@@ -837,8 +867,9 @@ fn state_body(s: AvatarSnapshot) -> String {
 }
 
 /// Serialise the `/sensors` body. `null` for sensors that haven't
-/// produced a sample yet; numbers (with two decimal places for accel /
-/// gyro / lux, four for the audio-RMS norm) elsewhere.
+/// produced a sample yet; numbers elsewhere — three decimals for
+/// accel-g, two for gyro-dps and ambient lux, four for the audio-RMS
+/// norm.
 fn sensors_body(s: snapshot::SensorsSnapshot) -> String {
     let imu = s.imu.map_or_else(
         || String::from("null"),
