@@ -38,7 +38,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -71,7 +71,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -90,7 +90,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -121,7 +121,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -171,7 +171,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
 
@@ -192,7 +192,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Check per-crate README drift
@@ -209,7 +209,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: bnjbvr/cargo-machete@main
 
   coverage:
@@ -220,7 +220,7 @@ jobs:
       !startsWith(github.event.pull_request.title, 'chore: release')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
