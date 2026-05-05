@@ -65,7 +65,7 @@ export function Audio() {
         />
       </label>
       <div class="btn-row">
-        <button type="button" onClick={toggleMute}>
+        <button type="button" onClick={toggleMute} data-shortcut="mute">
           {muted() ? "Unmute" : "Mute"}
         </button>
       </div>

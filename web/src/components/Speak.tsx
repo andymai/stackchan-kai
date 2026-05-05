@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { For, createSignal } from "solid-js";
 import { postJson } from "../auth";
 import { showToast } from "../store";
 
@@ -38,11 +38,13 @@ export function Speak() {
           <select
             onChange={(e) => setPhrase(e.currentTarget.value as (typeof PHRASES)[number])}
           >
-            {PHRASES.map((p) => (
-              <option value={p} selected={p === phrase()}>
-                {p}
-              </option>
-            ))}
+            <For each={PHRASES}>
+              {(p) => (
+                <option value={p} selected={p === phrase()}>
+                  {p}
+                </option>
+              )}
+            </For>
           </select>
         </label>
         <label>
@@ -50,11 +52,13 @@ export function Speak() {
           <select
             onChange={(e) => setLocale(e.currentTarget.value as (typeof LOCALES)[number])}
           >
-            {LOCALES.map((l) => (
-              <option value={l} selected={l === locale()}>
-                {l}
-              </option>
-            ))}
+            <For each={LOCALES}>
+              {(l) => (
+                <option value={l} selected={l === locale()}>
+                  {l}
+                </option>
+              )}
+            </For>
           </select>
         </label>
       </div>

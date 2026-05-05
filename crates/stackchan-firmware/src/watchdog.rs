@@ -194,6 +194,11 @@ pub fn read_tasks_snapshot() -> TasksSnapshot {
 /// testability.
 fn check_all() {
     let channels: &[&Channel] = &[&AUDIO, &IMU, &AMBIENT, &POWER, &HEAD];
+    // Pull `name` + `min_per_window` from the source `Channel` struct
+    // each tick rather than the hardcoded `empty()` table — if the
+    // `channels` slice ever reorders or grows out of sync with the
+    // `empty()` initialiser, the displayed names would silently
+    // disagree with reality.
     let mut snap = TasksSnapshot::empty();
     for (i, ch) in channels.iter().enumerate() {
         let (delta, stale) = ch.check_and_reset();
@@ -206,8 +211,12 @@ fn check_all() {
                 ch.min_per_window,
             );
         }
-        snap.channels[i].delta = delta;
-        snap.channels[i].stale = stale;
+        snap.channels[i] = TaskHealth {
+            name: ch.name,
+            delta,
+            min_per_window: ch.min_per_window,
+            stale,
+        };
     }
     TASKS_SNAPSHOT.lock(|cell| cell.set(snap));
 }

@@ -65,7 +65,18 @@ export function Settings() {
         const text = await res.text().catch(() => "");
         throw new Error(`${res.status}: ${text || res.statusText}`);
       }
-      setAuthToken(newToken);
+      // The form pre-fills the redaction sentinel for both PSK and
+      // token; submitting unchanged sends `***` back, which the
+      // firmware treats as 'preserve'. Mirroring that into
+      // localStorage would clobber the real token, so only persist
+      // the new value when the operator actually typed something
+      // different.
+      if (newToken && newToken !== "***") {
+        setAuthToken(newToken);
+      } else if (newToken === "") {
+        // Operator cleared the field → auth disabled; clear localStorage too.
+        setAuthToken("");
+      }
       const reply = (await res.json().catch(() => ({}))) as { reboot_required?: boolean };
       showToast(
         reply.reboot_required
@@ -91,8 +102,13 @@ export function Settings() {
       a.href = url;
       const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
       a.download = `stackchan-backup-${stamp}.json`;
+      // Firefox needs the anchor in the document for programmatic
+      // clicks to trigger; revokeObjectURL needs to wait until after
+      // the browser starts fetching the URL.
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       showToast("backup downloaded");
     } catch (e) {
       showToast((e as Error).message, true);
