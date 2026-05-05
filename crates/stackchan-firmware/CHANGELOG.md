@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.39.0...stackchan-firmware-v0.40.0) (2026-05-05)
+
+
+### Features
+
+* **firmware:** recovery & lifecycle — restart + factory-reset ([#212](https://github.com/andymai/stackchan-kai/issues/212)) ([bf99cb4](https://github.com/andymai/stackchan-kai/commit/bf99cb422c6d4df743790dfa9a914df6afdccbef))
+
 ## [0.39.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.38.0...stackchan-firmware-v0.39.0) (2026-05-05)
 
 
