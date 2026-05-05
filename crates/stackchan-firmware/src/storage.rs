@@ -327,6 +327,36 @@ where
         self.write_file(CAPTURE_FILE, frame)
     }
 
+    /// Delete every operator-visible file the firmware writes:
+    /// `STACKCHAN.RON`, the staging file, `BONDS.BIN`, the bonds
+    /// staging file, and the camera capture. Best-effort — missing
+    /// files are not an error (a fresh device has none of them).
+    ///
+    /// Used by `POST /factory-reset`. After a successful wipe the
+    /// caller is expected to trigger a soft reset; the boot path then
+    /// reads defaults.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Volume`] if the FAT volume can't be opened.
+    pub fn factory_reset(&mut self) -> Result<(), StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        for name in [
+            CONFIG_FILE,
+            STAGING_FILE,
+            BONDS_FILE,
+            BONDS_STAGING_FILE,
+            CAPTURE_FILE,
+        ] {
+            let _ = root.delete_file_in_dir(name);
+        }
+        Ok(())
+    }
+
     /// Atomically replace `/sd/BONDS.BIN` with `data`. Same staging-
     /// then-copy dance the config writeback uses; mid-write power
     /// loss leaves the previous bonds file intact.

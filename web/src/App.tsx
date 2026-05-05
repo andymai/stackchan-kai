@@ -7,6 +7,7 @@ import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
 import { Camera } from "./components/Camera";
 import { Events } from "./components/Events";
+import { Recovery } from "./components/Recovery";
 import { Sensors } from "./components/Sensors";
 import { Settings } from "./components/Settings";
 import { Speak } from "./components/Speak";
@@ -45,6 +46,7 @@ export function App() {
         <TaskHealth />
         <Events />
         <Settings />
+        <Recovery />
       </main>
       <Toast />
     </>
