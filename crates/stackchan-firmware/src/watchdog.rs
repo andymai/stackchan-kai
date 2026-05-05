@@ -18,6 +18,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Duration, Ticker};
 
 /// How often the watchdog task wakes to check every channel. 5 s gives
@@ -96,11 +98,104 @@ pub static POWER: Channel = Channel::new("power", 3);
 /// `SCServo` head-update loop. Beats once per 20 ms command tick.
 pub static HEAD: Channel = Channel::new("head", 150);
 
-/// Iterate every channel and warn on staleness. Internal helper, but
-/// exposed for unit testability.
+/// One row of [`TasksSnapshot`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskHealth {
+    /// Channel name. Stable identifier the dashboard renders.
+    pub name: &'static str,
+    /// Beats observed in the last [`WATCHDOG_PERIOD_MS`] window.
+    pub delta: u32,
+    /// Minimum acceptable beats per window — below this is stale.
+    pub min_per_window: u32,
+    /// Whether the last poll's delta fell below `min_per_window`.
+    pub stale: bool,
+}
+
+/// Read-side mirror of every monitored channel. Updated by
+/// [`run_watchdog_loop`] after each `check_all`; HTTP reads via
+/// [`read_tasks_snapshot`].
+#[derive(Debug, Clone, Copy)]
+pub struct TasksSnapshot {
+    /// Per-channel health, in declaration order.
+    pub channels: [TaskHealth; 5],
+    /// Window length in ms — surfaced so the dashboard can label the
+    /// "beats in last X" without hard-coding it on the JS side.
+    pub window_ms: u64,
+}
+
+impl TasksSnapshot {
+    /// Construct a snapshot with zero-delta entries for every channel.
+    /// Used as the initial value of [`TASKS_SNAPSHOT`] before the
+    /// watchdog has run its first poll.
+    const fn empty() -> Self {
+        Self {
+            channels: [
+                TaskHealth {
+                    name: "audio",
+                    delta: 0,
+                    min_per_window: AUDIO_MIN_PER_WINDOW,
+                    stale: false,
+                },
+                TaskHealth {
+                    name: "imu",
+                    delta: 0,
+                    min_per_window: IMU_MIN_PER_WINDOW,
+                    stale: false,
+                },
+                TaskHealth {
+                    name: "ambient",
+                    delta: 0,
+                    min_per_window: AMBIENT_MIN_PER_WINDOW,
+                    stale: false,
+                },
+                TaskHealth {
+                    name: "power",
+                    delta: 0,
+                    min_per_window: POWER_MIN_PER_WINDOW,
+                    stale: false,
+                },
+                TaskHealth {
+                    name: "head",
+                    delta: 0,
+                    min_per_window: HEAD_MIN_PER_WINDOW,
+                    stale: false,
+                },
+            ],
+            window_ms: WATCHDOG_PERIOD_MS,
+        }
+    }
+}
+
+/// Audio RMS loop — 33 ms tick, 50% jitter margin.
+const AUDIO_MIN_PER_WINDOW: u32 = 75;
+/// IMU polling loop — 10 ms tick, 50% jitter margin.
+const IMU_MIN_PER_WINDOW: u32 = 300;
+/// Ambient-light polling loop — 500 ms tick, 50% jitter margin.
+const AMBIENT_MIN_PER_WINDOW: u32 = 5;
+/// AXP2101 polling loop — 1 s tick, 50% jitter margin.
+const POWER_MIN_PER_WINDOW: u32 = 3;
+/// `SCServo` head loop — 20 ms tick, 50% jitter margin.
+const HEAD_MIN_PER_WINDOW: u32 = 150;
+
+/// Read-side mirror of every channel's last-poll outcome. Updated
+/// by [`run_watchdog_loop`] after each `check_all`; HTTP reads via
+/// [`read_tasks_snapshot`].
+static TASKS_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<TasksSnapshot>> =
+    Mutex::new(core::cell::Cell::new(TasksSnapshot::empty()));
+
+/// Cheap snapshot read for the HTTP `GET /tasks` handler.
+#[must_use]
+pub fn read_tasks_snapshot() -> TasksSnapshot {
+    TASKS_SNAPSHOT.lock(core::cell::Cell::get)
+}
+
+/// Iterate every channel, warn on staleness, and refresh
+/// [`TASKS_SNAPSHOT`]. Internal helper, but exposed for unit
+/// testability.
 fn check_all() {
     let channels: &[&Channel] = &[&AUDIO, &IMU, &AMBIENT, &POWER, &HEAD];
-    for ch in channels {
+    let mut snap = TasksSnapshot::empty();
+    for (i, ch) in channels.iter().enumerate() {
         let (delta, stale) = ch.check_and_reset();
         if stale {
             defmt::warn!(
@@ -111,7 +206,10 @@ fn check_all() {
                 ch.min_per_window,
             );
         }
+        snap.channels[i].delta = delta;
+        snap.channels[i].stale = stale;
     }
+    TASKS_SNAPSHOT.lock(|cell| cell.set(snap));
 }
 
 /// Embassy task entry point. Spawned once from `main.rs`. Runs the

@@ -832,6 +832,7 @@ async fn run_rms_loop<BUFFER>(
                     );
                 }
                 consecutive_dma_errs = consecutive_dma_errs.saturating_add(1);
+                crate::net::snapshot::update_audio_rms(0.0);
                 AUDIO_RMS_SIGNAL.signal(AudioRms(0.0));
                 sum_sq = 0.0;
                 count = 0;
@@ -880,6 +881,7 @@ async fn run_rms_loop<BUFFER>(
                 // above 1.0 (~3e-5). Clamp so consumers can rely on the
                 // documented [0, 1] contract.
                 let rms_norm = (mean_sq / FULL_SCALE_SQ).sqrt().min(1.0);
+                crate::net::snapshot::update_audio_rms(rms_norm);
                 AUDIO_RMS_SIGNAL.signal(AudioRms(rms_norm));
 
                 sum_sq = 0.0;

@@ -52,6 +52,7 @@ pub async fn run_ambient_loop<I: AsyncI2c>(bus: I) -> ! {
         crate::watchdog::AMBIENT.beat();
         match als.read_ambient().await {
             Ok(reading) => {
+                crate::net::snapshot::update_ambient_lux(reading.lux);
                 AMBIENT_LUX_SIGNAL.signal(reading.lux);
                 defmt::debug!(
                     "LTR-553: ch0={=u16} ch1={=u16} lux={=f32}",

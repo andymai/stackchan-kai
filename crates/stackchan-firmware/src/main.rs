@@ -25,8 +25,8 @@
 extern crate alloc;
 
 use stackchan_firmware::{
-    ambient, audio, ble, board, body_touch, button, camera, clock, framebuffer, head, imu, ir,
-    leds, net, power, storage, touch, tracking_trace, wallclock, watchdog,
+    ambient, audio, ble, board, body_touch, button, camera, clock, event_log, framebuffer, head,
+    imu, ir, leds, net, power, storage, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -1191,6 +1191,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     defmt::info!("boot complete — idle heartbeat");
+    event_log::record(event_log::Kind::Lifecycle, "boot complete");
     loop {
         Timer::after(Duration::from_secs(5)).await;
         defmt::debug!("heartbeat");

@@ -165,6 +165,7 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
         match connect_outcome {
             Either::First(Ok(())) => {
                 defmt::info!("wifi: connected");
+                crate::event_log::record(crate::event_log::Kind::Lifecycle, "wifi: connected");
                 WIFI_LINK_SIGNAL.signal(WifiLinkState::Connected);
                 LINK_READY.store(true, Ordering::Release);
                 backoff_idx = 0;
@@ -177,6 +178,10 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
                 match live_outcome {
                     Either::First(()) => {
                         defmt::warn!("wifi: link dropped; reconnecting");
+                        crate::event_log::record(
+                            crate::event_log::Kind::Warn,
+                            "wifi: link dropped",
+                        );
                         WIFI_LINK_SIGNAL.signal(WifiLinkState::Disconnected);
                     }
                     Either::Second(new_creds) => {

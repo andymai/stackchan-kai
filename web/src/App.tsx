@@ -5,7 +5,10 @@ import { State } from "./components/State";
 import { Emotion } from "./components/Emotion";
 import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
+import { Events } from "./components/Events";
+import { Sensors } from "./components/Sensors";
 import { Settings } from "./components/Settings";
+import { TaskHealth } from "./components/TaskHealth";
 import { Toast } from "./components/Toast";
 
 export function App() {
@@ -21,6 +24,9 @@ export function App() {
         <Emotion />
         <LookAt />
         <Audio />
+        <Sensors />
+        <TaskHealth />
+        <Events />
         <Settings />
       </main>
       <Toast />

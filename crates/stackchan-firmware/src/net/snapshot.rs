@@ -176,6 +176,107 @@ pub fn update_audio(audio: AudioConfig) {
     });
 }
 
+/// Sensors snapshot — populated by the producer tasks via the
+/// `update_*` mirrors below.
+///
+/// HTTP reads through [`read_sensors`] for `GET /sensors` without ever
+/// touching the source `Signal` channels (which are single-consumer /
+/// latest-wins by design — the render task already drains them).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SensorsSnapshot {
+    /// Most recent IMU reading. `None` until the BMI270 init succeeds.
+    pub imu: Option<ImuFields>,
+    /// Most recent ambient-light reading in lux. `None` until the
+    /// `LTR-553` publishes its first sample.
+    pub ambient_lux: Option<f32>,
+    /// Most recent microphone-RMS sample, normalised 0..=1. `0.0`
+    /// before the audio task spins up (the audio loop publishes
+    /// `AudioRms(0.0)` on DMA stalls too, so this overlaps).
+    pub audio_rms: f32,
+    /// Latest body-touch zones (left, centre, right) on the
+    /// 0..=3 intensity scale. `None` until `Si12T` init reports a value.
+    pub body_touch: Option<BodyTouchFields>,
+}
+
+/// Wire-format IMU sample.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImuFields {
+    /// Accelerometer reading in g units.
+    pub accel_g: (f32, f32, f32),
+    /// Gyroscope reading in degrees per second.
+    pub gyro_dps: (f32, f32, f32),
+}
+
+/// Wire-format body-touch reading. Mirrors `stackchan_core::BodyTouch`
+/// but lives here so the HTTP layer can serialize it without pulling
+/// in core's wider type surface.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BodyTouchFields {
+    /// Left-zone intensity 0..=3.
+    pub left: u8,
+    /// Centre-zone intensity 0..=3.
+    pub centre: u8,
+    /// Right-zone intensity 0..=3.
+    pub right: u8,
+}
+
+/// Backing static. Updates use cell-replace under a critical section
+/// to match the rest of this module's `Cell<T>`-in-`Mutex` pattern.
+pub static SENSORS_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<SensorsSnapshot>> =
+    Mutex::new(core::cell::Cell::new(SensorsSnapshot {
+        imu: None,
+        ambient_lux: None,
+        audio_rms: 0.0,
+        body_touch: None,
+    }));
+
+/// Read the current sensors snapshot.
+#[must_use]
+pub fn read_sensors() -> SensorsSnapshot {
+    SENSORS_SNAPSHOT.lock(core::cell::Cell::get)
+}
+
+/// Mirror an IMU sample. Called by the IMU task right after each
+/// successful read.
+pub fn update_imu(accel_g: (f32, f32, f32), gyro_dps: (f32, f32, f32)) {
+    SENSORS_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        s.imu = Some(ImuFields { accel_g, gyro_dps });
+        cell.set(s);
+    });
+}
+
+/// Mirror the latest ambient-light reading.
+pub fn update_ambient_lux(lux: f32) {
+    SENSORS_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        s.ambient_lux = Some(lux);
+        cell.set(s);
+    });
+}
+
+/// Mirror the latest audio-RMS sample (already normalised 0..=1).
+pub fn update_audio_rms(rms: f32) {
+    SENSORS_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        s.audio_rms = rms;
+        cell.set(s);
+    });
+}
+
+/// Mirror the latest body-touch zone state.
+pub fn update_body_touch(left: u8, centre: u8, right: u8) {
+    SENSORS_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        s.body_touch = Some(BodyTouchFields {
+            left,
+            centre,
+            right,
+        });
+        cell.set(s);
+    });
+}
+
 /// Replace the camera-mode field.
 ///
 /// Called by every producer of [`crate::camera::CAMERA_MODE_SIGNAL`]

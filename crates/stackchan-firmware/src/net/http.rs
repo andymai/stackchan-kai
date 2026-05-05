@@ -14,6 +14,14 @@
 //!   `AvatarSnapshot` updates. Sends an initial event on connect,
 //!   then one event per change (throttled at the producer to ~10 Hz),
 //!   plus a `: heartbeat` SSE comment every 15 s.
+//! - `GET /sensors` — `SensorsSnapshot` JSON: IMU accel/gyro,
+//!   ambient lux, audio RMS, body-touch zones. Mirrored from each
+//!   producer task into a snapshot static so the HTTP read never
+//!   touches the source `Signal` channels (single-consumer/race).
+//! - `GET /tasks` — watchdog channel health: per-task heartbeat
+//!   delta in the last window + a `stale` flag.
+//! - `GET /events` — recent operator-visible events (lifecycle,
+//!   control actions, warnings) from a bounded RAM ring.
 //! - `POST /emotion` — JSON `{"emotion": "...", "hold_ms": ...}`.
 //!   Sets affect + holds `mind.autonomy` against the autonomous
 //!   emotion drivers for `hold_ms` (default
@@ -284,6 +292,13 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         if !authorized {
             return Err(HttpError::Unauthorized);
         }
+        // Record every authenticated write so an operator can see what
+        // the dashboard / nRF Connect / curl session has been doing.
+        // Stays after the auth gate to avoid logging probe traffic.
+        crate::event_log::record_fmt(
+            crate::event_log::Kind::Control,
+            format_args!("{method} {path}"),
+        );
     }
 
     match (method, path) {
@@ -291,6 +306,18 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("GET", "/health") => write_json(socket, 200, &health_body()).await,
         ("GET", "/state") => write_json(socket, 200, &state_body(snapshot::read())).await,
         ("GET", "/state/stream") => handle_state_stream(socket).await,
+        ("GET", "/sensors") => {
+            write_json(socket, 200, &sensors_body(snapshot::read_sensors())).await
+        }
+        ("GET", "/tasks") => {
+            write_json(
+                socket,
+                200,
+                &tasks_body(crate::watchdog::read_tasks_snapshot()),
+            )
+            .await
+        }
+        ("GET", "/events") => write_json(socket, 200, &events_body()).await,
         ("GET", "/settings") => handle_get_settings(socket).await,
         ("PUT", "/settings") => handle_put_settings(socket, body).await,
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
@@ -445,6 +472,7 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
                 new_config.wifi.ssid.as_str(),
                 new_config.mdns.hostname.as_str()
             );
+            crate::event_log::record(crate::event_log::Kind::Lifecycle, "settings persisted");
             // Soft-reconnect Wi-Fi only when the credentials actually
             // changed. Comparing against the pre-merge snapshot avoids
             // a needless link drop when the dashboard re-PUTs the
@@ -666,6 +694,100 @@ fn state_body(s: AvatarSnapshot) -> String {
         muted = s.audio.muted,
         camera_mode = s.camera_mode,
     )
+}
+
+/// Serialise the `/sensors` body. `null` for sensors that haven't
+/// produced a sample yet; numbers (with two decimal places for accel /
+/// gyro / lux, four for the audio-RMS norm) elsewhere.
+fn sensors_body(s: snapshot::SensorsSnapshot) -> String {
+    let imu = s.imu.map_or_else(
+        || String::from("null"),
+        |i| {
+            let (ax, ay, az) = i.accel_g;
+            let (gx, gy, gz) = i.gyro_dps;
+            format!(
+                "{{\"accel_g\":[{ax:.3},{ay:.3},{az:.3}],\"gyro_dps\":[{gx:.2},{gy:.2},{gz:.2}]}}"
+            )
+        },
+    );
+    let lux = s
+        .ambient_lux
+        .map_or_else(|| String::from("null"), |l| format!("{l:.2}"));
+    let body_touch = s.body_touch.map_or_else(
+        || String::from("null"),
+        |b| {
+            format!(
+                "{{\"left\":{},\"centre\":{},\"right\":{}}}",
+                b.left, b.centre, b.right
+            )
+        },
+    );
+    format!(
+        "{{\"imu\":{imu},\"ambient_lux\":{lux},\"audio_rms\":{rms:.4},\"body_touch\":{body_touch}}}\n",
+        rms = s.audio_rms,
+    )
+}
+
+/// Serialise the `/tasks` body — per-channel watchdog health.
+fn tasks_body(s: crate::watchdog::TasksSnapshot) -> String {
+    use core::fmt::Write as _;
+    let mut out = format!("{{\"window_ms\":{},\"channels\":[", s.window_ms);
+    for (i, ch) in s.channels.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"name\":\"{}\",\"delta\":{},\"min_per_window\":{},\"stale\":{}}}",
+            ch.name, ch.delta, ch.min_per_window, ch.stale
+        );
+    }
+    out.push_str("]}\n");
+    out
+}
+
+/// Serialise the `/events` body — recent ring entries, oldest first.
+fn events_body() -> String {
+    use crate::event_log;
+    use core::fmt::Write as _;
+    let (total, entries) = event_log::drain_recent(event_log::CAP);
+    let mut out = format!("{{\"total\":{total},\"events\":[");
+    for (i, e) in entries.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"at_ms\":{},\"kind\":\"{}\",\"message\":\"{}\"}}",
+            e.at_ms,
+            e.kind.wire_str(),
+            json_escape(&e.message),
+        );
+    }
+    out.push_str("]}\n");
+    out
+}
+
+/// Minimal JSON string escaper — backslash, quote, and control bytes
+/// get the `\\uNNNN` form. Event messages are firmware-controlled (no
+/// user input lands here unredacted) so this stays simple.
+fn json_escape(s: &str) -> String {
+    use core::fmt::Write as _;
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Write `status` + `body` as `application/json`.
