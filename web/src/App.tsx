@@ -1,18 +1,33 @@
-import { onMount } from "solid-js";
+import { onCleanup, onMount } from "solid-js";
 import { connectStream } from "./store";
 import { ConnStatus } from "./components/ConnStatus";
 import { State } from "./components/State";
 import { Emotion } from "./components/Emotion";
 import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
+import { Camera } from "./components/Camera";
 import { Events } from "./components/Events";
 import { Sensors } from "./components/Sensors";
 import { Settings } from "./components/Settings";
+import { Speak } from "./components/Speak";
 import { TaskHealth } from "./components/TaskHealth";
 import { Toast } from "./components/Toast";
 
+const EMOTION_KEYS: Record<string, string> = {
+  "1": "neutral",
+  "2": "happy",
+  "3": "sad",
+  "4": "sleepy",
+  "5": "surprised",
+  "6": "angry",
+};
+
 export function App() {
-  onMount(connectStream);
+  onMount(() => {
+    connectStream();
+    document.addEventListener("keydown", onKeyDown);
+  });
+  onCleanup(() => document.removeEventListener("keydown", onKeyDown));
   return (
     <>
       <main>
@@ -24,6 +39,8 @@ export function App() {
         <Emotion />
         <LookAt />
         <Audio />
+        <Speak />
+        <Camera />
         <Sensors />
         <TaskHealth />
         <Events />
@@ -32,4 +49,35 @@ export function App() {
       <Toast />
     </>
   );
+}
+
+function onKeyDown(ev: KeyboardEvent) {
+  // Don't hijack typing in form fields.
+  const t = ev.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) {
+    return;
+  }
+  if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+
+  const k = ev.key.toLowerCase();
+  const emotion = EMOTION_KEYS[ev.key];
+  if (emotion) {
+    const btn = document.querySelector<HTMLButtonElement>(`button[data-emotion="${emotion}"]`);
+    btn?.click();
+    ev.preventDefault();
+    return;
+  }
+  if (k === "r") {
+    document.querySelector<HTMLButtonElement>('button[data-shortcut="reset"]')?.click();
+    ev.preventDefault();
+    return;
+  }
+  if (k === "m") {
+    // Mute button is the only button literal "Mute" or "Unmute".
+    const btn = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      /^(mute|unmute)$/i.test(b.textContent?.trim() ?? ""),
+    );
+    btn?.click();
+    ev.preventDefault();
+  }
 }
