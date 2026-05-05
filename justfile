@@ -76,20 +76,37 @@ ci: check
 msrv:
     cargo +1.88 build --workspace --exclude stackchan-firmware
 
+# ----- Web dashboard ------------------------------------------------------
+
+# Build the operator dashboard bundle. Vite + Solid → `web/dist/index.html`,
+# then gzip → `web/dist/index.html.gz`. The firmware `include_bytes!`
+# from the gzipped artifact, so this must run before any firmware build
+# or check (the firmware recipes below chain through it).
+web-build:
+    cd web && npm install --no-audit --no-fund && npm run build
+
+# Type-check the web sources without producing a bundle. Faster than
+# `web-build` for inner-loop iteration on the dashboard.
+web-typecheck:
+    cd web && npm install --no-audit --no-fund && npm run typecheck
+
 # ----- Firmware (requires `source ~/export-esp.sh` first) ------------------
 
 # Firmware-side compile check. Runs from inside the firmware crate so the
 # per-crate `.cargo/config.toml` (target + `build-std`) actually applies —
 # `-p stackchan-firmware` from workspace root silently misses that.
-check-firmware:
+# Chains through `web-build` because `http.rs` `include_bytes!`s the
+# dashboard bundle, which is parse-time — the file must exist before
+# `cargo check` parses the macro.
+check-firmware: web-build
     cd crates/stackchan-firmware && cargo +esp check
 
 # Firmware strict clippy (matches the CI firmware job).
-clippy-firmware:
+clippy-firmware: web-build
     cd crates/stackchan-firmware && cargo +esp clippy --release -- -D warnings
 
 # Full release build of the firmware binary.
-build-firmware:
+build-firmware: web-build
     cd crates/stackchan-firmware && cargo +esp build --release
 
 # Release build with the `tracking-trace` cargo feature on. Emits
