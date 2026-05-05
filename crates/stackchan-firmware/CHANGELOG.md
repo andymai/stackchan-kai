@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.36.0...stackchan-firmware-v0.37.0) (2026-05-05)
+
+
+### Features
+
+* **firmware:** TS + Solid + Vite dashboard pipeline ([#205](https://github.com/andymai/stackchan-kai/issues/205)) ([f9b419a](https://github.com/andymai/stackchan-kai/commit/f9b419a5cf056c7629bdbe07d406dd582b04922c))
+
 ## [0.36.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.35.0...stackchan-firmware-v0.36.0) (2026-05-01)
 
 
