@@ -43,6 +43,14 @@
 //!   write the latest QVGA RGB565 frame to `/sd/CAPTURE.565`; returns
 //!   `202 Accepted`. The SD write happens asynchronously inside the
 //!   camera task and stalls render for ~200 ms during the SPI burst.
+//! - `POST /restart` — empty body. Returns `202 Accepted` and triggers
+//!   an `esp_hal::system::software_reset` ~200 ms later (after the
+//!   response drains). Always requires an authenticated token, even
+//!   when the global token is empty — destructive ops opt-in only.
+//! - `POST /factory-reset` — JSON body `{"confirm":"erase"}`. Wipes
+//!   every operator-visible file (`STACKCHAN.RON`, `BONDS.BIN`,
+//!   `CAPTURE.565`, staging files) and soft-resets. Same always-auth
+//!   gate as `/restart`.
 //! - `GET /settings` — current persisted [`stackchan_net::Config`]
 //!   as JSON, with `wifi.psk` and `auth.token` redacted.
 //! - `GET /settings/backup` — same payload UNREDACTED. The single
@@ -50,12 +58,11 @@
 //!   secrets is what makes the backup usable for restore via PUT.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
 //!   Validates, writes back atomically to `/sd/STACKCHAN.RON`, and
-//!   responds `{"reboot_required": false}`. On any change to the
-//!   `wifi` block, signals [`super::wifi::WIFI_RECONFIG`] so the
-//!   wifi task drops the current link and reconnects with the new
-//!   credentials — no reboot needed. Other persisted blocks
-//!   (mDNS hostname, SNTP servers, audio) only take effect on the
-//!   next boot.
+//!   responds `{"reboot_required": <bool>}`. Wi-Fi creds reconnect
+//!   immediately via [`super::wifi::WIFI_RECONFIG`] and audio
+//!   mirrors into the live snapshot — `reboot_required` reflects
+//!   only the blocks that take effect at start-up (mDNS hostname,
+//!   SNTP, tracker tuning).
 //!
 //! ## Auth
 //!
@@ -220,6 +227,11 @@ enum HttpError {
 }
 
 /// Serve a single HTTP/1.1 exchange against an accepted socket.
+///
+/// The route table is the natural shape for "every endpoint in one
+/// place" — splitting it would scatter the auth gate + path matching
+/// across files for no real win.
+#[allow(clippy::too_many_lines)]
 async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     let mut buf = [0u8; REQUEST_BUF_BYTES];
     let mut filled = 0usize;
@@ -283,11 +295,17 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     // window) is treated as "auth disabled" — preserves the LAN-
     // open behaviour for operators who haven't opted in.
     //
-    // The single exception on the GET side is `/settings/backup`
-    // which returns the full config including secrets — that one
-    // GET is auth-gated like a write, by design. All other GETs
-    // stay open.
+    // Two exceptions on the otherwise-open GET / always-open POST
+    // side:
+    //
+    // 1. `GET /settings/backup` returns the full config including
+    //    secrets — auth-gated like a write, by design.
+    // 2. `POST /restart` and `POST /factory-reset` always require an
+    //    authenticated token, even when the global token is empty.
+    //    Destructive ops shouldn't ride the LAN-open default; an
+    //    operator must opt in to recovery by setting a token first.
     let backup_get = method == "GET" && path == "/settings/backup";
+    let destructive = method == "POST" && (path == "/restart" || path == "/factory-reset");
     if matches!(method, "PUT" | "POST") || backup_get {
         let provided = parse_bearer_token(&buf[line_end + 2..header_end]);
         let snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await;
@@ -295,6 +313,9 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
             Some(cfg) if !cfg.auth.token.is_empty() => {
                 provided.is_some_and(|t| ct_eq(t.as_bytes(), cfg.auth.token.as_bytes()))
             }
+            // Empty token = LAN-open for everyday ops, but destructive
+            // routes need an explicit opt-in.
+            _ if destructive => false,
             _ => true,
         };
         drop(snapshot);
@@ -338,6 +359,8 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
+        ("POST", "/restart") => handle_post_restart(socket).await,
+        ("POST", "/factory-reset") => handle_post_factory_reset(socket, body).await,
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
         _ => write_text(socket, 405, "method not allowed\n").await,
     }
@@ -655,6 +678,70 @@ async fn handle_post_camera_capture(socket: &mut TcpSocket<'_>) -> Result<(), Ht
     crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
     defmt::info!("http: POST /camera/capture → signal queued");
     write_text(socket, 202, "capture queued\n").await
+}
+
+/// `POST /restart` — write the response, briefly let the TCP buffer
+/// drain, then trigger an `esp_hal::reset::software_reset`.
+///
+/// The flush + 200 ms timer matter: without them, calling
+/// `software_reset` immediately after `write_all` returns would yank
+/// the chip mid-FIN — the dashboard would see a TCP RST instead of
+/// the response body, and the toast would be a 'connection reset'
+/// instead of 'rebooting'.
+async fn handle_post_restart(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    defmt::info!("http: POST /restart → soft reset in 200 ms");
+    crate::event_log::record(crate::event_log::Kind::Lifecycle, "restart requested");
+    write_text(socket, 202, "rebooting\n").await?;
+    embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
+    esp_hal::system::software_reset();
+}
+
+/// `POST /factory-reset` — gated by token (always required, even when
+/// the global `auth.token` is empty) plus a body-confirm phrase
+/// `{"confirm":"erase"}`.
+///
+/// Wipes every operator-visible file on the SD (`STACKCHAN.RON`,
+/// `BONDS.BIN`, `CAPTURE.565`, plus the staging files) and then soft-
+/// resets so the boot path comes up against defaults.
+async fn handle_post_factory_reset(
+    socket: &mut TcpSocket<'_>,
+    body: &str,
+) -> Result<(), HttpError> {
+    if !body_confirms_erase(body) {
+        return write_text(
+            socket,
+            400,
+            "factory-reset requires body {\"confirm\":\"erase\"}\n",
+        )
+        .await;
+    }
+    crate::event_log::record(crate::event_log::Kind::Lifecycle, "factory-reset requested");
+    let wipe = crate::storage::with_storage(crate::storage::FirmwareStorage::factory_reset).await;
+    match wipe {
+        Some(Ok(())) => {
+            defmt::warn!("http: POST /factory-reset wiped SD; resetting in 200 ms");
+            write_text(socket, 202, "wiped, rebooting\n").await?;
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
+            esp_hal::system::software_reset();
+        }
+        Some(Err(e)) => {
+            defmt::warn!("http: POST /factory-reset wipe failed ({})", e);
+            write_text(socket, 500, "wipe failed\n").await
+        }
+        None => {
+            defmt::warn!("http: POST /factory-reset rejected (no SD mounted)");
+            write_text(socket, 503, "no SD card mounted\n").await
+        }
+    }
+}
+
+/// Look for a `"confirm":"erase"` pair anywhere in the body. The
+/// hand-rolled parsers in `stackchan-net` are JSON-aware, but the
+/// match here is loose on purpose — we only care whether the operator
+/// typed the magic string, not whether it sits at exactly the right
+/// JSON depth.
+fn body_confirms_erase(body: &str) -> bool {
+    body.contains("\"confirm\"") && body.contains("\"erase\"")
 }
 
 /// Apply a parsed remote command (or surface the parser error to the
