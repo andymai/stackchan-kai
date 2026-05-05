@@ -1,5 +1,5 @@
 import { createSignal, onMount } from "solid-js";
-import { putJson, setAuthToken } from "../auth";
+import { authedFetch, setAuthToken } from "../auth";
 import { showToast, snapshot } from "../store";
 import type { Settings as SettingsType } from "../types";
 
@@ -56,9 +56,44 @@ export function Settings() {
     };
     const newToken = body.auth.token;
     try {
-      await putJson("/settings", body);
+      const res = await authedFetch("/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`${res.status}: ${text || res.statusText}`);
+      }
       setAuthToken(newToken);
-      showToast("settings saved — reboot to apply");
+      const reply = (await res.json().catch(() => ({}))) as { reboot_required?: boolean };
+      showToast(
+        reply.reboot_required
+          ? "saved — reboot to apply mdns / sntp / tracker changes"
+          : "saved — applied without reboot",
+      );
+    } catch (e) {
+      showToast((e as Error).message, true);
+    }
+  };
+
+  const downloadBackup = async () => {
+    try {
+      const res = await authedFetch("/settings/backup");
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`${res.status}: ${text || res.statusText}`);
+      }
+      const text = await res.text();
+      const blob = new Blob([text], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+      a.download = `stackchan-backup-${stamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast("backup downloaded");
     } catch (e) {
       showToast((e as Error).message, true);
     }
@@ -122,15 +157,20 @@ export function Settings() {
           />
         </label>
         <div class="btn-row">
-          <button type="submit">Save (reboot to apply)</button>
+          <button type="submit">Save</button>
           <button type="button" onClick={load}>
             Reload
+          </button>
+          <button type="button" onClick={downloadBackup} style="margin-left:auto">
+            Download backup
           </button>
         </div>
         <small>
           PSK and token show as <code>***</code> in GET and pre-fill into the form.
           Submit unchanged to keep the current value, clear the field to disable
-          (open AP / auth off), or type a new value to overwrite.
+          (open AP / auth off), or type a new value to overwrite. Download backup
+          calls GET /settings/backup, which is the one auth-gated read — restore
+          by pasting the file contents back into the form fields.
         </small>
       </form>
     </section>

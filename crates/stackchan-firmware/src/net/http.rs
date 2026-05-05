@@ -45,6 +45,9 @@
 //!   camera task and stalls render for ~200 ms during the SPI burst.
 //! - `GET /settings` — current persisted [`stackchan_net::Config`]
 //!   as JSON, with `wifi.psk` and `auth.token` redacted.
+//! - `GET /settings/backup` — same payload UNREDACTED. The single
+//!   auth-gated GET (every other GET stays open) — returning real
+//!   secrets is what makes the backup usable for restore via PUT.
 //! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
 //!   Validates, writes back atomically to `/sd/STACKCHAN.RON`, and
 //!   responds `{"reboot_required": false}`. On any change to the
@@ -279,7 +282,13 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     // token (or missing config snapshot during the brief boot
     // window) is treated as "auth disabled" — preserves the LAN-
     // open behaviour for operators who haven't opted in.
-    if matches!(method, "PUT" | "POST") {
+    //
+    // The single exception on the GET side is `/settings/backup`
+    // which returns the full config including secrets — that one
+    // GET is auth-gated like a write, by design. All other GETs
+    // stay open.
+    let backup_get = method == "GET" && path == "/settings/backup";
+    if matches!(method, "PUT" | "POST") || backup_get {
         let provided = parse_bearer_token(&buf[line_end + 2..header_end]);
         let snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await;
         let authorized = match snapshot.as_ref() {
@@ -319,6 +328,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         }
         ("GET", "/events") => write_json(socket, 200, &events_body()).await,
         ("GET", "/settings") => handle_get_settings(socket).await,
+        ("GET", "/settings/backup") => handle_get_settings_backup(socket).await,
         ("PUT", "/settings") => handle_put_settings(socket, body).await,
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
@@ -432,8 +442,49 @@ async fn handle_get_settings(socket: &mut TcpSocket<'_>) -> Result<(), HttpError
     }
 }
 
+/// `GET /settings/backup` — render the current snapshot UNREDACTED.
+///
+/// The one auth-gated GET in this control plane: returning real
+/// `wifi.psk` and `auth.token` over the wire is what makes a backup
+/// usable for restore via PUT, but it's also why this route requires
+/// the bearer token while every other GET stays open.
+async fn handle_get_settings_backup(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await.clone();
+    let Some(config) = snapshot else {
+        return write_text(socket, 503, "config snapshot unavailable\n").await;
+    };
+    match stackchan_net::render_settings_json(&config, false) {
+        Ok(body) => write_json(socket, 200, &body).await,
+        Err(_) => write_text(socket, 500, "render failed\n").await,
+    }
+}
+
+/// Decide whether the new config requires a reboot to fully apply.
+///
+/// Wi-Fi creds and audio (volume + mute) are signalled through to the
+/// running tasks and apply immediately. mDNS hostname, SNTP servers,
+/// and tracker tuning take effect on the next boot — those tasks read
+/// their config once at start-up. Auth-token changes apply
+/// immediately to the next request via the lock-free read in the
+/// auth gate.
+fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) -> bool {
+    if prev.mdns.hostname != new.mdns.hostname {
+        return true;
+    }
+    if prev.time.tz != new.time.tz || prev.time.sntp_servers != new.time.sntp_servers {
+        return true;
+    }
+    if prev.tracker != new.tracker {
+        return true;
+    }
+    false
+}
+
 /// `PUT /settings` — full replace, atomic SD writeback. Returns
-/// `{"reboot_required": false}` on success.
+/// `{"reboot_required": <bool>}` where `<bool>` reflects whether any
+/// changed field can only take effect on the next boot (mDNS
+/// hostname, SNTP, tracker tuning) — Wi-Fi creds and audio still
+/// apply immediately via the existing signal paths.
 ///
 /// On a change to `wifi.ssid` or `wifi.psk` (compared against the
 /// current `CONFIG_SNAPSHOT`), signals [`WIFI_RECONFIG`] so the
@@ -491,8 +542,10 @@ async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
             // SSE stream picks up volume / mute changes from a full
             // settings PUT without waiting for a reboot.
             snapshot::update_audio(new_config.audio);
+            let reboot_required = requires_reboot(&snapshot_for_merge, &new_config);
             *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
-            write_json(socket, 200, "{\"reboot_required\":false}\n").await
+            let body = format!("{{\"reboot_required\":{reboot_required}}}\n");
+            write_json(socket, 200, &body).await
         }
         Some(Err(e)) => {
             defmt::warn!("http: PUT /settings write failed ({})", e);
