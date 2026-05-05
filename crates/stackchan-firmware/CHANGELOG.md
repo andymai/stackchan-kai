@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.40.0...stackchan-firmware-v0.40.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* address greptile feedback across the dashboard PRs ([#214](https://github.com/andymai/stackchan-kai/issues/214)) ([2462cf3](https://github.com/andymai/stackchan-kai/commit/2462cf37c498da6f30a5bae2a2842cfb3ca933d6))
+
 ## [0.40.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.39.0...stackchan-firmware-v0.40.0) (2026-05-05)
 
 
