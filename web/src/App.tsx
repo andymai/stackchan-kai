@@ -1,0 +1,29 @@
+import { onMount } from "solid-js";
+import { connectStream } from "./store";
+import { ConnStatus } from "./components/ConnStatus";
+import { State } from "./components/State";
+import { Emotion } from "./components/Emotion";
+import { LookAt } from "./components/LookAt";
+import { Audio } from "./components/Audio";
+import { Settings } from "./components/Settings";
+import { Toast } from "./components/Toast";
+
+export function App() {
+  onMount(connectStream);
+  return (
+    <>
+      <main>
+        <header>
+          <h1>Stack-chan</h1>
+          <ConnStatus />
+        </header>
+        <State />
+        <Emotion />
+        <LookAt />
+        <Audio />
+        <Settings />
+      </main>
+      <Toast />
+    </>
+  );
+}

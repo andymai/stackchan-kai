@@ -2,9 +2,10 @@
 //!
 //! ## Routes
 //!
-//! - `GET /` — operator dashboard. Self-contained HTML + JS embedded
-//!   at compile time via `include_bytes!`. Drives the live state via
-//!   `/state/stream` and POSTs to the control routes.
+//! - `GET /` — operator dashboard. TS + Solid bundle from `/web`,
+//!   built by `just web-build` and embedded as gzipped bytes at
+//!   compile time. Drives the live state via `/state/stream` and
+//!   POSTs to the control routes.
 //! - `GET /health` — uptime, firmware version, free heap (handy for
 //!   liveness checks and post-flash smoke tests).
 //! - `GET /state` — `AvatarSnapshot` JSON read non-destructively
@@ -108,10 +109,14 @@ const REQUEST_BUF_BYTES: usize = 1024;
 /// a re-cap.
 const MAX_BODY_BYTES: usize = 1024;
 
-/// Self-contained operator dashboard, embedded at compile time.
-/// Loaded by `GET /` at the device root; uses the existing
-/// SSE / POST / PUT routes for live state and control.
-const DASHBOARD_HTML: &[u8] = include_bytes!("dashboard.html");
+/// Self-contained operator dashboard, embedded at compile time as
+/// gzip-compressed bytes. The bundle is built by `just web-build`
+/// (Vite + Solid in `/web`); the firmware serves it under
+/// `Content-Encoding: gzip` and lets the browser inflate.
+///
+/// `GET /` serves this; the bundle uses the SSE / POST / PUT routes
+/// for live state and control.
+const DASHBOARD_GZ: &[u8] = include_bytes!("../../../../web/dist/index.html.gz");
 
 /// Latest control-plane command.
 ///
@@ -699,21 +704,22 @@ async fn write_text(socket: &mut TcpSocket<'_>, status: u16, body: &str) -> Resu
     socket.flush().await.map_err(|_| HttpError::Write)
 }
 
-/// Serve [`DASHBOARD_HTML`] with `Content-Type: text/html`. Cache is
-/// disabled so a freshly flashed firmware's dashboard JS shows up on
-/// the next reload — the payload is 10 KiB over LAN, so the saving
-/// from a longer max-age was never worth the staleness it caused.
+/// Serve [`DASHBOARD_GZ`] with `Content-Type: text/html` and
+/// `Content-Encoding: gzip`. Cache is disabled so a freshly flashed
+/// firmware's dashboard JS shows up on the next reload — the payload
+/// is small over LAN, so a longer max-age was never worth the
+/// staleness it caused.
 async fn write_dashboard(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
-        len = DASHBOARD_HTML.len(),
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Length: {len}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+        len = DASHBOARD_GZ.len(),
     );
     socket
         .write_all(header.as_bytes())
         .await
         .map_err(|_| HttpError::Write)?;
     socket
-        .write_all(DASHBOARD_HTML)
+        .write_all(DASHBOARD_GZ)
         .await
         .map_err(|_| HttpError::Write)?;
     socket.flush().await.map_err(|_| HttpError::Write)
