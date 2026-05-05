@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.38.0...stackchan-firmware-v0.39.0) (2026-05-05)
+
+
+### Features
+
+* **firmware:** settings backup endpoint + reboot_required diff ([#210](https://github.com/andymai/stackchan-kai/issues/210)) ([130101e](https://github.com/andymai/stackchan-kai/commit/130101e3f23c13afe2214e2873306766c325e094))
+
 ## [0.38.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.37.0...stackchan-firmware-v0.38.0) (2026-05-05)
 
 
