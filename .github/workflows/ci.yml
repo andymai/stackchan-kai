@@ -106,7 +106,7 @@ jobs:
         working-directory: web
         run: npm run build
       - name: Upload bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: web/dist/
@@ -228,7 +228,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage report
         run: cargo llvm-cov --workspace --exclude stackchan-firmware --lcov --output-path lcov.info
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
           path: lcov.info
