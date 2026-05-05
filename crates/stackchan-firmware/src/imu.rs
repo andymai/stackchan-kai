@@ -106,7 +106,10 @@ pub async fn run_imu_loop<I: AsyncI2c>(bus: I) -> ! {
     loop {
         crate::watchdog::IMU.beat();
         match imu.read_measurement().await {
-            Ok(m) => IMU_SIGNAL.signal(m),
+            Ok(m) => {
+                crate::net::snapshot::update_imu(m.accel_g, m.gyro_dps);
+                IMU_SIGNAL.signal(m);
+            }
             Err(e) => defmt::warn!("BMI270: read failed: {}", defmt::Debug2Format(&e)),
         }
         ticker.next().await;

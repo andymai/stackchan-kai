@@ -56,10 +56,14 @@ pub async fn run_body_touch_loop<I: AsyncI2c>(bus: I) -> ! {
     loop {
         match chip.read_touch().await {
             Ok(touch) => {
+                let left = intensity_u8(touch.intensity.0);
+                let centre = intensity_u8(touch.intensity.1);
+                let right = intensity_u8(touch.intensity.2);
+                crate::net::snapshot::update_body_touch(left, centre, right);
                 BODY_TOUCH_SIGNAL.signal(BodyTouch {
-                    left: intensity_u8(touch.intensity.0),
-                    centre: intensity_u8(touch.intensity.1),
-                    right: intensity_u8(touch.intensity.2),
+                    left,
+                    centre,
+                    right,
                 });
             }
             Err(e) => defmt::warn!("Si12T: read_touch failed: {}", defmt::Debug2Format(&e),),

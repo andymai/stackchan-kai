@@ -35,3 +35,44 @@ export type Settings = {
   auth: { token: string };
   audio: AudioState;
 };
+
+export type Imu = {
+  accel_g: [number, number, number];
+  gyro_dps: [number, number, number];
+};
+
+export type BodyTouch = {
+  left: number;
+  centre: number;
+  right: number;
+};
+
+export type SensorsSnapshot = {
+  imu: Imu | null;
+  ambient_lux: number | null;
+  audio_rms: number;
+  body_touch: BodyTouch | null;
+};
+
+export type TaskHealth = {
+  name: string;
+  delta: number;
+  min_per_window: number;
+  stale: boolean;
+};
+
+export type TasksSnapshot = {
+  window_ms: number;
+  channels: TaskHealth[];
+};
+
+export type EventEntry = {
+  at_ms: number;
+  kind: "lifecycle" | "control" | "warn";
+  message: string;
+};
+
+export type EventsResponse = {
+  total: number;
+  events: EventEntry[];
+};
