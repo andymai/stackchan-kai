@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.37.0...stackchan-firmware-v0.38.0) (2026-05-05)
+
+
+### Features
+
+* **firmware:** live introspection — sensors, events, task health ([#207](https://github.com/andymai/stackchan-kai/issues/207)) ([b4741ce](https://github.com/andymai/stackchan-kai/commit/b4741ce1068556789ad15b87ce31b1c3a6dacb5f))
+
 ## [0.37.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.36.0...stackchan-firmware-v0.37.0) (2026-05-05)
 
 
