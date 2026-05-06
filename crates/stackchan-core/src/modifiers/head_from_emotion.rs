@@ -81,6 +81,47 @@ const fn targets_for(emotion: Emotion) -> HeadBias {
             pan_deg: 0.0,
             tilt_deg: -2.0,
         },
+        Emotion::Doubt => HeadBias {
+            // Faint chin-down skeptical tilt.
+            pan_deg: 0.0,
+            tilt_deg: -1.0,
+        },
+        Emotion::Boring => HeadBias {
+            // Slumped chin-down — disengaged posture.
+            pan_deg: 0.0,
+            tilt_deg: -3.0,
+        },
+        Emotion::Hi => HeadBias {
+            // Chin-up greeting reach — bigger than `Happy`'s nod.
+            pan_deg: 0.0,
+            tilt_deg: 4.0,
+        },
+        Emotion::Loved => HeadBias {
+            // Soft chin-up affectionate lift — sits between `Happy` and
+            // `Hi` so the bias is unique per variant (clippy's
+            // match-same-arms catches the alternative).
+            pan_deg: 0.0,
+            tilt_deg: 3.5,
+        },
+        Emotion::Curious => HeadBias {
+            // Subtle chin-up to peer at the target — narrower than
+            // `Surprised`'s startle to keep the eye-widening separate
+            // from the head reaction.
+            pan_deg: 0.0,
+            tilt_deg: 1.0,
+        },
+        Emotion::Confused => HeadBias {
+            // Tiny chin-down "huh?" lean — slightly deeper than `Doubt`'s
+            // -1.0 so the bias is unique per variant.
+            pan_deg: 0.0,
+            tilt_deg: -1.5,
+        },
+        Emotion::Mad => HeadBias {
+            // Deeper chin-down glare than `Sad`'s -4.0 — escalates
+            // `Angry` along the intensity axis.
+            pan_deg: 0.0,
+            tilt_deg: -4.5,
+        },
     }
 }
 

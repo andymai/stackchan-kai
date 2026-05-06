@@ -22,7 +22,7 @@ platform-independent heart of the firmware and the simulator.
 - `src/avatar.rs` — `Avatar`, `Eye`, `EyePhase`, `Mouth`, `Point`, `SCALE_DEFAULT`
 - `src/clock.rs` — `Clock` trait, `Instant` (millisecond-resolution monotonic)
 - `src/draw.rs` — `Avatar::draw` renders into any `embedded_graphics::DrawTarget<Color = Rgb565>`
-- `src/emotion.rs` — `Emotion` (Neutral, Happy, Sleepy, Surprised, Sad) and per-emotion style presets
+- `src/emotion.rs` — `Emotion` enum + `Emotion::ALL` catalogue. Per-emotion style targets live in `modifiers/style_from_emotion.rs::targets_for`
 - `src/head.rs` — `Pose`, `HeadDriver` trait, pan / tilt range constants
 - `src/leds.rs` — `LedFrame`, `render_leds` — maps avatar state to the 12-pixel ring
 - `src/modifiers/mod.rs` — `Modifier` trait + re-exports

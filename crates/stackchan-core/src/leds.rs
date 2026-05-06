@@ -104,6 +104,27 @@ const fn palette(emotion: Emotion) -> u32 {
         Emotion::Sleepy => 0x0030_1448,
         Emotion::Surprised => 0x0030_E0FF,
         Emotion::Angry => 0x00FF_2020,
+        // Skeptical violet — sits between `Sleepy`'s purple and the
+        // listening teal so it reads distinct from both.
+        Emotion::Doubt => 0x0080_5090,
+        // Muted olive — desaturated relative to every other entry,
+        // matching the disengaged feel.
+        Emotion::Boring => 0x0050_5040,
+        // Bright greeting yellow — warmer than `Happy`'s amber so the
+        // ring reads as a wave-hello rather than a steady glow.
+        Emotion::Hi => 0x00FF_E040,
+        // Heart-eye pink — adjacent to but distinct from the cheek-blush
+        // palette (`MOUTH_COLOR` ≈ #F58080).
+        Emotion::Loved => 0x00FF_60A0,
+        // Investigative seafoam — kept separate from `LISTEN_PALETTE`'s
+        // teal by shifting toward green, so a curious-while-listening
+        // pose still reads two distinct colours when intent overrides.
+        Emotion::Curious => 0x0040_D080,
+        // Muddy chartreuse — the unsettled cousin of `Curious`.
+        Emotion::Confused => 0x00A0_A030,
+        // Hotter red than `Angry` — saturates further into orange so the
+        // ring reads as escalation when the avatar transitions Angry → Mad.
+        Emotion::Mad => 0x00FF_4010,
     }
 }
 

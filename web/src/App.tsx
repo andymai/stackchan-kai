@@ -14,6 +14,9 @@ import { Speak } from "./components/Speak";
 import { TaskHealth } from "./components/TaskHealth";
 import { Toast } from "./components/Toast";
 
+// Keys 1-6 stay pinned to the original palette (muscle memory). The
+// expanded set fills the next contiguous keys: 7-9 + 0 cover four,
+// q/w/e cover the last three.
 const EMOTION_KEYS: Record<string, string> = {
   "1": "neutral",
   "2": "happy",
@@ -21,6 +24,13 @@ const EMOTION_KEYS: Record<string, string> = {
   "4": "sleepy",
   "5": "surprised",
   "6": "angry",
+  "7": "doubt",
+  "8": "boring",
+  "9": "hi",
+  "0": "loved",
+  q: "curious",
+  w: "confused",
+  e: "mad",
 };
 
 export function App() {
@@ -62,7 +72,9 @@ function onKeyDown(ev: KeyboardEvent) {
   if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
 
   const k = ev.key.toLowerCase();
-  const emotion = EMOTION_KEYS[ev.key];
+  // Lowercase lookup so `q/w/e` work regardless of shift state, mirroring
+  // how R/M work below. Digits are unaffected by `.toLowerCase()`.
+  const emotion = EMOTION_KEYS[k];
   if (emotion) {
     const btn = document.querySelector<HTMLButtonElement>(`button[data-emotion="${emotion}"]`);
     btn?.click();
