@@ -35,10 +35,24 @@ use embedded_graphics::{
     },
 };
 
+use crate::decorator::{Decorator, DecoratorState};
 use crate::face::{Eye, EyePhase, Face, Mouth, SCALE_DEFAULT};
 
 /// Pink mouth/cheek color — `#F58080` quantized into Rgb565's (5,6,5)-bit channels.
 const MOUTH_COLOR: Rgb565 = Rgb565::new(30, 32, 16);
+
+/// Heart decorator pink — slightly more saturated than `MOUTH_COLOR` so
+/// the heart reads as deliberate overlay rather than blush bleed-through.
+const HEART_COLOR: Rgb565 = Rgb565::new(31, 16, 12);
+
+/// Sweat decorator light blue — distinct from any other palette entry
+/// so it doesn't cross-talk with the LCD background or the angry/sad
+/// face rendering.
+const SWEAT_COLOR: Rgb565 = Rgb565::new(8, 32, 28);
+
+/// Dizzy decorator dot color — black so it reads against the white
+/// background even at small sizes.
+const DIZZY_COLOR: Rgb565 = Rgb565::BLACK;
 
 /// Stroke width for closed-eye line, resting mouth line, and curved arcs.
 const LINE_WIDTH: u32 = 3;
@@ -99,8 +113,141 @@ impl Face {
             target,
         )?;
         draw_mouth(&self.mouth, self.style.mouth_curve, target)?;
+        if let Some(state) = self.decorator {
+            draw_decorator(state, target)?;
+        }
         Ok(())
     }
+}
+
+/// Dispatch on [`Decorator`] kind to the per-shape draw routine. Only
+/// runs when `face.decorator` is `Some` — `None` is the steady state
+/// and short-circuits in `Face::draw`.
+fn draw_decorator<D>(state: DecoratorState, target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    match state.kind {
+        Decorator::Heart => draw_heart(target),
+        Decorator::Sweat => draw_sweat(target),
+        Decorator::Dizzy => draw_dizzy(target),
+    }
+}
+
+/// Heart decorator anchor — upper-right of the face. Two overlapping
+/// pink circles form the lobes; a small filled triangle fills the
+/// bottom point. Anchored at fixed coordinates rather than relative to
+/// the eyes because all three decorators share an anchor convention.
+const HEART_ANCHOR_X: i32 = 270;
+/// Heart decorator anchor Y — see [`HEART_ANCHOR_X`].
+const HEART_ANCHOR_Y: i32 = 50;
+/// Lobe radius for the heart — small enough to read as overlay rather
+/// than competing with the eyes (`radius_y = 25`).
+const HEART_LOBE_RADIUS: u32 = 9;
+
+/// Draw a small pink heart in the upper-right corner of the face.
+///
+/// The heart is two overlapping circles (left and right lobes) plus a
+/// downward-pointing triangle for the bottom point. Integer math; no
+/// floats; non-allocating.
+fn draw_heart<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use embedded_graphics::primitives::Triangle;
+
+    #[allow(clippy::cast_possible_wrap)]
+    let lobe_offset = (HEART_LOBE_RADIUS / 2) as i32;
+    let left_top = EgPoint::new(
+        HEART_ANCHOR_X - lobe_offset - i32::try_from(HEART_LOBE_RADIUS).unwrap_or(0),
+        HEART_ANCHOR_Y,
+    );
+    let right_top = EgPoint::new(HEART_ANCHOR_X + lobe_offset, HEART_ANCHOR_Y);
+    Circle::new(left_top, HEART_LOBE_RADIUS)
+        .into_styled(fill(HEART_COLOR))
+        .draw(target)?;
+    Circle::new(right_top, HEART_LOBE_RADIUS)
+        .into_styled(fill(HEART_COLOR))
+        .draw(target)?;
+    // Triangle filling the bottom point. Top corners sit at the
+    // bottom-inside of each lobe; bottom point sits below by ~lobe
+    // radius for a balanced heart silhouette.
+    #[allow(clippy::cast_possible_wrap)]
+    let r = HEART_LOBE_RADIUS as i32;
+    let lobe_bottom_y = HEART_ANCHOR_Y + r;
+    Triangle::new(
+        EgPoint::new(HEART_ANCHOR_X - r, lobe_bottom_y),
+        EgPoint::new(HEART_ANCHOR_X + r, lobe_bottom_y),
+        EgPoint::new(HEART_ANCHOR_X, lobe_bottom_y + r + 2),
+    )
+    .into_styled(fill(HEART_COLOR))
+    .draw(target)
+}
+
+/// Sweat decorator anchor — same upper-right region as Heart since
+/// only one decorator shows at a time.
+const SWEAT_ANCHOR_X: i32 = 270;
+/// Sweat decorator anchor Y — see [`SWEAT_ANCHOR_X`].
+const SWEAT_ANCHOR_Y: i32 = 40;
+
+/// Draw a small light-blue sweat drop. Approximated as a vertical
+/// ellipse with a small triangle on top (the drop's pointed end).
+fn draw_sweat<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use embedded_graphics::primitives::Triangle;
+
+    // Body: vertical ellipse, 12 px wide × 18 px tall.
+    let body_width: u32 = 12;
+    let body_height: u32 = 18;
+    #[allow(clippy::cast_possible_wrap)]
+    let half_w = (body_width / 2) as i32;
+    let body_top = EgPoint::new(SWEAT_ANCHOR_X - half_w, SWEAT_ANCHOR_Y + 6);
+    Ellipse::new(body_top, Size::new(body_width, body_height))
+        .into_styled(fill(SWEAT_COLOR))
+        .draw(target)?;
+    // Pointed tip: triangle above the ellipse, ~6 px tall.
+    Triangle::new(
+        EgPoint::new(SWEAT_ANCHOR_X - 4, SWEAT_ANCHOR_Y + 6),
+        EgPoint::new(SWEAT_ANCHOR_X + 4, SWEAT_ANCHOR_Y + 6),
+        EgPoint::new(SWEAT_ANCHOR_X, SWEAT_ANCHOR_Y),
+    )
+    .into_styled(fill(SWEAT_COLOR))
+    .draw(target)
+}
+
+/// Dizzy decorator: three black dots in an arc above the centre of the
+/// face. Centred at x=160 (frame midpoint).
+const DIZZY_CENTER_X: i32 = 160;
+/// Dizzy decorator anchor Y — above the eyes (eye centres are at y=110).
+const DIZZY_CENTER_Y: i32 = 30;
+/// Diameter of one dizzy dot.
+const DIZZY_DOT_DIAMETER: u32 = 8;
+
+/// Draw three small black dots in an arc above the eyes — the
+/// stylised "I'm seeing stars" overlay.
+fn draw_dizzy<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    #[allow(clippy::cast_possible_wrap)]
+    let half = (DIZZY_DOT_DIAMETER / 2) as i32;
+    // Dots at x = -30, 0, +30 from centre. Arc curvature: middle dot
+    // sits 4 px lower than the side dots so the trio reads as an
+    // arc rather than a straight line.
+    let positions: [(i32, i32); 3] = [
+        (DIZZY_CENTER_X - 30, DIZZY_CENTER_Y),
+        (DIZZY_CENTER_X, DIZZY_CENTER_Y + 4),
+        (DIZZY_CENTER_X + 30, DIZZY_CENTER_Y),
+    ];
+    for (cx, cy) in positions {
+        let top_left = EgPoint::new(cx - half, cy - half);
+        Circle::new(top_left, DIZZY_DOT_DIAMETER)
+            .into_styled(fill(DIZZY_COLOR))
+            .draw(target)?;
+    }
+    Ok(())
 }
 
 /// Draw one eye. Decision tree:

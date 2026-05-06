@@ -846,9 +846,13 @@ fn state_body(s: AvatarSnapshot) -> String {
         .wifi
         .ip
         .map_or_else(|| String::from("null"), |a| format!("\"{a}\""));
+    let decorator = s
+        .decorator
+        .map_or_else(|| String::from("null"), |d| format!("\"{}\"", d.wire_str()));
     format!(
         "{{\
 \"emotion\":\"{emotion}\",\
+\"decorator\":{decorator},\
 \"head_pose\":{{\"pan_deg\":{pan:.2},\"tilt_deg\":{tilt:.2}}},\
 \"head_actual\":{actual},\
 \"battery\":{{\"percent\":{pct},\"voltage_mv\":{mv}}},\

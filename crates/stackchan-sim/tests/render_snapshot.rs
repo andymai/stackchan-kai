@@ -15,7 +15,7 @@
 
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use stackchan_core::modifiers::StyleFromEmotion;
-use stackchan_core::{Director, Emotion, Entity, Instant};
+use stackchan_core::{Decorator, DecoratorState, Director, Emotion, Entity, Instant};
 use stackchan_sim::Framebuffer;
 
 /// LCD canvas width the firmware targets.
@@ -169,6 +169,70 @@ fn every_emotion_renders_distinguishable_frame() {
             neutral_fb.as_slice(),
             "{emotion:?} rendered identically to Neutral — palette row may have collided"
         );
+    }
+}
+
+/// Each [`Decorator`] variant must render visibly distinct from the
+/// no-decorator baseline. The base face is identical across runs;
+/// only the overlay layer differs.
+#[test]
+fn every_decorator_renders_distinguishable_overlay() {
+    let mut baseline = Framebuffer::new(WIDTH, HEIGHT);
+    Entity::default()
+        .face
+        .draw(&mut baseline)
+        .expect("Framebuffer DrawTarget is Infallible");
+
+    for &kind in Decorator::ALL {
+        let mut entity = Entity::default();
+        entity.face.decorator = Some(DecoratorState {
+            kind,
+            // Far in the future — we draw the overlay regardless of
+            // expiry; expiry is the modifier's job, not the renderer's.
+            expires_at: Instant::from_millis(u64::MAX / 2),
+        });
+        let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+        entity
+            .face
+            .draw(&mut fb)
+            .expect("Framebuffer DrawTarget is Infallible");
+        assert_ne!(
+            fb.as_slice(),
+            baseline.as_slice(),
+            "{kind:?} should paint pixels outside the no-decorator baseline"
+        );
+    }
+}
+
+/// Two distinct decorators must produce visibly distinct frames. Catches
+/// a draw-routine collision (e.g. Heart and Sweat anchored at the same
+/// pixel range with the same colour palette).
+#[test]
+fn distinct_decorators_render_distinct_frames() {
+    fn render(kind: Decorator) -> Framebuffer {
+        let mut entity = Entity::default();
+        entity.face.decorator = Some(DecoratorState {
+            kind,
+            expires_at: Instant::from_millis(u64::MAX / 2),
+        });
+        let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+        entity
+            .face
+            .draw(&mut fb)
+            .expect("Framebuffer DrawTarget is Infallible");
+        fb
+    }
+
+    for (i, &a) in Decorator::ALL.iter().enumerate() {
+        let fb_a = render(a);
+        for &b in &Decorator::ALL[i + 1..] {
+            let fb_b = render(b);
+            assert_ne!(
+                fb_a.as_slice(),
+                fb_b.as_slice(),
+                "{a:?} and {b:?} render identically — overlay anchors / colours have collided"
+            );
+        }
     }
 }
 
