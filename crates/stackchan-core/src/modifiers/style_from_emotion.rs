@@ -167,8 +167,9 @@ const fn targets_for(emotion: Emotion) -> StyleTarget {
         },
         Emotion::Loved => StyleTarget {
             // Smitten: full upward eye arc + heaviest blush of the
-            // catalogue. The decorator layer paints heart overlays on
-            // top in PR 1b; the base style stands alone here.
+            // catalogue. Reads as affectionate without any decorator
+            // overlay — heart overlays may stack on top later, but the
+            // base style stands alone.
             eye_curve: 90,
             mouth_curve: 50,
             cheek_blush: 220,
@@ -639,9 +640,9 @@ mod tests {
         );
     }
 
-    /// `Loved` is the heaviest-blush variant — the decorator layer
-    /// stacks heart overlays on top, but the base style needs to stand
-    /// alone too.
+    /// `Loved` is the heaviest-blush variant. Strict `>` (not `>=`) so a
+    /// future palette tweak that quietly ties Loved on blush surfaces
+    /// here as a real collision rather than passing silently.
     #[test]
     fn loved_has_the_heaviest_blush() {
         let loved = targets_for(Emotion::Loved);
@@ -650,7 +651,7 @@ mod tests {
                 continue;
             }
             assert!(
-                loved.cheek_blush >= targets_for(other).cheek_blush,
+                loved.cheek_blush > targets_for(other).cheek_blush,
                 "Loved should have the heaviest cheek_blush; {other:?} has {}",
                 targets_for(other).cheek_blush,
             );

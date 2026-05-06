@@ -24,7 +24,7 @@ pub enum Emotion {
     /// no override of breath or blink rate.
     Doubt,
     /// Disinterested / under-engaged. Half-lidded eyes, slow blink, slow
-    /// deep breath, flat mouth — the antonym of `Happy` along the
+    /// deep breath, faint frown — the antonym of `Happy` along the
     /// engagement axis (rather than valence).
     Boring,
     /// Outgoing greeting / wave-hello affect. Wide bright eyes, big smile,
@@ -32,8 +32,7 @@ pub enum Emotion {
     /// kind.
     Hi,
     /// Smitten / affectionate. Heaviest blush of the catalogue + full
-    /// upward eye arc. The decorator layer adds heart overlays in PR 1b;
-    /// the base style stands alone here.
+    /// upward eye arc.
     Loved,
     /// Curiously interested. Wide eyes (smaller than `Surprised`), faint
     /// smile, light blush — investigative rather than reactive.
@@ -119,9 +118,16 @@ impl Emotion {
     /// (the firmware HTTP `/state` snapshot doesn't enumerate; the BLE
     /// GATT does, via [`Self::wire_byte`]).
     ///
-    /// The slice is exhaustive: omitting a variant compiles, but the
-    /// `wire_byte_mapping_is_stable` test below pins the order against
-    /// this list, so a missed entry surfaces as a test failure.
+    /// **Manually maintained — no compile-time exhaustiveness check.**
+    /// The exhaustive `match` arms in [`Self::wire_byte`] and
+    /// [`Self::wire_str`] are the compile-time guard against forgetting
+    /// an enum variant; this slice is *additionally* required for
+    /// downstream iteration (BLE GATT enumeration, the `http_command`
+    /// round-trip test, and the `wire_bytes_are_unique` /
+    /// `wire_strs_are_unique_and_lowercase` tests below). The
+    /// `all_length_matches_variant_count` test is a length-pin
+    /// trip-wire — adding a variant must bump the asserted count, which
+    /// forces a conscious update to this slice.
     pub const ALL: &'static [Self] = &[
         Self::Neutral,
         Self::Happy,
@@ -160,6 +166,22 @@ mod tests {
         assert_eq!(Emotion::Curious.wire_byte(), 10);
         assert_eq!(Emotion::Confused.wire_byte(), 11);
         assert_eq!(Emotion::Mad.wire_byte(), 12);
+    }
+
+    /// Length pin for [`Emotion::ALL`]. Mirrors the
+    /// `field_all_covers_every_variant` pattern in
+    /// [`crate::director::Field::ALL`]: the slice has no compile-time
+    /// exhaustiveness check, so we trip-wire the count to force a
+    /// conscious bump on every variant addition.
+    #[test]
+    fn all_length_matches_variant_count() {
+        assert_eq!(
+            Emotion::ALL.len(),
+            13,
+            "update Emotion::ALL when adding a variant — the exhaustive \
+             match in wire_byte is the only compile-time check; this \
+             slice has to be hand-extended too"
+        );
     }
 
     /// Every wire-byte index is unique. A copy-paste collision in the
