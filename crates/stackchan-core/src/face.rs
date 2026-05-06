@@ -174,6 +174,11 @@ pub struct Face {
     pub mouth: Mouth,
     /// Emotion-driven appearance modulators.
     pub style: Style,
+    /// Active decorator overlay, drawn on top of the base face. `None`
+    /// is the steady state. Trigger modifiers in
+    /// [`crate::director::Phase::Decoration`] populate this field;
+    /// [`crate::modifiers::DecoratorExpiry`] clears it on deadline.
+    pub decorator: Option<crate::decorator::DecoratorState>,
 }
 
 impl Default for Face {
@@ -206,6 +211,7 @@ impl Default for Face {
                 mouth_open: 0.0,
             },
             style: Style::default(),
+            decorator: None,
         }
     }
 }

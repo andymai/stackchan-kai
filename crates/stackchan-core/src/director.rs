@@ -70,6 +70,12 @@ pub enum Phase {
     /// Emotion → face style. `StyleFromEmotion` picks curve / scale /
     /// blush; Blink / Breath / `IdleDrift` add per-frame deltas.
     Expression = 50,
+    /// Symbolic overlay layer. `DecoratorExpiry` clears stale state at
+    /// the head of the phase; trigger modifiers (body-touch → Heart,
+    /// loud → Sweat, shake → Dizzy) write `face.decorator` after.
+    /// Sits between Expression and Motion so decorators read final
+    /// emotion / style state but don't influence pose.
+    Decoration = 55,
     /// Intent + emotion → pose. `IdleHeadDrift` writes a baseline;
     /// `HeadFromEmotion` adds an emotion-keyed bias on top.
     Motion = 60,
@@ -148,6 +154,8 @@ pub enum Field {
     BlinkRateScale,
     /// `entity.face.style.breath_depth_scale`
     BreathDepthScale,
+    /// `entity.face.decorator`
+    Decorator,
 
     // ---- Motor ----
     /// `entity.motor.head_pose`
@@ -228,6 +236,7 @@ impl Field {
         Self::EyeScale,
         Self::BlinkRateScale,
         Self::BreathDepthScale,
+        Self::Decorator,
         Self::HeadPose,
         Self::HeadPoseActual,
         Self::AccelG,
@@ -273,7 +282,8 @@ impl Field {
             | Self::CheekBlush
             | Self::EyeScale
             | Self::BlinkRateScale
-            | Self::BreathDepthScale => FieldGroup::Face,
+            | Self::BreathDepthScale
+            | Self::Decorator => FieldGroup::Face,
             Self::HeadPose | Self::HeadPoseActual => FieldGroup::Motor,
             Self::AccelG
             | Self::GyroDps
@@ -331,6 +341,7 @@ impl Field {
             Self::BreathDepthScale => {
                 before.face.style.breath_depth_scale != after.face.style.breath_depth_scale
             }
+            Self::Decorator => before.face.decorator != after.face.decorator,
             Self::HeadPose => {
                 before.motor.head_pose.pan_deg.to_bits() != after.motor.head_pose.pan_deg.to_bits()
                     || before.motor.head_pose.tilt_deg.to_bits()
@@ -805,7 +816,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            40,
+            41,
             "update Field::ALL when adding variants"
         );
     }
