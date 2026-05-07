@@ -1212,4 +1212,44 @@ mod tests {
             Err(JsonError::UnknownKey)
         ));
     }
+
+    #[test]
+    fn face_target_rejects_duplicate_keys() {
+        // Closed-schema parsers reject `last-wins` repeats on every
+        // field so a typo doesn't silently override an earlier value.
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0,"x":0.5,"y":0.0}"#),
+            Err(JsonError::DuplicateKey("x"))
+        ));
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0,"y":0.0,"y":0.5}"#),
+            Err(JsonError::DuplicateKey("y"))
+        ));
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0,"y":0.0,"hold_ms":1,"hold_ms":2}"#),
+            Err(JsonError::DuplicateKey("hold_ms"))
+        ));
+    }
+
+    #[test]
+    fn face_target_lower_edges_pan_left_and_tilt_up() {
+        // Mirror of the right-edge / down test — covers the negative
+        // half of the FOV mapping.
+        let body = r#"{"x":-1.0,"y":-1.0}"#;
+        match parse_face_target(body).unwrap() {
+            RemoteCommand::LookAt { target, .. } => {
+                assert!(
+                    (target.pan_deg + stackchan_core::HALF_FOV_H_DEG).abs() < 0.01,
+                    "x=-1 should map to -HALF_FOV_H_DEG; got {}",
+                    target.pan_deg
+                );
+                assert!(
+                    (target.tilt_deg - stackchan_core::HALF_FOV_V_DEG).abs() < 0.01,
+                    "y=-1 should map to +HALF_FOV_V_DEG; got {}",
+                    target.tilt_deg
+                );
+            }
+            other => panic!("expected LookAt, got {other:?}"),
+        }
+    }
 }
