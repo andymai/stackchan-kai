@@ -34,6 +34,7 @@
 //! same way [`super::AttentionFromTracking`] holds its lock counter.
 
 use crate::clock::Instant;
+use crate::decorator::{Decorator, DecoratorState};
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
 use crate::entity::Entity;
@@ -43,13 +44,18 @@ use crate::mind::{Attention, OverrideSource};
 use crate::modifier::Modifier;
 use crate::voice::ChirpKind;
 
+/// Tail length re-applied each tick a pairing window is active. Once
+/// the window closes the standard
+/// [`super::DecoratorExpiry`] sweep clears the overlay after this
+/// many milliseconds.
+pub const PAIRING_DECORATOR_TAIL_MS: u64 = 500;
+
 /// External control-plane modifier — see module docs for trigger shape.
-#[derive(Debug, Default, Clone, Copy)]
 #[allow(
     clippy::struct_field_names,
-    reason = "the `_hold` postfix is the load-bearing distinction across the three slots; \
-              renaming to drop it would erase the 'this is a hold-timer slot' meaning"
+    reason = "the `_hold` postfix is the load-bearing distinction across the hold slots"
 )]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct RemoteCommandModifier {
     /// Active emotion hold, if any. `(emotion, hold_until)`.
     emotion_hold: Option<(Emotion, Instant)>,
@@ -61,6 +67,10 @@ pub struct RemoteCommandModifier {
     /// pins to the entry frame so listening-pose ease-in animations
     /// don't restart per tick (same idiom as [`Self::lookat_hold`]).
     listen_hold: Option<(Instant, Instant)>,
+    /// Active pairing-window deadline, if any. While the timer is
+    /// live, [`Self::update`] re-arms [`Decorator::Pairing`] on
+    /// `entity.face.decorator` each tick.
+    pairing_hold: Option<Instant>,
 }
 
 impl RemoteCommandModifier {
@@ -71,6 +81,7 @@ impl RemoteCommandModifier {
             emotion_hold: None,
             lookat_hold: None,
             listen_hold: None,
+            pairing_hold: None,
         }
     }
 
@@ -98,6 +109,7 @@ impl RemoteCommandModifier {
                 self.emotion_hold = None;
                 self.lookat_hold = None;
                 self.listen_hold = None;
+                self.pairing_hold = None;
             }
             RemoteCommand::Speak { .. } => {
                 // Audio dispatch is firmware-only; the producer drains
@@ -115,6 +127,15 @@ impl RemoteCommandModifier {
                 // tick.
                 entity.voice.chirp_request = Some(ChirpKind::Wake);
                 self.listen_hold = Some((now, until));
+            }
+            RemoteCommand::EnterPairing { duration_ms } => {
+                let until = now + u64::from(duration_ms);
+                entity.face.decorator = Some(DecoratorState::hold_for(
+                    Decorator::Pairing,
+                    now,
+                    PAIRING_DECORATOR_TAIL_MS,
+                ));
+                self.pairing_hold = Some(until);
             }
         }
     }
@@ -139,6 +160,7 @@ impl Modifier for RemoteCommandModifier {
                 Field::Attention,
                 Field::RemoteCommand,
                 Field::ChirpRequest,
+                Field::Decorator,
             ],
         };
         &META
@@ -191,16 +213,29 @@ impl Modifier for RemoteCommandModifier {
                 }
             }
         }
+
+        if let Some(until) = self.pairing_hold {
+            if now < until {
+                entity.face.decorator = Some(DecoratorState::hold_for(
+                    Decorator::Pairing,
+                    now,
+                    PAIRING_DECORATOR_TAIL_MS,
+                ));
+            } else {
+                self.pairing_hold = None;
+            }
+        }
     }
 }
 
 #[cfg(test)]
 #[allow(
+    clippy::expect_used,
     clippy::float_cmp,
     clippy::panic,
     reason = "test-only: f32 fields compared exactly against the literal we wrote; \
               let-else / match-with-panic is the cleanest pattern for value extraction \
-              on enum variants in tests"
+              on enum variants in tests; expect on Option is fine in test setup"
 )]
 mod tests {
     use super::*;
@@ -493,5 +528,68 @@ mod tests {
         step(&mut m, &mut entity, 0);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
         assert!(entity.mind.autonomy.manual_until.is_none());
+    }
+
+    #[test]
+    fn enter_pairing_arms_decorator_and_refreshes_each_tick() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterPairing { duration_ms: 1_000 });
+        step(&mut m, &mut entity, 0);
+        let s = entity
+            .face
+            .decorator
+            .expect("Pairing should be armed after EnterPairing");
+        assert_eq!(s.kind, Decorator::Pairing);
+        assert_eq!(
+            s.expires_at,
+            Instant::from_millis(PAIRING_DECORATOR_TAIL_MS)
+        );
+
+        // Advance mid-window: expiry refreshes to `now + tail`.
+        step(&mut m, &mut entity, 500);
+        let s = entity.face.decorator.expect("still armed mid-window");
+        assert_eq!(s.kind, Decorator::Pairing);
+        assert_eq!(
+            s.expires_at,
+            Instant::from_millis(500 + PAIRING_DECORATOR_TAIL_MS)
+        );
+    }
+
+    #[test]
+    fn enter_pairing_stops_refreshing_after_window_expires() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterPairing { duration_ms: 100 });
+        step(&mut m, &mut entity, 0);
+        // After the 100 ms window the modifier stops re-arming. The
+        // overlay clears via DecoratorExpiry once the 500 ms tail elapses;
+        // the modifier itself just stops touching the field.
+        let pre_expiry = entity.face.decorator;
+        step(&mut m, &mut entity, 1_000);
+        // The previous DecoratorState may still sit in the field if no
+        // expiry sweep has run; the assertion that matters is that the
+        // pairing_hold is released.
+        assert_eq!(entity.face.decorator, pre_expiry);
+    }
+
+    #[test]
+    fn reset_clears_pairing_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterPairing {
+            duration_ms: 30_000,
+        });
+        step(&mut m, &mut entity, 0);
+        assert!(entity.face.decorator.is_some());
+
+        entity.input.remote_command = Some(RemoteCommand::Reset);
+        step(&mut m, &mut entity, 100);
+        // Reset clears the timer; the decorator field is left alone
+        // (DecoratorExpiry handles the visual fade) — what we pin here
+        // is that subsequent ticks no longer refresh the overlay.
+        let after_reset = entity.face.decorator;
+        step(&mut m, &mut entity, 200);
+        assert_eq!(entity.face.decorator, after_reset);
     }
 }

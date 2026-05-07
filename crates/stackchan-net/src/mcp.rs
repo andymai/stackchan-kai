@@ -626,6 +626,7 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"look_at","description":"Aim the avatar's head at a pan/tilt target in degrees, with an optional hold timer.","inputSchema":{"type":"object","properties":{"pan_deg":{"type":"number"},"tilt_deg":{"type":"number"},"hold_ms":{"type":"integer"}},"required":["pan_deg","tilt_deg"]}},"#,
     r#"{"name":"speak","description":"Play a baked phrase or chirp through the speaker.","inputSchema":{"type":"object","properties":{"phrase":{"type":"string"},"locale":{"type":"string"}},"required":["phrase"]}},"#,
     r#"{"name":"start_listen","description":"Open a listen window: queue an acknowledge chirp, set Attention::Listening, arm the Ear decorator. Default 3000 ms.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
+    r#"{"name":"enter_pairing","description":"Open an ESP-NOW pairing window for the configured duration so an external remote can register.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
     r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );

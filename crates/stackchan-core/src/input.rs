@@ -79,6 +79,19 @@ pub enum RemoteCommand {
         /// playing audio; the default is [`Priority::Normal`].
         priority: Priority,
     },
+    /// Open an ESP-NOW pairing window for `duration_ms` milliseconds.
+    /// While the window is active,
+    /// [`crate::modifiers::RemoteCommandModifier`] arms the
+    /// [`crate::Decorator::Pairing`] overlay (refreshing expiry each
+    /// tick) so the operator gets visible confirmation, and the
+    /// firmware-side ESP-NOW receiver accepts new peer registrations.
+    /// Fire-and-forget on autonomy — pairing does not gate emotion or
+    /// attention.
+    EnterPairing {
+        /// Window length in milliseconds. The decorator refreshes its
+        /// 500 ms tail each tick and fades on release.
+        duration_ms: u32,
+    },
 }
 
 /// Pending inputs the modifier graph consumes.

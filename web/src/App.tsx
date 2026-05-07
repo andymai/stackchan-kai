@@ -12,6 +12,7 @@ import { Events } from "./components/Events";
 import { Recovery } from "./components/Recovery";
 import { Sensors } from "./components/Sensors";
 import { Settings } from "./components/Settings";
+import { Pair } from "./components/Pair";
 import { Speak } from "./components/Speak";
 import { TaskHealth } from "./components/TaskHealth";
 import { Toast } from "./components/Toast";
@@ -55,6 +56,7 @@ export function App() {
         <Audio />
         <Speak />
         <Listen />
+        <Pair />
         <Camera />
         <Sensors />
         <TaskHealth />

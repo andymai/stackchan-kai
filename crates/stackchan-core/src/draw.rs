@@ -54,6 +54,10 @@ const SWEAT_COLOR: Rgb565 = Rgb565::new(8, 32, 28);
 /// background even at small sizes.
 const DIZZY_COLOR: Rgb565 = Rgb565::BLACK;
 
+/// Pairing decorator color — saturated blue, the universal "transmitting"
+/// cue. Distinct from sweat-blue so the two never read as the same overlay.
+const PAIRING_COLOR: Rgb565 = Rgb565::new(4, 18, 31);
+
 /// Stroke width for closed-eye line, resting mouth line, and curved arcs.
 const LINE_WIDTH: u32 = 3;
 
@@ -132,6 +136,7 @@ where
         Decorator::Sweat => draw_sweat(target),
         Decorator::Dizzy => draw_dizzy(target),
         Decorator::Ear => draw_ear(target),
+        Decorator::Pairing => draw_pairing(target),
     }
 }
 
@@ -300,6 +305,59 @@ where
     Circle::new(inner_top_left, EAR_INNER_DIAMETER)
         .into_styled(fill(Rgb565::WHITE))
         .draw(target)?;
+    Ok(())
+}
+
+/// Pairing decorator anchor X — top-centre, mirrors `DIZZY_CENTER_X`.
+const PAIRING_CENTER_X: i32 = 160;
+/// Pairing decorator anchor Y — same band as the dizzy/listening cues.
+const PAIRING_CENTER_Y: i32 = 30;
+/// Centre dot diameter.
+const PAIRING_CORE_DIAMETER: u32 = 6;
+/// Inner ring diameter.
+const PAIRING_RING_INNER_DIAMETER: u32 = 16;
+/// Outer ring diameter.
+const PAIRING_RING_OUTER_DIAMETER: u32 = 26;
+/// Stroke width on the rings — thick enough to read at 320×240.
+const PAIRING_RING_STROKE: u32 = 2;
+
+/// Draw a wireless-signal radiating-from-point glyph: a filled centre
+/// dot with two concentric ring outlines. Reads as "transmitting" /
+/// "pairing window open" — pulse animation belongs to the LED ring,
+/// not the LCD overlay (the avatar's own attention should stay readable
+/// during pairing).
+fn draw_pairing<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let core_top_left = EgPoint::new(
+        #[allow(clippy::cast_possible_wrap)]
+        {
+            PAIRING_CENTER_X - (PAIRING_CORE_DIAMETER / 2) as i32
+        },
+        #[allow(clippy::cast_possible_wrap)]
+        {
+            PAIRING_CENTER_Y - (PAIRING_CORE_DIAMETER / 2) as i32
+        },
+    );
+    Circle::new(core_top_left, PAIRING_CORE_DIAMETER)
+        .into_styled(fill(PAIRING_COLOR))
+        .draw(target)?;
+    for diameter in [PAIRING_RING_INNER_DIAMETER, PAIRING_RING_OUTER_DIAMETER] {
+        let top_left = EgPoint::new(
+            #[allow(clippy::cast_possible_wrap)]
+            {
+                PAIRING_CENTER_X - (diameter / 2) as i32
+            },
+            #[allow(clippy::cast_possible_wrap)]
+            {
+                PAIRING_CENTER_Y - (diameter / 2) as i32
+            },
+        );
+        Circle::new(top_left, diameter)
+            .into_styled(stroke(PAIRING_COLOR, PAIRING_RING_STROKE))
+            .draw(target)?;
+    }
     Ok(())
 }
 

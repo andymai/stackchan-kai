@@ -35,6 +35,10 @@ pub enum Decorator {
     /// [`crate::Intent::Listening`] holds (operator-triggered or
     /// wake-word triggered).
     Ear,
+    /// Concentric blue rings — ESP-NOW pairing window active. Set by
+    /// [`crate::modifiers::RemoteCommandModifier`] for the duration of
+    /// an [`crate::RemoteCommand::EnterPairing`] hold.
+    Pairing,
 }
 
 impl Decorator {
@@ -52,6 +56,7 @@ impl Decorator {
             Self::Sweat => "sweat",
             Self::Dizzy => "dizzy",
             Self::Ear => "ear",
+            Self::Pairing => "pairing",
         }
     }
 
@@ -64,6 +69,7 @@ impl Decorator {
             Self::Sweat => 1,
             Self::Dizzy => 2,
             Self::Ear => 3,
+            Self::Pairing => 4,
         }
     }
 
@@ -72,7 +78,13 @@ impl Decorator {
     /// are the compile-time guard; this slice has no compile-time
     /// completeness check, so the `all_length_matches_variant_count`
     /// test is the trip-wire that forces an update on variant addition.
-    pub const ALL: &'static [Self] = &[Self::Heart, Self::Sweat, Self::Dizzy, Self::Ear];
+    pub const ALL: &'static [Self] = &[
+        Self::Heart,
+        Self::Sweat,
+        Self::Dizzy,
+        Self::Ear,
+        Self::Pairing,
+    ];
 }
 
 /// Active decorator overlay with its expiry deadline.
@@ -117,7 +129,7 @@ mod tests {
     fn all_length_matches_variant_count() {
         assert_eq!(
             Decorator::ALL.len(),
-            4,
+            5,
             "update Decorator::ALL when adding a variant"
         );
     }
@@ -128,6 +140,7 @@ mod tests {
         assert_eq!(Decorator::Sweat.wire_byte(), 1);
         assert_eq!(Decorator::Dizzy.wire_byte(), 2);
         assert_eq!(Decorator::Ear.wire_byte(), 3);
+        assert_eq!(Decorator::Pairing.wire_byte(), 4);
     }
 
     #[test]
