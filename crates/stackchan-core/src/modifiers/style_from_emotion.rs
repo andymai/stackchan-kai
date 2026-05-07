@@ -52,6 +52,12 @@ struct StyleTarget {
 /// Constant look-up of the style target for every [`Emotion`] variant.
 /// Kept as a plain `match` (rather than a table) so adding a variant to
 /// `Emotion` surfaces as a compile error here.
+#[allow(
+    clippy::too_many_lines,
+    reason = "lookup table — splitting into per-emotion consts would shift \
+              the line count without simplifying the surface, and the inline \
+              comments next to each row are the load-bearing rationale"
+)]
 const fn targets_for(emotion: Emotion) -> StyleTarget {
     match emotion {
         Emotion::Neutral => StyleTarget {
@@ -119,6 +125,99 @@ const fn targets_for(emotion: Emotion) -> StyleTarget {
             blink_rate_scale: 96,
             breath_depth_scale: 180,
             open_weight: 80,
+            mouth_weight: 0,
+        },
+        Emotion::Doubt => StyleTarget {
+            // Skeptical-positive: slight downward eye arc with a faint
+            // smile that reads as "I'm not buying it but I'm amused."
+            // Distinguished from `Confused` by the +mouth_curve sign.
+            eye_curve: -15,
+            mouth_curve: 20,
+            cheek_blush: 0,
+            eye_scale: 110,
+            blink_rate_scale: 80,
+            breath_depth_scale: 110,
+            open_weight: 80,
+            mouth_weight: 0,
+        },
+        Emotion::Boring => StyleTarget {
+            // Disinterested: half-lidded eyes, slow blink, slow deep
+            // breath, very faint frown. Distinguished from `Sleepy` by a
+            // less-droopy lid and a non-zero mouth_curve.
+            eye_curve: 0,
+            mouth_curve: -15,
+            cheek_blush: 0,
+            eye_scale: SCALE_DEFAULT,
+            blink_rate_scale: 56,
+            breath_depth_scale: 150,
+            open_weight: 65,
+            mouth_weight: 0,
+        },
+        Emotion::Hi => StyleTarget {
+            // Outgoing greeting. Wider eyes than `Happy`, faster blink,
+            // bigger smile arc — reads as a wave-hello.
+            eye_curve: 50,
+            mouth_curve: 70,
+            cheek_blush: 100,
+            eye_scale: 140,
+            blink_rate_scale: 160,
+            breath_depth_scale: 110,
+            open_weight: 100,
+            mouth_weight: 0,
+        },
+        Emotion::Loved => StyleTarget {
+            // Smitten: full upward eye arc + heaviest blush of the
+            // catalogue. Reads as affectionate without any decorator
+            // overlay — heart overlays may stack on top later, but the
+            // base style stands alone.
+            eye_curve: 90,
+            mouth_curve: 50,
+            cheek_blush: 220,
+            eye_scale: 110,
+            blink_rate_scale: 140,
+            breath_depth_scale: 110,
+            open_weight: 100,
+            mouth_weight: 0,
+        },
+        Emotion::Curious => StyleTarget {
+            // Investigative: wider-than-baseline eyes (smaller than
+            // `Surprised`), faint smile, light blush. The breath / blink
+            // hold near baseline so the wide-eye reads as attention,
+            // not startle.
+            eye_curve: 30,
+            mouth_curve: 25,
+            cheek_blush: 40,
+            eye_scale: 150,
+            blink_rate_scale: 110,
+            breath_depth_scale: SCALE_DEFAULT,
+            open_weight: 100,
+            mouth_weight: 0,
+        },
+        Emotion::Confused => StyleTarget {
+            // Unsettled-negative: matching downward curves on eyes and
+            // mouth + elevated blink rate (reads as eye-flutter).
+            // Mirrors `Doubt` along valence: same uncertainty, opposite
+            // mouth sign.
+            eye_curve: -20,
+            mouth_curve: -20,
+            cheek_blush: 0,
+            eye_scale: SCALE_DEFAULT,
+            blink_rate_scale: 160,
+            breath_depth_scale: SCALE_DEFAULT,
+            open_weight: 95,
+            mouth_weight: 0,
+        },
+        Emotion::Mad => StyleTarget {
+            // Hotter than `Angry`: deeper frown, heavier blush, slower
+            // huffing breath, narrower squint. The default
+            // `EmotionCycle` doesn't visit this — it's reactive only.
+            eye_curve: -55,
+            mouth_curve: -85,
+            cheek_blush: 120,
+            eye_scale: 100,
+            blink_rate_scale: 70,
+            breath_depth_scale: 200,
+            open_weight: 85,
             mouth_weight: 0,
         },
     }
@@ -498,5 +597,155 @@ mod tests {
         assert_eq!(ease(0, 100, 300, 300), 100);
         assert_eq!(ease(0, 100, 450, 300), 100);
         assert_eq!(ease(100, 0, 150, 300), 50);
+    }
+
+    /// Snap through each `Emotion` variant and assert the writer
+    /// produces a distinguishable style snapshot. Catches a copy-paste
+    /// where two variants accidentally end up with identical
+    /// `StyleTarget` rows.
+    #[test]
+    fn every_emotion_has_a_distinct_style_target() {
+        // Compare every pair. Any two variants that produce identical
+        // `StyleTarget` rows are a bug — the catalogue would have a
+        // visually invisible variant.
+        for (i, &a) in Emotion::ALL.iter().enumerate() {
+            for &b in &Emotion::ALL[i + 1..] {
+                assert_ne!(
+                    targets_for(a),
+                    targets_for(b),
+                    "{a:?} and {b:?} share a StyleTarget row — palettes must differ"
+                );
+            }
+        }
+    }
+
+    /// `Hi` is a louder `Happy`: bigger eye scale + faster blink. Pin
+    /// the relationship so a future palette tweak can't quietly swap
+    /// them along the engagement axis.
+    #[test]
+    fn hi_is_more_excited_than_happy() {
+        let h = targets_for(Emotion::Hi);
+        let happy = targets_for(Emotion::Happy);
+        assert!(
+            h.eye_scale > happy.eye_scale,
+            "Hi should widen eyes more than Happy ({} vs {})",
+            h.eye_scale,
+            happy.eye_scale,
+        );
+        assert!(
+            h.blink_rate_scale > happy.blink_rate_scale,
+            "Hi should blink faster than Happy ({} vs {})",
+            h.blink_rate_scale,
+            happy.blink_rate_scale,
+        );
+    }
+
+    /// `Loved` is the heaviest-blush variant. Strict `>` (not `>=`) so a
+    /// future palette tweak that quietly ties Loved on blush surfaces
+    /// here as a real collision rather than passing silently.
+    #[test]
+    fn loved_has_the_heaviest_blush() {
+        let loved = targets_for(Emotion::Loved);
+        for &other in Emotion::ALL {
+            if other == Emotion::Loved {
+                continue;
+            }
+            assert!(
+                loved.cheek_blush > targets_for(other).cheek_blush,
+                "Loved should have the heaviest cheek_blush; {other:?} has {}",
+                targets_for(other).cheek_blush,
+            );
+        }
+    }
+
+    /// `Mad` and `Angry` differ along the intensity axis — `Mad` is
+    /// the hotter one. Pin the inequality so a palette tweak can't
+    /// quietly invert the relationship.
+    #[test]
+    fn mad_is_hotter_than_angry() {
+        let mad = targets_for(Emotion::Mad);
+        let angry = targets_for(Emotion::Angry);
+        assert!(
+            mad.mouth_curve < angry.mouth_curve,
+            "Mad should frown deeper than Angry ({} vs {})",
+            mad.mouth_curve,
+            angry.mouth_curve,
+        );
+        assert!(
+            mad.cheek_blush > angry.cheek_blush,
+            "Mad should blush more than Angry ({} vs {})",
+            mad.cheek_blush,
+            angry.cheek_blush,
+        );
+        assert!(
+            mad.breath_depth_scale >= angry.breath_depth_scale,
+            "Mad should breathe at least as deeply as Angry ({} vs {})",
+            mad.breath_depth_scale,
+            angry.breath_depth_scale,
+        );
+    }
+
+    /// `Doubt` and `Confused` mirror each other along the valence
+    /// axis: same uncertainty signature, opposite mouth sign.
+    #[test]
+    fn doubt_and_confused_share_uncertainty_oppose_valence() {
+        let doubt = targets_for(Emotion::Doubt);
+        let confused = targets_for(Emotion::Confused);
+        // Both are below baseline on eye_curve (uncertain).
+        assert!(
+            doubt.eye_curve < 0 && confused.eye_curve < 0,
+            "both should drop eye_curve below 0; got Doubt {} / Confused {}",
+            doubt.eye_curve,
+            confused.eye_curve,
+        );
+        // Mouth sign disambiguates the pair.
+        assert!(
+            doubt.mouth_curve > 0 && confused.mouth_curve < 0,
+            "Doubt should smile faintly, Confused should frown; got {} / {}",
+            doubt.mouth_curve,
+            confused.mouth_curve,
+        );
+    }
+
+    /// `Boring` and `Sleepy` share the half-lidded look but differ on
+    /// `mouth_curve` and droop depth. Pin the distinguishing markers so
+    /// a future palette tweak doesn't collapse them into one.
+    #[test]
+    fn boring_is_distinguishable_from_sleepy() {
+        let boring = targets_for(Emotion::Boring);
+        let sleepy = targets_for(Emotion::Sleepy);
+        assert_ne!(
+            boring.mouth_curve, sleepy.mouth_curve,
+            "Boring's faint frown should distinguish it from Sleepy's flat mouth"
+        );
+        assert!(
+            boring.open_weight > sleepy.open_weight,
+            "Sleepy should droop more than Boring ({} vs {})",
+            sleepy.open_weight,
+            boring.open_weight,
+        );
+    }
+
+    /// `Curious` widens eyes more than baseline but less than `Surprised`.
+    /// Surprised is the wide-eye startle; Curious is the narrower
+    /// investigative gaze.
+    #[test]
+    fn curious_widens_less_than_surprised() {
+        let curious = targets_for(Emotion::Curious);
+        let surprised = targets_for(Emotion::Surprised);
+        assert!(
+            curious.eye_scale > SCALE_DEFAULT,
+            "Curious should be wider than baseline ({} vs {SCALE_DEFAULT})",
+            curious.eye_scale,
+        );
+        assert!(
+            curious.eye_scale < surprised.eye_scale,
+            "Curious should be narrower than Surprised ({} vs {})",
+            curious.eye_scale,
+            surprised.eye_scale,
+        );
+        // Surprised holds an open-mouth ellipse; Curious doesn't.
+        assert_eq!(curious.mouth_weight, 0);
+        assert!(surprised.mouth_weight > 0);
     }
 }

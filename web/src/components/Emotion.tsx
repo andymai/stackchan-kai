@@ -2,7 +2,25 @@ import { For, createSignal } from "solid-js";
 import { postJson } from "../auth";
 import { showToast } from "../store";
 
-const EMOTIONS = ["neutral", "happy", "sad", "sleepy", "surprised", "angry"] as const;
+// Wire-string vocabulary mirrors `Emotion::wire_str` in
+// `crates/stackchan-core/src/emotion.rs`. Order is the reading order in
+// the dashboard, not the wire-byte order — keep originals first so
+// muscle memory on keys 1-6 holds.
+const EMOTIONS = [
+  "neutral",
+  "happy",
+  "sad",
+  "sleepy",
+  "surprised",
+  "angry",
+  "doubt",
+  "boring",
+  "hi",
+  "loved",
+  "curious",
+  "confused",
+  "mad",
+] as const;
 const HOLD_PRESETS_S = [5, 10, 30, 60, 120] as const;
 
 export function Emotion() {
@@ -57,7 +75,9 @@ export function Emotion() {
           </For>
         </div>
       </div>
-      <small>Keys 1-6 fire the emotion at the configured hold; R resets, M toggles mute.</small>
+      <small>
+        Keys 1-9 + 0 + Q/W/E fire the emotion at the configured hold; R resets, M toggles mute.
+      </small>
     </section>
   );
 }

@@ -407,7 +407,10 @@ where
 }
 
 /// Parse a quoted emotion string into the corresponding [`Emotion`]
-/// variant. Vocabulary is closed and lowercase.
+/// variant. Vocabulary is closed and lowercase, and mirrors the
+/// `Emotion::wire_str` round-trip target — see the
+/// `emotion_wire_str_round_trips_through_parser` test for the live
+/// pin against `Emotion::ALL`.
 fn parse_emotion(scanner: &mut Scanner<'_>) -> Result<Emotion, JsonError> {
     let raw = scanner.read_string()?;
     match raw {
@@ -417,6 +420,13 @@ fn parse_emotion(scanner: &mut Scanner<'_>) -> Result<Emotion, JsonError> {
         "sleepy" => Ok(Emotion::Sleepy),
         "surprised" => Ok(Emotion::Surprised),
         "angry" => Ok(Emotion::Angry),
+        "doubt" => Ok(Emotion::Doubt),
+        "boring" => Ok(Emotion::Boring),
+        "hi" => Ok(Emotion::Hi),
+        "loved" => Ok(Emotion::Loved),
+        "curious" => Ok(Emotion::Curious),
+        "confused" => Ok(Emotion::Confused),
+        "mad" => Ok(Emotion::Mad),
         _ => Err(JsonError::UnknownEmotion),
     }
 }
@@ -638,16 +648,10 @@ mod tests {
         // Every `Emotion` variant must round-trip through
         // `Emotion::wire_str` and `parse_set_emotion` — a `GET /state`
         // consumer should be able to post the emotion value back
-        // without case translation. A failure here would also surface
-        // an enum/parser mismatch from a newly added variant.
-        for variant in [
-            Emotion::Neutral,
-            Emotion::Happy,
-            Emotion::Sad,
-            Emotion::Sleepy,
-            Emotion::Surprised,
-            Emotion::Angry,
-        ] {
+        // without case translation. Iterating `Emotion::ALL` keeps the
+        // test in lockstep with the enum, so a newly added variant
+        // surfaces here automatically.
+        for &variant in Emotion::ALL {
             let wire = variant.wire_str();
             let body = alloc::format!(r#"{{"emotion":"{wire}"}}"#);
             match parse_set_emotion(&body).unwrap() {

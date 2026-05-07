@@ -86,10 +86,20 @@ const fn next_emotion(current: Emotion) -> Emotion {
         Emotion::Happy => Emotion::Sleepy,
         Emotion::Sleepy => Emotion::Surprised,
         Emotion::Surprised => Emotion::Sad,
-        // `Sad` wraps the cycle back to `Neutral`. `Angry` is
-        // reactive-only (set by `EmotionFromIntent` on shake) and exits to
-        // `Neutral` rather than threading into the cycle.
-        Emotion::Sad | Emotion::Angry => Emotion::Neutral,
+        // `Sad` wraps the cycle back to `Neutral`. The remaining
+        // variants are reactive-only (set by intent / sensor / remote
+        // modifiers) and exit to `Neutral` instead of threading into
+        // the touch-cycle, so a tap during e.g. `Mad` clears the
+        // override rather than rolling forward.
+        Emotion::Sad
+        | Emotion::Angry
+        | Emotion::Doubt
+        | Emotion::Boring
+        | Emotion::Hi
+        | Emotion::Loved
+        | Emotion::Curious
+        | Emotion::Confused
+        | Emotion::Mad => Emotion::Neutral,
     }
 }
 

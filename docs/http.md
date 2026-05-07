@@ -86,7 +86,7 @@ $ curl -X POST http://stackchan.local/emotion \
 
 | Field    | Type   | Required | Notes                                             |
 |----------|--------|----------|---------------------------------------------------|
-| emotion  | string | yes      | `neutral` / `happy` / `sad` / `sleepy` / `surprised` / `angry` |
+| emotion  | string | yes      | One of the wire strings in [`Emotion::wire_str`](https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/emotion.rs) (e.g. `neutral`, `happy`, `sleepy`, …) |
 | hold_ms  | u32    | no       | Default 30 000. `0` is fire-and-forget.            |
 
 The hold blocks autonomous emotion drivers (touch, IR, ambient,

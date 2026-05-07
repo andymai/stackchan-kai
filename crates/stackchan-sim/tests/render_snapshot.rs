@@ -7,8 +7,15 @@
 //! *not* do a full pixel-hash snapshot — the set of asserted pixels is small
 //! enough to survive reasonable geometry tweaks.
 
+#![allow(
+    clippy::expect_used,
+    reason = "test-only: framebuffer DrawTarget is Infallible and the Director \
+              registry capacity is a compile-time constant in this fixture"
+)]
+
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
-use stackchan_core::Entity;
+use stackchan_core::modifiers::StyleFromEmotion;
+use stackchan_core::{Director, Emotion, Entity, Instant};
 use stackchan_sim::Framebuffer;
 
 /// LCD canvas width the firmware targets.
@@ -108,6 +115,61 @@ fn audio_open_lifts_mouth_above_resting_line() {
 
     // Mouth centre stays pink.
     assert_eq!(open.pixel(160, 180), Some(mouth_pink), "mouth centre");
+}
+
+/// Render every `Emotion` variant through `StyleFromEmotion` and assert
+/// the resulting frame differs from the neutral baseline. Catches a
+/// palette row that accidentally matches `Neutral`'s style — visually
+/// invisible, but a regression we'd otherwise only spot on hardware.
+///
+/// `open_weight` is a *cap* that `Blink` writes into `eye.weight` on
+/// every open transition; in a static one-frame snapshot we apply it
+/// here ourselves to mirror Blink's at-rest behavior — otherwise
+/// Sleepy / Boring (which differ from Neutral primarily through
+/// dynamic-only fields) would read as identical.
+#[test]
+fn every_emotion_renders_distinguishable_frame() {
+    fn render(emotion: Emotion) -> Framebuffer {
+        let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = emotion;
+        let mut style = StyleFromEmotion::new();
+        let mut director = Director::new();
+        director
+            .add_modifier(&mut style)
+            .expect("Director registry has room for one modifier");
+        // Two ticks past the transition window so the style settles.
+        director.run(&mut entity, Instant::from_millis(0));
+        director.run(
+            &mut entity,
+            Instant::from_millis(StyleFromEmotion::TRANSITION_MS + 1),
+        );
+        // Apply Blink's open-state contract: at rest, eye.weight is
+        // pinned to open_weight. Without this, dynamic-only style
+        // differences (blink rate, breath depth, lid droop) would
+        // collapse onto identical static frames.
+        entity.face.left_eye.weight = entity.face.left_eye.open_weight;
+        entity.face.right_eye.weight = entity.face.right_eye.open_weight;
+        entity
+            .face
+            .draw(&mut fb)
+            .expect("Framebuffer DrawTarget is Infallible");
+        fb
+    }
+
+    let neutral_fb = render(Emotion::Neutral);
+
+    for &emotion in Emotion::ALL {
+        if emotion == Emotion::Neutral {
+            continue;
+        }
+        let fb = render(emotion);
+        assert_ne!(
+            fb.as_slice(),
+            neutral_fb.as_slice(),
+            "{emotion:?} rendered identically to Neutral — palette row may have collided"
+        );
+    }
 }
 
 #[test]
