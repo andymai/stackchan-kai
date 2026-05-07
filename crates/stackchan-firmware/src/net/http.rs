@@ -1311,7 +1311,17 @@ async fn handle_post_firmware_update(
         .is_err()
     {
         defmt::warn!("http: POST /firmware/update — refused, another OTA in flight");
-        return write_text(socket, 409, "ota already in flight; retry after reboot\n").await;
+        // The in-flight latch releases on every non-reboot exit
+        // (auth fail, signature mismatch, flash error). Operators
+        // who hit this message can retry as soon as the prior
+        // request finishes — only a successful flash blocks them
+        // until the soft-reset cycles the device.
+        return write_text(
+            socket,
+            409,
+            "ota already in flight; retry shortly or after reboot\n",
+        )
+        .await;
     }
     // Defer-style guard: clear the latch on every exit. Successful
     // updates soft-reset before this runs (so the latch never
@@ -1395,12 +1405,14 @@ async fn handle_post_firmware_update(
             defmt::warn!("http: OTA failed: {}", e);
             let (status, msg) = match &e {
                 crate::ota::OtaPerformError::Disabled => (503, "ota disabled in this build\n"),
+                // Both flash-state errors are 503 (service
+                // unavailable) — `FlashUnavailable` is a build-time
+                // miswiring, `FlashConsumedThisBoot` is a runtime
+                // exhaustion; both are operationally "OTA can't
+                // serve this request" rather than "server bug".
                 crate::ota::OtaPerformError::FlashUnavailable => {
-                    (500, "flash peripheral unavailable\n")
+                    (503, "flash peripheral unavailable\n")
                 }
-                // Distinct from FlashUnavailable so the operator
-                // sees a clear "reboot to retry" path rather than
-                // assuming the build doesn't support OTA.
                 crate::ota::OtaPerformError::FlashConsumedThisBoot => (
                     503,
                     "flash consumed by a prior failed ota; reboot to retry\n",

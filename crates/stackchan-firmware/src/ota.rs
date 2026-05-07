@@ -198,20 +198,22 @@ pub fn perform_update(image_bytes: &[u8]) -> Result<(), OtaPerformError> {
     );
 
     let crc = esp_hal_ota::crc32::calc_crc32(payload, 0);
-    let flash_periph = FLASH_SLOT
-        .lock(|cell| cell.borrow_mut().take())
-        .ok_or_else(|| {
-            if FLASH_CONSUMED.load(core::sync::atomic::Ordering::Acquire) {
-                OtaPerformError::FlashConsumedThisBoot
-            } else {
-                OtaPerformError::FlashUnavailable
-            }
-        })?;
-    // Mark consumed before we hand the peripheral to FlashStorage —
-    // anything that fails after this point leaves the slot empty
-    // for the rest of this boot, and the next call needs to know
-    // why.
-    FLASH_CONSUMED.store(true, core::sync::atomic::Ordering::Release);
+    // Take + consumed-flag check + consumed-flag set all happen in
+    // one critical section. Folding them avoids a TOCTOU window
+    // between the take and a subsequent read of `FLASH_CONSUMED`
+    // that's harmless on a single-core cooperative scheduler today
+    // but easy to break later (a second core, an interrupt that
+    // calls into OTA, etc.).
+    let flash_periph = FLASH_SLOT.lock(|cell| match cell.borrow_mut().take() {
+        Some(periph) => {
+            FLASH_CONSUMED.store(true, core::sync::atomic::Ordering::Release);
+            Ok(periph)
+        }
+        None if FLASH_CONSUMED.load(core::sync::atomic::Ordering::Acquire) => {
+            Err(OtaPerformError::FlashConsumedThisBoot)
+        }
+        None => Err(OtaPerformError::FlashUnavailable),
+    })?;
     let flash = FlashStorage::new(flash_periph);
     let mut ota = Ota::new(flash)?;
     let payload_len: u32 = u32::try_from(payload.len())
