@@ -80,8 +80,8 @@ use stackchan_core::{
         EmotionFromBattery, EmotionFromIntent, EmotionFromRemote, EmotionFromTouch,
         EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent,
         IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
-        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
-        StyleFromIntent, StyleFromMood,
+        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, Soliloquy,
+        StyleFromEmotion, StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -232,6 +232,19 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut handling = Handling::new();
     let mut intent_from_body_touch = IntentFromBodyTouch::new();
     let mut bubble_expiry = BubbleExpiry::new();
+    // `behavior.soliloquy_enabled` flips at boot via STACKCHAN.RON; if
+    // the operator later toggles it via PUT /settings, the change
+    // takes effect on the next reboot. The modifier is always
+    // constructed; `enabled = false` short-circuits its `update` to a
+    // no-op so there's no cost when disabled.
+    let mut soliloquy = {
+        let enabled = stackchan_firmware::storage::CONFIG_SNAPSHOT
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|c| c.behavior.soliloquy_enabled);
+        Soliloquy::with_enabled(enabled)
+    };
     let mut decorator_expiry = DecoratorExpiry::new();
     let mut decorator_from_emotion = DecoratorFromEmotion::new();
     let mut decorator_from_body_touch = DecoratorFromBodyTouch::new();
@@ -317,6 +330,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .expect("registry full");
     director
         .add_modifier(&mut bubble_expiry)
+        .expect("registry full");
+    director
+        .add_modifier(&mut soliloquy)
         .expect("registry full");
     director
         .add_modifier(&mut decorator_from_emotion)

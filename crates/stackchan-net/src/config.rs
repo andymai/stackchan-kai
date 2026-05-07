@@ -57,6 +57,11 @@ pub struct Config {
     /// pairing window.
     #[cfg_attr(feature = "parse", serde(default))]
     pub esp_now: EspNowConfig,
+    /// Behavioural toggles — opt-in autonomous beats that aren't
+    /// part of the always-on reactive surface (which is driven by
+    /// the canonical modifier stack at all times).
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub behavior: BehaviorConfig,
 }
 
 /// Wi-Fi station credentials.
@@ -269,6 +274,24 @@ impl Default for EspNowConfig {
     fn default() -> Self {
         Self::DEFAULT
     }
+}
+
+/// Behavioural toggles. Opt-in autonomous beats that aren't part of
+/// the always-on reactive surface.
+///
+/// Default: every flag `false`. The boot config doesn't need a
+/// `behavior:` block at all — `serde(default)` on the parent populates
+/// it. Operators opt in by adding the block via `PUT /settings` or
+/// editing `STACKCHAN.RON` directly.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct BehaviorConfig {
+    /// When `true`, the firmware writes a randomly-picked
+    /// soliloquy line to `face.bubble` at random intervals
+    /// (no audio playback in this iteration; audio rides on a
+    /// follow-up that adds the corresponding phrase pool to the
+    /// baked TTS catalog).
+    pub soliloquy_enabled: bool,
 }
 
 /// Time / SNTP configuration.

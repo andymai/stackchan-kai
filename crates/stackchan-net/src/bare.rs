@@ -22,8 +22,8 @@ use core::fmt::Write as _;
 
 use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{
-    AudioConfig, AuthConfig, Config, EspNowConfig, MdnsConfig, TimeConfig, TrackerSettings,
-    WifiConfig, validate,
+    AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, MdnsConfig, TimeConfig,
+    TrackerSettings, WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -113,6 +113,14 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     let _ = writeln!(out, "        tx_rate_hz: {},", config.esp_now.tx_rate_hz);
     out.push_str("    ),\n");
 
+    out.push_str("    behavior: (\n");
+    let _ = writeln!(
+        out,
+        "        soliloquy_enabled: {},",
+        config.behavior.soliloquy_enabled
+    );
+    out.push_str("    ),\n");
+
     out.push_str(")\n");
     Ok(out)
 }
@@ -163,6 +171,7 @@ impl<'a> Parser<'a> {
         let mut audio: Option<AudioConfig> = None;
         let mut tracker: Option<TrackerSettings> = None;
         let mut esp_now: Option<EspNowConfig> = None;
+        let mut behavior: Option<BehaviorConfig> = None;
 
         loop {
             self.skip_ws_and_comments();
@@ -181,6 +190,7 @@ impl<'a> Parser<'a> {
                 "audio" => audio = Some(self.parse_audio()?),
                 "tracker" => tracker = Some(self.parse_tracker()?),
                 "esp_now" => esp_now = Some(self.parse_esp_now()?),
+                "behavior" => behavior = Some(self.parse_behavior()?),
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -202,6 +212,7 @@ impl<'a> Parser<'a> {
             audio: audio.unwrap_or_default(),
             tracker: tracker.unwrap_or_default(),
             esp_now: esp_now.unwrap_or_default(),
+            behavior: behavior.unwrap_or_default(),
         })
     }
 
@@ -457,6 +468,33 @@ impl<'a> Parser<'a> {
             lmk_hex: lmk_hex.unwrap_or(defaults.lmk_hex),
             channel: channel.unwrap_or(defaults.channel),
             tx_rate_hz: tx_rate_hz.unwrap_or(defaults.tx_rate_hz),
+        })
+    }
+
+    /// Parse the `behavior: (soliloquy_enabled)` block.
+    fn parse_behavior(&mut self) -> Result<BehaviorConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut soliloquy_enabled: Option<bool> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "soliloquy_enabled" => soliloquy_enabled = Some(self.parse_bool()?),
+                other => return Err(bare_err("unknown behavior field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in behavior", ""));
+            }
+        }
+        Ok(BehaviorConfig {
+            soliloquy_enabled: soliloquy_enabled.unwrap_or(false),
         })
     }
 
