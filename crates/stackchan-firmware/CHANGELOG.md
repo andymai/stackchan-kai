@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.49.0...stackchan-firmware-v0.50.0) (2026-05-07)
+
+
+### Features
+
+* **core:** speech-bubble overlay primitive ([#240](https://github.com/andymai/stackchan-kai/issues/240)) ([fe98f66](https://github.com/andymai/stackchan-kai/commit/fe98f66d8e8185b55a0e8e7e6adf9763cd519c23))
+
 ## [0.49.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.48.0...stackchan-firmware-v0.49.0) (2026-05-07)
 
 
