@@ -47,6 +47,14 @@
 //!   zero-point correction; both axes required, each clamped to
 //!   `[-30°, +30°]`. Layered on top of the firmware's compile-time
 //!   trim — runtime-only in v0.2.0, persistence ships with NVS.
+//! - `POST /firmware/update` — ed25519-signed SCFW image upload.
+//!   Verifies the signature against the build-time public key,
+//!   streams the payload into the inactive OTA slot, flips the
+//!   bootloader's `otadata` pointer, and soft-resets. Compiled out
+//!   when `STACKCHAN_OTA_PUBLIC_KEY` isn't set at build time (`503
+//!   Service Unavailable`); always requires a configured bearer
+//!   token even when the global token is otherwise empty. See
+//!   [`crate::ota`] for the full sequence.
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
 //! - `POST /speak` — JSON `{"phrase": "...", "locale": "..."}`.
@@ -301,6 +309,32 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     let body_start = header_end + 4;
     let content_length =
         parse_content_length(&buf[line_end + 2..header_end]).map_err(|_| HttpError::Malformed)?;
+
+    // OTA `POST /firmware/update` is the one route that bypasses
+    // the small fixed-body cap — the firmware payload is megabytes
+    // and lives on PSRAM for the duration of the verify+flash. Detect
+    // it here, after method/path are known but before the small-body
+    // read loop runs the cap. Auth is checked inside the OTA
+    // handler so the rest of the cap-and-buffer logic stays
+    // dedicated to the small-body routes.
+    let method_for_route =
+        core::str::from_utf8(&buf[..first_sp]).map_err(|_| HttpError::Malformed)?;
+    let path_for_route =
+        core::str::from_utf8(&buf[path_start..second_sp]).map_err(|_| HttpError::Malformed)?;
+    if method_for_route == "POST" && path_for_route == "/firmware/update" {
+        // Hand off to the streaming OTA handler — it copies the
+        // body bytes already in `buf` and reads the rest from the
+        // socket directly into a heap-allocated Vec.
+        let auth_token = parse_bearer_token(&buf[line_end + 2..header_end]);
+        let already_buffered = filled.saturating_sub(body_start);
+        let prefix = if already_buffered > 0 {
+            &buf[body_start..body_start + already_buffered]
+        } else {
+            &[][..]
+        };
+        return handle_post_firmware_update(socket, content_length, prefix, auth_token).await;
+    }
+
     if content_length >= MAX_BODY_BYTES {
         return Err(HttpError::BodyTooLarge);
     }
@@ -1203,6 +1237,133 @@ async fn handle_post_camera_capture(socket: &mut TcpSocket<'_>) -> Result<(), Ht
     crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
     defmt::info!("http: POST /camera/capture → signal queued");
     write_text(socket, 202, "capture queued\n").await
+}
+
+/// Cap on the OTA request body. Sized for the SCFW header (12) +
+/// the worst-case payload (`MAX_OTA_PAYLOAD_BYTES`) + the signature
+/// (64). Bigger requests get a `413` before any allocation happens
+/// — defends the worker against a malicious operator hammering the
+/// PSRAM allocator.
+const MAX_OTA_REQUEST_BYTES: usize = stackchan_net::ota::OTA_HEADER_LEN
+    + stackchan_net::ota::MAX_OTA_PAYLOAD_BYTES as usize
+    + stackchan_net::ota::OTA_SIGNATURE_LEN;
+
+/// Stack-resident chunk size for the streaming socket→Vec read.
+/// 1 KiB matches the request-buffer convention used by the rest of
+/// the HTTP module without any new constants.
+const OTA_RECV_CHUNK_BYTES: usize = 1024;
+
+/// `POST /firmware/update` — accept an SCFW-framed firmware image,
+/// verify the ed25519 signature against the build-time public key,
+/// stream the payload into the inactive OTA slot, flip the
+/// `otadata` pointer, and soft-reset.
+///
+/// Always requires a non-empty `Authorization: Bearer <token>` —
+/// even when the global token is empty, OTA is destructive and
+/// shouldn't ride the LAN-open default. The auth gate matches the
+/// `/restart` and `/factory-reset` discipline.
+///
+/// Returns `503 Service Unavailable` when OTA was compiled out (no
+/// `STACKCHAN_OTA_PUBLIC_KEY` env var at build time). Returns `413`
+/// for oversize bodies, `400` for SCFW framing failures, `403` for
+/// signature mismatches, and `500` for flash-write failures.
+async fn handle_post_firmware_update(
+    socket: &mut TcpSocket<'_>,
+    content_length: usize,
+    already_buffered: &[u8],
+    auth_token: Option<&str>,
+) -> Result<(), HttpError> {
+    if !crate::ota::ota_enabled() {
+        defmt::warn!("http: POST /firmware/update — OTA compiled out");
+        return write_text(
+            socket,
+            503,
+            "ota disabled in this build (STACKCHAN_OTA_PUBLIC_KEY unset)\n",
+        )
+        .await;
+    }
+
+    // Always-auth gate — non-empty token required, even when the
+    // global token is empty. Mirrors `/restart` / `/factory-reset`.
+    let snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await;
+    let configured_token = snapshot
+        .as_ref()
+        .map(|c| c.auth.token.clone())
+        .unwrap_or_default();
+    drop(snapshot);
+    if configured_token.is_empty() {
+        defmt::warn!("http: POST /firmware/update — auth token not configured");
+        return Err(HttpError::Unauthorized);
+    }
+    let authorized = auth_token.is_some_and(|t| ct_eq(t.as_bytes(), configured_token.as_bytes()));
+    if !authorized {
+        return Err(HttpError::Unauthorized);
+    }
+
+    if content_length > MAX_OTA_REQUEST_BYTES {
+        return write_text(socket, 413, "ota image exceeds the 4 MiB cap\n").await;
+    }
+    if content_length < stackchan_net::ota::OTA_HEADER_LEN + stackchan_net::ota::OTA_SIGNATURE_LEN {
+        return write_text(socket, 400, "ota image truncated\n").await;
+    }
+
+    // Allocate on the heap; PSRAM absorbs the multi-MB body without
+    // pressuring internal SRAM.
+    let mut body: alloc::vec::Vec<u8> = alloc::vec::Vec::with_capacity(content_length);
+    body.extend_from_slice(already_buffered);
+
+    let mut chunk = [0u8; OTA_RECV_CHUNK_BYTES];
+    while body.len() < content_length {
+        let want = content_length - body.len();
+        let take = want.min(OTA_RECV_CHUNK_BYTES);
+        let n = match socket.read(&mut chunk[..take]).await {
+            Ok(n) if n > 0 => n,
+            _ => return Err(HttpError::Read),
+        };
+        body.extend_from_slice(&chunk[..n]);
+    }
+
+    defmt::info!(
+        "http: POST /firmware/update — body received ({=usize} bytes), verifying",
+        body.len()
+    );
+    crate::event_log::record_fmt(
+        crate::event_log::Kind::Control,
+        format_args!("POST /firmware/update {} bytes", body.len()),
+    );
+
+    match crate::ota::perform_update(&body) {
+        Ok(()) => {
+            defmt::info!(
+                "http: OTA flush succeeded — soft-resetting in 200 ms to boot the new image"
+            );
+            // Free the body buffer before reset so PSRAM is in a
+            // known-empty state if the bootloader leaves it
+            // initialised across the soft-reset.
+            drop(body);
+            write_text(socket, 200, "ota verified + flashed; rebooting\n").await?;
+            socket.flush().await.map_err(|_| HttpError::Write)?;
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(200)).await;
+            esp_hal::system::software_reset()
+        }
+        Err(e) => {
+            defmt::warn!("http: OTA failed: {}", e);
+            let (status, msg) = match &e {
+                crate::ota::OtaPerformError::Disabled => (503, "ota disabled in this build\n"),
+                crate::ota::OtaPerformError::FlashUnavailable => {
+                    (500, "flash peripheral unavailable\n")
+                }
+                // Signature mismatch is the most operator-actionable
+                // error path — surface it as 403 specifically.
+                crate::ota::OtaPerformError::Image(stackchan_net::ota::OtaImageError::Verify(
+                    _,
+                )) => (403, "signature verification failed\n"),
+                crate::ota::OtaPerformError::Image(_) => (400, "image rejected\n"),
+                crate::ota::OtaPerformError::Flash(_) => (500, "flash write failed\n"),
+            };
+            write_text(socket, status, msg).await
+        }
+    }
 }
 
 /// `POST /restart` — write the response, briefly let the TCP buffer

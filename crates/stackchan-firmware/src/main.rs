@@ -934,6 +934,13 @@ async fn main(spawner: Spawner) -> ! {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
+    // Park the FLASH peripheral for the OTA path so a later
+    // `POST /firmware/update` can claim it without re-acquiring
+    // peripherals from main. No-op cost when OTA isn't enabled at
+    // build time: the static slot still gets populated, but
+    // `perform_update` returns `Disabled` before reading it.
+    stackchan_firmware::ota::install_flash_peripheral(peripherals.FLASH);
+
     defmt::info!(
         "stackchan-firmware v{} — CoreS3 boot",
         env!("CARGO_PKG_VERSION")

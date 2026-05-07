@@ -33,6 +33,7 @@ pub mod imu;
 pub mod ir;
 pub mod leds;
 pub mod net;
+pub mod ota;
 pub mod power;
 pub mod reminders;
 pub mod runtime_store;

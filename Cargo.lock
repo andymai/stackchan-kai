@@ -1882,6 +1882,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-hal-ota"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79c3b3f18d6dd148df3152ef16df4825e37622cf4fcd2d2c04b21b70c312d46c"
+dependencies = [
+ "defmt 1.0.1",
+ "embedded-storage",
+ "esp32s3 0.35.2",
+]
+
+[[package]]
 name = "esp-hal-procmacros"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2026,6 +2037,21 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-sync 0.1.1",
  "portable-atomic",
+]
+
+[[package]]
+name = "esp-storage"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1495fc1f5549bdd840b52d9ceb201746200e1620d2636f46958c11e765623b80"
+dependencies = [
+ "document-features",
+ "embedded-storage",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated 0.3.0",
+ "esp-rom-sys",
+ "esp-sync 0.1.1",
 ]
 
 [[package]]
@@ -4689,9 +4715,11 @@ dependencies = [
  "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-hal-ota",
  "esp-println",
  "esp-radio",
  "esp-rtos",
+ "esp-storage",
  "ft6336u",
  "gc0308",
  "heapless 0.8.0",
