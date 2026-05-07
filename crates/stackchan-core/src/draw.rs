@@ -64,10 +64,11 @@ const PAIRING_COLOR: Rgb565 = Rgb565::new(4, 18, 31);
 /// vein-pop rather than emotional flush.
 const ANGRY_COLOR: Rgb565 = Rgb565::new(31, 8, 4);
 
-/// Shy decorator color — same warm pink as the existing `EAR_COLOR`
-/// so the embarrassed crosshatch reads as part of the avatar's
-/// blush-family palette rather than a foreign overlay.
-const SHY_COLOR: Rgb565 = Rgb565::new(31, 50, 22);
+// Shy decorator reuses `EAR_COLOR` (defined alongside the ear
+// rendering) so the embarrassed crosshatch reads as part of the
+// avatar's blush-family palette rather than a foreign overlay. No
+// dedicated constant: drift between two "same warm pink" colours
+// would be a real bug a future palette tweak could introduce.
 
 /// Stroke width for closed-eye line, resting mouth line, and curved arcs.
 const LINE_WIDTH: u32 = 3;
@@ -464,7 +465,7 @@ where
             let y = SHY_ANCHOR_Y + offset_idx * SHY_MARK_SPACING;
             let top_left = EgPoint::new(anchor_x - half_len, y);
             Rectangle::new(top_left, Size::new(SHY_MARK_LEN, SHY_MARK_THICKNESS))
-                .into_styled(fill(SHY_COLOR))
+                .into_styled(fill(EAR_COLOR))
                 .draw(target)?;
         }
     }

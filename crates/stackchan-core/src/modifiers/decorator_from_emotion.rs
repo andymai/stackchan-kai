@@ -15,15 +15,19 @@
 //!
 //! ## Phase + priority
 //!
-//! Runs in [`Phase::Decoration`] at priority `5` — after
-//! [`super::DecoratorExpiry`] (-10) clears any prior expired overlay,
-//! and *before* the body-touch / loud / shake / listening triggers
-//! (priorities 0 / 10 / 20 / 25). That ordering lets a shake event
-//! that fires both [`Intent::Shaken`] (→ Dizzy via
-//! [`super::DecoratorFromShake`] at priority 20) AND
-//! [`crate::Emotion::Angry`] (→ Angry here at priority 5) end up
-//! showing the more specific Dizzy overlay rather than the
-//! emotion-derived Angry one.
+//! Runs in [`Phase::Decoration`] at priority `-5` — after
+//! [`super::DecoratorExpiry`] (`-10`) clears any prior expired overlay,
+//! and *before* every other trigger
+//! ([`super::DecoratorFromBodyTouch`] at `0`,
+//! [`super::DecoratorFromLoud`] at `10`,
+//! [`super::DecoratorFromShake`] at `20`,
+//! [`super::DecoratorFromListening`] at `25`). Within [`Phase::Decoration`],
+//! later writes win, so an emotion-derived Angry overlay is overwritten
+//! by any of the more-specific signal-driven triggers when their
+//! condition is also true. A shake event that fires both
+//! [`crate::mind::Intent::Shaken`] (→ Dizzy via
+//! [`super::DecoratorFromShake`]) AND [`crate::Emotion::Angry`] (→
+//! Angry here) ends up showing Dizzy, the more specific cue.
 
 use crate::decorator::{Decorator, DecoratorState};
 use crate::director::{Field, ModifierMeta, Phase};
@@ -95,7 +99,7 @@ impl Modifier for DecoratorFromEmotion {
                           (→ Decorator::Angry) or Emotion::Loved (→ Decorator::Shy). \
                           Sustained emotion does not refresh the hold.",
             phase: Phase::Decoration,
-            priority: 5,
+            priority: -5,
             reads: &[Field::Emotion],
             writes: &[Field::Decorator],
         };
