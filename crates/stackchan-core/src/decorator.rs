@@ -39,6 +39,12 @@ pub enum Decorator {
     /// [`crate::modifiers::RemoteCommandModifier`] for the duration of
     /// an [`crate::RemoteCommand::EnterPairing`] hold.
     Pairing,
+    /// Red `#` symbol at the upper-left — the anime "vein pop"
+    /// trope, amplifying [`crate::Emotion::Angry`].
+    Angry,
+    /// Pink hash-mark blush under each cheek — the embarrassed
+    /// crosshatch trope, amplifying [`crate::Emotion::Loved`].
+    Shy,
 }
 
 impl Decorator {
@@ -57,6 +63,8 @@ impl Decorator {
             Self::Dizzy => "dizzy",
             Self::Ear => "ear",
             Self::Pairing => "pairing",
+            Self::Angry => "angry",
+            Self::Shy => "shy",
         }
     }
 
@@ -70,6 +78,8 @@ impl Decorator {
             Self::Dizzy => 2,
             Self::Ear => 3,
             Self::Pairing => 4,
+            Self::Angry => 5,
+            Self::Shy => 6,
         }
     }
 
@@ -84,6 +94,8 @@ impl Decorator {
         Self::Dizzy,
         Self::Ear,
         Self::Pairing,
+        Self::Angry,
+        Self::Shy,
     ];
 }
 
@@ -129,7 +141,7 @@ mod tests {
     fn all_length_matches_variant_count() {
         assert_eq!(
             Decorator::ALL.len(),
-            5,
+            7,
             "update Decorator::ALL when adding a variant"
         );
     }
@@ -141,6 +153,8 @@ mod tests {
         assert_eq!(Decorator::Dizzy.wire_byte(), 2);
         assert_eq!(Decorator::Ear.wire_byte(), 3);
         assert_eq!(Decorator::Pairing.wire_byte(), 4);
+        assert_eq!(Decorator::Angry.wire_byte(), 5);
+        assert_eq!(Decorator::Shy.wire_byte(), 6);
     }
 
     #[test]
