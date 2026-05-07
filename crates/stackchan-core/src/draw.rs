@@ -141,9 +141,15 @@ where
 const HEART_ANCHOR_X: i32 = 270;
 /// Heart decorator anchor Y — see [`HEART_ANCHOR_X`].
 const HEART_ANCHOR_Y: i32 = 50;
-/// Lobe radius for the heart — small enough to read as overlay rather
-/// than competing with the eyes (`radius_y = 25`).
-const HEART_LOBE_RADIUS: u32 = 9;
+/// Lobe diameter (passed directly to `Circle::new`). Sized so lobe
+/// centres sit `HEART_LOBE_CENTER_OFFSET` apart and the right edge of
+/// the left lobe overlaps the left edge of the right lobe by a few
+/// pixels — the classic double-bump silhouette.
+const HEART_LOBE_DIAMETER: u32 = 12;
+/// Horizontal distance from the anchor to each lobe's centre. Picked
+/// so the two lobes overlap (centre offset < diameter) for the heart
+/// silhouette rather than reading as two isolated dots.
+const HEART_LOBE_CENTER_OFFSET: i32 = 4;
 
 /// Draw a small pink heart in the upper-right corner of the face.
 ///
@@ -156,29 +162,32 @@ where
 {
     use embedded_graphics::primitives::Triangle;
 
+    // `Circle::new(top_left, diameter)` — the corner of the bounding
+    // box, not the centre. Convert from each lobe's centre to its
+    // bounding-box top-left.
     #[allow(clippy::cast_possible_wrap)]
-    let lobe_offset = (HEART_LOBE_RADIUS / 2) as i32;
-    let left_top = EgPoint::new(
-        HEART_ANCHOR_X - lobe_offset - i32::try_from(HEART_LOBE_RADIUS).unwrap_or(0),
-        HEART_ANCHOR_Y,
-    );
-    let right_top = EgPoint::new(HEART_ANCHOR_X + lobe_offset, HEART_ANCHOR_Y);
-    Circle::new(left_top, HEART_LOBE_RADIUS)
+    let half_d = (HEART_LOBE_DIAMETER / 2) as i32;
+    let left_center_x = HEART_ANCHOR_X - HEART_LOBE_CENTER_OFFSET;
+    let right_center_x = HEART_ANCHOR_X + HEART_LOBE_CENTER_OFFSET;
+    let lobe_top_y = HEART_ANCHOR_Y;
+    let left_top = EgPoint::new(left_center_x - half_d, lobe_top_y);
+    let right_top = EgPoint::new(right_center_x - half_d, lobe_top_y);
+    Circle::new(left_top, HEART_LOBE_DIAMETER)
         .into_styled(fill(HEART_COLOR))
         .draw(target)?;
-    Circle::new(right_top, HEART_LOBE_RADIUS)
+    Circle::new(right_top, HEART_LOBE_DIAMETER)
         .into_styled(fill(HEART_COLOR))
         .draw(target)?;
-    // Triangle filling the bottom point. Top corners sit at the
-    // bottom-inside of each lobe; bottom point sits below by ~lobe
-    // radius for a balanced heart silhouette.
+    // Triangle filling the bottom point. Top corners sit on the lobe
+    // bottoms (diameter px below the lobe top); bottom apex sits a
+    // further ~diameter below for a balanced heart silhouette.
     #[allow(clippy::cast_possible_wrap)]
-    let r = HEART_LOBE_RADIUS as i32;
-    let lobe_bottom_y = HEART_ANCHOR_Y + r;
+    let d = HEART_LOBE_DIAMETER as i32;
+    let lobe_bottom_y = lobe_top_y + d;
     Triangle::new(
-        EgPoint::new(HEART_ANCHOR_X - r, lobe_bottom_y),
-        EgPoint::new(HEART_ANCHOR_X + r, lobe_bottom_y),
-        EgPoint::new(HEART_ANCHOR_X, lobe_bottom_y + r + 2),
+        EgPoint::new(left_center_x - half_d, lobe_bottom_y - 1),
+        EgPoint::new(right_center_x + half_d, lobe_bottom_y - 1),
+        EgPoint::new(HEART_ANCHOR_X, lobe_bottom_y + d),
     )
     .into_styled(fill(HEART_COLOR))
     .draw(target)
