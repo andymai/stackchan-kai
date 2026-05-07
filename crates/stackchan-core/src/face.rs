@@ -179,6 +179,11 @@ pub struct Face {
     /// [`crate::director::Phase::Decoration`] populate this field;
     /// [`crate::modifiers::DecoratorExpiry`] clears it on deadline.
     pub decorator: Option<crate::decorator::DecoratorState>,
+    /// Active speech-bubble text overlay, drawn above the face. `None`
+    /// is the steady state. Trigger paths (e.g. soliloquy modifier,
+    /// firmware-side MCP `speak` short-circuit) populate this field;
+    /// [`crate::modifiers::BubbleExpiry`] clears it on deadline.
+    pub bubble: Option<crate::bubble::BubbleState>,
 }
 
 impl Default for Face {
@@ -212,6 +217,7 @@ impl Default for Face {
             },
             style: Style::default(),
             decorator: None,
+            bubble: None,
         }
     }
 }
