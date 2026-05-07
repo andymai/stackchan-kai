@@ -45,8 +45,11 @@ const MDNS_TTL_SECS: u32 = 120;
 /// Maximum DNS message we'll accept or build. The full announcement
 /// (PTR + SRV + TXT + A with no name compression) lands around
 /// 320 bytes for a 9-character hostname; 512 is the classic DNS UDP
-/// limit and gives generous headroom for longer hostnames + future
-/// TXT keys without spilling onto the kernel stack.
+/// limit. Layout cost is roughly `6 × hostname_len + ~220` bytes
+/// with the current TXT set, so the effective hostname ceiling is
+/// ~48 characters — callers are expected to use short names, and
+/// `build_announcement` returns `None` gracefully if the buffer
+/// would overflow.
 const MAX_DNS_BYTES: usize = 512;
 
 /// HTTP port advertised in the SRV record. Matches `HTTP_PORT` in
@@ -551,6 +554,15 @@ mod tests {
     fn classify_query_treats_any_as_service_when_name_matches() {
         let q = build_query(&[b"_stackchan", b"_tcp", b"local"], 255);
         assert_eq!(classify_query(&q, "stackchan"), QueryKind::ServicePtr);
+    }
+
+    #[test]
+    fn classify_query_treats_any_for_hostname_as_host_a() {
+        // Avahi's `-r` resolve sends ANY for the host name as a
+        // follow-up after SRV resolution; without this match we'd
+        // time out the resolve flow.
+        let q = build_query(&[b"stackchan", b"local"], 255);
+        assert_eq!(classify_query(&q, "stackchan"), QueryKind::HostA);
     }
 
     #[test]
