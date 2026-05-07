@@ -28,6 +28,7 @@
 #![deny(unsafe_code)]
 
 pub mod clock;
+pub mod decorator;
 pub mod director;
 pub mod draw;
 pub mod emotion;
@@ -48,6 +49,7 @@ pub mod skills;
 pub mod voice;
 
 pub use clock::{Clock, Instant};
+pub use decorator::{Decorator, DecoratorState};
 pub use director::{
     Director, Field, FieldGroup, MODIFIER_CAP, ModifierMeta, Phase, SKILL_CAP, SkillMeta,
 };

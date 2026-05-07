@@ -84,6 +84,10 @@
 mod attention_from_tracking;
 mod blink;
 mod breath;
+mod decorator_expiry;
+mod decorator_from_body_touch;
+mod decorator_from_loud;
+mod decorator_from_shake;
 mod dormancy_from_activity;
 mod emotion_cycle;
 mod emotion_from_ambient;
@@ -113,6 +117,10 @@ pub use attention_from_tracking::{
 };
 pub use blink::Blink;
 pub use breath::Breath;
+pub use decorator_expiry::DecoratorExpiry;
+pub use decorator_from_body_touch::{DecoratorFromBodyTouch, HEART_HOLD_MS};
+pub use decorator_from_loud::{DecoratorFromLoud, SWEAT_HOLD_MS, SWEAT_RMS_THRESHOLD};
+pub use decorator_from_shake::{DIZZY_HOLD_MS, DecoratorFromShake};
 pub use dormancy_from_activity::{DORMANCY_TIMEOUT_MS, DormancyFromActivity};
 pub use emotion_cycle::EmotionCycle;
 pub use emotion_from_ambient::{

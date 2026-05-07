@@ -74,7 +74,8 @@ use mipidsi::{
 use stackchan_core::{
     Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
-        AttentionFromTracking, Blink, Breath, DormancyFromActivity, EmotionCycle,
+        AttentionFromTracking, Blink, Breath, DecoratorExpiry, DecoratorFromBodyTouch,
+        DecoratorFromLoud, DecoratorFromShake, DormancyFromActivity, EmotionCycle,
         EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
         HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
@@ -221,6 +222,10 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut petting = Petting::new();
     let mut handling = Handling::new();
     let mut intent_from_body_touch = IntentFromBodyTouch::new();
+    let mut decorator_expiry = DecoratorExpiry::new();
+    let mut decorator_from_body_touch = DecoratorFromBodyTouch::new();
+    let mut decorator_from_loud = DecoratorFromLoud::new();
+    let mut decorator_from_shake = DecoratorFromShake::new();
     let mut last_rendered: Option<Face> = None;
     // Last on-screen pairing passkey. Tracked separately from
     // `last_rendered` so a passkey transition forces a redraw even
@@ -287,6 +292,23 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     director.add_modifier(&mut blink).expect("registry full");
     director.add_modifier(&mut breath).expect("registry full");
     director.add_modifier(&mut drift).expect("registry full");
+    // Phase::Decoration — expiry first (priority -10), then trigger
+    // modifiers in priority order. Sits between Expression and Motion
+    // so decorators read final emotion / style state but don't influence
+    // pose. Registration order doesn't matter; the Director sorts by
+    // (phase, priority, registration_order).
+    director
+        .add_modifier(&mut decorator_expiry)
+        .expect("registry full");
+    director
+        .add_modifier(&mut decorator_from_body_touch)
+        .expect("registry full");
+    director
+        .add_modifier(&mut decorator_from_loud)
+        .expect("registry full");
+    director
+        .add_modifier(&mut decorator_from_shake)
+        .expect("registry full");
     director
         .add_modifier(&mut head_drift)
         .expect("registry full");
@@ -546,6 +568,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
             entity.mind.affect.emotion,
             entity.motor.head_pose,
             Some(entity.motor.head_pose_actual),
+            entity.face.decorator.map(|d| d.kind),
         );
         // Push the latest snapshot to any connected SSE subscribers.
         // Throttled internally so a 30 Hz render doesn't firehose

@@ -13,8 +13,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::Instant as EmbassyInstant;
-use stackchan_core::Emotion;
 use stackchan_core::head::Pose;
+use stackchan_core::{Decorator, Emotion};
 use stackchan_net::config::AudioConfig;
 
 /// Battery snapshot — published by the power task.
@@ -65,6 +65,10 @@ pub struct AvatarSnapshot {
     /// HTTP `POST /camera/mode`, BLE view-service write) before the
     /// signal fires, so the snapshot stays canonical.
     pub camera_mode: bool,
+    /// Active decorator overlay, if any. Mirrors
+    /// `entity.face.decorator.kind`; the `expires_at` deadline is
+    /// internal and not exposed.
+    pub decorator: Option<Decorator>,
 }
 
 impl AvatarSnapshot {
@@ -92,6 +96,7 @@ impl AvatarSnapshot {
             && self.wifi == other.wifi
             && self.audio == other.audio
             && self.camera_mode == other.camera_mode
+            && self.decorator == other.decorator
     }
 }
 
@@ -105,6 +110,7 @@ impl Default for AvatarSnapshot {
             wifi: WifiSnapshot::default(),
             audio: AudioConfig::DEFAULT,
             camera_mode: false,
+            decorator: None,
         }
     }
 }
@@ -129,15 +135,22 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
         },
         audio: AudioConfig::DEFAULT,
         camera_mode: false,
+        decorator: None,
     }));
 
 /// Replace the avatar/head fields. Called per render tick.
-pub fn update_avatar(emotion: Emotion, head_pose: Pose, head_actual: Option<Pose>) {
+pub fn update_avatar(
+    emotion: Emotion,
+    head_pose: Pose,
+    head_actual: Option<Pose>,
+    decorator: Option<Decorator>,
+) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
         s.emotion = emotion;
         s.head_pose = head_pose;
         s.head_actual = head_actual;
+        s.decorator = decorator;
         cell.set(s);
     });
 }
