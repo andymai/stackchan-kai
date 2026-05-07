@@ -52,6 +52,18 @@ pub enum RemoteCommand {
     /// Clear any active emotion or look-at hold and return to
     /// autonomous behavior.
     Reset,
+    /// Open a listen window — set [`crate::Intent::Listening`] +
+    /// [`crate::Attention::Listening`] for `duration_ms`, queue an
+    /// acknowledge chirp, and arm the [`crate::Decorator::Ear`]
+    /// overlay. Sourced from the dashboard `POST /listen`, the
+    /// long-press body-touch trigger, or a future wake-word event.
+    /// Fire-and-forget from the producer's view; the modifier owns
+    /// the timeout.
+    StartListen {
+        /// How long to hold the listening state, in milliseconds.
+        /// Operator-driven calls typically use 3 000 ms.
+        duration_ms: u32,
+    },
     /// Play a [`PhraseId`] from the baked TTS catalog through the
     /// firmware's TX path. Fire-and-forget — no avatar-state hold,
     /// no autonomy gate. The firmware drains this slot before

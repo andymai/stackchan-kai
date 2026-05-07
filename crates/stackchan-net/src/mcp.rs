@@ -625,6 +625,7 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"set_mood","description":"Set the operator-selected mood baseline. Vocabulary: neutral, calm, playful, focus, sleepy.","inputSchema":{"type":"object","properties":{"mood":{"type":"string"}},"required":["mood"]}},"#,
     r#"{"name":"look_at","description":"Aim the avatar's head at a pan/tilt target in degrees, with an optional hold timer.","inputSchema":{"type":"object","properties":{"pan_deg":{"type":"number"},"tilt_deg":{"type":"number"},"hold_ms":{"type":"integer"}},"required":["pan_deg","tilt_deg"]}},"#,
     r#"{"name":"speak","description":"Play a baked phrase or chirp through the speaker.","inputSchema":{"type":"object","properties":{"phrase":{"type":"string"},"locale":{"type":"string"}},"required":["phrase"]}},"#,
+    r#"{"name":"start_listen","description":"Open a listen window: queue an acknowledge chirp, set Attention::Listening, arm the Ear decorator. Default 3000 ms.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
     r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );

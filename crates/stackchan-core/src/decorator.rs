@@ -30,6 +30,11 @@ pub enum Decorator {
     Sweat,
     /// Three-dot arc — dizzy / shaken overlay.
     Dizzy,
+    /// Cupped-hand / ear shape — listening overlay. Armed by
+    /// [`crate::modifiers::DecoratorFromListening`] while
+    /// [`crate::Intent::Listening`] holds (operator-triggered or
+    /// wake-word triggered).
+    Ear,
 }
 
 impl Decorator {
@@ -46,6 +51,7 @@ impl Decorator {
             Self::Heart => "heart",
             Self::Sweat => "sweat",
             Self::Dizzy => "dizzy",
+            Self::Ear => "ear",
         }
     }
 
@@ -57,6 +63,7 @@ impl Decorator {
             Self::Heart => 0,
             Self::Sweat => 1,
             Self::Dizzy => 2,
+            Self::Ear => 3,
         }
     }
 
@@ -65,7 +72,7 @@ impl Decorator {
     /// are the compile-time guard; this slice has no compile-time
     /// completeness check, so the `all_length_matches_variant_count`
     /// test is the trip-wire that forces an update on variant addition.
-    pub const ALL: &'static [Self] = &[Self::Heart, Self::Sweat, Self::Dizzy];
+    pub const ALL: &'static [Self] = &[Self::Heart, Self::Sweat, Self::Dizzy, Self::Ear];
 }
 
 /// Active decorator overlay with its expiry deadline.
@@ -110,7 +117,7 @@ mod tests {
     fn all_length_matches_variant_count() {
         assert_eq!(
             Decorator::ALL.len(),
-            3,
+            4,
             "update Decorator::ALL when adding a variant"
         );
     }
@@ -120,6 +127,7 @@ mod tests {
         assert_eq!(Decorator::Heart.wire_byte(), 0);
         assert_eq!(Decorator::Sweat.wire_byte(), 1);
         assert_eq!(Decorator::Dizzy.wire_byte(), 2);
+        assert_eq!(Decorator::Ear.wire_byte(), 3);
     }
 
     #[test]

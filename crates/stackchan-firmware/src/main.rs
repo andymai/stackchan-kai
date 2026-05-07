@@ -75,8 +75,8 @@ use stackchan_core::{
     Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
         AttentionFromTracking, Blink, Breath, DecoratorExpiry, DecoratorFromBodyTouch,
-        DecoratorFromLoud, DecoratorFromShake, DormancyFromActivity, EmotionCycle,
-        EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
+        DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake, DormancyFromActivity,
+        EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
         HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
         MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
@@ -225,6 +225,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut intent_from_body_touch = IntentFromBodyTouch::new();
     let mut decorator_expiry = DecoratorExpiry::new();
     let mut decorator_from_body_touch = DecoratorFromBodyTouch::new();
+    let mut decorator_from_listening = DecoratorFromListening::new();
     let mut decorator_from_loud = DecoratorFromLoud::new();
     let mut decorator_from_shake = DecoratorFromShake::new();
     let mut last_rendered: Option<Face> = None;
@@ -312,6 +313,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .expect("registry full");
     director
         .add_modifier(&mut decorator_from_shake)
+        .expect("registry full");
+    director
+        .add_modifier(&mut decorator_from_listening)
         .expect("registry full");
     director
         .add_modifier(&mut head_drift)

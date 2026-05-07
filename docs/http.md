@@ -30,6 +30,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
 | POST   | `/speak`         | Play a baked phrase / chirp through the speaker      |
+| POST   | `/listen`        | Open a 3-second listen window — Ear decorator + ack chirp |
 | POST   | `/mood`          | Set the operator-selected energy baseline (runtime-only) |
 | POST   | `/mcp`           | JSON-RPC 2.0 / MCP endpoint (initialize, tools/list, tools/call) |
 | POST   | `/volume`        | Set output volume (0–100); persisted to SD           |
