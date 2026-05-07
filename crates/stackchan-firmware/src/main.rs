@@ -161,16 +161,19 @@ type LcdDisplay = mipidsi::Display<
 /// Modifier order is the canonical stackchan-core stack:
 /// `EmotionFromTouch` → `EmotionCycle` → `StyleFromEmotion` → `Blink` →
 /// `Breath` → `IdleDrift` → `IdleHeadDrift` → `HeadFromEmotion` →
-/// `HeadFromAttention` → `LostTargetSearch`. `EmotionFromTouch` runs
-/// first so a tap queued from the touch task becomes the active emotion
-/// before `EmotionCycle` checks the `manual_until` gate. `IdleHeadDrift`
-/// writes the base `entity.motor.head_pose` (slow wander);
-/// `HeadFromEmotion` adds an emotion-keyed bias on top; `HeadFromAttention`
-/// adds an upward listening tilt when the `Listening` skill (registered
-/// separately) sets `mind.attention = Listening`. `LostTargetSearch`
-/// rides on top of those, animating a brief directional saccade after
-/// the engagement falling-edge so the avatar reads as "looking for
-/// where they went."
+/// `HeadFromAttention` → `LostTargetSearch` → `HeadFromIntent`.
+/// `EmotionFromTouch` runs first so a tap queued from the touch task
+/// becomes the active emotion before `EmotionCycle` checks the
+/// `manual_until` gate. `IdleHeadDrift` writes the base
+/// `entity.motor.head_pose` (slow wander); `HeadFromEmotion` adds an
+/// emotion-keyed bias on top; `HeadFromAttention` adds an upward
+/// listening tilt when the `Listening` skill (registered separately)
+/// sets `mind.attention = Listening`. `LostTargetSearch` rides on top
+/// of those, animating a brief directional saccade after the
+/// engagement falling-edge so the avatar reads as "looking for where
+/// they went." `HeadFromIntent` (priority 30) runs last in the Motion
+/// phase so its asymmetric startle recoil composes additively over
+/// the rest of the stack.
 /// The final pose is published to the 50 Hz head task via
 /// [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when no
 /// pixel-affecting modifier changed anything — pose updates alone never
