@@ -760,6 +760,7 @@ async fn head_task(mut driver: HeadDriverImpl) {
     let clock = HalClock;
     let mut ticker = Ticker::every(Duration::from_millis(HEAD_PERIOD_MS));
     let mut current = stackchan_core::Pose::NEUTRAL;
+    let mut offsets = head::HeadOffsets::default();
     let mut tick_count: u32 = 0;
     defmt::info!(
         "head task: {=u64} ms tick, consumes POSE_SIGNAL for SCServo IDs {=u8} (yaw) / {=u8} (pitch), reads actual @ {=u64} ms",
@@ -773,7 +774,17 @@ async fn head_task(mut driver: HeadDriverImpl) {
         if let Some(next) = head::POSE_SIGNAL.try_take() {
             current = next;
         }
-        if let Err(e) = driver.set_pose(current, clock.now()).await {
+        if let Some(next_offsets) = head::OFFSETS_SIGNAL.try_take() {
+            offsets = next_offsets;
+            head::OFFSETS_CACHE.lock(|cell| cell.set(next_offsets));
+            defmt::info!(
+                "head: offsets updated yaw={=f32} tilt={=f32}",
+                offsets.yaw_offset_deg,
+                offsets.tilt_offset_deg,
+            );
+        }
+        let commanded = offsets.apply(current);
+        if let Err(e) = driver.set_pose(commanded, clock.now()).await {
             defmt::warn!("head: SCServo write failed: {}", defmt::Debug2Format(&e));
         }
         tick_count = tick_count.wrapping_add(1);
