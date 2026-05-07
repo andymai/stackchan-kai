@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.26.0...stackchan-core-v0.27.0) (2026-05-07)
+
+
+### Features
+
+* **core:** runtime palette swap with named presets ([#252](https://github.com/andymai/stackchan-kai/issues/252)) ([e77ad86](https://github.com/andymai/stackchan-kai/commit/e77ad86f81e411ee97512d15e8a0ccafa7aea439))
+
 ## [0.26.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.25.0...stackchan-core-v0.26.0) (2026-05-07)
 
 
