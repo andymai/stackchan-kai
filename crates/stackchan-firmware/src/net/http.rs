@@ -742,7 +742,7 @@ async fn handle_post_mcp(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), H
                 .ok()
                 .flatten()
                 .unwrap_or("{}");
-            mcp_dispatch_tool(req.id, tool_name, arguments)
+            mcp_dispatch_tool(req.id, tool_name, arguments).await
         }
         _ => render_error(
             Some(req.id),
@@ -756,7 +756,17 @@ async fn handle_post_mcp(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), H
 /// Dispatch a `tools/call` request to the matching control-plane
 /// primitive. Returns a fully-rendered JSON-RPC response (success or
 /// error) string ready for `write_json`.
-fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
+///
+/// Async because `set_volume` and `set_mute` thread through the audio
+/// task's SD-write persistence path, mirroring `POST /volume` and
+/// `POST /mute`. Other tools resolve synchronously by signalling
+/// `REMOTE_COMMAND_SIGNAL` and rendering a fixed acknowledgement.
+#[allow(
+    clippy::too_many_lines,
+    reason = "single dispatch table that mirrors `TOOLS_LIST_RESULT_JSON`; \
+              splitting fragments the per-tool layout the catalogue depends on"
+)]
+async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
     use stackchan_net::mcp::{
         JsonRpcErrorCode, render_error, render_success, render_tool_text_result,
     };
@@ -831,11 +841,61 @@ fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "set_volume" => match json::parse_volume(arguments) {
+            Ok(level) => match crate::audio::persist_volume(level).await {
+                crate::audio::AudioPersistOutcome::Persisted => {
+                    render_success(id, &render_tool_text_result("volume persisted"))
+                }
+                outcome => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InternalError,
+                    audio_persist_detail(outcome),
+                ),
+            },
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "set_mute" => match json::parse_mute(arguments) {
+            Ok(muted) => match crate::audio::persist_mute(muted).await {
+                crate::audio::AudioPersistOutcome::Persisted => {
+                    render_success(id, &render_tool_text_result("mute persisted"))
+                }
+                outcome => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InternalError,
+                    audio_persist_detail(outcome),
+                ),
+            },
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         "get_state" => {
             let snap = snapshot::read();
             render_success(id, &render_tool_text_result(&state_body(snap)))
         }
         _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
+    }
+}
+
+/// Map a non-`Persisted` [`crate::audio::AudioPersistOutcome`] to a
+/// `&'static str` MCP error detail. Mirrors [`audio_persist_to_http`]
+/// but in JSON-RPC error-detail form rather than HTTP status codes.
+const fn audio_persist_detail(outcome: crate::audio::AudioPersistOutcome) -> &'static str {
+    use crate::audio::AudioPersistOutcome;
+    match outcome {
+        // The success path is already filtered out by the call site;
+        // the variant is unreachable here but const-match needs every
+        // arm covered.
+        AudioPersistOutcome::Persisted => "ok",
+        AudioPersistOutcome::NoSnapshot => "config snapshot unavailable",
+        AudioPersistOutcome::NoStorage => "no SD card mounted",
+        AudioPersistOutcome::WriteFailed => "config write failed",
     }
 }
 

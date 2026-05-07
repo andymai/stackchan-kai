@@ -607,13 +607,17 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
     "}",
 );
 
-/// Static MCP `tools/list` result JSON. Five tools that map onto the
-/// existing HTTP control plane:
+/// Static MCP `tools/list` result JSON. Tools map onto the existing
+/// HTTP control plane:
 ///
 /// - `set_emotion(emotion: string, hold_ms?: integer)`
 /// - `set_mood(mood: string)`
 /// - `look_at(pan_deg: number, tilt_deg: number, hold_ms?: integer)`
 /// - `speak(phrase: string, locale?: string)`
+/// - `start_listen(duration_ms?: integer)`
+/// - `enter_pairing(duration_ms?: integer)`
+/// - `set_volume(level: integer)`
+/// - `set_mute(muted: bool)`
 /// - `get_state()`
 ///
 /// Schemas are minimal — no enum constraints on emotion / mood /
@@ -627,6 +631,8 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"speak","description":"Play a baked phrase or chirp through the speaker.","inputSchema":{"type":"object","properties":{"phrase":{"type":"string"},"locale":{"type":"string"}},"required":["phrase"]}},"#,
     r#"{"name":"start_listen","description":"Open a listen window: queue an acknowledge chirp, set Attention::Listening, arm the Ear decorator. Default 3000 ms.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
     r#"{"name":"enter_pairing","description":"Open an ESP-NOW pairing window for the configured duration so an external remote can register.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
+    r#"{"name":"set_volume","description":"Set the speaker volume in percent (0..=100). Persists to STACKCHAN.RON; survives reboot.","inputSchema":{"type":"object","properties":{"level":{"type":"integer","minimum":0,"maximum":100}},"required":["level"]}},"#,
+    r#"{"name":"set_mute","description":"Mute or unmute the speaker without losing the persisted volume level. Persists to STACKCHAN.RON.","inputSchema":{"type":"object","properties":{"muted":{"type":"boolean"}},"required":["muted"]}},"#,
     r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );
