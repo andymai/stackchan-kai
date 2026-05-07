@@ -188,6 +188,19 @@ impl Modifier for Soliloquy {
             return;
         }
 
+        // Yield to a non-expired bubble already on screen. The
+        // soliloquy beat is the lowest-priority bubble producer:
+        // anything that drove the bubble field this tick (or earlier
+        // ticks within its TTL) is by definition more topical than a
+        // random ambient line. Re-roll the schedule as if we'd fired
+        // so the operator-driven bubble's TTL gets to play out before
+        // we try again.
+        if entity.face.bubble.is_some_and(|b| !b.is_expired(now)) {
+            let next = self.rand_interval(SOLILOQUY_INTERVAL_MIN_MS, SOLILOQUY_INTERVAL_MAX_MS);
+            self.next_fire_at = Some(now + next);
+            return;
+        }
+
         // Pick a phrase. Modulo over a small slice is fine — the
         // tiny bias toward early entries is invisible at 10
         // entries.
@@ -321,5 +334,35 @@ mod tests {
             fa, fb,
             "two distinct seeds produced identical first-fire instants",
         );
+    }
+
+    #[test]
+    fn yields_to_non_expired_bubble_from_other_source() {
+        // An MCP `speak` or operator-set bubble should NOT be
+        // clobbered by a soliloquy fire. Drive the modifier past its
+        // first scheduled fire while a non-soliloquy bubble is
+        // active; the modifier must leave the existing bubble alone.
+        let mut m = Soliloquy::with_enabled(true);
+        let mut entity = at(0);
+
+        // Plant a non-soliloquy bubble whose TTL extends past the
+        // soliloquy max-interval so we can be sure the active-bubble
+        // gate is what's preventing the fire.
+        let external_text = "external operator text";
+        entity.face.bubble = Some(BubbleState::hold_for(
+            external_text,
+            Instant::from_millis(0),
+            SOLILOQUY_INTERVAL_MAX_MS + 30_000,
+        ));
+
+        for t_ms in (0..SOLILOQUY_INTERVAL_MAX_MS + 1_000).step_by(500) {
+            entity.tick.now = Instant::from_millis(t_ms);
+            m.update(&mut entity);
+            let bubble = entity.face.bubble.expect("external bubble must persist");
+            assert_eq!(
+                bubble.text, external_text,
+                "soliloquy clobbered an active external bubble at {t_ms}ms",
+            );
+        }
     }
 }
