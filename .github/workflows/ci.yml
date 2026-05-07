@@ -126,7 +126,7 @@ jobs:
         with:
           name: web-dist
           path: web/dist/
-      - uses: esp-rs/xtensa-toolchain@v1.5
+      - uses: esp-rs/xtensa-toolchain@v1.7
         with:
           # Pin: `latest` resolves through GitHub's `/releases/latest`
           # endpoint then re-fetches the paginated listing to find the
