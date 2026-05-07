@@ -98,4 +98,26 @@ pub enum ConfigError {
     /// boot log.
     #[error("bare RON parse error: {0}")]
     BareParse(String),
+
+    /// `esp_now.pmk_hex` or `esp_now.lmk_hex` was non-empty but not
+    /// exactly 32 hex characters (16 bytes). Carries the field name
+    /// so the operator can fix the right line.
+    #[error("esp_now.{0} must be exactly 32 hex chars (16 bytes)")]
+    InvalidEspNowKey(&'static str),
+
+    /// `esp_now.peer_mac` was non-empty but did not parse as either
+    /// `xx:xx:xx:xx:xx:xx` or bare 12 hex chars. Carries the offending
+    /// value.
+    #[error("esp_now.peer_mac is not a valid MAC: {0:?}")]
+    InvalidEspNowMac(String),
+
+    /// `esp_now.channel` was outside the valid 2.4 GHz range (1..=14).
+    /// Carries the offending value.
+    #[error("esp_now.channel must be in 1..=14; got {0}")]
+    InvalidEspNowChannel(u8),
+
+    /// `esp_now.tx_rate_hz` exceeded the documented maximum (20 Hz).
+    /// Carries the offending value.
+    #[error("esp_now.tx_rate_hz must be <= 20; got {0}")]
+    InvalidEspNowTxRate(u8),
 }

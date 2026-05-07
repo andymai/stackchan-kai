@@ -22,7 +22,8 @@ use core::fmt::Write as _;
 
 use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{
-    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate,
+    AudioConfig, AuthConfig, Config, EspNowConfig, MdnsConfig, TimeConfig, TrackerSettings,
+    WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -98,6 +99,20 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     let _ = writeln!(out, "        flip_y: {},", config.tracker.flip_y);
     out.push_str("    ),\n");
 
+    out.push_str("    esp_now: (\n");
+    let _ = writeln!(out, "        enabled: {},", config.esp_now.enabled);
+    push_field(&mut out, "        pmk_hex", &config.esp_now.pmk_hex);
+    push_field(&mut out, "        peer_mac", &config.esp_now.peer_mac);
+    push_field(&mut out, "        lmk_hex", &config.esp_now.lmk_hex);
+    match config.esp_now.channel {
+        Some(ch) => {
+            let _ = writeln!(out, "        channel: Some({ch}),");
+        }
+        None => out.push_str("        channel: None,\n"),
+    }
+    let _ = writeln!(out, "        tx_rate_hz: {},", config.esp_now.tx_rate_hz);
+    out.push_str("    ),\n");
+
     out.push_str(")\n");
     Ok(out)
 }
@@ -147,6 +162,7 @@ impl<'a> Parser<'a> {
         let mut auth: Option<AuthConfig> = None;
         let mut audio: Option<AudioConfig> = None;
         let mut tracker: Option<TrackerSettings> = None;
+        let mut esp_now: Option<EspNowConfig> = None;
 
         loop {
             self.skip_ws_and_comments();
@@ -164,6 +180,7 @@ impl<'a> Parser<'a> {
                 "auth" => auth = Some(self.parse_auth()?),
                 "audio" => audio = Some(self.parse_audio()?),
                 "tracker" => tracker = Some(self.parse_tracker()?),
+                "esp_now" => esp_now = Some(self.parse_esp_now()?),
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -177,13 +194,14 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
-            // `auth`, `audio`, and `tracker` are optional for
+            // `auth`, `audio`, `tracker`, and `esp_now` are optional for
             // migration: SD cards written before each block landed
             // lack them, and the defaults match the firmware's prior
             // hard-coded behaviour.
             auth: auth.unwrap_or_default(),
             audio: audio.unwrap_or_default(),
             tracker: tracker.unwrap_or_default(),
+            esp_now: esp_now.unwrap_or_default(),
         })
     }
 
@@ -396,6 +414,70 @@ impl<'a> Parser<'a> {
             flip_x: flip_x.unwrap_or(defaults.flip_x),
             flip_y: flip_y.unwrap_or(defaults.flip_y),
         })
+    }
+
+    /// Parse the optional `esp_now: (...)` block. All inner fields
+    /// are optional and fall back to [`EspNowConfig::DEFAULT`].
+    fn parse_esp_now(&mut self) -> Result<EspNowConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut enabled: Option<bool> = None;
+        let mut pmk_hex: Option<String> = None;
+        let mut peer_mac: Option<String> = None;
+        let mut lmk_hex: Option<String> = None;
+        let mut channel: Option<Option<u8>> = None;
+        let mut tx_rate_hz: Option<u8> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "enabled" => enabled = Some(self.parse_bool()?),
+                "pmk_hex" => pmk_hex = Some(self.parse_string()?),
+                "peer_mac" => peer_mac = Some(self.parse_string()?),
+                "lmk_hex" => lmk_hex = Some(self.parse_string()?),
+                "channel" => channel = Some(self.parse_optional_u8()?),
+                "tx_rate_hz" => tx_rate_hz = Some(self.parse_u8()?),
+                other => return Err(bare_err("unknown esp_now field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in esp_now", ""));
+            }
+        }
+        let defaults = EspNowConfig::DEFAULT;
+        Ok(EspNowConfig {
+            enabled: enabled.unwrap_or(defaults.enabled),
+            pmk_hex: pmk_hex.unwrap_or(defaults.pmk_hex),
+            peer_mac: peer_mac.unwrap_or(defaults.peer_mac),
+            lmk_hex: lmk_hex.unwrap_or(defaults.lmk_hex),
+            channel: channel.unwrap_or(defaults.channel),
+            tx_rate_hz: tx_rate_hz.unwrap_or(defaults.tx_rate_hz),
+        })
+    }
+
+    /// Parse `Some(<u8>)` or `None` — the RON encoding for an
+    /// `Option<u8>` in our renderer.
+    fn parse_optional_u8(&mut self) -> Result<Option<u8>, ConfigError> {
+        if self.input.starts_with("None") {
+            self.advance("None".len());
+            return Ok(None);
+        }
+        if self.input.starts_with("Some") {
+            self.advance("Some".len());
+            self.skip_ws_and_comments();
+            self.expect_char('(')?;
+            self.skip_ws_and_comments();
+            let v = self.parse_u8()?;
+            self.skip_ws_and_comments();
+            self.expect_char(')')?;
+            return Ok(Some(v));
+        }
+        Err(bare_err("expected Some(...) or None", ""))
     }
 
     /// Parse a contiguous run of decimal digits as a `u8`. Used for

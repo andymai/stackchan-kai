@@ -49,6 +49,14 @@ pub struct Config {
     /// (mirrors the mDNS / SNTP / audio-init pattern).
     #[cfg_attr(feature = "parse", serde(default))]
     pub tracker: TrackerSettings,
+    /// ESP-NOW remote-control radio settings. Default: disabled. With
+    /// `enabled = true` the firmware spawns the inbound RX task and the
+    /// optional outbound heartbeat at `tx_rate_hz`. When `peer_mac` is
+    /// non-empty the address is registered statically at boot;
+    /// otherwise peer registration only happens during a `POST /pair`
+    /// pairing window.
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub esp_now: EspNowConfig,
 }
 
 /// Wi-Fi station credentials.
@@ -198,6 +206,71 @@ impl Default for TrackerSettings {
     }
 }
 
+/// ESP-NOW remote-control radio settings.
+///
+/// ESP-NOW is a connectionless 2.4 GHz protocol layered on top of
+/// 802.11 — peers agree on a Wi-Fi channel without ever associating.
+/// `channel = None` is the standard mode where this device follows
+/// whatever channel the Wi-Fi STA picked when it associated; setting
+/// `channel = Some(n)` is for ESP-NOW-only operation without
+/// joining a Wi-Fi network.
+///
+/// All on-disk hex strings are case-insensitive and accept either bare
+/// hex (`"aabbccddeeff"`) or RFC-style colon-delimited MAC
+/// (`"aa:bb:cc:dd:ee:ff"`). Empty strings are sentinels for "not
+/// configured" — see field docs for how each field treats them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct EspNowConfig {
+    /// Master switch. Default `false`; the firmware skips ESP-NOW init
+    /// entirely. Setting to `true` requires either a non-empty
+    /// `peer_mac` (static peer) or an operator-driven
+    /// [`crate::http_command::parse_enter_pairing`] window before any
+    /// frames are accepted.
+    pub enabled: bool,
+    /// Pre-master key as a 32-character hex string (16 bytes). Empty
+    /// disables encryption — fine for development on a private LAN,
+    /// but expose AES-CCM by setting a real PMK before shipping a
+    /// device with `enabled = true` to a less-trusted environment.
+    pub pmk_hex: String,
+    /// Peer's MAC address. Either empty (no static peer; operator
+    /// must use the pairing window), bare 12 hex chars, or
+    /// colon-delimited (`xx:xx:xx:xx:xx:xx`). Case-insensitive.
+    pub peer_mac: String,
+    /// Local master key for the static peer. Same hex shape as
+    /// `pmk_hex`. Required if `peer_mac` is non-empty AND `pmk_hex`
+    /// is non-empty (encryption enabled with a static peer); empty
+    /// in dev mode.
+    pub lmk_hex: String,
+    /// Wi-Fi channel to lock the radio to. `None` follows the Wi-Fi
+    /// STA's chosen channel — the standard mode where ESP-NOW
+    /// piggybacks on the Wi-Fi association. `Some(n)` (1..=14) is
+    /// for ESP-NOW-only deployments without Wi-Fi association.
+    pub channel: Option<u8>,
+    /// Outbound heartbeat rate in Hz. `0` disables outbound entirely
+    /// (RX-only). Range gated to `0..=20`. Default `5`.
+    pub tx_rate_hz: u8,
+}
+
+impl EspNowConfig {
+    /// Const-evaluable default: disabled, no peer, no encryption,
+    /// channel follows STA, 5 Hz heartbeat (a no-op while disabled).
+    pub const DEFAULT: Self = Self {
+        enabled: false,
+        pmk_hex: String::new(),
+        peer_mac: String::new(),
+        lmk_hex: String::new(),
+        channel: None,
+        tx_rate_hz: 5,
+    };
+}
+
+impl Default for EspNowConfig {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// Time / SNTP configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
@@ -308,7 +381,118 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
             config.tracker.target_smoothing_alpha,
         ));
     }
+    validate_esp_now(&config.esp_now)?;
     Ok(())
+}
+
+/// Run the ESP-NOW sub-block validators against [`EspNowConfig`].
+///
+/// Empty hex strings short-circuit — they're sentinels for "not set".
+/// Non-empty strings must match the documented shape (32 hex chars for
+/// keys, 12 raw or colon-delimited for the MAC).
+///
+/// # Errors
+///
+/// Returns one of [`ConfigError::InvalidEspNowKey`],
+/// [`ConfigError::InvalidEspNowMac`],
+/// [`ConfigError::InvalidEspNowChannel`], or
+/// [`ConfigError::InvalidEspNowTxRate`] on out-of-range values.
+fn validate_esp_now(c: &EspNowConfig) -> Result<(), ConfigError> {
+    if !is_redacted_or_empty(&c.pmk_hex) && !is_valid_hex_key(&c.pmk_hex) {
+        return Err(ConfigError::InvalidEspNowKey("pmk_hex"));
+    }
+    if !is_redacted_or_empty(&c.lmk_hex) && !is_valid_hex_key(&c.lmk_hex) {
+        return Err(ConfigError::InvalidEspNowKey("lmk_hex"));
+    }
+    if !c.peer_mac.is_empty() && parse_mac(&c.peer_mac).is_none() {
+        return Err(ConfigError::InvalidEspNowMac(c.peer_mac.clone()));
+    }
+    // Encrypted-static-peer requires both PMK + LMK. Pinning here so
+    // an inconsistent triple (peer_mac + pmk set, lmk left blank)
+    // can't drop the firmware into a silent unencrypted-unicast
+    // fallback.
+    if !c.peer_mac.is_empty() && !is_redacted_or_empty(&c.pmk_hex) && c.lmk_hex.is_empty() {
+        return Err(ConfigError::InvalidEspNowKey("lmk_hex"));
+    }
+    if let Some(ch) = c.channel
+        && !(1..=14).contains(&ch)
+    {
+        return Err(ConfigError::InvalidEspNowChannel(ch));
+    }
+    if c.tx_rate_hz > 20 {
+        return Err(ConfigError::InvalidEspNowTxRate(c.tx_rate_hz));
+    }
+    Ok(())
+}
+
+/// True iff the value is empty or matches the `***` redaction sentinel
+/// (mirroring `wifi.psk` / `auth.token` behaviour). The sentinel
+/// flows through to the downstream
+/// [`crate::bare_json::merge_settings_with_current`] step, which
+/// substitutes the persisted value back in.
+fn is_redacted_or_empty(s: &str) -> bool {
+    s.is_empty() || s == "***"
+}
+
+/// True iff `s` is exactly 32 case-insensitive hex characters
+/// (16 bytes — the ESP-NOW PMK / LMK size).
+fn is_valid_hex_key(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Parse a MAC address from either `xx:xx:xx:xx:xx:xx` or bare 12-hex
+/// form. Returns the raw 6 bytes on success, `None` on any structural
+/// mismatch. Case-insensitive on the hex digits.
+#[must_use]
+pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
+    let bytes = s.as_bytes();
+    let valid = match bytes.len() {
+        12 => bytes.iter().all(u8::is_ascii_hexdigit),
+        17 => {
+            // `xx:xx:xx:xx:xx:xx` — colons at positions 2, 5, 8, 11, 14.
+            for i in [2_usize, 5, 8, 11, 14] {
+                if bytes[i] != b':' {
+                    return None;
+                }
+            }
+            (0..17).all(|i| matches!(i, 2 | 5 | 8 | 11 | 14) || bytes[i].is_ascii_hexdigit())
+        }
+        _ => return None,
+    };
+    if !valid {
+        return None;
+    }
+    let mut out = [0_u8; 6];
+    let mut hex = [0_u8; 12];
+    if bytes.len() == 12 {
+        hex.copy_from_slice(bytes);
+    } else {
+        // Skip the colons at 2/5/8/11/14.
+        let mut j = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            if matches!(i, 2 | 5 | 8 | 11 | 14) {
+                continue;
+            }
+            hex[j] = b;
+            j += 1;
+        }
+    }
+    for (i, byte) in out.iter_mut().enumerate() {
+        let hi = hex_nibble(hex[i * 2])?;
+        let lo = hex_nibble(hex[i * 2 + 1])?;
+        *byte = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+/// Convert one ASCII hex digit to its numeric value (0..=15).
+const fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// True iff `deg` is a finite positive value within `(0, 180]`. Lens
@@ -355,6 +539,10 @@ fn is_valid_hostname(s: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test-only: unwrap on Option / Result is the standard test idiom for asserting parse success"
+)]
 mod tests {
     use super::*;
 
@@ -415,5 +603,118 @@ mod tests {
         assert!(!is_valid_hostname("-stackchan"));
         assert!(!is_valid_hostname("stackchan-"));
         assert!(!is_valid_hostname("stack_chan"));
+    }
+
+    #[test]
+    fn esp_now_default_is_disabled_and_empty() {
+        let c = EspNowConfig::default();
+        assert!(!c.enabled);
+        assert!(c.pmk_hex.is_empty());
+        assert!(c.peer_mac.is_empty());
+        assert!(c.lmk_hex.is_empty());
+        assert!(c.channel.is_none());
+        assert_eq!(c.tx_rate_hz, 5);
+    }
+
+    #[test]
+    fn parse_mac_accepts_both_formats() {
+        let bare = parse_mac("aabbccddeeff").unwrap();
+        let colon = parse_mac("aa:bb:cc:dd:ee:ff").unwrap();
+        let upper = parse_mac("AA:BB:CC:DD:EE:FF").unwrap();
+        assert_eq!(bare, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+        assert_eq!(bare, colon);
+        assert_eq!(bare, upper);
+    }
+
+    #[test]
+    fn parse_mac_rejects_garbage() {
+        assert!(parse_mac("").is_none());
+        assert!(parse_mac("not-a-mac").is_none());
+        assert!(parse_mac("aa:bb:cc:dd:ee").is_none()); // too short
+        assert!(parse_mac("aa:bb:cc:dd:ee:ff:gg").is_none()); // too long
+        assert!(parse_mac("zz:bb:cc:dd:ee:ff").is_none()); // bad hex
+        assert!(parse_mac("aabbccddeefz").is_none()); // bad hex bare
+    }
+
+    #[test]
+    fn validate_rejects_bad_pmk() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.pmk_hex = "tooshort".to_string();
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidEspNowKey("pmk_hex"))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_bad_peer_mac() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.peer_mac = "not-a-mac".to_string();
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidEspNowMac(_))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_channel_out_of_range() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.channel = Some(15);
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidEspNowChannel(15))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_tx_rate_too_high() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.tx_rate_hz = 21;
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidEspNowTxRate(21))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_static_peer_with_pmk_but_no_lmk() {
+        // peer_mac + pmk_hex set without lmk_hex would silently
+        // register an encrypted peer with no per-peer key. Reject.
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.peer_mac = "aa:bb:cc:dd:ee:ff".to_string();
+        c.esp_now.pmk_hex = "0123456789abcdef0123456789abcdef".to_string();
+        // lmk_hex left empty.
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidEspNowKey("lmk_hex"))
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_static_peer_with_no_encryption() {
+        // peer_mac + lmk + pmk all empty — open-mode static peer is
+        // valid. Only the (peer + pmk + no-lmk) triple is rejected.
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.peer_mac = "aa:bb:cc:dd:ee:ff".to_string();
+        assert!(validate(&c).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_well_formed_esp_now() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.enabled = true;
+        c.esp_now.pmk_hex = "0123456789abcdef0123456789abcdef".to_string();
+        c.esp_now.peer_mac = "aa:bb:cc:dd:ee:ff".to_string();
+        c.esp_now.lmk_hex = "fedcba9876543210fedcba9876543210".to_string();
+        c.esp_now.channel = Some(6);
+        c.esp_now.tx_rate_hz = 5;
+        assert!(validate(&c).is_ok());
     }
 }

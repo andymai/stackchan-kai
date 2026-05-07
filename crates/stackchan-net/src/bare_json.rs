@@ -20,7 +20,8 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use crate::config::{
-    AudioConfig, AuthConfig, Config, MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate,
+    AudioConfig, AuthConfig, Config, EspNowConfig, MdnsConfig, TimeConfig, TrackerSettings,
+    WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -38,6 +39,13 @@ pub const PSK_REDACTED: &str = "***";
 /// Same `"preserve current value"` semantics on the input side as
 /// [`PSK_REDACTED`] — see [`merge_settings_with_current`].
 pub const TOKEN_REDACTED: &str = "***";
+
+/// Sentinel emitted in place of a non-empty `esp_now.pmk_hex` /
+/// `esp_now.lmk_hex` on render.
+///
+/// Same `"preserve current value"` semantics on the input side as
+/// [`PSK_REDACTED`] — see [`merge_settings_with_current`].
+pub const ESP_NOW_KEY_REDACTED: &str = "***";
 
 /// Parse a schema-v1 JSON object into a [`Config`].
 ///
@@ -105,6 +113,25 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
         },
         audio: new.audio,
         tracker: new.tracker,
+        esp_now: EspNowConfig {
+            enabled: new.esp_now.enabled,
+            // Same redaction discipline as `wifi.psk`: the placeholder
+            // sentinel preserves the persisted secret while a non-empty
+            // explicit value overwrites and an empty string clears.
+            pmk_hex: if new.esp_now.pmk_hex == ESP_NOW_KEY_REDACTED {
+                current.esp_now.pmk_hex.clone()
+            } else {
+                new.esp_now.pmk_hex
+            },
+            peer_mac: new.esp_now.peer_mac,
+            lmk_hex: if new.esp_now.lmk_hex == ESP_NOW_KEY_REDACTED {
+                current.esp_now.lmk_hex.clone()
+            } else {
+                new.esp_now.lmk_hex
+            },
+            channel: new.esp_now.channel,
+            tx_rate_hz: new.esp_now.tx_rate_hz,
+        },
     }
 }
 
@@ -175,6 +202,38 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         flip_x = config.tracker.flip_x,
         flip_y = config.tracker.flip_y,
     );
+    out.push_str("},\"esp_now\":{");
+    let _ = write!(out, "\"enabled\":{}", config.esp_now.enabled);
+    out.push(',');
+    push_string_field(
+        &mut out,
+        "pmk_hex",
+        if redact_secrets && !config.esp_now.pmk_hex.is_empty() {
+            ESP_NOW_KEY_REDACTED
+        } else {
+            &config.esp_now.pmk_hex
+        },
+    );
+    out.push(',');
+    push_string_field(&mut out, "peer_mac", &config.esp_now.peer_mac);
+    out.push(',');
+    push_string_field(
+        &mut out,
+        "lmk_hex",
+        if redact_secrets && !config.esp_now.lmk_hex.is_empty() {
+            ESP_NOW_KEY_REDACTED
+        } else {
+            &config.esp_now.lmk_hex
+        },
+    );
+    out.push_str(",\"channel\":");
+    match config.esp_now.channel {
+        Some(ch) => {
+            let _ = write!(out, "{ch}");
+        }
+        None => out.push_str("null"),
+    }
+    let _ = write!(out, ",\"tx_rate_hz\":{}", config.esp_now.tx_rate_hz);
     out.push_str("}}");
     Ok(out)
 }
@@ -231,6 +290,7 @@ impl<'a> Parser<'a> {
         let mut auth: Option<AuthConfig> = None;
         let mut audio: Option<AudioConfig> = None;
         let mut tracker: Option<TrackerSettings> = None;
+        let mut esp_now: Option<EspNowConfig> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -277,6 +337,12 @@ impl<'a> Parser<'a> {
                     }
                     tracker = Some(self.parse_tracker()?);
                 }
+                "esp_now" => {
+                    if esp_now.is_some() {
+                        return Err(bare_err("duplicate top-level field", "esp_now"));
+                    }
+                    esp_now = Some(self.parse_esp_now()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -295,6 +361,7 @@ impl<'a> Parser<'a> {
             auth: auth.unwrap_or_default(),
             audio: audio.unwrap_or_default(),
             tracker: tracker.unwrap_or_default(),
+            esp_now: esp_now.unwrap_or_default(),
         })
     }
 
@@ -578,6 +645,90 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse the optional `"esp_now": { ... }` block.
+    fn parse_esp_now(&mut self) -> Result<EspNowConfig, ConfigError> {
+        self.expect_char('{')?;
+        let mut enabled: Option<bool> = None;
+        let mut pmk_hex: Option<String> = None;
+        let mut peer_mac: Option<String> = None;
+        let mut lmk_hex: Option<String> = None;
+        let mut channel: Option<Option<u8>> = None;
+        let mut tx_rate_hz: Option<u8> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            match key.as_str() {
+                "enabled" => {
+                    if enabled.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "enabled"));
+                    }
+                    enabled = Some(self.parse_bool()?);
+                }
+                "pmk_hex" => {
+                    if pmk_hex.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "pmk_hex"));
+                    }
+                    pmk_hex = Some(self.parse_string()?);
+                }
+                "peer_mac" => {
+                    if peer_mac.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "peer_mac"));
+                    }
+                    peer_mac = Some(self.parse_string()?);
+                }
+                "lmk_hex" => {
+                    if lmk_hex.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "lmk_hex"));
+                    }
+                    lmk_hex = Some(self.parse_string()?);
+                }
+                "channel" => {
+                    if channel.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "channel"));
+                    }
+                    channel = Some(self.parse_optional_u8()?);
+                }
+                "tx_rate_hz" => {
+                    if tx_rate_hz.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "tx_rate_hz"));
+                    }
+                    tx_rate_hz = Some(self.parse_u8()?);
+                }
+                other => return Err(bare_err("unknown esp_now field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in esp_now", ""));
+            }
+        }
+        let defaults = EspNowConfig::DEFAULT;
+        Ok(EspNowConfig {
+            enabled: enabled.unwrap_or(defaults.enabled),
+            pmk_hex: pmk_hex.unwrap_or(defaults.pmk_hex),
+            peer_mac: peer_mac.unwrap_or(defaults.peer_mac),
+            lmk_hex: lmk_hex.unwrap_or(defaults.lmk_hex),
+            channel: channel.unwrap_or(defaults.channel),
+            tx_rate_hz: tx_rate_hz.unwrap_or(defaults.tx_rate_hz),
+        })
+    }
+
+    /// Parse `null` or a decimal `u8`. The JSON wire form for an
+    /// `Option<u8>` — null = `None`, integer = `Some(n)`. Used for
+    /// `esp_now.channel`.
+    fn parse_optional_u8(&mut self) -> Result<Option<u8>, ConfigError> {
+        if self.input.starts_with("null") {
+            self.advance("null".len());
+            return Ok(None);
+        }
+        Ok(Some(self.parse_u8()?))
+    }
+
     /// Parse a JSON number into `f32`. Delegates to
     /// [`crate::bare::scan_f32`] so the RON and JSON parsers consume
     /// the identical grammar (and so a leading `+` is rejected
@@ -774,6 +925,14 @@ mod tests {
                 target_smoothing_alpha: 0.4,
                 flip_x: true,
                 flip_y: false,
+            },
+            esp_now: EspNowConfig {
+                enabled: true,
+                pmk_hex: "0123456789abcdef0123456789abcdef".to_string(),
+                peer_mac: "aa:bb:cc:dd:ee:ff".to_string(),
+                lmk_hex: "fedcba9876543210fedcba9876543210".to_string(),
+                channel: Some(6),
+                tx_rate_hz: 5,
             },
         }
     }
@@ -1080,6 +1239,14 @@ mod tests {
                 muted: false,
             },
             tracker: TrackerSettings::DEFAULT,
+            esp_now: EspNowConfig {
+                enabled: true,
+                pmk_hex: "0".repeat(32),
+                peer_mac: "aa:bb:cc:dd:ee:ff".to_string(),
+                lmk_hex: "f".repeat(32),
+                channel: Some(11),
+                tx_rate_hz: 20,
+            },
         };
         let rendered = render_settings_json(&config, false).unwrap();
         assert!(

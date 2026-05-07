@@ -22,6 +22,14 @@ shape of the on-disk config and the RON file `PUT /settings` round-trips.
     wifi: ( ssid: "home", psk: "redacted", country: "US" ),
     mdns: ( hostname: "stackchan" ),
     time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+    esp_now: (
+        enabled: false,
+        pmk_hex: "",
+        peer_mac: "",
+        lmk_hex: "",
+        channel: None,
+        tx_rate_hz: 5,
+    ),
 )
 ```
 
@@ -30,6 +38,12 @@ shape of the on-disk config and the RON file `PUT /settings` round-trips.
 - `TimeConfig` — IANA timezone label + SNTP servers (default `"UTC"`,
   `["pool.ntp.org"]`). The TZ field is parsed but currently unused;
   the BM8563 RTC stores UTC.
+- `EspNowConfig` — ESP-NOW remote-control radio settings. Disabled by
+  default. `pmk_hex` / `lmk_hex` are 32-character hex (16 bytes);
+  `peer_mac` accepts either bare 12-hex or `xx:xx:xx:xx:xx:xx`.
+  `channel: None` follows the Wi-Fi STA's chosen channel; explicit
+  values `1..=14` are for ESP-NOW-only deployments. `tx_rate_hz`
+  ranges `0..=20`; `0` disables outbound entirely.
 
 ## Key Files
 
