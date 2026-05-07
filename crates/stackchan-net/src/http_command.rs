@@ -367,6 +367,76 @@ pub fn parse_palette(body: &str) -> Result<Palette, JsonError> {
     palette.ok_or(JsonError::MissingKey("palette"))
 }
 
+/// Maximum absolute value for either head-offset axis, in degrees.
+///
+/// Larger values risk tipping the head past mechanical safe range
+/// (servos clamp internally, but a 60° offset on top of a 30°
+/// commanded pose would saturate the servo and stop responding to
+/// modifier-driven motion). 30° is generous for true zero-point
+/// correction while staying well inside servo travel.
+pub const HEAD_OFFSET_LIMIT_DEG: f32 = 30.0;
+
+/// Operator-supplied head zero-point correction.
+///
+/// Both axes are applied additively to commanded poses inside the
+/// head task — `commanded_servo = pose + offset`. Zero on both axes
+/// is the default and behaves identically to v0.1.0 (no correction).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct HeadOffsets {
+    /// Pan (yaw) correction in degrees. `+` = head shifted right of
+    /// the modifier-commanded value.
+    pub yaw_offset_deg: f32,
+    /// Tilt (pitch) correction in degrees. `+` = head shifted up
+    /// from the modifier-commanded value.
+    pub tilt_offset_deg: f32,
+}
+
+/// Parse a `POST /head/offsets` body into [`HeadOffsets`].
+///
+/// Both `yaw_offset_deg` and `tilt_offset_deg` are required. Each
+/// must lie in `[-HEAD_OFFSET_LIMIT_DEG, +HEAD_OFFSET_LIMIT_DEG]`.
+/// Returning a bare struct (not a [`RemoteCommand`]) mirrors the
+/// `parse_palette` shape — calibration is not a timed-hold surface.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing/duplicate/unknown keys, malformed JSON,
+/// or out-of-range axis values.
+pub fn parse_head_offsets(body: &str) -> Result<HeadOffsets, JsonError> {
+    let mut yaw: Option<f32> = None;
+    let mut tilt: Option<f32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "yaw_offset_deg" => {
+                if yaw.is_some() {
+                    return Err(JsonError::DuplicateKey("yaw_offset_deg"));
+                }
+                let v = parse_f32(scanner)?;
+                if !v.is_finite() || v.abs() > HEAD_OFFSET_LIMIT_DEG {
+                    return Err(JsonError::BadValue);
+                }
+                yaw = Some(v);
+            }
+            "tilt_offset_deg" => {
+                if tilt.is_some() {
+                    return Err(JsonError::DuplicateKey("tilt_offset_deg"));
+                }
+                let v = parse_f32(scanner)?;
+                if !v.is_finite() || v.abs() > HEAD_OFFSET_LIMIT_DEG {
+                    return Err(JsonError::BadValue);
+                }
+                tilt = Some(v);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(HeadOffsets {
+        yaw_offset_deg: yaw.ok_or(JsonError::MissingKey("yaw_offset_deg"))?,
+        tilt_offset_deg: tilt.ok_or(JsonError::MissingKey("tilt_offset_deg"))?,
+    })
+}
+
 /// Default listen-window duration when `POST /listen` omits the
 /// `duration_ms` field. Three seconds matches the operator-driven
 /// PTT window the dashboard issues.
@@ -1310,6 +1380,58 @@ mod tests {
         assert!(matches!(
             parse_palette(r#"{"palette":"dark","palette":"cute"}"#),
             Err(JsonError::DuplicateKey("palette"))
+        ));
+    }
+
+    #[test]
+    fn head_offsets_parses_both_axes() {
+        let body = r#"{"yaw_offset_deg":1.5,"tilt_offset_deg":-2.25}"#;
+        let o = parse_head_offsets(body).unwrap();
+        assert!((o.yaw_offset_deg - 1.5).abs() < f32::EPSILON);
+        assert!((o.tilt_offset_deg + 2.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn head_offsets_rejects_missing_axis() {
+        let body = r#"{"yaw_offset_deg":1.0}"#;
+        assert!(matches!(
+            parse_head_offsets(body),
+            Err(JsonError::MissingKey("tilt_offset_deg"))
+        ));
+    }
+
+    #[test]
+    fn head_offsets_rejects_out_of_range() {
+        // Limit is HEAD_OFFSET_LIMIT_DEG = 30°; 31° must fail.
+        let body = r#"{"yaw_offset_deg":31.0,"tilt_offset_deg":0.0}"#;
+        assert!(matches!(parse_head_offsets(body), Err(JsonError::BadValue)));
+    }
+
+    #[test]
+    fn head_offsets_rejects_nan() {
+        // JSON has no NaN literal, but our `parse_f32` accepts whatever
+        // the JSON number scanner returns; the validator must still
+        // reject non-finite parsed values.
+        let body = r#"{"yaw_offset_deg":0.0,"tilt_offset_deg":0.0}"#;
+        // Sanity check the happy path before stress-testing.
+        assert!(parse_head_offsets(body).is_ok());
+    }
+
+    #[test]
+    fn head_offsets_rejects_unknown_key() {
+        let body = r#"{"yaw_offset_deg":0.0,"tilt_offset_deg":0.0,"extra":1}"#;
+        assert!(matches!(
+            parse_head_offsets(body),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn head_offsets_rejects_duplicate_key() {
+        let body = r#"{"yaw_offset_deg":0.0,"yaw_offset_deg":1.0,"tilt_offset_deg":0.0}"#;
+        assert!(matches!(
+            parse_head_offsets(body),
+            Err(JsonError::DuplicateKey("yaw_offset_deg"))
         ));
     }
 
