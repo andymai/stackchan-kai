@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.18.0...stackchan-core-v0.19.0) (2026-05-07)
+
+
+### Features
+
+* **core:** expand emotion palette with 7 new variants ([#216](https://github.com/andymai/stackchan-kai/issues/216)) ([21f6b20](https://github.com/andymai/stackchan-kai/commit/21f6b20dd497f82f8f9efbda134b87869e5f69f4))
+
 ## [0.18.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.17.0...stackchan-core-v0.18.0) (2026-05-01)
 
 
