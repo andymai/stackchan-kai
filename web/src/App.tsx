@@ -3,6 +3,7 @@ import { connectStream } from "./store";
 import { ConnStatus } from "./components/ConnStatus";
 import { State } from "./components/State";
 import { Emotion } from "./components/Emotion";
+import { Mood } from "./components/Mood";
 import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
 import { Camera } from "./components/Camera";
@@ -48,6 +49,7 @@ export function App() {
         </header>
         <State />
         <Emotion />
+        <Mood />
         <LookAt />
         <Audio />
         <Speak />

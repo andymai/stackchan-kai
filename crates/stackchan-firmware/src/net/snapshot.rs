@@ -14,7 +14,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::Instant as EmbassyInstant;
 use stackchan_core::head::Pose;
-use stackchan_core::{Decorator, Emotion};
+use stackchan_core::{Decorator, Emotion, Mood};
 use stackchan_net::config::AudioConfig;
 
 /// Battery snapshot — published by the power task.
@@ -69,6 +69,9 @@ pub struct AvatarSnapshot {
     /// `entity.face.decorator.kind`; the `expires_at` deadline is
     /// internal and not exposed.
     pub decorator: Option<Decorator>,
+    /// Operator-selected energy baseline. Mirrors `entity.mind.mood`;
+    /// HTTP `POST /mood` updates this through `MOOD_SIGNAL`.
+    pub mood: Mood,
 }
 
 impl AvatarSnapshot {
@@ -97,6 +100,7 @@ impl AvatarSnapshot {
             && self.audio == other.audio
             && self.camera_mode == other.camera_mode
             && self.decorator == other.decorator
+            && self.mood == other.mood
     }
 }
 
@@ -111,6 +115,7 @@ impl Default for AvatarSnapshot {
             audio: AudioConfig::DEFAULT,
             camera_mode: false,
             decorator: None,
+            mood: Mood::Neutral,
         }
     }
 }
@@ -136,6 +141,7 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
         audio: AudioConfig::DEFAULT,
         camera_mode: false,
         decorator: None,
+        mood: Mood::Neutral,
     }));
 
 /// Replace the avatar/head fields. Called per render tick.
@@ -144,6 +150,7 @@ pub fn update_avatar(
     head_pose: Pose,
     head_actual: Option<Pose>,
     decorator: Option<Decorator>,
+    mood: Mood,
 ) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
@@ -151,6 +158,7 @@ pub fn update_avatar(
         s.head_pose = head_pose;
         s.head_actual = head_actual;
         s.decorator = decorator;
+        s.mood = mood;
         cell.set(s);
     });
 }

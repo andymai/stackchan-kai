@@ -29,6 +29,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
 | POST   | `/speak`         | Play a baked phrase / chirp through the speaker      |
+| POST   | `/mood`          | Set the operator-selected energy baseline (runtime-only) |
 | POST   | `/volume`        | Set output volume (0–100); persisted to SD           |
 | POST   | `/mute`          | Mute / un-mute output stage; persisted to SD         |
 | GET    | `/settings`      | Persisted config (PSK + token redacted)             |

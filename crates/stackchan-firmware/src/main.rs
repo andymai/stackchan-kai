@@ -80,7 +80,7 @@ use stackchan_core::{
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
         HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
         MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
-        StyleFromIntent,
+        StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -203,6 +203,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut cycle = EmotionCycle::new();
     let mut style = StyleFromEmotion::new();
     let mut style_from_intent = StyleFromIntent::new();
+    let mut style_from_mood = StyleFromMood::new();
     let mut gaze_from_attention = GazeFromAttention::new();
     let mut microsaccade = MicrosaccadeFromAttention::new();
     let mut blink = Blink::new();
@@ -282,6 +283,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     director.add_modifier(&mut style).expect("registry full");
     director
         .add_modifier(&mut style_from_intent)
+        .expect("registry full");
+    director
+        .add_modifier(&mut style_from_mood)
         .expect("registry full");
     director
         .add_modifier(&mut gaze_from_attention)
@@ -431,6 +435,12 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
                 other => entity.input.remote_command = Some(other),
             }
         }
+        // Drain pending mood selections from `POST /mood`. Latest-wins;
+        // mood persists across emotion changes and only flips on an
+        // explicit operator action.
+        if let Some(mood) = net::http::MOOD_SIGNAL.try_take() {
+            entity.mind.mood = mood;
+        }
         // Drain the latest IMU reading.
         if let Some(m) = imu::IMU_SIGNAL.try_take() {
             entity.perception.accel_g = m.accel_g;
@@ -569,6 +579,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
             entity.motor.head_pose,
             Some(entity.motor.head_pose_actual),
             entity.face.decorator.map(|d| d.kind),
+            entity.mind.mood,
         );
         // Push the latest snapshot to any connected SSE subscribers.
         // Throttled internally so a 30 Hz render doesn't firehose
