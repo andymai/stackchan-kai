@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.58.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.57.0...stackchan-firmware-v0.58.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** hourly chime — config-gated top-of-hour chirp ([#261](https://github.com/andymai/stackchan-kai/issues/261)) ([bf379f7](https://github.com/andymai/stackchan-kai/commit/bf379f7a75bc8b06a2027ad9acd026d1b75ba063))
+
 ## [0.57.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.56.0...stackchan-firmware-v0.57.0) (2026-05-07)
 
 
