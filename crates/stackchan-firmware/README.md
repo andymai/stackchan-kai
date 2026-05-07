@@ -90,8 +90,11 @@ runs three networked services on the LAN:
   phrase or chirp on the AW88298 TX path. See
   [docs/http.md](../../docs/http.md) for the full route table, body
   shapes, error codes, and the auth section with `curl` examples.
-- **mDNS** — advertises `<hostname>.local` from
-  `mdns.hostname` in the boot config (default `stackchan`).
+- **mDNS** — advertises `<hostname>.local` (A) plus the DNS-SD
+  service `_stackchan._tcp.local.` (PTR / SRV / TXT) from
+  `mdns.hostname` in the boot config (default `stackchan`). The TXT
+  record carries `kai=1` as a variant marker; a generic Bonjour
+  browser still lists the device alongside upstream stackchan units.
 - **SNTP** — on link-up, queries the SNTP servers from
   `time.sntp_servers` and writes the result into the BM8563 RTC.
 
