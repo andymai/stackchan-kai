@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.12.8](https://github.com/andymai/stackchan-kai/compare/tracker-v0.12.7...tracker-v0.12.8) (2026-05-07)
+
 ## [0.12.7](https://github.com/andymai/stackchan-kai/compare/tracker-v0.12.6...tracker-v0.12.7) (2026-05-07)
 
 ## [0.12.6](https://github.com/andymai/stackchan-kai/compare/tracker-v0.12.5...tracker-v0.12.6) (2026-05-07)
