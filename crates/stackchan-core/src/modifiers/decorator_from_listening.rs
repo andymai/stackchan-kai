@@ -50,13 +50,14 @@ impl Modifier for DecoratorFromListening {
                           refreshes expires_at each frame and lets DecoratorExpiry's tail \
                           handle the fade-out when Listening releases.",
             phase: Phase::Decoration,
-            // Priority 5 — runs after the other decorator triggers
-            // (Heart=0, Sweat=10, Dizzy=20). Ear takes precedence
-            // over Sweat / Dizzy for an active listen window because
-            // the operator-driven listening signal is intentional;
-            // those autonomous decorators can re-arm on the next
-            // trigger.
-            priority: 5,
+            // Priority 25 — runs LAST among the decorator triggers
+            // (Heart=0, Sweat=10, Dizzy=20). The director sorts
+            // ascending and `face.decorator` is a single Option, so
+            // last-write-wins. An active listen window must take
+            // precedence over both Sweat and Dizzy because the
+            // operator-driven listening signal is intentional; the
+            // autonomous decorators can re-arm on their next trigger.
+            priority: 25,
             reads: &[Field::Attention],
             writes: &[Field::Decorator],
         };

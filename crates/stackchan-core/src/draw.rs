@@ -281,11 +281,9 @@ const EAR_INNER_DIAMETER: u32 = 12;
 /// foreign UI element.
 const EAR_COLOR: Rgb565 = Rgb565::new(31, 50, 22);
 
-/// Draw the cupped-hand listening overlay. Two concentric circles
-/// (outer pink, inner white) — the white inner circle "subtracts"
-/// from the pink outer to leave a ring, then a small triangle on
-/// the right side closes the C-shape so it reads as a hand cupped
-/// behind an ear rather than a plain donut.
+/// Draw the listening overlay. Two concentric circles (outer pink,
+/// inner white) — the white inner circle "subtracts" from the pink
+/// outer to leave a ring that reads as an ear / listen indicator.
 fn draw_ear<D>(target: &mut D) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
