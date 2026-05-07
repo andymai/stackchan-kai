@@ -7,7 +7,6 @@
 //! we want is "anyone who pats Stack-chan gets a heart back," and
 //! `Petting`'s sustain-counter is too slow for that interaction.
 
-use crate::clock::Instant;
 use crate::decorator::{Decorator, DecoratorState};
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
@@ -22,10 +21,11 @@ pub const HEART_HOLD_MS: u64 = 2_000;
 pub struct DecoratorFromBodyTouch {
     /// Hold duration in milliseconds. Configurable for tests.
     hold_ms: u64,
-    /// Last `now` we observed `body_touch.any() == true`. Used so we
-    /// only re-arm the heart on a rising edge, not on every frame the
-    /// hand is still resting on the head.
-    last_touched_at: Option<Instant>,
+    /// `true` if the previous frame observed `body_touch.any()`. Used
+    /// so we only re-arm the heart on a rising edge, not on every
+    /// frame the hand is still resting on the head — a `bool` is
+    /// enough; we don't need the timestamp.
+    was_touched_last_frame: bool,
 }
 
 impl DecoratorFromBodyTouch {
@@ -34,7 +34,7 @@ impl DecoratorFromBodyTouch {
     pub const fn new() -> Self {
         Self {
             hold_ms: HEART_HOLD_MS,
-            last_touched_at: None,
+            was_touched_last_frame: false,
         }
     }
 
@@ -44,7 +44,7 @@ impl DecoratorFromBodyTouch {
     pub const fn with_hold_ms(hold_ms: u64) -> Self {
         Self {
             hold_ms,
-            last_touched_at: None,
+            was_touched_last_frame: false,
         }
     }
 }
@@ -84,12 +84,8 @@ impl Modifier for DecoratorFromBodyTouch {
         // Detect rising edge: was untouched (or first frame), now is.
         // Without the rising-edge gate we'd refresh the expiry every
         // frame the hand is held, masking the natural fade-out.
-        let rose = touched && self.last_touched_at.is_none();
-        if touched {
-            self.last_touched_at = Some(now);
-        } else {
-            self.last_touched_at = None;
-        }
+        let rose = touched && !self.was_touched_last_frame;
+        self.was_touched_last_frame = touched;
 
         if rose && emotion_invites_heart(entity.mind.affect.emotion) {
             entity.face.decorator = Some(DecoratorState::hold_for(
@@ -110,6 +106,7 @@ impl Modifier for DecoratorFromBodyTouch {
 )]
 mod tests {
     use super::*;
+    use crate::clock::Instant;
     use crate::perception::BodyTouch;
 
     fn step(m: &mut DecoratorFromBodyTouch, entity: &mut Entity, ms: u64) {
