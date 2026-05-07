@@ -71,11 +71,14 @@ for the details.
 ## Features
 
 - **Animated face** — eased transitions across the m5stack-avatar emotion palette, blink / breath / idle-drift at double-buffered 30 FPS
-- **Head motion** — Feetech SCServo pan/tilt with a calibration bench (`just bench`)
+- **Symbolic overlays** — speech-bubble text and decorator badges (heart, sweat, sleep, anger, shy) layered on top of the base face
+- **Color palette swap** — runtime theme switch through a small set of named presets (default / dark / cute / dog) without disturbing the symbolic-overlay layer's distinctness
+- **Head motion** — Feetech SCServo pan/tilt with a calibration bench (`just bench`) and a runtime zero-point correction surface for day-of mounting drift
 - **9-axis sensing** — BMI270 accel + gyro, BMM150 magnetometer (compensated µT, live bench via `just mag-bench`)
 - **Local inputs** — FT6336U touch, Si12T body-touch strip, LTR-553 ambient + proximity, NEC IR decoder
 - **Timekeeping + peripherals** — BM8563 RTC, PY32 co-processor, WS2812 neck LED ring (`just leds-bench`)
 - **Camera tracking** — GC0308 capture into a block-grid motion tracker, engagement-driven gaze with microsaccades and lost-target search
+- **Optional autonomy** — opt-in soliloquy bubbles at random intervals; opt-in top-of-hour chime
 - **Host-side sim** — runs the full modifier stack on the host with pixel-golden tests + an `egui` visualiser (`cargo run -p stackchan-sim --bin viz --features viz`); cuts behaviour iteration from ~30 s build cycles to under a second
 - **Safe by default** — no `unwrap` in library code, typed errors throughout, `unsafe` denied workspace-wide
 
@@ -86,10 +89,23 @@ and the firmware exposes a LAN-only HTTP control plane:
 
 - `GET /` — operator dashboard, single-page HTML embedded in the binary
 - `GET /state/stream` — live state via Server-Sent Events
-- `POST /emotion`, `/look-at`, `/reset`, `/speak` — manual override
-- `POST /volume`, `/mute` — persistent audio control (atomic SD writeback)
+- `POST /emotion`, `/look-at`, `/face-target`, `/reset`, `/speak` — manual override
+- `POST /volume`, `/mute`, `/palette`, `/head/offsets` — runtime control surface
+- `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP for AI agent integrations (`set_emotion`, `look_at`, `speak`, `set_volume`, `create_reminder` / `list_reminders` / `cancel_reminder`, …)
 - `GET` / `PUT /settings` — persistent config with atomic SD writeback
 - Bearer-token auth on writes; constant-time compare; LAN-scoped (no TLS)
+
+Discovery and inter-device:
+
+- **mDNS** — `<hostname>.local` plus DNS-SD service records (`_stackchan._tcp.local.`)
+  carrying a `kai=1` variant marker so kai-aware clients gate on extension endpoints
+  while a generic Bonjour browser still lists the device alongside upstream stackchan units
+- **ESP-NOW** — peer-allowlisted RX driving the same `RemoteCommand` plumbing as HTTP,
+  plus a TX path that broadcasts pose-mirror + heartbeat frames so multiple units can
+  choreograph against each other
+- **BLE peripheral** — Device Information / Battery / emotion / Wi-Fi provisioning /
+  audio / avatar control / camera-view services, advertised as `stackchan-XXXXXX`
+  (last three MAC bytes); shares the radio with Wi-Fi via `esp-radio` coex
 
 Without an SD card the firmware boots offline and the desk-toy surface works
 the same. See [HTTP control plane](https://andymai.github.io/stackchan-kai/http)
