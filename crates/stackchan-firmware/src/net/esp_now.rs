@@ -194,24 +194,30 @@ pub async fn esp_now_task(esp_now: EspNow<'static>, cfg: EspNowConfig) {
     let static_peer = parse_mac(&cfg.peer_mac);
     let mut window = PairWindowCache::new();
     let mut tx_state = TxState::new();
+    let mut tx_deadline = Instant::now() + Duration::from_millis(TX_TICK_MS);
 
     loop {
-        // Bias is implicit in `select`: whichever future resolves
-        // first wins. Heartbeat / pose-mirror cadence is 200 ms, so
-        // a steady RX stream still gets serviced — frames just queue
-        // in the radio buffer between TX ticks.
-        match select(
-            receiver.receive_async(),
-            Timer::after(Duration::from_millis(TX_TICK_MS)),
-        )
-        .await
-        {
+        // The Timer here is just a wake-up — the actual TX trigger
+        // is `Instant::now() >= tx_deadline` after the select
+        // resolves. Earlier versions used the `Either::Second` arm
+        // as the TX trigger, but `select` polls its first future
+        // first, so under sustained inbound traffic `Either::First`
+        // fired every iteration, dropping the timer mid-flight and
+        // never advancing past it. The wall-clock deadline persists
+        // across cancelled-future cycles, so RX traffic can't starve
+        // TX. (See greptile review on PR #255.)
+        let timeout = tx_deadline.saturating_duration_since(Instant::now());
+        match select(receiver.receive_async(), Timer::after(timeout)).await {
             Either::First(frame) => {
                 handle_inbound_frame(&frame, static_peer, &mut window);
             }
             Either::Second(()) => {
-                tx_state.tick(&mut sender).await;
+                // Timer fired naturally; deadline is now in the past.
             }
+        }
+        if Instant::now() >= tx_deadline {
+            tx_state.tick(&mut sender).await;
+            tx_deadline = Instant::now() + Duration::from_millis(TX_TICK_MS);
         }
     }
 }
@@ -280,7 +286,25 @@ impl TxState {
     /// (the receiver gets liveness for free from the pose frame).
     async fn tick(&mut self, sender: &mut esp_radio::esp_now::EspNowSender<'_>) {
         let snapshot = read_avatar_snapshot();
-        let pose = snapshot.head_pose;
+        // Coerce non-finite axes to zero before comparison or storage.
+        // The encoder already maps NaN/inf to 0 on the wire, so a
+        // raw NaN snapshot would still send `(0, 0)`; without the
+        // pre-clamp here, `last_sent` would latch the NaN and every
+        // subsequent `pose_delta_exceeds(NaN, valid, ε)` would
+        // evaluate `false`, killing TX until reboot. (See greptile
+        // review on PR #255.)
+        let pose = Pose::new(
+            if snapshot.head_pose.pan_deg.is_finite() {
+                snapshot.head_pose.pan_deg
+            } else {
+                0.0
+            },
+            if snapshot.head_pose.tilt_deg.is_finite() {
+                snapshot.head_pose.tilt_deg
+            } else {
+                0.0
+            },
+        );
         let pose_changed = self
             .last_sent
             .is_none_or(|prev| pose_delta_exceeds(prev, pose, POSE_TX_EPSILON_DEG));
