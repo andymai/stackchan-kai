@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use crate::config::{
-    AudioConfig, AuthConfig, Config, EspNowConfig, MdnsConfig, TimeConfig, TrackerSettings,
-    WifiConfig, validate,
+    AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, MdnsConfig, TimeConfig,
+    TrackerSettings, WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -132,6 +132,7 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
             channel: new.esp_now.channel,
             tx_rate_hz: new.esp_now.tx_rate_hz,
         },
+        behavior: new.behavior,
     }
 }
 
@@ -234,6 +235,12 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         None => out.push_str("null"),
     }
     let _ = write!(out, ",\"tx_rate_hz\":{}", config.esp_now.tx_rate_hz);
+    out.push_str("},\"behavior\":{");
+    let _ = write!(
+        out,
+        "\"soliloquy_enabled\":{}",
+        config.behavior.soliloquy_enabled
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -291,6 +298,7 @@ impl<'a> Parser<'a> {
         let mut audio: Option<AudioConfig> = None;
         let mut tracker: Option<TrackerSettings> = None;
         let mut esp_now: Option<EspNowConfig> = None;
+        let mut behavior: Option<BehaviorConfig> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -343,6 +351,12 @@ impl<'a> Parser<'a> {
                     }
                     esp_now = Some(self.parse_esp_now()?);
                 }
+                "behavior" => {
+                    if behavior.is_some() {
+                        return Err(bare_err("duplicate top-level field", "behavior"));
+                    }
+                    behavior = Some(self.parse_behavior()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -362,6 +376,7 @@ impl<'a> Parser<'a> {
             audio: audio.unwrap_or_default(),
             tracker: tracker.unwrap_or_default(),
             esp_now: esp_now.unwrap_or_default(),
+            behavior: behavior.unwrap_or_default(),
         })
     }
 
@@ -718,6 +733,38 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse the optional `"behavior": { "soliloquy_enabled": <bool> }` block.
+    fn parse_behavior(&mut self) -> Result<BehaviorConfig, ConfigError> {
+        self.expect_char('{')?;
+        let mut soliloquy_enabled: Option<bool> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            match key.as_str() {
+                "soliloquy_enabled" => {
+                    if soliloquy_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "soliloquy_enabled"));
+                    }
+                    soliloquy_enabled = Some(self.parse_bool()?);
+                }
+                other => return Err(bare_err("unknown behavior field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in behavior", ""));
+            }
+        }
+        Ok(BehaviorConfig {
+            soliloquy_enabled: soliloquy_enabled.unwrap_or(false),
+        })
+    }
+
     /// Parse `null` or a decimal `u8`. The JSON wire form for an
     /// `Option<u8>` — null = `None`, integer = `Some(n)`. Used for
     /// `esp_now.channel`.
@@ -933,6 +980,9 @@ mod tests {
                 lmk_hex: "fedcba9876543210fedcba9876543210".to_string(),
                 channel: Some(6),
                 tx_rate_hz: 5,
+            },
+            behavior: BehaviorConfig {
+                soliloquy_enabled: true,
             },
         }
     }
@@ -1246,6 +1296,9 @@ mod tests {
                 lmk_hex: "f".repeat(32),
                 channel: Some(11),
                 tx_rate_hz: 20,
+            },
+            behavior: BehaviorConfig {
+                soliloquy_enabled: true,
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

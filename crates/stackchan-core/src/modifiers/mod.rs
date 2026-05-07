@@ -111,6 +111,7 @@ mod lost_target_search;
 mod microsaccade_from_attention;
 mod mouth_from_audio;
 mod remote_command;
+mod soliloquy;
 mod style_from_emotion;
 mod style_from_intent;
 mod style_from_mood;
@@ -175,6 +176,10 @@ pub use mouth_from_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthFromAudio,
 };
 pub use remote_command::{PAIRING_DECORATOR_TAIL_MS, RemoteCommandModifier};
+pub use soliloquy::{
+    SOLILOQUY_BUBBLE_TTL_MS, SOLILOQUY_INTERVAL_MAX_MS, SOLILOQUY_INTERVAL_MIN_MS, SOLILOQUY_LINES,
+    Soliloquy,
+};
 pub use style_from_emotion::StyleFromEmotion;
 pub use style_from_intent::{
     PETTING_BLUSH_BUMP, PETTING_EYE_CURVE_BUMP, PETTING_OPEN_WEIGHT_CAP, StyleFromIntent,
