@@ -36,7 +36,10 @@ function rgb565beToImageData(buf: Uint8Array): ImageData {
 
 export function Camera() {
   const previewActive = createMemo(() => snapshot()?.camera_mode ?? false);
-  const [snapshotUrl, setSnapshotUrl] = createSignal<string | null>(null);
+  // Visibility marker for the canvas — `true` once a snapshot has
+  // been fetched and rendered. Plain bool because we never hold the
+  // image bytes in JS state; the canvas owns them.
+  const [hasSnapshot, setHasSnapshot] = createSignal(false);
   let canvasRef: HTMLCanvasElement | undefined;
 
   const toggleMode = async () => {
@@ -77,7 +80,7 @@ export function Camera() {
       const ctx = canvasRef?.getContext("2d");
       if (!ctx) throw new Error("canvas 2d context unavailable");
       ctx.putImageData(rgb565beToImageData(buf), 0, 0);
-      setSnapshotUrl("rendered"); // marker so the canvas shows
+      setHasSnapshot(true);
       showToast("snapshot rendered");
     } catch (e) {
       showToast((e as Error).message, true);
@@ -105,7 +108,7 @@ export function Camera() {
         width={FRAME_WIDTH}
         height={FRAME_HEIGHT}
         style={{
-          display: snapshotUrl() ? "block" : "none",
+          display: hasSnapshot() ? "block" : "none",
           "margin-top": "8px",
           "max-width": "100%",
           border: "1px solid var(--muted)",

@@ -337,8 +337,14 @@ where
     ///
     /// # Errors
     ///
-    /// [`StorageError::Read`] on a partial / failed read.
+    /// [`StorageError::Read`] on a partial / failed read,
+    /// [`StorageError::TooLarge`] if the file exceeds the QVGA RGB565
+    /// frame size — guards against a corrupt FAT entry reporting a
+    /// gigabyte-scale length and starving the PSRAM heap.
     pub fn read_capture(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
+        // Cap on the capture size — a single QVGA RGB565 frame.
+        // Mirrors `MAX_BONDS_BYTES` / `MAX_CONFIG_BYTES`'s pattern.
+        const MAX_CAPTURE_BYTES: u32 = 320 * 240 * 2;
         let volume = self
             .mgr
             .open_volume(VolumeIdx(0))
@@ -347,7 +353,11 @@ where
         let Ok(file) = root.open_file_in_dir(CAPTURE_FILE, Mode::ReadOnly) else {
             return Ok(None);
         };
-        let len = file.length() as usize;
+        let raw_len = file.length();
+        if raw_len > MAX_CAPTURE_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = raw_len as usize;
         let mut buf = alloc::vec![0u8; len];
         let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
         buf.truncate(n);
