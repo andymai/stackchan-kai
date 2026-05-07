@@ -437,6 +437,73 @@ pub fn parse_head_offsets(body: &str) -> Result<HeadOffsets, JsonError> {
     })
 }
 
+/// Operator-supplied reminder creation body, parsed by
+/// [`parse_create_reminder`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreateReminderRequest {
+    /// Seconds from request reception until the reminder fires.
+    /// Range-checked at the firmware-side dispatcher.
+    pub fire_in_secs: u32,
+    /// Baked phrase to play on fire. Vocabulary mirrors `parse_speak`.
+    pub phrase: PhraseId,
+}
+
+/// Parse a `POST /reminders` (or MCP `create_reminder`) body. Both
+/// fields required.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing/duplicate/unknown keys, malformed JSON
+/// shape, or unrecognised phrase strings.
+pub fn parse_create_reminder(body: &str) -> Result<CreateReminderRequest, JsonError> {
+    let mut fire_in_secs: Option<u32> = None;
+    let mut phrase: Option<PhraseId> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "fire_in_secs" => {
+                if fire_in_secs.is_some() {
+                    return Err(JsonError::DuplicateKey("fire_in_secs"));
+                }
+                fire_in_secs = Some(parse_u32(scanner)?);
+            }
+            "phrase" => {
+                if phrase.is_some() {
+                    return Err(JsonError::DuplicateKey("phrase"));
+                }
+                phrase = Some(parse_phrase(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(CreateReminderRequest {
+        fire_in_secs: fire_in_secs.ok_or(JsonError::MissingKey("fire_in_secs"))?,
+        phrase: phrase.ok_or(JsonError::MissingKey("phrase"))?,
+    })
+}
+
+/// Parse a `cancel_reminder` body — `{"id": <integer>}`.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing/duplicate/unknown keys, malformed JSON.
+pub fn parse_cancel_reminder(body: &str) -> Result<u32, JsonError> {
+    let mut id: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "id" => {
+                if id.is_some() {
+                    return Err(JsonError::DuplicateKey("id"));
+                }
+                id = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    id.ok_or(JsonError::MissingKey("id"))
+}
+
 /// Default listen-window duration when `POST /listen` omits the
 /// `duration_ms` field. Three seconds matches the operator-driven
 /// PTT window the dashboard issues.
@@ -735,6 +802,29 @@ fn parse_phrase(scanner: &mut Scanner<'_>) -> Result<PhraseId, JsonError> {
         "acknowledge_name" => Ok(PhraseId::AcknowledgeName),
         "battery_low" => Ok(PhraseId::BatteryLow),
         _ => Err(JsonError::UnknownPhrase),
+    }
+}
+
+/// Inverse of `parse_phrase` — render a [`PhraseId`] back to its
+/// wire string.
+///
+/// Variants outside the public phrase vocabulary fall back to
+/// `"unknown"`, which round-trips back to a
+/// [`JsonError::UnknownPhrase`] on parse — visible breakage rather
+/// than a silent misrender.
+#[must_use]
+pub const fn phrase_wire_str(p: PhraseId) -> &'static str {
+    match p {
+        PhraseId::WakeChirp => "wake_chirp",
+        PhraseId::PickupChirp => "pickup_chirp",
+        PhraseId::StartleChirp => "startle_chirp",
+        PhraseId::LowBatteryChirp => "low_battery_chirp",
+        PhraseId::CameraModeEnteredChirp => "camera_mode_entered_chirp",
+        PhraseId::CameraModeExitedChirp => "camera_mode_exited_chirp",
+        PhraseId::Greeting => "greeting",
+        PhraseId::AcknowledgeName => "acknowledge_name",
+        PhraseId::BatteryLow => "battery_low",
+        _ => "unknown",
     }
 }
 
