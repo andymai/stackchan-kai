@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.23.0...stackchan-core-v0.24.0) (2026-05-07)
+
+
+### Features
+
+* **core:** Angry + Shy decorators with emotion-edge trigger ([#239](https://github.com/andymai/stackchan-kai/issues/239)) ([0f5693a](https://github.com/andymai/stackchan-kai/commit/0f5693a2ae81e70addd2d521dd4506ac71552660))
+
 ## [0.23.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.22.0...stackchan-core-v0.23.0) (2026-05-07)
 
 
