@@ -24,6 +24,7 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/`              | Operator dashboard (HTML + JS, embedded in firmware) |
 | GET    | `/health`        | Uptime, firmware version, free heap                  |
 | GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio |
+| GET    | `/camera/snapshot` | Most recent `/sd/CAPTURE.565` frame as raw QVGA RGB565 BE |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
 | POST   | `/emotion`       | Set affect with hold timer                          |
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |

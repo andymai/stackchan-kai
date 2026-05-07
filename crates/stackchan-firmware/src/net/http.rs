@@ -365,6 +365,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
+        ("GET", "/camera/snapshot") => handle_get_camera_snapshot(socket).await,
         ("POST", "/restart") => handle_post_restart(socket).await,
         ("POST", "/factory-reset") => handle_post_factory_reset(socket, body).await,
         ("GET" | "POST" | "PUT", _) => write_text(socket, 404, "not found\n").await,
@@ -702,6 +703,54 @@ async fn handle_post_camera_mode(socket: &mut TcpSocket<'_>, body: &str) -> Resu
     crate::camera::CAMERA_MODE_SIGNAL.signal(active);
     defmt::info!("http: POST /camera/mode → {=bool}", active);
     write_no_content(socket).await
+}
+
+/// `GET /camera/snapshot` — read `/sd/CAPTURE.565` (the most recent
+/// frame written by `POST /camera/capture`) and return it as raw
+/// QVGA RGB565 big-endian bytes. The dashboard renders these onto a
+/// canvas after fetching.
+///
+/// Returns `404 Not Found` if no capture exists yet (the
+/// before-first-capture state). The interaction model is "POST
+/// /camera/capture → wait a moment → GET /camera/snapshot" — the
+/// snapshot endpoint always reads the SD copy rather than holding a
+/// live frame in RAM.
+async fn handle_get_camera_snapshot(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let frame =
+        match crate::storage::with_storage(crate::storage::FirmwareStorage::read_capture).await {
+            Some(Ok(Some(frame))) => frame,
+            Some(Ok(None)) => {
+                return write_text(
+                    socket,
+                    404,
+                    "no capture available — POST /camera/capture first\n",
+                )
+                .await;
+            }
+            Some(Err(e)) => {
+                defmt::warn!(
+                    "http: GET /camera/snapshot SD read failed ({})",
+                    defmt::Debug2Format(&e)
+                );
+                return write_text(socket, 503, "SD read failed\n").await;
+            }
+            None => {
+                return write_text(socket, 503, "storage unavailable\n").await;
+            }
+        };
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+        len = frame.len(),
+    );
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket
+        .write_all(&frame)
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)
 }
 
 /// `POST /camera/capture` — empty body, signals the camera task to
