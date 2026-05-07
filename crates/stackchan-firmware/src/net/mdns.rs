@@ -1,14 +1,27 @@
-//! Minimal hostname-only mDNS responder.
+//! mDNS responder — hostname A records plus full DNS-SD service
+//! advertising for `_stackchan._tcp.local.`.
 //!
-//! Joins the IPv4 mDNS multicast group `224.0.0.251:5353`, listens
-//! for `A` queries for `<hostname>.local`, and answers with the
-//! station's current IPv4 lease. Sends one unsolicited announcement
-//! per `WIFI_LINK_SIGNAL::Connected` transition so phones / laptops
-//! pick up the device without an explicit query.
+//! Joins the IPv4 mDNS multicast group `224.0.0.251:5353` and emits an
+//! unsolicited announcement on every `WIFI_LINK_SIGNAL::Connected`
+//! transition so phones / laptops / Bonjour browsers pick up the
+//! device without an explicit query. Inbound A queries for
+//! `<hostname>.local` and PTR queries for the service type are
+//! answered on demand.
 //!
-//! No `PTR` / `SRV` / `TXT` records — this is the smallest useful
-//! surface. A future revision can extend the same wire-format
-//! encoder for service-type advertising.
+//! ## Records advertised
+//!
+//! - `A` `<hostname>.local.` → station IPv4 lease
+//! - `PTR` `_stackchan._tcp.local.` → `<hostname>._stackchan._tcp.local.`
+//! - `SRV` `<hostname>._stackchan._tcp.local.` → priority 0 weight 0
+//!   port 80 target `<hostname>.local.`
+//! - `TXT` `<hostname>._stackchan._tcp.local.` → `txtvers=1`,
+//!   `version=<crate>`, `path=/`, `mcp=/mcp`, `kai=1`
+//!
+//! The `kai=1` key is the variant marker — meganetaaan-line clients
+//! ignore it, kai-aware clients use it to gate access to extension
+//! endpoints (MCP, palette, soliloquy config). The other keys mirror
+//! the upstream stackchan / m5stack-avatar convention so a generic
+//! Bonjour browser shows the device alongside upstream units.
 
 use alloc::string::String;
 
@@ -29,10 +42,21 @@ const MDNS_PORT: u16 = 5353;
 /// network notices when the device leaves.
 const MDNS_TTL_SECS: u32 = 120;
 
-/// Maximum DNS message we'll accept or build. Hostname-only A
-/// records sit well under 256 bytes; a 512-byte cap matches the
-/// classic DNS UDP limit and keeps stack alloc bounded.
+/// Maximum DNS message we'll accept or build. The full announcement
+/// (PTR + SRV + TXT + A with no name compression) lands around
+/// 320 bytes for a 9-character hostname; 512 is the classic DNS UDP
+/// limit and gives generous headroom for longer hostnames + future
+/// TXT keys without spilling onto the kernel stack.
 const MAX_DNS_BYTES: usize = 512;
+
+/// HTTP port advertised in the SRV record. Matches `HTTP_PORT` in
+/// the firmware's HTTP module — kept in sync manually because the
+/// dependency direction is `mdns → http`, not the reverse.
+const ADVERTISED_HTTP_PORT: u16 = 80;
+
+/// DNS-SD service type for stackchan units. Matches the meganetaaan
+/// upstream convention so mixed kai + upstream fleets browse together.
+const SERVICE_LABELS: [&[u8]; 3] = [b"_stackchan", b"_tcp", b"local"];
 
 /// Embassy task — owns one UDP socket on the mDNS multicast group.
 /// Rebinds on each `Connected` transition so a Wi-Fi reconnect
@@ -82,12 +106,13 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
         };
 
         defmt::info!(
-            "mdns: announcing {=str}.local at {=u8}.{=u8}.{=u8}.{=u8}",
+            "mdns: announcing {=str}.local at {=u8}.{=u8}.{=u8}.{=u8} (service _stackchan._tcp port {=u16})",
             hostname.as_str(),
             our_ip.octets()[0],
             our_ip.octets()[1],
             our_ip.octets()[2],
             our_ip.octets()[3],
+            ADVERTISED_HTTP_PORT,
         );
 
         // Send unsolicited announcement once.
@@ -108,7 +133,8 @@ async fn park_forever() -> ! {
     }
 }
 
-/// Listen for queries; respond when one matches our hostname.
+/// Listen for queries; respond when one matches our hostname or the
+/// service type we advertise.
 async fn serve_loop(socket: &UdpSocket<'_>, hostname: &str, our_ip: embassy_net::Ipv4Address) {
     let mut buf = [0u8; MAX_DNS_BYTES];
     loop {
@@ -123,15 +149,18 @@ async fn serve_loop(socket: &UdpSocket<'_>, hostname: &str, our_ip: embassy_net:
             continue;
         }
 
-        if !matches_a_query(&buf[..n], hostname) {
+        let kind = classify_query(&buf[..n], hostname);
+        if matches!(kind, QueryKind::None) {
             continue;
         }
 
-        // Build a response with the same transaction-id (mDNS
-        // typically uses 0 but we mirror the requester just in case).
-        let resp_id = u16::from_be_bytes([buf[0], buf[1]]);
+        // Both A and service-type queries are answered with the same
+        // announcement payload — building one record set keeps the
+        // wire surface uniform and avoids drift between the
+        // unsolicited and reactive paths.
         let mut resp = [0u8; MAX_DNS_BYTES];
-        let Some(len) = build_response(&mut resp, resp_id, hostname, our_ip) else {
+        let resp_id = u16::from_be_bytes([buf[0], buf[1]]);
+        let Some(len) = build_announcement(&mut resp, resp_id, hostname, our_ip) else {
             continue;
         };
 
@@ -156,7 +185,7 @@ async fn send_announcement(
     our_ip: embassy_net::Ipv4Address,
 ) {
     let mut resp = [0u8; MAX_DNS_BYTES];
-    let Some(len) = build_response(&mut resp, 0, hostname, our_ip) else {
+    let Some(len) = build_announcement(&mut resp, 0, hostname, our_ip) else {
         return;
     };
     let target = embassy_net::IpEndpoint::new(MDNS_MULTICAST, MDNS_PORT);
@@ -165,32 +194,50 @@ async fn send_announcement(
     }
 }
 
-/// True iff `msg` is a DNS query for `<hostname>.local` of type `A`.
-/// Tolerant: ignores any further questions and any malformed bits
-/// past the first answer-eligible question.
-fn matches_a_query(msg: &[u8], hostname: &str) -> bool {
+/// Query classification — what (if anything) the inbound message is
+/// asking about. Used to skip messages aimed at other hosts without
+/// allocating a response buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueryKind {
+    /// Not for us, or malformed.
+    None,
+    /// `A`-record query for `<hostname>.local`.
+    HostA,
+    /// `PTR` query for `_stackchan._tcp.local`.
+    ServicePtr,
+}
+
+/// Classify the first question in `msg`. Tolerant: ignores any
+/// further questions and any malformed bits past the first
+/// answer-eligible question. Returns the most specific match —
+/// `HostA` and `ServicePtr` are mutually exclusive given different
+/// QNAMEs and QTYPEs.
+fn classify_query(msg: &[u8], hostname: &str) -> QueryKind {
     if msg.len() < 12 {
-        return false;
+        return QueryKind::None;
     }
     let qdcount = u16::from_be_bytes([msg[4], msg[5]]);
     if qdcount == 0 {
-        return false;
+        return QueryKind::None;
     }
-    // Walk the first question's name labels, comparing case-
-    // insensitively against `<hostname>.local`.
     let Some((qname, after_name)) = read_qname(msg, 12) else {
-        return false;
+        return QueryKind::None;
     };
     if after_name + 4 > msg.len() {
-        return false;
+        return QueryKind::None;
     }
     let qtype = u16::from_be_bytes([msg[after_name], msg[after_name + 1]]);
-    if qtype != 1
-    /* A */
-    {
-        return false;
+
+    // `A` query for our hostname.
+    if qtype == 1 && matches_local_hostname(&qname, hostname) {
+        return QueryKind::HostA;
     }
-    matches_local_hostname(&qname, hostname)
+    // `PTR` query for our service type. `ANY` (255) is also a valid
+    // mDNS query type; treat it as service-type if the name matches.
+    if (qtype == 12 || qtype == 255) && qname.eq_ignore_ascii_case("_stackchan._tcp.local") {
+        return QueryKind::ServicePtr;
+    }
+    QueryKind::None
 }
 
 /// Walk DNS labels starting at `off`, returning the joined dotted
@@ -232,51 +279,196 @@ fn matches_local_hostname(qname: &str, hostname: &str) -> bool {
     host.eq_ignore_ascii_case(hostname) && tld.eq_ignore_ascii_case("local")
 }
 
-/// Encode an mDNS A-record response into `out`. Returns `None` if
-/// the buffer is too small (shouldn't happen for hostname-only
-/// schema-v1 names).
-fn build_response(
+/// Encode a full mDNS announcement (PTR + SRV + TXT + A) into `out`.
+/// Returns `None` if the buffer is too small.
+///
+/// All four answers reference the same hostname, but no DNS name
+/// compression is performed — at our message sizes the duplication
+/// is well under the 512-byte budget and avoids the pointer-bookkeeping
+/// that compression requires.
+fn build_announcement(
     out: &mut [u8; MAX_DNS_BYTES],
     transaction_id: u16,
     hostname: &str,
     our_ip: embassy_net::Ipv4Address,
 ) -> Option<usize> {
-    // Header.
+    // Header: response, authoritative, ANCOUNT=4.
     out[0..2].copy_from_slice(&transaction_id.to_be_bytes());
     out[2..4].copy_from_slice(&0x8400u16.to_be_bytes()); // QR=1, AA=1
     out[4..6].copy_from_slice(&0u16.to_be_bytes()); // qdcount
-    out[6..8].copy_from_slice(&1u16.to_be_bytes()); // ancount
+    out[6..8].copy_from_slice(&4u16.to_be_bytes()); // ancount = PTR + SRV + TXT + A
     out[8..10].copy_from_slice(&0u16.to_be_bytes()); // nscount
     out[10..12].copy_from_slice(&0u16.to_be_bytes()); // arcount
 
     let mut off = 12;
-    // Answer name: <hostname>.local (length-prefixed labels + 0).
-    off = write_label(out, off, hostname.as_bytes())?;
-    off = write_label(out, off, b"local")?;
-    *out.get_mut(off)? = 0;
-    off += 1;
+    off = write_ptr_answer(out, off, hostname)?;
+    off = write_srv_answer(out, off, hostname, ADVERTISED_HTTP_PORT)?;
+    off = write_txt_answer(out, off, hostname)?;
+    off = write_a_answer(out, off, hostname, our_ip)?;
+    Some(off)
+}
 
-    // TYPE=A
-    out.get_mut(off..off + 2)?
-        .copy_from_slice(&1u16.to_be_bytes());
+/// PTR answer: name `_stackchan._tcp.local.`, RDATA = instance name.
+fn write_ptr_answer(
+    out: &mut [u8; MAX_DNS_BYTES],
+    mut off: usize,
+    hostname: &str,
+) -> Option<usize> {
+    // Owner name = service type (no cache-flush bit on PTR; multiple
+    // service instances may share the same PTR owner).
+    off = write_name(out, off, &SERVICE_LABELS)?;
+    off = write_record_header(out, off, 12 /* PTR */, false, MDNS_TTL_SECS)?;
+
+    // RDLENGTH placeholder; backfill once we know the encoded size.
+    let rdlen_off = off;
     off += 2;
-    // CLASS=IN with cache-flush bit (0x8001).
-    out.get_mut(off..off + 2)?
-        .copy_from_slice(&0x8001u16.to_be_bytes());
+    let rdata_start = off;
+
+    // RDATA: full instance name `<hostname>._stackchan._tcp.local.`
+    let instance_labels: [&[u8]; 4] = [
+        hostname.as_bytes(),
+        SERVICE_LABELS[0],
+        SERVICE_LABELS[1],
+        SERVICE_LABELS[2],
+    ];
+    off = write_name(out, off, &instance_labels)?;
+
+    let rdlen = u16::try_from(off - rdata_start).ok()?;
+    out.get_mut(rdlen_off..rdlen_off + 2)?
+        .copy_from_slice(&rdlen.to_be_bytes());
+    Some(off)
+}
+
+/// SRV answer: name `<instance>`, RDATA = priority/weight/port/target.
+fn write_srv_answer(
+    out: &mut [u8; MAX_DNS_BYTES],
+    mut off: usize,
+    hostname: &str,
+    port: u16,
+) -> Option<usize> {
+    let instance_labels: [&[u8]; 4] = [
+        hostname.as_bytes(),
+        SERVICE_LABELS[0],
+        SERVICE_LABELS[1],
+        SERVICE_LABELS[2],
+    ];
+    off = write_name(out, off, &instance_labels)?;
+    off = write_record_header(out, off, 33 /* SRV */, true, MDNS_TTL_SECS)?;
+
+    let rdlen_off = off;
     off += 2;
-    // TTL.
-    out.get_mut(off..off + 4)?
-        .copy_from_slice(&MDNS_TTL_SECS.to_be_bytes());
-    off += 4;
-    // RDLENGTH = 4
+    let rdata_start = off;
+
+    // priority + weight (both zero — single instance, no preference).
+    out.get_mut(off..off + 2)?
+        .copy_from_slice(&0u16.to_be_bytes());
+    off += 2;
+    out.get_mut(off..off + 2)?
+        .copy_from_slice(&0u16.to_be_bytes());
+    off += 2;
+    out.get_mut(off..off + 2)?
+        .copy_from_slice(&port.to_be_bytes());
+    off += 2;
+    // Target: `<hostname>.local.`
+    let host_labels: [&[u8]; 2] = [hostname.as_bytes(), SERVICE_LABELS[2]];
+    off = write_name(out, off, &host_labels)?;
+
+    let rdlen = u16::try_from(off - rdata_start).ok()?;
+    out.get_mut(rdlen_off..rdlen_off + 2)?
+        .copy_from_slice(&rdlen.to_be_bytes());
+    Some(off)
+}
+
+/// TXT answer: name `<instance>`, RDATA = length-prefixed strings.
+fn write_txt_answer(
+    out: &mut [u8; MAX_DNS_BYTES],
+    mut off: usize,
+    hostname: &str,
+) -> Option<usize> {
+    let instance_labels: [&[u8]; 4] = [
+        hostname.as_bytes(),
+        SERVICE_LABELS[0],
+        SERVICE_LABELS[1],
+        SERVICE_LABELS[2],
+    ];
+    off = write_name(out, off, &instance_labels)?;
+    off = write_record_header(out, off, 16 /* TXT */, true, MDNS_TTL_SECS)?;
+
+    let rdlen_off = off;
+    off += 2;
+    let rdata_start = off;
+
+    // DNS-SD TXT keys. `txtvers` is the conventional first key per
+    // RFC 6763 §6.7. `version` mirrors upstream stackchan TXT for
+    // browser parity. `kai=1` is the variant marker that gates
+    // kai-only routes (MCP / palette / behavior config).
+    for kv in [
+        b"txtvers=1" as &[u8],
+        concat!("version=", env!("CARGO_PKG_VERSION")).as_bytes(),
+        b"path=/",
+        b"mcp=/mcp",
+        b"kai=1",
+    ] {
+        off = write_txt_string(out, off, kv)?;
+    }
+
+    let rdlen = u16::try_from(off - rdata_start).ok()?;
+    out.get_mut(rdlen_off..rdlen_off + 2)?
+        .copy_from_slice(&rdlen.to_be_bytes());
+    Some(off)
+}
+
+/// A answer: name `<hostname>.local.`, RDATA = IPv4 (4 bytes).
+fn write_a_answer(
+    out: &mut [u8; MAX_DNS_BYTES],
+    mut off: usize,
+    hostname: &str,
+    our_ip: embassy_net::Ipv4Address,
+) -> Option<usize> {
+    let host_labels: [&[u8]; 2] = [hostname.as_bytes(), SERVICE_LABELS[2]];
+    off = write_name(out, off, &host_labels)?;
+    off = write_record_header(out, off, 1 /* A */, true, MDNS_TTL_SECS)?;
+
     out.get_mut(off..off + 2)?
         .copy_from_slice(&4u16.to_be_bytes());
     off += 2;
-    // RDATA (IPv4)
     out.get_mut(off..off + 4)?.copy_from_slice(&our_ip.octets());
     off += 4;
-
     Some(off)
+}
+
+/// Encode TYPE(2) + CLASS(2) + TTL(4) — the fixed-width prefix of
+/// every record before its variable-length RDATA. `cache_flush`
+/// sets the high bit on CLASS for "this answer replaces any prior
+/// record" (mDNS unique-record signal).
+fn write_record_header(
+    out: &mut [u8; MAX_DNS_BYTES],
+    mut off: usize,
+    rrtype: u16,
+    cache_flush: bool,
+    ttl: u32,
+) -> Option<usize> {
+    out.get_mut(off..off + 2)?
+        .copy_from_slice(&rrtype.to_be_bytes());
+    off += 2;
+    let class = if cache_flush { 0x8001 } else { 0x0001 };
+    out.get_mut(off..off + 2)?
+        .copy_from_slice(&u16::to_be_bytes(class));
+    off += 2;
+    out.get_mut(off..off + 4)?
+        .copy_from_slice(&ttl.to_be_bytes());
+    off += 4;
+    Some(off)
+}
+
+/// Write a sequence of labels followed by the root-label terminator
+/// (zero byte). Each label must be 1..=63 bytes per DNS limits.
+fn write_name(out: &mut [u8; MAX_DNS_BYTES], mut off: usize, labels: &[&[u8]]) -> Option<usize> {
+    for label in labels {
+        off = write_label(out, off, label)?;
+    }
+    *out.get_mut(off)? = 0;
+    Some(off + 1)
 }
 
 /// Write a single label (length byte + bytes). Returns the offset
@@ -289,11 +481,23 @@ fn write_label(out: &mut [u8; MAX_DNS_BYTES], off: usize, label: &[u8]) -> Optio
     if off + 1 + label.len() > out.len() {
         return None;
     }
-    // SAFETY-EQUIVALENT NOTE: `label.len()` is bounded above by the
-    // 63-byte check directly above, so the cast is in-range.
     out[off] = u8::try_from(label.len()).ok()?;
     out[off + 1..off + 1 + label.len()].copy_from_slice(label);
     Some(off + 1 + label.len())
+}
+
+/// Write one TXT-record string (length byte + UTF-8 bytes). Each
+/// string is capped at 255 bytes — well above any kv-pair we emit.
+fn write_txt_string(out: &mut [u8; MAX_DNS_BYTES], off: usize, s: &[u8]) -> Option<usize> {
+    if s.len() > 255 {
+        return None;
+    }
+    if off + 1 + s.len() > out.len() {
+        return None;
+    }
+    out[off] = u8::try_from(s.len()).ok()?;
+    out[off + 1..off + 1 + s.len()].copy_from_slice(s);
+    Some(off + 1 + s.len())
 }
 
 #[cfg(test)]
@@ -308,16 +512,112 @@ mod tests {
         assert!(!matches_local_hostname("not-us.local", "stackchan"));
     }
 
+    /// Build a minimal DNS query asking for QNAME of QTYPE.
+    fn build_query(qname_labels: &[&[u8]], qtype: u16) -> alloc::vec::Vec<u8> {
+        let mut v: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+        // Header: id=0, flags=0, qdcount=1, others=0.
+        v.extend_from_slice(&0u16.to_be_bytes());
+        v.extend_from_slice(&0u16.to_be_bytes());
+        v.extend_from_slice(&1u16.to_be_bytes());
+        v.extend_from_slice(&0u16.to_be_bytes());
+        v.extend_from_slice(&0u16.to_be_bytes());
+        v.extend_from_slice(&0u16.to_be_bytes());
+        for l in qname_labels {
+            v.push(u8::try_from(l.len()).unwrap());
+            v.extend_from_slice(l);
+        }
+        v.push(0);
+        v.extend_from_slice(&qtype.to_be_bytes());
+        v.extend_from_slice(&1u16.to_be_bytes()); // CLASS=IN
+        v
+    }
+
     #[test]
-    fn build_response_round_trip() {
+    fn classify_query_recognises_host_a() {
+        let q = build_query(&[b"stackchan", b"local"], 1);
+        assert_eq!(classify_query(&q, "stackchan"), QueryKind::HostA);
+    }
+
+    #[test]
+    fn classify_query_recognises_service_ptr() {
+        let q = build_query(&[b"_stackchan", b"_tcp", b"local"], 12);
+        assert_eq!(classify_query(&q, "stackchan"), QueryKind::ServicePtr);
+    }
+
+    #[test]
+    fn classify_query_treats_any_as_service_when_name_matches() {
+        let q = build_query(&[b"_stackchan", b"_tcp", b"local"], 255);
+        assert_eq!(classify_query(&q, "stackchan"), QueryKind::ServicePtr);
+    }
+
+    #[test]
+    fn classify_query_rejects_other_hosts() {
+        let q = build_query(&[b"someone-else", b"local"], 1);
+        assert_eq!(classify_query(&q, "stackchan"), QueryKind::None);
+    }
+
+    #[test]
+    fn classify_query_rejects_unknown_qtype_for_host() {
+        // AAAA query for our host — we don't serve IPv6.
+        let q = build_query(&[b"stackchan", b"local"], 28);
+        assert_eq!(classify_query(&q, "stackchan"), QueryKind::None);
+    }
+
+    #[test]
+    fn build_announcement_round_trip() {
         let ip = embassy_net::Ipv4Address::new(192, 168, 1, 42);
         let mut out = [0u8; MAX_DNS_BYTES];
-        let n = build_response(&mut out, 0, "stackchan", ip).unwrap();
-        // Header marks QR=1, AA=1.
+        let n = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        // Header: QR=1 AA=1, ANCOUNT=4 (PTR + SRV + TXT + A).
         assert_eq!(u16::from_be_bytes([out[2], out[3]]), 0x8400);
-        // ANCOUNT=1.
-        assert_eq!(u16::from_be_bytes([out[6], out[7]]), 1);
-        // RDATA at the end matches our IP.
+        assert_eq!(u16::from_be_bytes([out[6], out[7]]), 4);
+        // The IP appears in the final A-record RDATA — last 4 bytes
+        // of the announcement are the IPv4 octets.
         assert_eq!(&out[n - 4..n], &[192, 168, 1, 42]);
+    }
+
+    #[test]
+    fn announcement_contains_service_type_and_kai_marker() {
+        let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
+        let mut out = [0u8; MAX_DNS_BYTES];
+        let n = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        let bytes = &out[..n];
+        // The service-type label sequence appears in the PTR owner.
+        let needle = b"\x0a_stackchan\x04_tcp\x05local\x00";
+        assert!(
+            bytes.windows(needle.len()).any(|w| w == needle),
+            "service type labels missing from announcement"
+        );
+        // `kai=1` TXT marker is what kai-aware clients gate on.
+        let kai = b"kai=1";
+        assert!(
+            bytes.windows(kai.len()).any(|w| w == kai),
+            "kai marker missing from TXT"
+        );
+    }
+
+    #[test]
+    fn announcement_srv_record_carries_http_port() {
+        let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
+        let mut out = [0u8; MAX_DNS_BYTES];
+        let _ = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        // SRV RDATA is priority(0,0) + weight(0,0) + port — search
+        // for the literal HTTP port in the announcement bytes.
+        let port_be = ADVERTISED_HTTP_PORT.to_be_bytes();
+        assert!(
+            out.windows(2).any(|w| w == port_be),
+            "advertised HTTP port not encoded in announcement"
+        );
+    }
+
+    #[test]
+    fn announcement_fits_in_buffer_for_long_hostname() {
+        // 32-character hostname — comfortably under the 63-byte
+        // single-label DNS cap and representative of real fleets.
+        let host = "stackchan-abcdef0123456789-abcdef";
+        assert_eq!(host.len(), 33);
+        let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
+        let mut out = [0u8; MAX_DNS_BYTES];
+        assert!(build_announcement(&mut out, 0, host, ip).is_some());
     }
 }
