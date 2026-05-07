@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.58.0...stackchan-firmware-v0.59.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** MCP reminder/timer tools — runtime scheduler ([#263](https://github.com/andymai/stackchan-kai/issues/263)) ([91cbf9a](https://github.com/andymai/stackchan-kai/commit/91cbf9a9edd198ae68188ec168f3ab8530914e1f))
+
 ## [0.58.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.57.0...stackchan-firmware-v0.58.0) (2026-05-07)
 
 
