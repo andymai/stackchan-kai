@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.46.0...stackchan-firmware-v0.47.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** ESP-NOW RX task — peer-allowlisted frame ingest ([#233](https://github.com/andymai/stackchan-kai/issues/233)) ([93536b4](https://github.com/andymai/stackchan-kai/commit/93536b496f5fc5c896269ed31493b9b2193dc55a))
+
 ## [0.46.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.45.0...stackchan-firmware-v0.46.0) (2026-05-07)
 
 
