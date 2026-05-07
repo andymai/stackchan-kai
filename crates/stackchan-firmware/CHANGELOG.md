@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.55.0...stackchan-firmware-v0.56.0) (2026-05-07)
+
+
+### Features
+
+* **net:** mDNS DNS-SD service records for _stackchan._tcp.local. ([#254](https://github.com/andymai/stackchan-kai/issues/254)) ([5a40567](https://github.com/andymai/stackchan-kai/commit/5a405676bc5c81e22ff61fa8704500cfc9300a02))
+
 ## [0.55.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.54.0...stackchan-firmware-v0.55.0) (2026-05-07)
 
 
