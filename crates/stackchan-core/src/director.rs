@@ -200,6 +200,8 @@ pub enum Field {
     Dormancy,
     /// `entity.mind.mood`
     Mood,
+    /// `entity.mind.last_gesture`
+    Gesture,
 
     // ---- Voice ----
     /// `entity.voice.chirp_request`
@@ -307,7 +309,8 @@ impl Field {
             | Self::Attention
             | Self::Engagement
             | Self::Dormancy
-            | Self::Mood => FieldGroup::Mind,
+            | Self::Mood
+            | Self::Gesture => FieldGroup::Mind,
             Self::ChirpRequest | Self::UtteranceRequest | Self::IsSpeaking => FieldGroup::Voice,
             Self::TapPending | Self::RemotePending | Self::RemoteCommand => FieldGroup::Input,
         }
@@ -411,6 +414,7 @@ impl Field {
             Self::Engagement => before.mind.engagement != after.mind.engagement,
             Self::Dormancy => before.mind.dormancy != after.mind.dormancy,
             Self::Mood => before.mind.mood != after.mind.mood,
+            Self::Gesture => before.mind.last_gesture != after.mind.last_gesture,
             Self::ChirpRequest => before.voice.chirp_request != after.voice.chirp_request,
             Self::UtteranceRequest => {
                 before.voice.utterance_request != after.voice.utterance_request

@@ -101,6 +101,7 @@ mod emotion_from_touch;
 mod emotion_from_voice;
 mod gaze_from_attention;
 mod head_from_attention;
+mod head_from_body_gesture;
 mod head_from_emotion;
 mod head_from_intent;
 mod idle_drift;
@@ -145,6 +146,10 @@ pub use emotion_from_voice::{
 };
 pub use gaze_from_attention::{GAZE_MAX_OFFSET_PX, GAZE_PIXELS_PER_DEG, GazeFromAttention};
 pub use head_from_attention::{HeadFromAttention, LISTEN_HEAD_EASE_MS, LISTEN_HEAD_TILT_DEG};
+pub use head_from_body_gesture::{
+    HEADPET_PAN_DEG, HEADPET_REACTION_ATTACK_MS, HEADPET_REACTION_TOTAL_MS, HEADPET_TILT_DEG,
+    HeadFromBodyGesture,
+};
 pub use head_from_emotion::HeadFromEmotion;
 pub use head_from_intent::{
     HeadFromIntent, STARTLE_HEAD_ATTACK_MS, STARTLE_HEAD_DECAY_MS, STARTLE_HEAD_PAN_DEG,

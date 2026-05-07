@@ -290,6 +290,41 @@ impl Dormancy {
     }
 }
 
+/// Most recently fired back-of-head gesture.
+///
+/// Exposed so downstream modifiers can react with their own visual
+/// / motion overlay without duplicating the
+/// [`crate::modifiers::IntentFromBodyTouch`] state machine.
+///
+/// Variants mirror the upstream `m5stack/StackChan` gesture model
+/// (`hal_head_touch.cpp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BodyGesture {
+    /// Initial press on any zone. The triggering zone is captured so
+    /// reactions that care about left/centre/right can specialise
+    /// (factory firmware varies the pose-nudge direction with the
+    /// zone). Uses the same `0..=3` intensity surface the perception
+    /// layer publishes; `0` everywhere is impossible here because
+    /// `Press` only fires on a transition from no-touch to touched.
+    Press {
+        /// Left-zone intensity (`0..=3`) at the moment of press.
+        left: u8,
+        /// Centre-zone intensity (`0..=3`) at the moment of press.
+        centre: u8,
+        /// Right-zone intensity (`0..=3`) at the moment of press.
+        right: u8,
+    },
+    /// Centroid shifted left → right past the swipe threshold during
+    /// a touch run.
+    SwipeForward,
+    /// Centroid shifted right → left past the swipe threshold during
+    /// a touch run.
+    SwipeBackward,
+    /// Touch run released — back to no-touch.
+    Release,
+}
+
 /// Persistent facts the entity remembers across boots. Placeholder
 /// marker type; not yet populated.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -326,6 +361,14 @@ pub struct Mind {
     /// [`crate::modifiers::StyleFromMood`] which scales blink rate,
     /// breath depth, and idle drift on top of the per-emotion targets.
     pub mood: Mood,
+    /// Most recent back-of-head gesture, with the wall-clock instant
+    /// it fired. Written by
+    /// [`crate::modifiers::IntentFromBodyTouch`] on each gesture
+    /// transition; read by reaction modifiers in later phases. The
+    /// timestamp lets readers debounce against stale gestures (e.g.
+    /// a head-pet motion modifier ignores anything older than its
+    /// own reaction window). `None` until the first gesture lands.
+    pub last_gesture: Option<(BodyGesture, Instant)>,
     /// Persistent facts.
     pub memory: Memory,
 }
