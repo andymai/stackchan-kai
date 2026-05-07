@@ -107,6 +107,10 @@ pub async fn run_button_loop<I: AsyncI2c>(bus: I) -> ! {
                             duration_ms,
                         );
                         touch::TAP_SIGNAL.signal(());
+                        // The button is the universal "wake the
+                        // device" gesture for someone who can't
+                        // reach the touchscreen.
+                        crate::sleep::wake_if_sleeping();
                     }
                     press_started = None;
                     long_press_fired = false;

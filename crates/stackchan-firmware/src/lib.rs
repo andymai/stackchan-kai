@@ -38,6 +38,7 @@ pub mod power;
 pub mod reminders;
 pub mod runtime_store;
 pub mod sd_spi;
+pub mod sleep;
 pub mod storage;
 pub mod touch;
 pub mod tracking_trace;

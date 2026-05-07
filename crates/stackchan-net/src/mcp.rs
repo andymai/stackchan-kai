@@ -622,6 +622,8 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
 /// - `list_reminders() -> { reminders: [...] }`
 /// - `cancel_reminder(id: integer)`
 /// - `take_photo() -> { url, format, width, height }`
+/// - `sleep()`
+/// - `wake()`
 /// - `get_state()`
 ///
 /// Schemas are minimal — no enum constraints on emotion / mood /
@@ -641,6 +643,8 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"list_reminders","description":"Return the currently-scheduled reminders.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"cancel_reminder","description":"Cancel a previously-scheduled reminder by id. Returns 404 / not-found if no matching reminder exists.","inputSchema":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}},"#,
     r#"{"name":"take_photo","description":"Trigger the camera to capture the next frame and write it to /sd/CAPTURE.565. The frame is then fetchable via GET /camera/snapshot as raw 320x240 RGB565 big-endian bytes (X-Frame-Format / X-Frame-Width / X-Frame-Height response headers describe the layout). Returns the snapshot URL and dimensions.","inputSchema":{"type":"object","properties":{}}},"#,
+    r#"{"name":"sleep","description":"Enter sleep mode: eyes shut, head limp, LED ring dark, audio TX paused. Wake via the wake tool, any touch on the screen or body-touch pads, or the side power button. Sleep state resets on reboot.","inputSchema":{"type":"object","properties":{}}},"#,
+    r#"{"name":"wake","description":"Exit sleep mode and resume the live face / head / LED state.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );

@@ -40,6 +40,13 @@
 //!   avatar's colour palette at runtime; persisted to
 //!   `/sd/RUNTIME.RON` so a reboot restores the selection. Vocabulary
 //!   matches `Palette::wire_str` (default / dark / cute / dog).
+//! - `POST /sleep` — empty body. Drops eyes shut, head limp, LED
+//!   ring dark, audio TX paused. Wake via `POST /wake`, MCP `wake`,
+//!   any touch (`FT6336U` screen or `Si12T` body pads), or the
+//!   `AXP2101` short-press. Runtime-only — sleep state resets on
+//!   reboot.
+//! - `POST /wake` — empty body. Resumes the live modifier face +
+//!   head + LED state.
 //! - `GET  /head/offsets` — current operator-applied yaw/tilt zero
 //!   correction (degrees). Returns `{"yaw_offset_deg":F,"tilt_offset_deg":F}`.
 //! - `POST /head/offsets` — JSON
@@ -428,6 +435,8 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/palette") => handle_post_palette(socket, body).await,
+        ("POST", "/sleep") => handle_post_sleep(socket).await,
+        ("POST", "/wake") => handle_post_wake(socket).await,
         ("GET", "/head/offsets") => handle_get_head_offsets(socket).await,
         ("POST", "/head/offsets") => handle_post_head_offsets(socket, body).await,
         ("POST", "/mcp") => handle_post_mcp(socket, body).await,
@@ -821,6 +830,22 @@ async fn handle_post_palette(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
     write_no_content(socket).await
 }
 
+/// `POST /sleep` — empty body. Drops eyes shut, head limp, LED ring
+/// dark, audio TX paused. Wake via `POST /wake`, MCP `wake`, any
+/// touch (`FT6336U` or `Si12T` body pads), or `AXP2101` short-press.
+async fn handle_post_sleep(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    crate::sleep::SLEEP_SIGNAL.signal(crate::sleep::SleepState::Sleeping);
+    defmt::info!("http: POST /sleep → entering sleep");
+    write_no_content(socket).await
+}
+
+/// `POST /wake` — empty body. Reverse of [`handle_post_sleep`].
+async fn handle_post_wake(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    crate::sleep::SLEEP_SIGNAL.signal(crate::sleep::SleepState::Awake);
+    defmt::info!("http: POST /wake → exiting sleep");
+    write_no_content(socket).await
+}
+
 /// `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP.
 ///
 /// Reads a JSON-RPC request, dispatches to one of `initialize` /
@@ -1070,6 +1095,16 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                     r#"{"url":"/camera/snapshot","format":"rgb565be","width":320,"height":240,"note":"available within ~500ms"}"#,
                 ),
             )
+        }
+        "sleep" => {
+            crate::sleep::SLEEP_SIGNAL.signal(crate::sleep::SleepState::Sleeping);
+            defmt::info!("mcp: sleep → entering sleep");
+            render_success(id, &render_tool_text_result("entering sleep"))
+        }
+        "wake" => {
+            crate::sleep::SLEEP_SIGNAL.signal(crate::sleep::SleepState::Awake);
+            defmt::info!("mcp: wake → exiting sleep");
+            render_success(id, &render_tool_text_result("exiting sleep"))
         }
         "get_state" => {
             let snap = snapshot::read();

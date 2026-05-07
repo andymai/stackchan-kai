@@ -26,7 +26,7 @@ extern crate alloc;
 
 use stackchan_firmware::{
     ambient, audio, ble, board, body_touch, button, camera, clock, event_log, framebuffer, head,
-    imu, ir, leds, net, power, storage, touch, tracking_trace, wallclock, watchdog,
+    imu, ir, leds, net, power, sleep, storage, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -558,6 +558,12 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // modifier — see `crate::director` for the full pipeline.
         director.run(&mut entity, now);
         tracking_trace.observe(&entity, now);
+        // Drain operator-commanded sleep state into the cache.
+        // After this point, `sleep::is_sleeping()` reflects the
+        // latest HTTP / MCP / wake-on-touch decision; the face
+        // override below + the head/LED gates further down all
+        // read from the same cache.
+        sleep::pump();
 
         // Hint the camera task about Listening attention so it can
         // widen face detection past motion-only candidates: a still
@@ -615,8 +621,22 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
             );
         }
 
-        // Publish the final pose to the head task.
-        head::POSE_SIGNAL.signal(entity.motor.head_pose);
+        // Apply the operator-sleep face override after the modifier
+        // pipeline runs so wake resumes the live face state without
+        // a transition glitch. The override clamps eyes shut, flat
+        // mouth, no overlays — the dirty-check below picks up the
+        // change so the LCD blits one closed-eyes frame and then
+        // sits idle.
+        sleep::apply_to_face(&mut entity.face);
+
+        // Publish the final pose to the head task — but only when
+        // awake. While sleeping, the head task gets no fresh signal
+        // and holds whatever pose it last commanded; the head
+        // task itself further skips `set_pose` to drop servo
+        // torque. See `sleep::is_sleeping` consumers.
+        if !sleep::is_sleeping() {
+            head::POSE_SIGNAL.signal(entity.motor.head_pose);
+        }
 
         // Update the read-only avatar snapshot the HTTP `/state`
         // handler reads. Per-frame is cheap (one mutex, one struct
@@ -634,8 +654,14 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // GET /state/stream clients.
         net::snapshot::publish_if_changed();
 
-        // Render the LED ring from the same entity state.
-        render_leds(&entity, now, &mut led_frame);
+        // Render the LED ring from the same entity state — or send
+        // an all-off frame when sleeping so the ring stays dark
+        // alongside the face.
+        if sleep::is_sleeping() {
+            led_frame = LedFrame::default();
+        } else {
+            render_leds(&entity, now, &mut led_frame);
+        }
         leds::LED_FRAME_SIGNAL.signal(led_frame);
 
         // Drain the latest observed pose from the head task.

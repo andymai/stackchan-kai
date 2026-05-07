@@ -96,6 +96,11 @@ pub async fn run_touch_loop<I: AsyncI2c>(mut touch: Ft6336u<I>) -> ! {
                 // rising edge.
                 if previous_fingers == 0 && report.fingers > 0 {
                     TAP_SIGNAL.signal(());
+                    // Any tap also wakes from operator-commanded
+                    // sleep — tapping the screen is the most natural
+                    // wake gesture and matches every dormancy
+                    // wake-trigger downstream.
+                    crate::sleep::wake_if_sleeping();
                     if let Some((x, y)) = report.first {
                         defmt::debug!("touch: tap at ({=u16}, {=u16})", x, y);
                     } else {
