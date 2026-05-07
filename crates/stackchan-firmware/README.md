@@ -95,6 +95,10 @@ runs three networked services on the LAN:
   `mdns.hostname` in the boot config (default `stackchan`). The TXT
   record carries `kai=1` as a variant marker; a generic Bonjour
   browser still lists the device alongside upstream stackchan units.
+  TXT also publishes live `yaw=<deg>` / `pitch=<deg>` (one decimal,
+  refreshed at most every 100 ms with a 1 s heartbeat) so a follower
+  in a mimic stack can lift current pose off mDNS without an HTTP
+  round-trip.
 - **SNTP** — on link-up, queries the SNTP servers from
   `time.sntp_servers` and writes the result into the BM8563 RTC.
 
