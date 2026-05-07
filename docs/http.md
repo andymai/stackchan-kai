@@ -31,6 +31,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
 | POST   | `/speak`         | Play a baked phrase / chirp through the speaker      |
 | POST   | `/listen`        | Open a 3-second listen window — Ear decorator + ack chirp |
+| POST   | `/pair`          | Open ESP-NOW pairing window with hold timer         |
 | POST   | `/mood`          | Set the operator-selected energy baseline (runtime-only) |
 | POST   | `/mcp`           | JSON-RPC 2.0 / MCP endpoint (initialize, tools/list, tools/call) |
 | POST   | `/volume`        | Set output volume (0–100); persisted to SD           |
@@ -160,6 +161,26 @@ firmware's `audio::try_dispatch_utterance` directly and can preempt
 or evict an in-flight operator request.
 
 `POST /speak` is gated by [auth](#auth) when a token is configured.
+
+### `POST /pair`
+
+```
+$ curl -X POST http://stackchan.local/pair \
+       -H 'Content-Type: application/json' \
+       -d '{"duration_ms":30000}'
+```
+
+| Field        | Type    | Required | Notes                                                |
+|--------------|---------|----------|------------------------------------------------------|
+| duration_ms  | integer | no       | Pairing window length in ms; default 30 000          |
+
+Opens an ESP-NOW pairing window for the given duration. While the
+window is open, the avatar shows the `Decorator::Pairing` overlay
+(concentric blue rings) and the firmware-side ESP-NOW receiver
+accepts new peer registrations. The window times out automatically;
+`POST /reset` closes it early.
+
+`POST /pair` is gated by [auth](#auth) when a token is configured.
 
 ### `POST /volume`
 

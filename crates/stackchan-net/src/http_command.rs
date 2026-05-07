@@ -337,6 +337,40 @@ pub fn parse_camera_mode(body: &str) -> Result<bool, JsonError> {
     enabled.ok_or(JsonError::MissingKey("enabled"))
 }
 
+/// Default ESP-NOW pairing window. 30 seconds is the rough span needed
+/// to power up an `M5StickC` remote, navigate its menu, and trigger the
+/// pairing handshake. Operators can override per request.
+pub const DEFAULT_PAIRING_DURATION_MS: u32 = 30_000;
+
+/// Parse a `POST /pair` body into a [`RemoteCommand::EnterPairing`].
+///
+/// All keys are optional. Missing body or empty `{}` defaults to
+/// [`DEFAULT_PAIRING_DURATION_MS`]; the only key recognised is
+/// `duration_ms` (u32).
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for unknown keys or malformed JSON
+/// shape.
+pub fn parse_enter_pairing(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut duration_ms: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "duration_ms" => {
+                if duration_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("duration_ms"));
+                }
+                duration_ms = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(RemoteCommand::EnterPairing {
+        duration_ms: duration_ms.unwrap_or(DEFAULT_PAIRING_DURATION_MS),
+    })
+}
+
 /// Single-pass byte cursor over the body. Each parse helper advances
 /// past the value it consumes (without consuming the trailing comma
 /// or `}` — those belong to [`visit_object`]).
@@ -974,6 +1008,39 @@ mod tests {
         assert!(matches!(
             parse_camera_mode(r#"{"enabled":true,"hold_ms":1000}"#),
             Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn enter_pairing_defaults_to_30s_window() {
+        let cmd = parse_enter_pairing(r"{}").unwrap();
+        assert_eq!(
+            cmd,
+            RemoteCommand::EnterPairing {
+                duration_ms: DEFAULT_PAIRING_DURATION_MS
+            }
+        );
+    }
+
+    #[test]
+    fn enter_pairing_accepts_explicit_duration() {
+        let cmd = parse_enter_pairing(r#"{"duration_ms":5000}"#).unwrap();
+        assert_eq!(cmd, RemoteCommand::EnterPairing { duration_ms: 5_000 });
+    }
+
+    #[test]
+    fn enter_pairing_rejects_unknown_key() {
+        assert!(matches!(
+            parse_enter_pairing(r#"{"hold_ms":1000}"#),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn enter_pairing_rejects_duplicate_key() {
+        assert!(matches!(
+            parse_enter_pairing(r#"{"duration_ms":1,"duration_ms":2}"#),
+            Err(JsonError::DuplicateKey("duration_ms"))
         ));
     }
 }

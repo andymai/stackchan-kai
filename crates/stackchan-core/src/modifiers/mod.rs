@@ -170,7 +170,7 @@ pub use microsaccade_from_attention::{
 pub use mouth_from_audio::{
     DEFAULT_ATTACK_MS, DEFAULT_FULL_DB, DEFAULT_RELEASE_MS, DEFAULT_SILENCE_DB, MouthFromAudio,
 };
-pub use remote_command::RemoteCommandModifier;
+pub use remote_command::{PAIRING_DECORATOR_TAIL_MS, RemoteCommandModifier};
 pub use style_from_emotion::StyleFromEmotion;
 pub use style_from_intent::{
     PETTING_BLUSH_BUMP, PETTING_EYE_CURVE_BUMP, PETTING_OPEN_WEIGHT_CAP, StyleFromIntent,
