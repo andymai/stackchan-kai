@@ -79,8 +79,8 @@ use stackchan_core::{
         EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
         HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
-        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
-        StyleFromIntent, StyleFromMood,
+        LostTargetSearch, MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier,
+        StyleFromEmotion, StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -161,13 +161,19 @@ type LcdDisplay = mipidsi::Display<
 /// Modifier order is the canonical stackchan-core stack:
 /// `EmotionFromTouch` → `EmotionCycle` → `StyleFromEmotion` → `Blink` →
 /// `Breath` → `IdleDrift` → `IdleHeadDrift` → `HeadFromEmotion` →
-/// `HeadFromAttention`. `EmotionFromTouch` runs first so a tap queued from the
-/// touch task becomes the active emotion before `EmotionCycle` checks
-/// the `manual_until` gate. `IdleHeadDrift` writes the base
+/// `HeadFromAttention` → `LostTargetSearch` → `HeadFromIntent`.
+/// `EmotionFromTouch` runs first so a tap queued from the touch task
+/// becomes the active emotion before `EmotionCycle` checks the
+/// `manual_until` gate. `IdleHeadDrift` writes the base
 /// `entity.motor.head_pose` (slow wander); `HeadFromEmotion` adds an
-/// emotion-keyed bias on top; `HeadFromAttention` adds an upward listening
-/// tilt when the `Listening` skill (registered separately) sets
-/// `mind.attention = Listening`.
+/// emotion-keyed bias on top; `HeadFromAttention` adds an upward
+/// listening tilt when the `Listening` skill (registered separately)
+/// sets `mind.attention = Listening`. `LostTargetSearch` rides on top
+/// of those, animating a brief directional saccade after the
+/// engagement falling-edge so the avatar reads as "looking for where
+/// they went." `HeadFromIntent` (priority 30) runs last in the Motion
+/// phase so its asymmetric startle recoil composes additively over
+/// the rest of the stack.
 /// The final pose is published to the 50 Hz head task via
 /// [`head::POSE_SIGNAL`]. `frame_eq` short-circuits blits when no
 /// pixel-affecting modifier changed anything — pose updates alone never
@@ -217,6 +223,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut head_drift = IdleHeadDrift::with_seed(head_drift_seed);
     let mut head_from_emotion = HeadFromEmotion::new();
     let mut head_from_attention = HeadFromAttention::new();
+    let mut lost_target_search = LostTargetSearch::new();
     let mut head_from_intent = HeadFromIntent::new();
     let mut mouth_from_audio = MouthFromAudio::new();
     let mut listening = Listening::new();
@@ -327,6 +334,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .add_modifier(&mut head_from_attention)
         .expect("registry full");
     director
+        .add_modifier(&mut lost_target_search)
+        .expect("registry full");
+    director
         .add_modifier(&mut head_from_intent)
         .expect("registry full");
     director
@@ -359,7 +369,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
