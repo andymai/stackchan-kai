@@ -148,8 +148,17 @@ impl Modifier for MouthFromAudio {
         // (and optional viseme) directly. The mic path is gated to
         // None during playback by the firmware's TX guard, so we'd
         // otherwise see "silent" mid-speech.
+        //
+        // Viseme-aware shaping: when the producer attaches a viseme
+        // tag, scale the envelope by the viseme's `mouth_scale` so
+        // a sustained /s/ fricative reads less open than a sustained
+        // /a/, and `Closed` / `Mm` shut the mouth fully even when
+        // raw envelope still has some residual energy.
         let target = if let Some(lip_sync) = entity.perception.tx_lip_sync {
-            clamp_unit(lip_sync.envelope)
+            let envelope = clamp_unit(lip_sync.envelope);
+            lip_sync
+                .viseme
+                .map_or(envelope, |v| clamp_unit(envelope * v.mouth_scale()))
         } else {
             // Pre-publish (audio_rms = None) reads as silent. Once the
             // firmware audio task starts publishing, it stays Some.
@@ -428,6 +437,53 @@ mod tests {
         // Deep silence: rms 1e-6 → below silence_db; clamps to 0.0.
         let t = mouth.target_from_rms(1e-6);
         assert!(t.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tx_viseme_scales_mouth_open_below_envelope() {
+        // A loud envelope tagged with a fricative viseme should drive
+        // the mouth less open than the same envelope with no viseme
+        // (fricative scale = 0.3).
+        use crate::lipsync::{LipSync, Viseme};
+        let mut entity = Entity::default();
+        let mut mouth = MouthFromAudio::new();
+        entity.perception.tx_lip_sync = Some(LipSync::with_viseme(1.0, Viseme::Ff));
+        entity.tick.now = Instant::from_millis(0);
+        mouth.update(&mut entity);
+        assert!(
+            entity.face.mouth.mouth_open < 0.5,
+            "Ff viseme should scale envelope down; got {}",
+            entity.face.mouth.mouth_open,
+        );
+    }
+
+    #[test]
+    fn tx_viseme_closed_silences_mouth_even_with_envelope_energy() {
+        // Closed and Mm map to mouth_scale = 0.0; the mouth shuts
+        // even if envelope has residual energy.
+        use crate::lipsync::{LipSync, Viseme};
+        let mut entity = Entity::default();
+        let mut mouth = MouthFromAudio::new();
+        entity.perception.tx_lip_sync = Some(LipSync::with_viseme(0.8, Viseme::Closed));
+        entity.tick.now = Instant::from_millis(0);
+        mouth.update(&mut entity);
+        assert!(entity.face.mouth.mouth_open.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tx_viseme_aa_passes_envelope_through() {
+        // Aa scale is 1.0 — envelope reaches the mouth unchanged.
+        use crate::lipsync::{LipSync, Viseme};
+        let mut entity = Entity::default();
+        let mut mouth = MouthFromAudio::new();
+        entity.perception.tx_lip_sync = Some(LipSync::with_viseme(0.7, Viseme::Aa));
+        entity.tick.now = Instant::from_millis(0);
+        mouth.update(&mut entity);
+        assert!(
+            (entity.face.mouth.mouth_open - 0.7).abs() < TOL,
+            "expected mouth ~0.7, got {}",
+            entity.face.mouth.mouth_open,
+        );
     }
 
     #[test]
