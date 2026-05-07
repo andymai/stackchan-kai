@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.27.0...stackchan-core-v0.28.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** SD-backed RuntimeStore — persist palette + mood ([#266](https://github.com/andymai/stackchan-kai/issues/266)) ([df1415a](https://github.com/andymai/stackchan-kai/commit/df1415ace028fc1e9f1519f385868833e9e92e7e))
+
 ## [0.27.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.26.0...stackchan-core-v0.27.0) (2026-05-07)
 
 
