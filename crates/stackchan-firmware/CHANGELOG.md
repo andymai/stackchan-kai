@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.3](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.2...stackchan-firmware-v0.62.3) (2026-05-07)
+
+
+### Bug Fixes
+
+* **firmware:** greptile post-merge findings on [#273](https://github.com/andymai/stackchan-kai/issues/273) + [#275](https://github.com/andymai/stackchan-kai/issues/275) ([#277](https://github.com/andymai/stackchan-kai/issues/277)) ([fef55ff](https://github.com/andymai/stackchan-kai/commit/fef55ff75a42e68dc279c39509dc68e6d880e38b))
+
 ## [0.62.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.1...stackchan-firmware-v0.62.2) (2026-05-07)
 
 
