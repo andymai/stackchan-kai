@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.44.0...stackchan-firmware-v0.45.0) (2026-05-07)
+
+
+### Features
+
+* **core:** listen-window scaffolding + Ear decorator ([#230](https://github.com/andymai/stackchan-kai/issues/230)) ([3e87968](https://github.com/andymai/stackchan-kai/commit/3e8796834dc41b67e706e63c0142a6a1984d62ae))
+
 ## [0.44.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.43.0...stackchan-firmware-v0.44.0) (2026-05-07)
 
 

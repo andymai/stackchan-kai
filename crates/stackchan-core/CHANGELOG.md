@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.21.0...stackchan-core-v0.22.0) (2026-05-07)
+
+
+### Features
+
+* **core:** listen-window scaffolding + Ear decorator ([#230](https://github.com/andymai/stackchan-kai/issues/230)) ([3e87968](https://github.com/andymai/stackchan-kai/commit/3e8796834dc41b67e706e63c0142a6a1984d62ae))
+
 ## [0.21.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.20.0...stackchan-core-v0.21.0) (2026-05-07)
 
 
