@@ -67,10 +67,10 @@ pub struct RemoteCommandModifier {
     /// pins to the entry frame so listening-pose ease-in animations
     /// don't restart per tick (same idiom as [`Self::lookat_hold`]).
     listen_hold: Option<(Instant, Instant)>,
-    /// Active pairing-window hold, if any. `(entered_at, hold_until)`.
-    /// While the timer is live, [`Self::update`] re-arms
-    /// [`Decorator::Pairing`] on `entity.face.decorator` each tick.
-    pairing_hold: Option<(Instant, Instant)>,
+    /// Active pairing-window deadline, if any. While the timer is
+    /// live, [`Self::update`] re-arms [`Decorator::Pairing`] on
+    /// `entity.face.decorator` each tick.
+    pairing_hold: Option<Instant>,
 }
 
 impl RemoteCommandModifier {
@@ -135,7 +135,7 @@ impl RemoteCommandModifier {
                     now,
                     PAIRING_DECORATOR_TAIL_MS,
                 ));
-                self.pairing_hold = Some((now, until));
+                self.pairing_hold = Some(until);
             }
         }
     }
@@ -214,7 +214,7 @@ impl Modifier for RemoteCommandModifier {
             }
         }
 
-        if let Some((_entered, until)) = self.pairing_hold {
+        if let Some(until) = self.pairing_hold {
             if now < until {
                 entity.face.decorator = Some(DecoratorState::hold_for(
                     Decorator::Pairing,
