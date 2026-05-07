@@ -102,6 +102,89 @@ pub static POSE_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Signal::new();
 /// backlog.
 pub static HEAD_POSE_ACTUAL_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Signal::new();
 
+/// Operator-supplied head zero-point correction.
+///
+/// Layered on top of the compile-time [`PAN_TRIM_DEG`] /
+/// [`TILT_TRIM_DEG`]: the const trims absorb the per-unit servo
+/// encoder offset (a hardware property of the assembled module);
+/// `OFFSETS` absorbs day-of mounting / cabling differences that an
+/// operator wants to dial in without reflashing. Stored runtime-only
+/// in v0.2.0 — persistence across reboots ships alongside the NVS
+/// `RuntimeStore` follow-up.
+pub static OFFSETS_SIGNAL: Signal<CriticalSectionRawMutex, HeadOffsets> = Signal::new();
+
+/// Operator-supplied head zero-point correction; latched in the head
+/// task between [`OFFSETS_SIGNAL`] updates. Defaults to zero on both
+/// axes (identical to v0.1.0 behaviour).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct HeadOffsets {
+    /// Pan (yaw) correction in degrees. `+` = head shifted right of
+    /// the modifier-commanded value.
+    pub yaw_offset_deg: f32,
+    /// Tilt (pitch) correction in degrees. `+` = head shifted up
+    /// from the modifier-commanded value.
+    pub tilt_offset_deg: f32,
+}
+
+impl HeadOffsets {
+    /// Apply this offset to a commanded pose, returning the
+    /// servo-bound pose. Pure addition — no clamping; the `SCServo`
+    /// driver clamps to mechanical range further down.
+    #[must_use]
+    pub fn apply(&self, pose: Pose) -> Pose {
+        Pose::new(
+            pose.pan_deg + self.yaw_offset_deg,
+            pose.tilt_deg + self.tilt_offset_deg,
+        )
+    }
+}
+
+/// Cached current offsets, mirrored from [`OFFSETS_SIGNAL`] each
+/// time the head task drains the signal.
+///
+/// The HTTP `GET /head/offsets` route reads this back so an operator
+/// can confirm the live value without round-tripping through the
+/// modifier pipeline.
+pub static OFFSETS_CACHE: embassy_sync::blocking_mutex::Mutex<
+    CriticalSectionRawMutex,
+    core::cell::Cell<HeadOffsets>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(HeadOffsets {
+    yaw_offset_deg: 0.0,
+    tilt_offset_deg: 0.0,
+}));
+
+/// Read the most recently applied head offsets. Cheap — non-blocking
+/// `Cell::get` under the critical-section mutex.
+#[must_use]
+pub fn current_offsets() -> HeadOffsets {
+    OFFSETS_CACHE.lock(core::cell::Cell::get)
+}
+
+#[cfg(test)]
+mod head_offsets_tests {
+    use super::*;
+
+    #[test]
+    fn apply_adds_each_axis_independently() {
+        let offsets = HeadOffsets {
+            yaw_offset_deg: 1.5,
+            tilt_offset_deg: -2.0,
+        };
+        let out = offsets.apply(Pose::new(10.0, 5.0));
+        assert!((out.pan_deg - 11.5).abs() < f32::EPSILON);
+        assert!((out.tilt_deg - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn default_is_identity() {
+        let offsets = HeadOffsets::default();
+        let pose = Pose::new(7.0, -3.0);
+        let out = offsets.apply(pose);
+        assert!((out.pan_deg - pose.pan_deg).abs() < f32::EPSILON);
+        assert!((out.tilt_deg - pose.tilt_deg).abs() < f32::EPSILON);
+    }
+}
+
 /// Feetech SCServo-backed head driver.
 pub struct ScsHead<W> {
     /// Underlying `SCServo` protocol driver on the UART bus.

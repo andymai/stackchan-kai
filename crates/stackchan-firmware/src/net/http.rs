@@ -40,6 +40,13 @@
 //!   avatar's colour palette at runtime. Runtime-only;
 //!   persistence ships alongside the NVS `RuntimeStore`. Vocabulary
 //!   matches `Palette::wire_str` (default / dark / cute / dog).
+//! - `GET  /head/offsets` — current operator-applied yaw/tilt zero
+//!   correction (degrees). Returns `{"yaw_offset_deg":F,"tilt_offset_deg":F}`.
+//! - `POST /head/offsets` — JSON
+//!   `{"yaw_offset_deg":F,"tilt_offset_deg":F}`. Sets the head's
+//!   zero-point correction; both axes required, each clamped to
+//!   `[-30°, +30°]`. Layered on top of the firmware's compile-time
+//!   trim — runtime-only in v0.2.0, persistence ships with NVS.
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
 //! - `POST /speak` — JSON `{"phrase": "...", "locale": "..."}`.
@@ -385,6 +392,8 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/palette") => handle_post_palette(socket, body).await,
+        ("GET", "/head/offsets") => handle_get_head_offsets(socket).await,
+        ("POST", "/head/offsets") => handle_post_head_offsets(socket, body).await,
         ("POST", "/mcp") => handle_post_mcp(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
@@ -702,6 +711,48 @@ async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
     };
     MOOD_SIGNAL.signal(mood);
     defmt::info!("http: POST /mood → {}", mood.wire_str());
+    write_no_content(socket).await
+}
+
+/// `GET /head/offsets` — read the current operator-applied head
+/// zero-point correction. Returns the live cache published by the
+/// head task on every offset update; an operator can confirm the
+/// applied value without a round-trip through `/state`.
+async fn handle_get_head_offsets(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let offsets = crate::head::current_offsets();
+    let body = format!(
+        r#"{{"yaw_offset_deg":{:.3},"tilt_offset_deg":{:.3}}}"#,
+        offsets.yaw_offset_deg, offsets.tilt_offset_deg,
+    );
+    write_json(socket, 200, &body).await
+}
+
+/// `POST /head/offsets` — parse the JSON body and push the new
+/// offsets at the head task via
+/// [`crate::head::OFFSETS_SIGNAL`]. Runtime-only — persistence
+/// across reboots ships alongside the NVS `RuntimeStore` follow-up.
+async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let offsets = match json::parse_head_offsets(body) {
+        Ok(o) => o,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /head/offsets parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    let firmware_offsets = crate::head::HeadOffsets {
+        yaw_offset_deg: offsets.yaw_offset_deg,
+        tilt_offset_deg: offsets.tilt_offset_deg,
+    };
+    crate::head::OFFSETS_SIGNAL.signal(firmware_offsets);
+    defmt::info!(
+        "http: POST /head/offsets → yaw={=f32} tilt={=f32}",
+        firmware_offsets.yaw_offset_deg,
+        firmware_offsets.tilt_offset_deg,
+    );
     write_no_content(socket).await
 }
 
