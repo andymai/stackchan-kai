@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.61.0...stackchan-firmware-v0.62.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** on-device OTA — verify, flash, swap, reboot ([#271](https://github.com/andymai/stackchan-kai/issues/271)) ([b8217ed](https://github.com/andymai/stackchan-kai/commit/b8217eddfaa8d3da7a7633bd6eabfc287526151c))
+
 ## [0.61.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.60.0...stackchan-firmware-v0.61.0) (2026-05-07)
 
 
