@@ -1015,6 +1015,19 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "take_photo" => {
+            // Trigger the camera-task capture path; the actual SD
+            // write happens out-of-band ~200–500 ms later. The MCP
+            // client polls `GET /camera/snapshot` to retrieve it.
+            crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
+            defmt::info!("mcp: take_photo → camera capture queued");
+            render_success(
+                id,
+                &render_tool_text_result(
+                    r#"{"url":"/camera/snapshot","format":"rgb565be","width":320,"height":240,"note":"available within ~500ms"}"#,
+                ),
+            )
+        }
         "get_state" => {
             let snap = snapshot::read();
             render_success(id, &render_tool_text_result(&state_body(snap)))
@@ -1160,8 +1173,14 @@ async fn handle_get_camera_snapshot(socket: &mut TcpSocket<'_>) -> Result<(), Ht
                 return write_text(socket, 503, "storage unavailable\n").await;
             }
         };
+    // Frame layout headers let an MCP / curl client know exactly
+    // what the byte stream is without a separate descriptor. Format
+    // is fixed: 320 × 240 RGB565 big-endian, 153 600 bytes total —
+    // matches what the GC0308 capture path writes.
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\
+         X-Frame-Format: rgb565be\r\nX-Frame-Width: 320\r\nX-Frame-Height: 240\r\n\
+         Content-Length: {len}\r\nConnection: close\r\n\r\n",
         len = frame.len(),
     );
     socket

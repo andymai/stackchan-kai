@@ -621,6 +621,7 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
 /// - `create_reminder(fire_in_secs: integer, phrase: string) -> { id }`
 /// - `list_reminders() -> { reminders: [...] }`
 /// - `cancel_reminder(id: integer)`
+/// - `take_photo() -> { url, format, width, height }`
 /// - `get_state()`
 ///
 /// Schemas are minimal — no enum constraints on emotion / mood /
@@ -639,6 +640,7 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"create_reminder","description":"Schedule a baked phrase to play in N seconds. Returns the reminder id. Runtime-only — does not survive reboot.","inputSchema":{"type":"object","properties":{"fire_in_secs":{"type":"integer","minimum":1,"maximum":432000},"phrase":{"type":"string"}},"required":["fire_in_secs","phrase"]}},"#,
     r#"{"name":"list_reminders","description":"Return the currently-scheduled reminders.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"cancel_reminder","description":"Cancel a previously-scheduled reminder by id. Returns 404 / not-found if no matching reminder exists.","inputSchema":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}},"#,
+    r#"{"name":"take_photo","description":"Trigger the camera to capture the next frame and write it to /sd/CAPTURE.565. The frame is then fetchable via GET /camera/snapshot as raw 320x240 RGB565 big-endian bytes (X-Frame-Format / X-Frame-Width / X-Frame-Height response headers describe the layout). Returns the snapshot URL and dimensions.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );
