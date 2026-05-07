@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.42.0...stackchan-firmware-v0.43.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** GET /camera/snapshot + dashboard view-capture button ([#221](https://github.com/andymai/stackchan-kai/issues/221)) ([ae1ccd0](https://github.com/andymai/stackchan-kai/commit/ae1ccd0068c0f8253f0bd6972d1626710bf262f0))
+
 ## [0.42.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.41.0...stackchan-firmware-v0.42.0) (2026-05-07)
 
 
