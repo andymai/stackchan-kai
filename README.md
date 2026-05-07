@@ -91,6 +91,7 @@ and the firmware exposes a LAN-only HTTP control plane:
 - `GET /state/stream` — live state via Server-Sent Events
 - `POST /emotion`, `/look-at`, `/face-target`, `/reset`, `/speak` — manual override
 - `POST /volume`, `/mute`, `/mood`, `/palette`, `/head/offsets` — runtime control surface
+- `POST /sleep`, `/wake` — sleep mode (eyes shut / head limp / LED dark / audio paused). Wake via the route, MCP tool, any touch, or the side power button.
 - `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP for AI agent integrations (`set_emotion`, `look_at`, `speak`, `set_volume`, `create_reminder` / `list_reminders` / `cancel_reminder`, …)
 - `POST /firmware/update` — ed25519-signed SCFW image upload; auto-flashes the inactive OTA slot and soft-resets. Compiled out unless `STACKCHAN_OTA_PUBLIC_KEY` is set at build time. Always requires a configured bearer token.
 - `GET` / `PUT /settings` — persistent config with atomic SD writeback

@@ -60,6 +60,12 @@ pub async fn run_body_touch_loop<I: AsyncI2c>(bus: I) -> ! {
                 let centre = intensity_u8(touch.intensity.1);
                 let right = intensity_u8(touch.intensity.2);
                 crate::net::snapshot::update_body_touch(left, centre, right);
+                // Any body-touch contact wakes the avatar — pressing
+                // the back-of-head pads is the most natural way to
+                // rouse a sleeping desk-toy.
+                if left + centre + right > 0 {
+                    crate::sleep::wake_if_sleeping();
+                }
                 BODY_TOUCH_SIGNAL.signal(BodyTouch {
                     left,
                     centre,
