@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.40.2...stackchan-firmware-v0.41.0) (2026-05-07)
+
+
+### Features
+
+* **core:** decorator overlay layer + 3 trigger modifiers ([#223](https://github.com/andymai/stackchan-kai/issues/223)) ([057e56e](https://github.com/andymai/stackchan-kai/commit/057e56e5d3ae8b585858fdd0b963a836ae72232b))
+
 ## [0.40.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.40.1...stackchan-firmware-v0.40.2) (2026-05-07)
 
 ## [0.40.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.40.0...stackchan-firmware-v0.40.1) (2026-05-05)

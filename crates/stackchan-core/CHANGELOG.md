@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.19.0...stackchan-core-v0.20.0) (2026-05-07)
+
+
+### Features
+
+* **core:** decorator overlay layer + 3 trigger modifiers ([#223](https://github.com/andymai/stackchan-kai/issues/223)) ([057e56e](https://github.com/andymai/stackchan-kai/commit/057e56e5d3ae8b585858fdd0b963a836ae72232b))
+
 ## [0.19.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.18.0...stackchan-core-v0.19.0) (2026-05-07)
 
 
