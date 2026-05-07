@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.63.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.3...stackchan-firmware-v0.63.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** operator-commanded sleep mode ([#279](https://github.com/andymai/stackchan-kai/issues/279)) ([93bac33](https://github.com/andymai/stackchan-kai/commit/93bac339bfd2341d56db86d6dc3d53580ec26a50))
+
 ## [0.62.3](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.2...stackchan-firmware-v0.62.3) (2026-05-07)
 
 
