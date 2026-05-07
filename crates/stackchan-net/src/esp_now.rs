@@ -68,6 +68,12 @@ pub enum EspNowKind {
     Speak = 0x04,
     /// JSON body matches `POST /pair` schema.
     EnterPairing = 0x05,
+    /// Outbound pose-mirror broadcast. JSON body is the same shape as
+    /// `POST /look-at` (`{"pan_deg":F,"tilt_deg":F}`) — receivers
+    /// that want to slave their head to this device's pose can map
+    /// the body straight to a `LookAt` command, while receivers that
+    /// don't care decode it as [`InboundFrame::Pose`] and discard.
+    PoseMirror = 0x06,
 }
 
 impl EspNowKind {
@@ -81,6 +87,7 @@ impl EspNowKind {
             0x03 => Some(Self::Reset),
             0x04 => Some(Self::Speak),
             0x05 => Some(Self::EnterPairing),
+            0x06 => Some(Self::PoseMirror),
             _ => None,
         }
     }
@@ -90,7 +97,11 @@ impl EspNowKind {
     pub const fn has_body(self) -> bool {
         match self {
             Self::Heartbeat | Self::Reset => false,
-            Self::SetEmotion | Self::LookAt | Self::Speak | Self::EnterPairing => true,
+            Self::SetEmotion
+            | Self::LookAt
+            | Self::Speak
+            | Self::EnterPairing
+            | Self::PoseMirror => true,
         }
     }
 }
@@ -123,15 +134,27 @@ impl From<JsonError> for DecodeError {
 
 /// Decoded inbound ESP-NOW frame.
 ///
-/// `Heartbeat` carries no payload; the rest map onto a
-/// [`RemoteCommand`] ready to enqueue on the firmware-side
-/// `REMOTE_COMMAND_SIGNAL`.
+/// `Heartbeat` carries no payload; `Pose` carries an advisory mirror
+/// of another device's head pose (the receiver decides whether to
+/// follow it); the rest map onto a [`RemoteCommand`] ready to enqueue
+/// on the firmware-side `REMOTE_COMMAND_SIGNAL`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InboundFrame {
     /// Liveness only — caller may use as proof-of-life for the peer.
     Heartbeat,
     /// Decoded remote command, ready to forward to the modifier graph.
     Command(RemoteCommand),
+    /// Pose-mirror frame from another Stack-chan unit. Carrying the
+    /// same shape as a `LookAt` command but kept distinct so the
+    /// receiver decides whether to slave to the sender's head — a
+    /// blanket mirror of inbound `LookAt`s would create a feedback
+    /// loop in any multi-unit choreography.
+    Pose {
+        /// Sender's head pan in degrees, +CCW from straight ahead.
+        pan_deg: f32,
+        /// Sender's head tilt in degrees, + up.
+        tilt_deg: f32,
+    },
 }
 
 /// Parse a raw ESP-NOW frame buffer into an [`InboundFrame`].
@@ -172,6 +195,20 @@ pub fn decode(buf: &[u8]) -> Result<InboundFrame, DecodeError> {
         EspNowKind::LookAt => Ok(InboundFrame::Command(parse_look_at(body_str)?)),
         EspNowKind::Speak => Ok(InboundFrame::Command(parse_speak(body_str)?)),
         EspNowKind::EnterPairing => Ok(InboundFrame::Command(parse_enter_pairing(body_str)?)),
+        EspNowKind::PoseMirror => {
+            // Reuse `parse_look_at` for the body shape — same JSON
+            // schema — then unwrap to bare degrees so a `Pose` variant
+            // can't be mistaken for a `LookAt` command downstream.
+            match parse_look_at(body_str)? {
+                RemoteCommand::LookAt { target, .. } => Ok(InboundFrame::Pose {
+                    pan_deg: target.pan_deg,
+                    tilt_deg: target.tilt_deg,
+                }),
+                // `parse_look_at` only ever returns `LookAt`, but the
+                // exhaustive arm keeps the types honest.
+                _ => Err(DecodeError::BadBody(JsonError::BadValue)),
+            }
+        }
     }
 }
 
@@ -191,6 +228,105 @@ pub fn encode_header(buf: &mut [u8], kind: EspNowKind) -> Result<usize, DecodeEr
     buf[4] = ESP_NOW_VERSION;
     buf[5] = kind as u8;
     Ok(HEADER_LEN)
+}
+
+/// Encode an empty-body [`EspNowKind::Heartbeat`] frame into `buf`,
+/// returning the total frame length. Liveness signal — receivers
+/// treat it as proof-of-life from the sender's MAC.
+///
+/// # Errors
+///
+/// Returns [`DecodeError::TooShort`] if `buf` can't hold the 6-byte
+/// header.
+pub fn encode_heartbeat(buf: &mut [u8]) -> Result<usize, DecodeError> {
+    encode_header(buf, EspNowKind::Heartbeat)
+}
+
+/// Encode a [`EspNowKind::PoseMirror`] frame carrying the sender's
+/// current head pose.
+///
+/// Body is JSON-shape-identical to a `LookAt` command
+/// (`{"pan_deg":F,"tilt_deg":F}`) so cross-decoders that want to
+/// slave on the pose can reuse the existing parser. Returns the
+/// total frame length on success.
+///
+/// # Errors
+///
+/// - [`DecodeError::TooShort`] if `buf` can't hold the header + body.
+/// - [`DecodeError::Oversize`] if the rendered body would itself
+///   exceed [`MAX_BODY_LEN`] (only possible for pathological f32
+///   formatting, but the bound keeps the wire contract honest).
+pub fn encode_pose_mirror(
+    buf: &mut [u8],
+    pan_deg: f32,
+    tilt_deg: f32,
+) -> Result<usize, DecodeError> {
+    if buf.len() < HEADER_LEN {
+        return Err(DecodeError::TooShort);
+    }
+    encode_header(buf, EspNowKind::PoseMirror)?;
+    let body_buf = &mut buf[HEADER_LEN..];
+    let body_len = render_pose_body(body_buf, pan_deg, tilt_deg)?;
+    Ok(HEADER_LEN + body_len)
+}
+
+/// Render `{"pan_deg":F,"tilt_deg":F}` into `out` without touching
+/// `alloc`. Each angle is formatted to one decimal place — pose
+/// values live in `[-90.0, +90.0]` degrees and 0.1° resolution is
+/// well below the servo's mechanical noise floor.
+///
+/// Non-finite inputs (NaN / inf) render as `0`; the firmware-side
+/// pose source already clamps to finite values, so the fallback
+/// only protects against future callers passing raw IMU data.
+fn render_pose_body(out: &mut [u8], pan_deg: f32, tilt_deg: f32) -> Result<usize, DecodeError> {
+    use core::fmt::Write as _;
+    let mut cursor = ByteCursor::new(out);
+    let pan = if pan_deg.is_finite() { pan_deg } else { 0.0 };
+    let tilt = if tilt_deg.is_finite() { tilt_deg } else { 0.0 };
+    write!(
+        &mut cursor,
+        r#"{{"pan_deg":{pan:.1},"tilt_deg":{tilt:.1}}}"#
+    )
+    .map_err(|_| DecodeError::TooShort)?;
+    let len = cursor.len();
+    if len > MAX_BODY_LEN {
+        return Err(DecodeError::Oversize(len));
+    }
+    Ok(len)
+}
+
+/// `core::fmt::Write` adapter over a `&mut [u8]`. Keeps the wire
+/// rendering allocation-free without pulling in `heapless` for a
+/// 32-byte transient buffer.
+struct ByteCursor<'a> {
+    /// Backing slice the cursor writes into.
+    buf: &'a mut [u8],
+    /// Bytes written so far — also the next-free offset.
+    written: usize,
+}
+
+impl<'a> ByteCursor<'a> {
+    /// Wrap `buf` with the cursor positioned at offset 0.
+    const fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, written: 0 }
+    }
+
+    /// Total bytes the cursor has emitted into `buf`.
+    const fn len(&self) -> usize {
+        self.written
+    }
+}
+
+impl core::fmt::Write for ByteCursor<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let end = self.written.checked_add(s.len()).ok_or(core::fmt::Error)?;
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.written..end].copy_from_slice(s.as_bytes());
+        self.written = end;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -329,5 +465,47 @@ mod tests {
     fn decode_rejects_oversize() {
         let buf = [0_u8; MAX_FRAME_LEN + 1];
         assert_eq!(decode(&buf), Err(DecodeError::Oversize(MAX_FRAME_LEN + 1)));
+    }
+
+    #[test]
+    fn encode_heartbeat_round_trips() {
+        let mut buf = [0_u8; HEADER_LEN];
+        let n = encode_heartbeat(&mut buf).unwrap();
+        assert_eq!(n, HEADER_LEN);
+        assert_eq!(decode(&buf[..n]), Ok(InboundFrame::Heartbeat));
+    }
+
+    #[test]
+    fn encode_pose_mirror_round_trips() {
+        let mut buf = [0_u8; MAX_FRAME_LEN];
+        let n = encode_pose_mirror(&mut buf, 12.5, -3.4).unwrap();
+        match decode(&buf[..n]).unwrap() {
+            InboundFrame::Pose { pan_deg, tilt_deg } => {
+                assert!((pan_deg - 12.5).abs() < 0.05, "pan_deg={pan_deg}");
+                assert!((tilt_deg - -3.4).abs() < 0.05, "tilt_deg={tilt_deg}");
+            }
+            other => panic!("expected Pose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn encode_pose_mirror_handles_non_finite_inputs() {
+        let mut buf = [0_u8; MAX_FRAME_LEN];
+        let n = encode_pose_mirror(&mut buf, f32::NAN, f32::INFINITY).unwrap();
+        // NaN/inf collapse to 0 so the body stays valid JSON.
+        match decode(&buf[..n]).unwrap() {
+            InboundFrame::Pose { pan_deg, tilt_deg } => {
+                assert!(pan_deg.abs() < f32::EPSILON, "pan_deg={pan_deg}");
+                assert!(tilt_deg.abs() < f32::EPSILON, "tilt_deg={tilt_deg}");
+            }
+            other => panic!("expected Pose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pose_mirror_kind_is_append_only() {
+        // Wire byte for PoseMirror must stay 0x06 — every shipped
+        // remote depends on this value being stable.
+        assert_eq!(EspNowKind::PoseMirror as u8, 0x06);
     }
 }
