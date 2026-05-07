@@ -11,7 +11,7 @@
 //! - Eyes: `Rgb565::BLACK`, either filled ellipses (when
 //!   [`Style::eye_curve`](crate::face::Style::eye_curve) is 0) or a
 //!   stroked polyline arc (otherwise).
-//! - Mouth: pink (`MOUTH_COLOR`), either the v0.1.0 line/ellipse (when
+//! - Mouth: from `palette.mouth`, either the v0.1.0 line/ellipse (when
 //!   [`Style::mouth_curve`](crate::face::Style::mouth_curve) is 0) or
 //!   a stroked polyline curve.
 //! - Cheeks: a weight-blended white→pink circle below each eye when
@@ -41,12 +41,11 @@ use embedded_graphics::{
 use crate::bubble::BubbleState;
 use crate::decorator::{Decorator, DecoratorState};
 use crate::face::{Eye, EyePhase, Face, Mouth, SCALE_DEFAULT};
+use crate::palette::PaletteColors;
 
-/// Pink mouth/cheek color — `#F58080` quantized into Rgb565's (5,6,5)-bit channels.
-const MOUTH_COLOR: Rgb565 = Rgb565::new(30, 32, 16);
-
-/// Heart decorator pink — slightly more saturated than `MOUTH_COLOR` so
-/// the heart reads as deliberate overlay rather than blush bleed-through.
+/// Heart decorator pink — slightly more saturated than the `Default`
+/// palette's mouth pink so the heart reads as a deliberate overlay
+/// rather than blush bleed-through.
 const HEART_COLOR: Rgb565 = Rgb565::new(31, 16, 12);
 
 /// Sweat decorator light blue — distinct from any other palette entry
@@ -102,7 +101,8 @@ impl Face {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        target.clear(Rgb565::WHITE)?;
+        let palette = self.palette.colors();
+        target.clear(palette.background)?;
         // Cheeks first: the eye sits on top of the cheek circle when the
         // two overlap at high `eye_scale` + `cheek_blush`.
         if self.style.cheek_blush > 0 {
@@ -110,12 +110,14 @@ impl Face {
                 &self.left_eye,
                 self.style.cheek_blush,
                 self.style.eye_scale,
+                palette,
                 target,
             )?;
             draw_cheek(
                 &self.right_eye,
                 self.style.cheek_blush,
                 self.style.eye_scale,
+                palette,
                 target,
             )?;
         }
@@ -123,15 +125,17 @@ impl Face {
             &self.left_eye,
             self.style.eye_curve,
             self.style.eye_scale,
+            palette.eye,
             target,
         )?;
         draw_eye(
             &self.right_eye,
             self.style.eye_curve,
             self.style.eye_scale,
+            palette.eye,
             target,
         )?;
-        draw_mouth(&self.mouth, self.style.mouth_curve, target)?;
+        draw_mouth(&self.mouth, self.style.mouth_curve, palette.mouth, target)?;
         if let Some(state) = self.decorator {
             draw_decorator(state, target)?;
         }
@@ -615,7 +619,13 @@ where
 /// 3. Otherwise: a stroked parabolic arc. `curve > 0` (Happy) arches
 ///    upward, `curve < 0` (Sad) dips downward.
 #[allow(clippy::similar_names)] // `scaled_rx` / `scaled_ry` is the intended x/y pair.
-fn draw_eye<D>(eye: &Eye, curve: i8, scale: u8, target: &mut D) -> Result<(), D::Error>
+fn draw_eye<D>(
+    eye: &Eye,
+    curve: i8,
+    scale: u8,
+    eye_color: Rgb565,
+    target: &mut D,
+) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -628,7 +638,7 @@ where
             eye.center.x,
             eye.center.y,
             scaled_rx,
-            stroke(Rgb565::BLACK, LINE_WIDTH),
+            stroke(eye_color, LINE_WIDTH),
             target,
         );
     }
@@ -640,7 +650,7 @@ where
         let top_left = EgPoint::new(eye.center.x - half_w, eye.center.y - half_h);
         let size = Size::new(u32::from(width), u32::from(height));
         return Ellipse::new(top_left, size)
-            .into_styled(fill(Rgb565::BLACK))
+            .into_styled(fill(eye_color))
             .draw(target);
     }
 
@@ -653,7 +663,7 @@ where
         eye.center.y,
         scaled_rx,
         sag,
-        stroke(Rgb565::BLACK, EYE_ARC_WIDTH),
+        stroke(eye_color, EYE_ARC_WIDTH),
         target,
     )
 }
@@ -679,7 +689,12 @@ const MOUTH_OPEN_MAX_HEIGHT_PX: f32 = 40.0;
 ///    uses this) and the `mouth_open`-derived audio height. When both
 ///    are zero, falls back to a horizontal resting line (v0.1.0
 ///    neutral mouth).
-fn draw_mouth<D>(mouth: &Mouth, curve: i8, target: &mut D) -> Result<(), D::Error>
+fn draw_mouth<D>(
+    mouth: &Mouth,
+    curve: i8,
+    mouth_color: Rgb565,
+    target: &mut D,
+) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -692,7 +707,7 @@ where
             mouth.center.y,
             mouth.radius_x,
             sag,
-            stroke(MOUTH_COLOR, LINE_WIDTH),
+            stroke(mouth_color, LINE_WIDTH),
             target,
         );
     }
@@ -705,7 +720,7 @@ where
             mouth.center.x,
             mouth.center.y,
             mouth.radius_x,
-            stroke(MOUTH_COLOR, LINE_WIDTH),
+            stroke(mouth_color, LINE_WIDTH),
             target,
         );
     }
@@ -717,7 +732,7 @@ where
     let size = Size::new(u32::from(width), u32::from(height));
 
     Ellipse::new(top_left, size)
-        .into_styled(fill(MOUTH_COLOR))
+        .into_styled(fill(mouth_color))
         .draw(target)
 }
 
@@ -745,9 +760,18 @@ fn audio_open_height(mouth_open: f32) -> u16 {
     rounded
 }
 
-/// Draw a cheek circle below `eye` with color blended between white and
-/// `MOUTH_COLOR` by `blush` (0..=255).
-fn draw_cheek<D>(eye: &Eye, blush: u8, eye_scale: u8, target: &mut D) -> Result<(), D::Error>
+/// Draw a cheek circle below `eye` with color blended between the
+/// palette background and the palette cheek colour by `blush`
+/// (0..=255). The blend lives in the palette's colour space rather
+/// than always-against-white so a `Dark` palette's cheek reads
+/// correctly against the black background.
+fn draw_cheek<D>(
+    eye: &Eye,
+    blush: u8,
+    eye_scale: u8,
+    palette: PaletteColors,
+    target: &mut D,
+) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -758,32 +782,32 @@ where
     let half = (CHEEK_DIAMETER / 2) as i32;
     let top_left = EgPoint::new(eye.center.x - half, cheek_top);
     Circle::new(top_left, CHEEK_DIAMETER)
-        .into_styled(fill(blend_blush(blush)))
+        .into_styled(fill(blend_blush(blush, palette.background, palette.cheek)))
         .draw(target)
 }
 
-/// Linearly blend between white and `MOUTH_COLOR` by `blush` (0 = white,
-/// 255 = full pink). Stays in Rgb565 channel space (5/6/5 bits) to keep
-/// the result directly renderable.
-fn blend_blush(blush: u8) -> Rgb565 {
+/// Linearly blend between `from` and `to` colours by `blush` (0 =
+/// pure `from`, 255 = pure `to`). Stays in Rgb565 channel space
+/// (5/6/5 bits) so the result is directly renderable.
+fn blend_blush(blush: u8, from: Rgb565, to: Rgb565) -> Rgb565 {
     let t = u32::from(blush);
-    let lerp = |from: u32, to: u32| -> u8 {
-        let delta = from.abs_diff(to);
+    let lerp = |from_ch: u32, to_ch: u32| -> u8 {
+        let delta = from_ch.abs_diff(to_ch);
         let shift = delta * t / 255;
         #[allow(clippy::cast_possible_truncation)]
         let shifted = shift as u8;
         #[allow(clippy::cast_possible_truncation)]
-        let base = from as u8;
-        if to >= from {
+        let base = from_ch as u8;
+        if to_ch >= from_ch {
             base.saturating_add(shifted)
         } else {
             base.saturating_sub(shifted)
         }
     };
     Rgb565::new(
-        lerp(31, u32::from(MOUTH_COLOR.r())),
-        lerp(63, u32::from(MOUTH_COLOR.g())),
-        lerp(31, u32::from(MOUTH_COLOR.b())),
+        lerp(u32::from(from.r()), u32::from(to.r())),
+        lerp(u32::from(from.g()), u32::from(to.g())),
+        lerp(u32::from(from.b()), u32::from(to.b())),
     )
 }
 
@@ -904,9 +928,15 @@ mod tests {
 
     #[test]
     fn blend_blush_endpoints_match_palette() {
-        let at_zero = blend_blush(0);
-        assert_eq!(at_zero, Rgb565::WHITE, "blush=0 is pure white");
-        let at_max = blend_blush(255);
-        assert_eq!(at_max, MOUTH_COLOR, "blush=255 matches palette pink");
+        // Default palette: blush 0 → background (white),
+        // blush 255 → cheek (pink).
+        let default_palette = crate::palette::Palette::Default.colors();
+        let at_zero = blend_blush(0, default_palette.background, default_palette.cheek);
+        assert_eq!(
+            at_zero, default_palette.background,
+            "blush=0 stays at background"
+        );
+        let at_max = blend_blush(255, default_palette.background, default_palette.cheek);
+        assert_eq!(at_max, default_palette.cheek, "blush=255 stays at cheek");
     }
 }

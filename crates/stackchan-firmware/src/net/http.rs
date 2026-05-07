@@ -36,6 +36,10 @@
 //!   and routes through the same `RemoteCommand::LookAt` path as
 //!   `/look-at` so cognition modifiers don't have to distinguish the
 //!   command source.
+//! - `POST /palette` — JSON `{"palette": "<name>"}`. Switches the
+//!   avatar's colour palette at runtime. Runtime-only;
+//!   persistence ships alongside the NVS `RuntimeStore`. Vocabulary
+//!   matches `Palette::wire_str` (default / dark / cute / dog).
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
 //! - `POST /speak` — JSON `{"phrase": "...", "locale": "..."}`.
@@ -155,6 +159,13 @@ pub static REMOTE_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, RemoteCommand>
 /// the render task into `entity.mind.mood` ahead of `Director::run`.
 /// Latest-wins semantics; persistence ships in a follow-up.
 pub static MOOD_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Mood> = Signal::new();
+
+/// Latest palette the operator has selected via `POST /palette`.
+///
+/// Drained by the render task into `entity.face.palette` ahead of
+/// `Director::run`. Latest-wins semantics; persistence ships in a
+/// follow-up alongside the NVS `RuntimeStore`.
+pub static PALETTE_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Palette> = Signal::new();
 
 /// Number of concurrent HTTP worker tasks. Each worker holds its own
 /// rx/tx buffers and accepts one connection at a time.
@@ -373,6 +384,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/volume") => handle_post_volume(socket, body).await,
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
+        ("POST", "/palette") => handle_post_palette(socket, body).await,
         ("POST", "/mcp") => handle_post_mcp(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
@@ -693,6 +705,27 @@ async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
     write_no_content(socket).await
 }
 
+/// `POST /palette` — parse `{"palette": "<string>"}`, push the
+/// selected palette at the render task via [`PALETTE_SIGNAL`].
+/// Runtime-only; persistence across reboots ships in a follow-up
+/// alongside the NVS `RuntimeStore`.
+async fn handle_post_palette(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let palette = match json::parse_palette(body) {
+        Ok(p) => p,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /palette parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    PALETTE_SIGNAL.signal(palette);
+    defmt::info!("http: POST /palette → {}", palette.wire_str());
+    write_no_content(socket).await
+}
+
 /// `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP.
 ///
 /// Reads a JSON-RPC request, dispatches to one of `initialize` /
@@ -925,6 +958,7 @@ const fn tool_parse_detail(e: &JsonError) -> &'static str {
         E::UnknownPhrase => "unknown phrase",
         E::UnknownLocale => "unknown locale",
         E::UnknownMood => "unknown mood",
+        E::UnknownPalette => "unknown palette",
         E::VolumeOutOfRange(_) => "volume out of range",
     }
 }

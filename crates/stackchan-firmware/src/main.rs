@@ -480,6 +480,14 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         if let Some(mood) = net::http::MOOD_SIGNAL.try_take() {
             entity.mind.mood = mood;
         }
+        // Drain the latest palette selection from `POST /palette`.
+        // Same latest-wins semantics as MOOD_SIGNAL — the palette
+        // persists across operator-driven changes and emotion swings,
+        // and only flips on explicit re-selection (or reboot, since
+        // palette persistence is a follow-up).
+        if let Some(palette) = net::http::PALETTE_SIGNAL.try_take() {
+            entity.face.palette = palette;
+        }
         // Drain the latest IMU reading.
         if let Some(m) = imu::IMU_SIGNAL.try_take() {
             entity.perception.accel_g = m.accel_g;
