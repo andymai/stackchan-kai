@@ -41,10 +41,15 @@ extern crate alloc;
 pub mod backend;
 pub mod baked;
 pub mod source;
+pub mod voicevox;
 
 pub use backend::{RenderError, SpeechBackend};
 pub use baked::{BakedBackend, SineSequence, SineTableSource};
 pub use source::AudioSource;
+pub use voicevox::{
+    BufferedSource, DEFAULT_VOICEVOX_PORT, DEFAULT_VOICEVOX_SPEAKER_ID, VoiceVoxBackend,
+    VoiceVoxConfig, WavError, WavHeader, audio_query_path, parse_wav, synthesis_path,
+};
 // Re-export lip-sync types from core; they live there because the
 // `Perception` layer carries them as a per-frame field.
 pub use stackchan_core::lipsync::{LipSync, Viseme};
