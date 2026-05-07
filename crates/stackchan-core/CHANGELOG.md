@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.22.0...stackchan-core-v0.23.0) (2026-05-07)
+
+
+### Features
+
+* **core:** pairing-window scaffolding + Decorator::Pairing ([#231](https://github.com/andymai/stackchan-kai/issues/231)) ([38b14fa](https://github.com/andymai/stackchan-kai/commit/38b14fa1db2bd21bc39e8ebdb337a65d27d116b0))
+
 ## [0.22.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.21.0...stackchan-core-v0.22.0) (2026-05-07)
 
 

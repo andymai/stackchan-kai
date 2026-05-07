@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.45.0...stackchan-firmware-v0.46.0) (2026-05-07)
+
+
+### Features
+
+* **core:** pairing-window scaffolding + Decorator::Pairing ([#231](https://github.com/andymai/stackchan-kai/issues/231)) ([38b14fa](https://github.com/andymai/stackchan-kai/commit/38b14fa1db2bd21bc39e8ebdb337a65d27d116b0))
+
 ## [0.45.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.44.0...stackchan-firmware-v0.45.0) (2026-05-07)
 
 
