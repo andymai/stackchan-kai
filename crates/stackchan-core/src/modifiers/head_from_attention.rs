@@ -238,6 +238,31 @@ impl Modifier for HeadFromAttention {
                         smoothed.tilt_deg - upstream_tilt,
                     )
                 }
+                (
+                    None,
+                    Attention::Point {
+                        target: (x, y, z), ..
+                    },
+                ) => {
+                    // 3D look-at: compute the pose direction once (the
+                    // singularity at the origin returns `None` and we
+                    // fall through to no contribution), then run the
+                    // same low-pass smoother as the Tracking branch.
+                    if let Some(point_target) = Pose::from_xyz_lookat(x, y, z).map(Pose::clamped) {
+                        let prev = self.smoothed_target.unwrap_or(point_target);
+                        let smoothed = lerp_pose(prev, point_target);
+                        self.smoothed_target = Some(smoothed);
+                        (
+                            smoothed.pan_deg - upstream_pan,
+                            smoothed.tilt_deg - upstream_tilt,
+                        )
+                    } else {
+                        // Origin / NaN / Inf — drop the smoother and
+                        // contribute nothing this tick.
+                        self.smoothed_target = None;
+                        (0.0, 0.0)
+                    }
+                }
                 (None, Attention::Listening { .. } | Attention::None) => {
                     // Drop the smoother anchor so a future Tracking run
                     // re-anchors at the live target (no stale chase).

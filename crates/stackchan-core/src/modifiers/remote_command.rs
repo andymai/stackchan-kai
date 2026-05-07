@@ -63,6 +63,11 @@ pub struct RemoteCommandModifier {
     /// `since` is captured at the first frame of the hold so the
     /// rendered ease-in does not restart every tick.
     lookat_hold: Option<(Pose, Instant, Instant)>,
+    /// Active 3D look-at-point hold, if any. `(target, since, hold_until)`.
+    /// `target` is the raw `(x, y, z)` world point — the modifier graph
+    /// does the IK conversion each tick rather than caching the pose,
+    /// so a future re-clamp or convention change picks up automatically.
+    lookat_point_hold: Option<((f32, f32, f32), Instant, Instant)>,
     /// Active listen hold, if any. `(since, hold_until)`. `since`
     /// pins to the entry frame so listening-pose ease-in animations
     /// don't restart per tick (same idiom as [`Self::lookat_hold`]).
@@ -80,6 +85,7 @@ impl RemoteCommandModifier {
         Self {
             emotion_hold: None,
             lookat_hold: None,
+            lookat_point_hold: None,
             listen_hold: None,
             pairing_hold: None,
         }
@@ -101,6 +107,15 @@ impl RemoteCommandModifier {
                 let until = now + u64::from(hold_ms);
                 entity.mind.attention = Attention::Tracking { target, since: now };
                 self.lookat_hold = Some((target, now, until));
+                // A new 2D look-at supersedes any active 3D point hold.
+                self.lookat_point_hold = None;
+            }
+            RemoteCommand::LookAtPoint { target, hold_ms } => {
+                let until = now + u64::from(hold_ms);
+                entity.mind.attention = Attention::Point { target, since: now };
+                self.lookat_point_hold = Some((target, now, until));
+                // A new 3D point supersedes any active 2D look-at hold.
+                self.lookat_hold = None;
             }
             RemoteCommand::Reset => {
                 entity.mind.autonomy.manual_until = None;
@@ -108,6 +123,7 @@ impl RemoteCommandModifier {
                 entity.mind.attention = Attention::None;
                 self.emotion_hold = None;
                 self.lookat_hold = None;
+                self.lookat_point_hold = None;
                 self.listen_hold = None;
                 self.pairing_hold = None;
             }
@@ -193,6 +209,20 @@ impl Modifier for RemoteCommandModifier {
             } else {
                 self.lookat_hold = None;
                 if matches!(entity.mind.attention, Attention::Tracking { target: t, .. } if t == target)
+                {
+                    entity.mind.attention = Attention::None;
+                }
+            }
+        }
+
+        if let Some((target, since, until)) = self.lookat_point_hold {
+            if now < until {
+                entity.mind.attention = Attention::Point { target, since };
+            } else {
+                self.lookat_point_hold = None;
+                // Only release attention if it's still our point —
+                // another modifier may have already taken over.
+                if matches!(entity.mind.attention, Attention::Point { target: t, .. } if t == target)
                 {
                     entity.mind.attention = Attention::None;
                 }

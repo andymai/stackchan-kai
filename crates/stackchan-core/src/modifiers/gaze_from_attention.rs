@@ -119,6 +119,18 @@ impl Modifier for GazeFromAttention {
             (None, Attention::Tracking { target, .. }) => {
                 target_to_offset(target.pan_deg, target.tilt_deg)
             }
+            (
+                None,
+                Attention::Point {
+                    target: (x, y, z), ..
+                },
+            ) => {
+                // Convert the 3D point into a head-pose direction; if
+                // the target sits at the singularity, drop the
+                // contribution.
+                crate::Pose::from_xyz_lookat(x, y, z)
+                    .map_or((0, 0), |p| target_to_offset(p.pan_deg, p.tilt_deg))
+            }
             (None, Attention::None | Attention::Listening { .. }) => (0, 0),
         };
 

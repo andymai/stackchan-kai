@@ -21,6 +21,13 @@
 //!   travel from horizontal. Firmware const-table trim is applied
 //!   *after* Pose is produced, so the core-visible range is uniform.
 
+// `F32Ext` provides `atan2`/`sqrt`/`to_degrees` on the `no_std`
+// firmware target. On host (`cfg(test)`) these methods come from
+// `std`, so the import looks unused — silence the lint rather than
+// branch the import on `cfg`.
+#[allow(unused_imports)]
+use micromath::F32Ext as _;
+
 use crate::clock::Instant;
 
 /// Conservative upper bound on pan travel in degrees (±).
@@ -93,6 +100,60 @@ impl Pose {
             tilt_deg: clamp_range_or_zero(self.tilt_deg, MIN_TILT_DEG, MAX_TILT_DEG),
         }
     }
+
+    /// 3D inverse kinematics: convert a Cartesian world point into the
+    /// pose that aims the head at it. Right-handed coordinates with
+    /// `+Z` forward (head's natural gaze axis), `+X` right, `+Y` up.
+    ///
+    /// - Pan (yaw) = `atan2(x, z)` — rotation around the vertical axis.
+    /// - Tilt (pitch) = `atan2(y, sqrt(x² + z²))` — elevation above
+    ///   the horizontal plane.
+    ///
+    /// Returns `None` when the target lies at the origin (or so close
+    /// that the math is undefined): there's no direction to aim at.
+    /// The factory firmware's `motion.h::lookAtPoint` documents this
+    /// same singularity.
+    ///
+    /// Inputs must be finite — NaN or Inf in any axis returns `None`.
+    /// The returned pose is *unclamped*; callers that need the
+    /// mechanical-safe range should pipe the result through
+    /// [`Self::clamped`].
+    #[must_use]
+    pub fn from_xyz_lookat(x: f32, y: f32, z: f32) -> Option<Self> {
+        // Tolerance keeps us from amplifying float noise into wild
+        // angles when the point is "essentially the origin." 1 mm-ish
+        // in any sensible application unit.
+        const ORIGIN_EPSILON_SQ: f32 = 1e-6;
+
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() {
+            return None;
+        }
+        // Squared planar distance avoids a sqrt for the singularity
+        // check. `mul_add` would need libm on no_std for f32; the
+        // straightforward form keeps the math platform-uniform.
+        #[allow(
+            clippy::suboptimal_flops,
+            reason = "f32::mul_add needs libm on no_std; straight multiply-add is platform-uniform here"
+        )]
+        let planar_sq = x * x + z * z;
+        #[allow(clippy::suboptimal_flops, reason = "see above")]
+        let radial_sq = planar_sq + y * y;
+        if radial_sq < ORIGIN_EPSILON_SQ {
+            return None;
+        }
+        // `atan2` + `sqrt` come from `micromath`'s `F32Ext` polyfill;
+        // matches the rest of the workspace's no_std math stance.
+        let pan_rad = x.atan2(z);
+        // sqrt(planar_sq) is fine even at x=z=0 because radial_sq >=
+        // ORIGIN_EPSILON_SQ guarantees y is large enough that the
+        // tilt branch dominates.
+        let planar = planar_sq.sqrt();
+        let tilt_rad = y.atan2(planar);
+        Some(Self {
+            pan_deg: pan_rad.to_degrees(),
+            tilt_deg: tilt_rad.to_degrees(),
+        })
+    }
 }
 
 /// Clamp `value` into `[-max, +max]`, collapsing NaN to `0.0`.
@@ -140,8 +201,10 @@ pub trait HeadDriver {
 #[cfg(test)]
 #[allow(
     clippy::float_cmp,
+    clippy::expect_used,
+    clippy::unwrap_used,
     reason = "tests compare bit-exact outputs of our own clamp/const code, \
-              not results of floating-point arithmetic where epsilon matters"
+              and unwrap on values our own helper just produced"
 )]
 mod tests {
     use super::*;
@@ -183,5 +246,88 @@ mod tests {
         let p = Pose::new(f32::NAN, f32::NAN).clamped();
         assert_eq!(p.pan_deg, 0.0);
         assert_eq!(p.tilt_deg, 0.0);
+    }
+
+    #[test]
+    fn lookat_forward_is_neutral() {
+        // Straight ahead on +Z, level → pan = 0, tilt = 0.
+        let p = Pose::from_xyz_lookat(0.0, 0.0, 1.0).expect("forward target is well-defined");
+        assert!(p.pan_deg.abs() < 0.5);
+        assert!(p.tilt_deg.abs() < 0.5);
+    }
+
+    #[test]
+    fn lookat_right_yields_positive_pan() {
+        // Pure +X (one unit to the right, no Y, no Z) → pan = +90°.
+        let p = Pose::from_xyz_lookat(1.0, 0.0, 0.0).expect("right target is well-defined");
+        assert!(
+            (p.pan_deg - 90.0).abs() < 0.5,
+            "expected pan ≈ +90, got {}",
+            p.pan_deg
+        );
+        assert!(p.tilt_deg.abs() < 0.5);
+    }
+
+    #[test]
+    fn lookat_left_yields_negative_pan() {
+        let p = Pose::from_xyz_lookat(-1.0, 0.0, 0.0).expect("left target is well-defined");
+        assert!(
+            (p.pan_deg - (-90.0)).abs() < 0.5,
+            "expected pan ≈ -90, got {}",
+            p.pan_deg
+        );
+    }
+
+    #[test]
+    fn lookat_above_yields_positive_tilt() {
+        // Up (+Y), forward (+Z) → tilt ≈ +45°.
+        let p = Pose::from_xyz_lookat(0.0, 1.0, 1.0).expect("up-forward target is well-defined");
+        assert!(p.pan_deg.abs() < 0.5);
+        assert!(
+            (p.tilt_deg - 45.0).abs() < 1.0,
+            "expected tilt ≈ +45, got {}",
+            p.tilt_deg
+        );
+    }
+
+    #[test]
+    fn lookat_below_yields_negative_tilt() {
+        let p = Pose::from_xyz_lookat(0.0, -1.0, 1.0).expect("down-forward target is well-defined");
+        assert!(
+            (p.tilt_deg - (-45.0)).abs() < 1.0,
+            "expected tilt ≈ -45, got {}",
+            p.tilt_deg
+        );
+    }
+
+    #[test]
+    fn lookat_origin_is_singularity() {
+        assert!(Pose::from_xyz_lookat(0.0, 0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn lookat_rejects_nan_and_infinity() {
+        assert!(Pose::from_xyz_lookat(f32::NAN, 0.0, 1.0).is_none());
+        assert!(Pose::from_xyz_lookat(0.0, f32::INFINITY, 1.0).is_none());
+        assert!(Pose::from_xyz_lookat(0.0, 0.0, f32::NEG_INFINITY).is_none());
+    }
+
+    #[test]
+    fn lookat_independent_of_target_distance() {
+        // Doubling all coordinates keeps the same direction → same pose.
+        let near = Pose::from_xyz_lookat(0.5, 0.3, 1.0).expect("near target well-defined");
+        let far = Pose::from_xyz_lookat(50.0, 30.0, 100.0).expect("far target well-defined");
+        assert!(
+            (near.pan_deg - far.pan_deg).abs() < 0.5,
+            "pan should be distance-invariant: {} vs {}",
+            near.pan_deg,
+            far.pan_deg
+        );
+        assert!(
+            (near.tilt_deg - far.tilt_deg).abs() < 0.5,
+            "tilt should be distance-invariant: {} vs {}",
+            near.tilt_deg,
+            far.tilt_deg
+        );
     }
 }

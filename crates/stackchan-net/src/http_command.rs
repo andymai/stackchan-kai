@@ -143,6 +143,67 @@ pub fn parse_look_at(body: &str) -> Result<RemoteCommand, JsonError> {
     })
 }
 
+/// Parse a `POST /look-at-point` body into a
+/// [`RemoteCommand::LookAtPoint`].
+///
+/// Required: `x`, `y`, `z` (all numbers in arbitrary world units —
+/// only direction matters; right-handed coordinates with `+Z`
+/// forward). Optional: `hold_ms` (integer, defaults to
+/// [`DEFAULT_HOLD_MS`]).
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys, unknown
+/// keys, malformed JSON shape, or a target at the singularity (origin).
+pub fn parse_look_at_point(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut x: Option<f32> = None;
+    let mut y: Option<f32> = None;
+    let mut z: Option<f32> = None;
+    let mut hold_ms: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "x" => {
+                if x.is_some() {
+                    return Err(JsonError::DuplicateKey("x"));
+                }
+                x = Some(parse_f32(scanner)?);
+            }
+            "y" => {
+                if y.is_some() {
+                    return Err(JsonError::DuplicateKey("y"));
+                }
+                y = Some(parse_f32(scanner)?);
+            }
+            "z" => {
+                if z.is_some() {
+                    return Err(JsonError::DuplicateKey("z"));
+                }
+                z = Some(parse_f32(scanner)?);
+            }
+            "hold_ms" => {
+                if hold_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("hold_ms"));
+                }
+                hold_ms = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    let x = x.ok_or(JsonError::MissingKey("x"))?;
+    let y = y.ok_or(JsonError::MissingKey("y"))?;
+    let z = z.ok_or(JsonError::MissingKey("z"))?;
+    // Reject the singularity at the source; the modifier graph would
+    // otherwise have to handle a None pose every tick of the hold.
+    if stackchan_core::Pose::from_xyz_lookat(x, y, z).is_none() {
+        return Err(JsonError::BadValue);
+    }
+    Ok(RemoteCommand::LookAtPoint {
+        target: (x, y, z),
+        hold_ms: hold_ms.unwrap_or(DEFAULT_HOLD_MS),
+    })
+}
+
 /// Parse a `POST /face-target` body into a [`RemoteCommand::LookAt`].
 ///
 /// Required: `x`, `y` (both numbers in normalised frame coordinates
