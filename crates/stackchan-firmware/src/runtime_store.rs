@@ -164,35 +164,46 @@ pub async fn load_into_cache() -> RuntimeState {
 /// already updated, so the runtime change still takes effect; only
 /// the across-reboot persistence is lost).
 pub async fn update_palette(palette: Palette) -> bool {
-    let snapshot = mutate(|s| s.palette = palette);
-    persist(snapshot).await
+    mutate(|s| s.palette = palette);
+    persist().await
 }
 
 /// Update the mood field and persist the cache. Same semantics as
 /// [`update_palette`].
 pub async fn update_mood(mood: Mood) -> bool {
-    let snapshot = mutate(|s| s.mood = mood);
-    persist(snapshot).await
+    mutate(|s| s.mood = mood);
+    persist().await
 }
 
-/// Apply `f` to the cache atomically (read + modify + write happen
-/// inside one critical section) and return the post-mutation
-/// snapshot. The previous shape — `current()` then `set_cache(...)`
-/// — left a window where a second `update_*` could clobber the
-/// first axis between the read and the set.
-fn mutate(f: impl FnOnce(&mut RuntimeState)) -> RuntimeState {
+/// Apply `f` to the cache atomically — read + modify + write happen
+/// inside one critical section.
+///
+/// The previous shape — `current()` then `set_cache(...)` — left a
+/// window where a second `update_*` could clobber the first axis
+/// between the read and the set.
+fn mutate(f: impl FnOnce(&mut RuntimeState)) {
     CACHE.lock(|cell| {
         let mut s = cell.get();
         f(&mut s);
         cell.set(s);
-        s
-    })
+    });
 }
 
-/// Render `state` and atomically replace `/sd/RUNTIME.RON`.
-async fn persist(state: RuntimeState) -> bool {
-    let rendered = render(&state);
-    let outcome = crate::storage::with_storage(|s| s.write_runtime(&rendered)).await;
+/// Render the **current** cache and atomically replace
+/// `/sd/RUNTIME.RON`.
+///
+/// Reading the cache inside the storage closure (rather than from a
+/// caller-captured snapshot) means a second `update_*` that lands
+/// between two persists doesn't get clobbered on disk: the second
+/// SD write reads the merged state. Without this, an A-then-B
+/// mutate sequence whose persists complete in B-then-A order would
+/// drop B's field on disk.
+async fn persist() -> bool {
+    let outcome = crate::storage::with_storage(|s| {
+        let rendered = render(&current());
+        s.write_runtime(&rendered)
+    })
+    .await;
     match outcome {
         Some(Ok(())) => true,
         Some(Err(e)) => {

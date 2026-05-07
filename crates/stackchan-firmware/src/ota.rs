@@ -107,10 +107,20 @@ const fn hex_nibble(c: u8) -> u8 {
 
 /// Slot for the boot-acquired `FLASH` peripheral. Populated once
 /// from `main` via [`install_flash_peripheral`]; consumed by
-/// [`perform_update`] (a successful update reboots, so the flash
-/// handle is never returned).
+/// [`perform_update`] on the first attempt. Once moved into a
+/// `FlashStorage`, the underlying `Flash<'_>` can't be recovered
+/// (esp-storage owns it), so a failed flash leaves the slot empty
+/// for the rest of this boot — see [`FLASH_CONSUMED`].
 static FLASH_SLOT: Mutex<CriticalSectionRawMutex, RefCell<Option<FLASH<'static>>>> =
     Mutex::new(RefCell::new(None));
+
+/// Sticky flag — set on the first `perform_update` that takes the
+/// FLASH peripheral. Distinguishes "OTA never installed" (programming
+/// error) from "FLASH was claimed by a prior attempt and is now
+/// inside a `FlashStorage` we can't extract from" (operator needs
+/// to power-cycle to retry). The HTTP route maps each case to a
+/// different status code so the operator gets an actionable error.
+static FLASH_CONSUMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// Park the FLASH peripheral so the OTA path can claim it later.
 /// Called once from boot; calling twice is a programming error and
@@ -130,6 +140,13 @@ pub enum OtaPerformError {
     /// FLASH peripheral was never parked at boot — OTA is unreachable.
     /// Programming error: `install_flash_peripheral` not called.
     FlashUnavailable,
+    /// FLASH was consumed by a prior `perform_update` call this boot
+    /// (the prior call entered the flash-write path and `esp-storage`
+    /// took ownership of the peripheral). A reboot is required to
+    /// retry. Operationally distinct from `FlashUnavailable` so the
+    /// HTTP layer can surface a "reboot to retry" hint instead of
+    /// "OTA disabled".
+    FlashConsumedThisBoot,
     /// SCFW framing or ed25519 verification failed.
     Image(#[defmt(Debug2Format)] OtaImageError),
     /// `esp-hal-ota` rejected the partition setup or chunk write.
@@ -183,7 +200,18 @@ pub fn perform_update(image_bytes: &[u8]) -> Result<(), OtaPerformError> {
     let crc = esp_hal_ota::crc32::calc_crc32(payload, 0);
     let flash_periph = FLASH_SLOT
         .lock(|cell| cell.borrow_mut().take())
-        .ok_or(OtaPerformError::FlashUnavailable)?;
+        .ok_or_else(|| {
+            if FLASH_CONSUMED.load(core::sync::atomic::Ordering::Acquire) {
+                OtaPerformError::FlashConsumedThisBoot
+            } else {
+                OtaPerformError::FlashUnavailable
+            }
+        })?;
+    // Mark consumed before we hand the peripheral to FlashStorage —
+    // anything that fails after this point leaves the slot empty
+    // for the rest of this boot, and the next call needs to know
+    // why.
+    FLASH_CONSUMED.store(true, core::sync::atomic::Ordering::Release);
     let flash = FlashStorage::new(flash_periph);
     let mut ota = Ota::new(flash)?;
     let payload_len: u32 = u32::try_from(payload.len())

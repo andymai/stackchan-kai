@@ -1398,6 +1398,13 @@ async fn handle_post_firmware_update(
                 crate::ota::OtaPerformError::FlashUnavailable => {
                     (500, "flash peripheral unavailable\n")
                 }
+                // Distinct from FlashUnavailable so the operator
+                // sees a clear "reboot to retry" path rather than
+                // assuming the build doesn't support OTA.
+                crate::ota::OtaPerformError::FlashConsumedThisBoot => (
+                    503,
+                    "flash consumed by a prior failed ota; reboot to retry\n",
+                ),
                 // Signature mismatch is the most operator-actionable
                 // error path — surface it as 403 specifically.
                 crate::ota::OtaPerformError::Image(stackchan_net::ota::OtaImageError::Verify(
