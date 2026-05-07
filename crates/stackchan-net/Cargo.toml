@@ -37,3 +37,9 @@ ron = { version = "0.12", default-features = false, optional = true }
 # Typed errors without `std`. Always on — not parse-gated. Firmware
 # wraps with `defmt::Debug2Format`.
 thiserror = { version = "2", default-features = false }
+# Ed25519 signature verification for OTA images. `default-features = false`
+# turns off the std + random / blinding backends; only the verifier is
+# pulled, which compiles cleanly on `xtensa-esp32s3-none-elf` and the
+# host. Held in `stackchan-net` (not the firmware crate) so the verify
+# path is host-testable through `parse_image` + `verify_signature`.
+ed25519-compact = { version = "2", default-features = false }

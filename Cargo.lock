@@ -1180,6 +1180,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed25519-compact"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ce99a9e19c84beb4cc35ece85374335ccc398240712114c85038319ed709bd"
+
+[[package]]
 name = "eframe"
 version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4709,6 +4715,7 @@ dependencies = [
 name = "stackchan-net"
 version = "0.2.12"
 dependencies = [
+ "ed25519-compact",
  "ron",
  "serde",
  "stackchan-core",

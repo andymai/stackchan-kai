@@ -203,6 +203,93 @@ pub fn build_header(payload_len: u32) -> [u8; OTA_HEADER_LEN] {
     out
 }
 
+/// Length of an Ed25519 public key in bytes.
+pub const OTA_PUBLIC_KEY_LEN: usize = 32;
+
+/// Failure modes for [`verify_signature`].
+///
+/// `MalformedKey` is the only structurally-impossible variant in
+/// production (the firmware's build-time public key is checked
+/// once at the call site); it surfaces here so host tests can
+/// exercise the bad-key path without a custom panic harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VerifyError {
+    /// Public key bytes didn't decode as an Ed25519 public key
+    /// (e.g. all-zero, or otherwise structurally invalid).
+    MalformedKey,
+    /// Signature didn't decode as an Ed25519 signature shape.
+    MalformedSignature,
+    /// Cryptographic check failed: the signature is well-formed but
+    /// doesn't match `payload` under `public_key`.
+    SignatureMismatch,
+}
+
+/// Verify a parsed OTA image's Ed25519 signature against
+/// `public_key`. Returns `Ok(())` if the signature is valid; the
+/// caller may then commit the payload to the inactive flash slot.
+///
+/// The public key is the 32-byte Ed25519 verify key the operator
+/// embeds in the firmware at build time. The matching signing key
+/// stays on the operator's host and never enters the firmware.
+///
+/// # Errors
+///
+/// See [`VerifyError`].
+pub fn verify_signature(
+    image: &ParsedImage<'_>,
+    public_key: &[u8; OTA_PUBLIC_KEY_LEN],
+) -> Result<(), VerifyError> {
+    let pk = ed25519_compact::PublicKey::from_slice(public_key)
+        .map_err(|_| VerifyError::MalformedKey)?;
+    let sig = ed25519_compact::Signature::from_slice(&image.signature)
+        .map_err(|_| VerifyError::MalformedSignature)?;
+    pk.verify(image.payload, &sig)
+        .map_err(|_| VerifyError::SignatureMismatch)
+}
+
+/// Parse + verify in one shot. Convenience for HTTP handlers that
+/// don't care about intermediate `ParsedImage` borrowing — most of
+/// the time you just want `Ok(payload_slice)` or an error.
+///
+/// # Errors
+///
+/// [`OtaImageError`] — either a framing problem from
+/// [`parse_image`] or a signature problem from [`verify_signature`].
+pub fn parse_and_verify<'a>(
+    bytes: &'a [u8],
+    public_key: &[u8; OTA_PUBLIC_KEY_LEN],
+) -> Result<&'a [u8], OtaImageError> {
+    let image = parse_image(bytes)?;
+    verify_signature(&image, public_key)?;
+    Ok(image.payload)
+}
+
+/// Top-level OTA failure surface.
+///
+/// Either a framing error from [`parse_image`] or a verification
+/// error from [`verify_signature`]. Used by [`parse_and_verify`] so
+/// handlers have a single error type to map onto HTTP status codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OtaImageError {
+    /// Image-framing problem (magic / version / length).
+    Framing(OtaError),
+    /// Cryptographic problem (key / signature).
+    Verify(VerifyError),
+}
+
+impl From<OtaError> for OtaImageError {
+    fn from(e: OtaError) -> Self {
+        Self::Framing(e)
+    }
+}
+
+impl From<VerifyError> for OtaImageError {
+    fn from(e: VerifyError) -> Self {
+        Self::Verify(e)
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -312,5 +399,86 @@ mod tests {
             u32::from_be_bytes(h[8..12].try_into().expect("4 bytes")),
             42
         );
+    }
+
+    /// Build a fresh keypair from an in-test seed. ed25519-compact
+    /// derives both keys deterministically, so this gives reproducible
+    /// public-key bytes across machines and CI runs without
+    /// shipping pre-computed bytes that drift if the dep changes.
+    fn fixed_test_keypair() -> ed25519_compact::KeyPair {
+        let seed = ed25519_compact::Seed::from_slice(&[7u8; 32]).expect("seed length is 32");
+        ed25519_compact::KeyPair::from_seed(seed)
+    }
+
+    /// Wrap a payload into a signed SCFW image using the test keypair.
+    fn sign_image(payload: &[u8]) -> (Vec<u8>, [u8; OTA_PUBLIC_KEY_LEN]) {
+        let kp = fixed_test_keypair();
+        let sig = kp.sk.sign(payload, None);
+        let mut sig_bytes = [0u8; OTA_SIGNATURE_LEN];
+        sig_bytes.copy_from_slice(sig.as_ref());
+        let image = build_image(payload, sig_bytes);
+        let mut pk_bytes = [0u8; OTA_PUBLIC_KEY_LEN];
+        pk_bytes.copy_from_slice(kp.pk.as_ref());
+        (image, pk_bytes)
+    }
+
+    #[test]
+    fn verify_accepts_signature_from_matching_key() {
+        let (image, pk) = sign_image(b"firmware bytes here");
+        let payload = parse_and_verify(&image, &pk).expect("valid image + key");
+        assert_eq!(payload, b"firmware bytes here");
+    }
+
+    #[test]
+    fn verify_rejects_signature_under_wrong_key() {
+        let (image, _correct_pk) = sign_image(b"firmware");
+        let other_kp = ed25519_compact::KeyPair::from_seed(
+            ed25519_compact::Seed::from_slice(&[42u8; 32]).expect("seed length is 32"),
+        );
+        let mut wrong_pk = [0u8; OTA_PUBLIC_KEY_LEN];
+        wrong_pk.copy_from_slice(other_kp.pk.as_ref());
+        let err = parse_and_verify(&image, &wrong_pk).expect_err("wrong key");
+        assert_eq!(err, OtaImageError::Verify(VerifyError::SignatureMismatch));
+    }
+
+    #[test]
+    fn verify_rejects_tampered_payload() {
+        let (mut image, pk) = sign_image(b"firmware bytes here");
+        // Flip a byte inside the payload (between header at 0..12
+        // and signature at len-64..).
+        let payload_offset = OTA_HEADER_LEN + 4;
+        image[payload_offset] ^= 0xFF;
+        let err = parse_and_verify(&image, &pk).expect_err("tampered payload");
+        assert_eq!(err, OtaImageError::Verify(VerifyError::SignatureMismatch));
+    }
+
+    #[test]
+    fn verify_rejects_tampered_signature() {
+        let (mut image, pk) = sign_image(b"firmware");
+        let len = image.len();
+        // Flip a byte in the signature trailer (last 64 bytes).
+        image[len - 1] ^= 0xFF;
+        let err = parse_and_verify(&image, &pk).expect_err("tampered signature");
+        // ed25519-compact may surface either a malformed-signature
+        // shape error or a signature-mismatch depending on which bit
+        // flipped — both are acceptable rejection paths.
+        assert!(matches!(
+            err,
+            OtaImageError::Verify(VerifyError::SignatureMismatch | VerifyError::MalformedSignature)
+        ));
+    }
+
+    #[test]
+    fn verify_rejects_all_zero_public_key() {
+        let (image, _pk) = sign_image(b"firmware");
+        let zero_pk = [0u8; OTA_PUBLIC_KEY_LEN];
+        let err = parse_and_verify(&image, &zero_pk).expect_err("zero key");
+        // ed25519-compact accepts the all-zero point as structurally
+        // valid but the signature won't verify under it. Either
+        // rejection path is acceptable.
+        assert!(matches!(
+            err,
+            OtaImageError::Verify(VerifyError::MalformedKey | VerifyError::SignatureMismatch)
+        ));
     }
 }
