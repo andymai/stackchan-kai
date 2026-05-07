@@ -53,6 +53,7 @@ pub mod bare_json;
 pub mod ble_command;
 pub mod config;
 pub mod error;
+pub mod esp_now;
 pub mod http_command;
 pub mod http_parse;
 pub mod mcp;
