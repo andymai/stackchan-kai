@@ -1252,9 +1252,38 @@ async fn main(spawner: Spawner) -> ! {
     if let Some(dt) = wallclock::read_datetime(rtc_bus).await {
         let mut rtc_buf = [0u8; 19];
         defmt::info!(
-            "boot @ {=str} (RTC)",
+            "boot @ {=str} (RTC, UTC)",
             bm8563::format_datetime(dt, &mut rtc_buf),
         );
+        // Emit a second line in local time when `time.tz` resolves to
+        // a non-zero offset. Unknown labels degrade to UTC with a
+        // warning so the boot log still reflects what the operator
+        // sees in their config.
+        let tz = stackchan_firmware::storage::CONFIG_SNAPSHOT
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.time.tz.clone());
+        if let Some(tz_label) = tz {
+            match stackchan_net::tz_offset_minutes(&tz_label) {
+                Some(0) => {} // UTC — first line already shows it.
+                Some(offset_minutes) => {
+                    let local = wallclock::apply_offset(dt, offset_minutes);
+                    let mut local_buf = [0u8; 19];
+                    defmt::info!(
+                        "boot @ {=str} (RTC, {=str})",
+                        bm8563::format_datetime(local, &mut local_buf),
+                        tz_label.as_str(),
+                    );
+                }
+                None => {
+                    defmt::warn!(
+                        "wallclock: unknown tz {=str} — boot local-time line skipped",
+                        tz_label.as_str(),
+                    );
+                }
+            }
+        }
     }
 
     defmt::info!("boot complete — idle heartbeat");
