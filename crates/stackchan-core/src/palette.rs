@@ -114,14 +114,20 @@ impl Palette {
                 cheek: Rgb565::new(31, 32, 20),
             },
             Self::Cute => PaletteColors {
-                // Light pink background — the avatar is a single
+                // Very light pink background — the avatar is a single
                 // soft-pink blob.
                 background: Rgb565::new(31, 50, 22),
                 // Saturated pink for the eyes, contrasting against
                 // the lighter background.
                 eye: Rgb565::new(28, 16, 14),
+                // Mouth stays white for the high-contrast smile.
                 mouth: Rgb565::new(31, 63, 31),
-                cheek: Rgb565::new(31, 63, 31),
+                // Cheek is a medium pink between the background's
+                // light tint and the eye's saturated pink — without
+                // this the blush blends into the background at any
+                // realistic `cheek_blush` weight and the cheek
+                // disappears.
+                cheek: Rgb565::new(30, 32, 16),
             },
             Self::Dog => PaletteColors {
                 // Warm tan background.

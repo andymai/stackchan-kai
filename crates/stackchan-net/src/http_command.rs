@@ -1270,6 +1270,50 @@ mod tests {
     }
 
     #[test]
+    fn palette_accepts_each_known_name() {
+        for &p in stackchan_core::Palette::ALL {
+            let body = format!("{{\"palette\":\"{}\"}}", p.wire_str());
+            assert_eq!(
+                parse_palette(&body).unwrap(),
+                p,
+                "round-trip failed for {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn palette_rejects_missing_key() {
+        assert!(matches!(
+            parse_palette("{}"),
+            Err(JsonError::MissingKey("palette"))
+        ));
+    }
+
+    #[test]
+    fn palette_rejects_unknown_palette_name() {
+        assert!(matches!(
+            parse_palette(r#"{"palette":"rainbow"}"#),
+            Err(JsonError::UnknownPalette)
+        ));
+    }
+
+    #[test]
+    fn palette_rejects_unknown_top_level_key() {
+        assert!(matches!(
+            parse_palette(r#"{"theme":"dark"}"#),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn palette_rejects_duplicate_key() {
+        assert!(matches!(
+            parse_palette(r#"{"palette":"dark","palette":"cute"}"#),
+            Err(JsonError::DuplicateKey("palette"))
+        ));
+    }
+
+    #[test]
     fn face_target_lower_edges_pan_left_and_tilt_up() {
         // Mirror of the right-edge / down test — covers the negative
         // half of the FOV mapping.
