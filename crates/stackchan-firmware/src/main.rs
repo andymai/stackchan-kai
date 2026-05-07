@@ -75,12 +75,13 @@ use stackchan_core::{
     Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
         AttentionFromTracking, Blink, Breath, DecoratorExpiry, DecoratorFromBodyTouch,
-        DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake, DormancyFromActivity,
-        EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
-        EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion,
-        HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud,
-        LostTargetSearch, MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier,
-        StyleFromEmotion, StyleFromIntent, StyleFromMood,
+        DecoratorFromEmotion, DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake,
+        DormancyFromActivity, EmotionCycle, EmotionFromAmbient, EmotionFromBattery,
+        EmotionFromIntent, EmotionFromRemote, EmotionFromTouch, EmotionFromVoice,
+        GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent, IdleDrift,
+        IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
+        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
+        StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -231,6 +232,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut handling = Handling::new();
     let mut intent_from_body_touch = IntentFromBodyTouch::new();
     let mut decorator_expiry = DecoratorExpiry::new();
+    let mut decorator_from_emotion = DecoratorFromEmotion::new();
     let mut decorator_from_body_touch = DecoratorFromBodyTouch::new();
     let mut decorator_from_listening = DecoratorFromListening::new();
     let mut decorator_from_loud = DecoratorFromLoud::new();
@@ -311,6 +313,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     // (phase, priority, registration_order).
     director
         .add_modifier(&mut decorator_expiry)
+        .expect("registry full");
+    director
+        .add_modifier(&mut decorator_from_emotion)
         .expect("registry full");
     director
         .add_modifier(&mut decorator_from_body_touch)

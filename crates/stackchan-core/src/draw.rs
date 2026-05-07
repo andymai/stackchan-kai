@@ -32,6 +32,7 @@ use embedded_graphics::{
     pixelcolor::{Rgb565, RgbColor},
     primitives::{
         Circle, Ellipse, Line, Polyline, Primitive, PrimitiveStyle, PrimitiveStyleBuilder,
+        Rectangle,
     },
 };
 
@@ -57,6 +58,16 @@ const DIZZY_COLOR: Rgb565 = Rgb565::BLACK;
 /// Pairing decorator color — saturated blue, the universal "transmitting"
 /// cue. Distinct from sweat-blue so the two never read as the same overlay.
 const PAIRING_COLOR: Rgb565 = Rgb565::new(4, 18, 31);
+
+/// Angry decorator color — vivid red, distinct from heart pink and from
+/// any cheek-blush warmth so the # symbol reads as deliberate
+/// vein-pop rather than emotional flush.
+const ANGRY_COLOR: Rgb565 = Rgb565::new(31, 8, 4);
+
+/// Shy decorator color — same warm pink as the existing `EAR_COLOR`
+/// so the embarrassed crosshatch reads as part of the avatar's
+/// blush-family palette rather than a foreign overlay.
+const SHY_COLOR: Rgb565 = Rgb565::new(31, 50, 22);
 
 /// Stroke width for closed-eye line, resting mouth line, and curved arcs.
 const LINE_WIDTH: u32 = 3;
@@ -137,6 +148,8 @@ where
         Decorator::Dizzy => draw_dizzy(target),
         Decorator::Ear => draw_ear(target),
         Decorator::Pairing => draw_pairing(target),
+        Decorator::Angry => draw_angry(target),
+        Decorator::Shy => draw_shy(target),
     }
 }
 
@@ -357,6 +370,103 @@ where
         Circle::new(top_left, diameter)
             .into_styled(stroke(PAIRING_COLOR, PAIRING_RING_STROKE))
             .draw(target)?;
+    }
+    Ok(())
+}
+
+/// Angry decorator anchor — upper-left, mirroring [`HEART_ANCHOR_X`]
+/// (upper-right) so the two never visually collide.
+const ANGRY_ANCHOR_X: i32 = 50;
+/// Angry decorator anchor Y — same band as Heart so the overlay
+/// position reads as a fixed "upper corner cue" regardless of which
+/// kind is active.
+const ANGRY_ANCHOR_Y: i32 = 48;
+/// Half-extent of the `#` symbol's bounding box, in pixels. Each
+/// stroke spans `2 × ANGRY_HALF_EXTENT` and the inner crossbars
+/// sit at `± ANGRY_BAR_OFFSET` from the centre.
+const ANGRY_HALF_EXTENT: i32 = 9;
+/// Distance from the anchor centre to each crossbar, in pixels.
+const ANGRY_BAR_OFFSET: i32 = 4;
+/// Stroke width for each leg of the `#` symbol.
+const ANGRY_STROKE: u32 = 3;
+
+/// Draw a red `#` symbol at the upper-left — two short horizontal
+/// bars and two short vertical bars, the anime "vein-pop" cue for
+/// strong anger. Pure rectangle fills; no curves, no allocations.
+fn draw_angry<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    // Each bar is rendered as a 1-D rectangle (full width × stroke
+    // height for horizontals, stroke width × full height for verticals).
+    // Using filled rectangles keeps the path closer to embedded-graphics'
+    // fast scanline path than stroked lines.
+    let len = ANGRY_HALF_EXTENT * 2;
+    #[allow(clippy::cast_sign_loss)]
+    let len_u = len as u32;
+    let stroke_w = ANGRY_STROKE;
+    let half_stroke = i32::try_from(stroke_w / 2).unwrap_or(1);
+
+    // Two horizontal bars — above and below the centre.
+    for dy in [-ANGRY_BAR_OFFSET, ANGRY_BAR_OFFSET] {
+        let top_left = EgPoint::new(
+            ANGRY_ANCHOR_X - ANGRY_HALF_EXTENT,
+            ANGRY_ANCHOR_Y + dy - half_stroke,
+        );
+        Rectangle::new(top_left, Size::new(len_u, stroke_w))
+            .into_styled(fill(ANGRY_COLOR))
+            .draw(target)?;
+    }
+    // Two vertical bars — left and right of the centre.
+    for dx in [-ANGRY_BAR_OFFSET, ANGRY_BAR_OFFSET] {
+        let top_left = EgPoint::new(
+            ANGRY_ANCHOR_X + dx - half_stroke,
+            ANGRY_ANCHOR_Y - ANGRY_HALF_EXTENT,
+        );
+        Rectangle::new(top_left, Size::new(stroke_w, len_u))
+            .into_styled(fill(ANGRY_COLOR))
+            .draw(target)?;
+    }
+    Ok(())
+}
+
+/// Shy decorator: short pink hash marks under each cheek — the
+/// embarrassed crosshatch trope, paired left + right so the cue
+/// reads as a single bilateral overlay rather than a one-sided dot.
+/// X anchors mirror the natural cheek positions; Y sits below the
+/// existing cheek-blush band so the overlay augments rather than
+/// replaces the base blush.
+const SHY_LEFT_ANCHOR_X: i32 = 80;
+/// Shy decorator right-cheek anchor X. Mirror of [`SHY_LEFT_ANCHOR_X`]
+/// across the frame midline.
+const SHY_RIGHT_ANCHOR_X: i32 = 240;
+/// Shy decorator anchor Y — sits below the cheek-blush band
+/// (cheek circles are centred ~135 with `CHEEK_DIAMETER` 18, so
+/// their bottom edge is ~144).
+const SHY_ANCHOR_Y: i32 = 175;
+/// Length of one shy hash mark, in pixels.
+const SHY_MARK_LEN: u32 = 12;
+/// Stroke height of one shy hash mark, in pixels.
+const SHY_MARK_THICKNESS: u32 = 2;
+/// Vertical spacing between the three stacked hash marks.
+const SHY_MARK_SPACING: i32 = 4;
+
+/// Draw the shy / embarrassed overlay: three short pink horizontal
+/// hash marks under each cheek, stacked vertically.
+fn draw_shy<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    #[allow(clippy::cast_possible_wrap)]
+    let half_len = (SHY_MARK_LEN / 2) as i32;
+    for anchor_x in [SHY_LEFT_ANCHOR_X, SHY_RIGHT_ANCHOR_X] {
+        for offset_idx in [-1_i32, 0, 1] {
+            let y = SHY_ANCHOR_Y + offset_idx * SHY_MARK_SPACING;
+            let top_left = EgPoint::new(anchor_x - half_len, y);
+            Rectangle::new(top_left, Size::new(SHY_MARK_LEN, SHY_MARK_THICKNESS))
+                .into_styled(fill(SHY_COLOR))
+                .draw(target)?;
+        }
     }
     Ok(())
 }
