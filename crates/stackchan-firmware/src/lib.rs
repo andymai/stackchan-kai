@@ -24,6 +24,7 @@ pub mod board;
 pub mod body_touch;
 pub mod button;
 pub mod camera;
+pub mod chime;
 pub mod clock;
 pub mod event_log;
 pub mod framebuffer;
