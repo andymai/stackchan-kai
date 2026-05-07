@@ -1037,6 +1037,18 @@ async fn main(spawner: Spawner) -> ! {
             // first request — and so the SSE stream stays consistent
             // with what the amp actually applies at boot.
             net::snapshot::update_audio(cfg.audio);
+            // Restore the operator-tuned palette + mood from the
+            // SD-backed runtime store. Tolerant of a missing /
+            // malformed file: any failure leaves the cache (and the
+            // signal fan-out below) at variant defaults.
+            let runtime = stackchan_firmware::runtime_store::load_into_cache().await;
+            net::http::PALETTE_SIGNAL.signal(runtime.palette);
+            net::http::MOOD_SIGNAL.signal(runtime.mood);
+            defmt::info!(
+                "runtime store: restored palette={=str} mood={=str}",
+                runtime.palette.wire_str(),
+                runtime.mood.wire_str(),
+            );
             cfg
         }
         Err(e) => {

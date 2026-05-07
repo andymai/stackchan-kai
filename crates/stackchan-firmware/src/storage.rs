@@ -107,6 +107,21 @@ const CONFIG_FILE: &str = "STACKCHAN.RON";
 /// `STACKCHAN.RON`; mid-write power loss leaves the old file intact.
 const STAGING_FILE: &str = "STACKCHAN.NEW";
 
+/// Runtime-state filename. Holds operator-tuned values that change
+/// faster than the boot config (palette, mood) and that a real NVS
+/// region would otherwise back. Not in `STACKCHAN.RON` so the
+/// hand-edited boot config doesn't churn on every dashboard click.
+const RUNTIME_FILE: &str = "RUNTIME.RON";
+
+/// Atomic-write staging name for the runtime store. Same dance as
+/// `STACKCHAN.NEW`.
+const RUNTIME_STAGING_FILE: &str = "RUNTIME.NEW";
+
+/// Cap on the runtime-state file. Today's payload is ~30 bytes; the
+/// 256-byte ceiling absorbs future field additions without
+/// unbounded SRAM allocation at boot.
+const MAX_RUNTIME_BYTES: u32 = 256;
+
 /// Cap on the RON we'll read into memory at boot. Schema v1 fits
 /// well under 1 KiB; the headroom keeps SRAM bounded if the schema
 /// grows.
@@ -280,6 +295,50 @@ where
         let rendered = stackchan_net::render_ron_bare(config).map_err(|_| StorageError::Decode)?;
         self.write_file(STAGING_FILE, rendered.as_bytes())?;
         self.copy_then_delete(STAGING_FILE, CONFIG_FILE)?;
+        Ok(())
+    }
+
+    /// Read `/sd/RUNTIME.RON` as raw UTF-8 text. Returns `Ok(None)`
+    /// if the file is absent — that's the first-boot state, not an
+    /// error. Caller parses; the storage layer doesn't know the
+    /// runtime-state schema.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial / failed read,
+    /// [`StorageError::TooLarge`] if the file exceeds
+    /// [`MAX_RUNTIME_BYTES`], [`StorageError::NotUtf8`] if the bytes
+    /// don't decode as UTF-8.
+    pub fn read_runtime(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(RUNTIME_FILE, Mode::ReadOnly) else {
+            return Ok(None);
+        };
+        let len = file.length();
+        if len > MAX_RUNTIME_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = len as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        let text = alloc::string::String::from_utf8(buf).map_err(|_| StorageError::NotUtf8)?;
+        Ok(Some(text))
+    }
+
+    /// Atomically replace `/sd/RUNTIME.RON` with `rendered`. Same
+    /// staging-file dance as [`Self::write_config`].
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying write failure.
+    pub fn write_runtime(&mut self, rendered: &str) -> Result<(), StorageError> {
+        self.write_file(RUNTIME_STAGING_FILE, rendered.as_bytes())?;
+        self.copy_then_delete(RUNTIME_STAGING_FILE, RUNTIME_FILE)?;
         Ok(())
     }
 

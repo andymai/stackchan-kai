@@ -59,6 +59,21 @@ impl Mood {
         }
     }
 
+    /// Inverse of [`Self::wire_str`]. Returns `None` on any string
+    /// that isn't an exact lowercase match. Mirrors
+    /// [`crate::Palette::from_wire_str`].
+    #[must_use]
+    pub fn from_wire_str(s: &str) -> Option<Self> {
+        match s {
+            "neutral" => Some(Self::Neutral),
+            "calm" => Some(Self::Calm),
+            "playful" => Some(Self::Playful),
+            "focus" => Some(Self::Focus),
+            "sleepy" => Some(Self::Sleepy),
+            _ => None,
+        }
+    }
+
     /// Multiplier applied to `face.style.blink_rate_scale` after
     /// [`crate::modifiers::StyleFromEmotion`] has set the per-emotion
     /// baseline. `1.0` = no change; `< 1.0` slows blinks, `> 1.0`

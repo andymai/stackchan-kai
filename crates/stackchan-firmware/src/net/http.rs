@@ -694,9 +694,9 @@ async fn audio_persist_to_http(
     }
 }
 
-/// `POST /mood` — parse `{"mood": "<string>"}`, push the new mood at
-/// the render task via [`MOOD_SIGNAL`]. Runtime-only; persistence
-/// across reboots ships in a follow-up that touches the RON schema.
+/// `POST /mood` — parse `{"mood": "<string>"}`, push the new mood
+/// at the render task via [`MOOD_SIGNAL`], and persist the choice to
+/// `/sd/RUNTIME.RON` so a reboot restores it.
 async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let mood = match json::parse_mood(body) {
         Ok(m) => m,
@@ -710,6 +710,7 @@ async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
         }
     };
     MOOD_SIGNAL.signal(mood);
+    let _ = crate::runtime_store::update_mood(mood).await;
     defmt::info!("http: POST /mood → {}", mood.wire_str());
     write_no_content(socket).await
 }
@@ -757,9 +758,8 @@ async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Res
 }
 
 /// `POST /palette` — parse `{"palette": "<string>"}`, push the
-/// selected palette at the render task via [`PALETTE_SIGNAL`].
-/// Runtime-only; persistence across reboots ships in a follow-up
-/// alongside the NVS `RuntimeStore`.
+/// selected palette at the render task via [`PALETTE_SIGNAL`], and
+/// persist the choice to `/sd/RUNTIME.RON` so a reboot restores it.
 async fn handle_post_palette(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let palette = match json::parse_palette(body) {
         Ok(p) => p,
@@ -773,6 +773,7 @@ async fn handle_post_palette(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
         }
     };
     PALETTE_SIGNAL.signal(palette);
+    let _ = crate::runtime_store::update_palette(palette).await;
     defmt::info!("http: POST /palette → {}", palette.wire_str());
     write_no_content(socket).await
 }
@@ -878,6 +879,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         "set_mood" => match json::parse_mood(arguments) {
             Ok(mood) => {
                 crate::net::http::MOOD_SIGNAL.signal(mood);
+                let _ = crate::runtime_store::update_mood(mood).await;
                 render_success(id, &render_tool_text_result("mood enqueued"))
             }
             Err(e) => render_error(
