@@ -29,6 +29,13 @@
 //! - `POST /look-at` — JSON `{"pan_deg": f32, "tilt_deg": f32, "hold_ms": ...}`.
 //!   Sets `mind.attention = Tracking { target }` for `hold_ms`,
 //!   asserting the operator's target against camera tracking.
+//! - `POST /face-target` — JSON `{"x": f32, "y": f32, "hold_ms": ...}`
+//!   in normalised frame coordinates `[-1, 1]`. External CV servers
+//!   (face / pose / object detectors on the LAN) post the latest
+//!   centroid every frame; the firmware converts via the camera FOV
+//!   and routes through the same `RemoteCommand::LookAt` path as
+//!   `/look-at` so cognition modifiers don't have to distinguish the
+//!   command source.
 //! - `POST /reset` — empty body. Clears any active emotion or
 //!   look-at hold and returns the avatar to autonomous behaviour.
 //! - `POST /speak` — JSON `{"phrase": "...", "locale": "..."}`.
@@ -358,6 +365,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("PUT", "/settings") => handle_put_settings(socket, body).await,
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
+        ("POST", "/face-target") => handle_remote(socket, json::parse_face_target(body)).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("POST", "/listen") => handle_remote(socket, json::parse_start_listen(body)).await,

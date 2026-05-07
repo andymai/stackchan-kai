@@ -141,6 +141,85 @@ pub fn parse_look_at(body: &str) -> Result<RemoteCommand, JsonError> {
     })
 }
 
+/// Parse a `POST /face-target` body into a [`RemoteCommand::LookAt`].
+///
+/// Required: `x`, `y` (both numbers in normalised frame coordinates
+/// `[-1.0, 1.0]` where `(0, 0)` is the camera centre, positive `x`
+/// is right, positive `y` is down — the screen-space convention used
+/// by every external CV pipeline that emits face-bbox centroids).
+/// Optional: `hold_ms` (integer, defaults to [`DEFAULT_HOLD_MS`]).
+///
+/// External CV servers (face / pose / object detectors running on a
+/// laptop or single-board computer on the LAN) can POST a fresh centroid every frame —
+/// the body is small enough to fit a single TCP segment, so the
+/// stream rate scales with the LAN's RTT rather than with our HTTP
+/// parser's overhead.
+///
+/// The `(x, y)` pair is converted to a head pose via the camera FOV
+/// (mirroring the cognition path inside
+/// [`stackchan_core::modifiers::LostTargetSearch`]) and packaged as a
+/// [`RemoteCommand::LookAt`] so the same downstream
+/// `RemoteCommandModifier` handles operator-driven and external-CV
+/// commands identically. `hold_ms` should be set just longer than the
+/// expected POST cadence so the head holds the last centroid through
+/// network jitter without snapping back when a single frame is dropped.
+///
+/// `y` is inverted on the way to tilt — positive screen-space `y` is
+/// down, but positive tilt is up by Stack-chan's pose convention, so a
+/// face below the camera centre maps to a downward tilt.
+///
+/// # Errors
+///
+/// Returns a [`JsonError::BadValue`] for `x` or `y` outside
+/// `[-1.0, 1.0]`, plus the usual missing-key / unknown-key /
+/// malformed-JSON variants.
+pub fn parse_face_target(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut x: Option<f32> = None;
+    let mut y: Option<f32> = None;
+    let mut hold_ms: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "x" => {
+                if x.is_some() {
+                    return Err(JsonError::DuplicateKey("x"));
+                }
+                let v = parse_f32(scanner)?;
+                if !(-1.0..=1.0).contains(&v) {
+                    return Err(JsonError::BadValue);
+                }
+                x = Some(v);
+            }
+            "y" => {
+                if y.is_some() {
+                    return Err(JsonError::DuplicateKey("y"));
+                }
+                let v = parse_f32(scanner)?;
+                if !(-1.0..=1.0).contains(&v) {
+                    return Err(JsonError::BadValue);
+                }
+                y = Some(v);
+            }
+            "hold_ms" => {
+                if hold_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("hold_ms"));
+                }
+                hold_ms = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    let xv = x.ok_or(JsonError::MissingKey("x"))?;
+    let yv = y.ok_or(JsonError::MissingKey("y"))?;
+    Ok(RemoteCommand::LookAt {
+        target: Pose {
+            pan_deg: xv * stackchan_core::HALF_FOV_H_DEG,
+            tilt_deg: -yv * stackchan_core::HALF_FOV_V_DEG,
+        },
+        hold_ms: hold_ms.unwrap_or(DEFAULT_HOLD_MS),
+    })
+}
+
 /// Parse a `POST /speak` body into a [`RemoteCommand::Speak`].
 ///
 /// Required: `phrase` (string, lowercase `snake_case`). Optional:
@@ -1042,5 +1121,135 @@ mod tests {
             parse_enter_pairing(r#"{"duration_ms":1,"duration_ms":2}"#),
             Err(JsonError::DuplicateKey("duration_ms"))
         ));
+    }
+
+    #[test]
+    fn face_target_centred_maps_to_neutral_pose() {
+        let body = r#"{"x":0.0,"y":0.0}"#;
+        match parse_face_target(body).unwrap() {
+            RemoteCommand::LookAt { target, hold_ms } => {
+                assert!((target.pan_deg - 0.0).abs() < 0.01);
+                assert!((target.tilt_deg - 0.0).abs() < 0.01);
+                assert_eq!(hold_ms, DEFAULT_HOLD_MS);
+            }
+            other => panic!("expected LookAt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn face_target_right_edge_pans_right_by_half_fov() {
+        let body = r#"{"x":1.0,"y":0.0}"#;
+        match parse_face_target(body).unwrap() {
+            RemoteCommand::LookAt { target, .. } => {
+                assert!(
+                    (target.pan_deg - stackchan_core::HALF_FOV_H_DEG).abs() < 0.01,
+                    "x=1 should map to +HALF_FOV_H_DEG; got {}",
+                    target.pan_deg
+                );
+                assert!((target.tilt_deg - 0.0).abs() < 0.01);
+            }
+            other => panic!("expected LookAt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn face_target_y_inverts_to_screen_space_convention() {
+        // Positive screen-space y is down, but positive tilt is up.
+        // y=1 (bottom of frame) must map to a downward (negative) tilt.
+        let body = r#"{"x":0.0,"y":1.0}"#;
+        match parse_face_target(body).unwrap() {
+            RemoteCommand::LookAt { target, .. } => {
+                assert!(
+                    (target.tilt_deg + stackchan_core::HALF_FOV_V_DEG).abs() < 0.01,
+                    "y=1 should map to -HALF_FOV_V_DEG; got {}",
+                    target.tilt_deg
+                );
+            }
+            other => panic!("expected LookAt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn face_target_explicit_hold_overrides_default() {
+        let body = r#"{"x":0.5,"y":-0.25,"hold_ms":250}"#;
+        match parse_face_target(body).unwrap() {
+            RemoteCommand::LookAt { hold_ms, .. } => {
+                assert_eq!(hold_ms, 250);
+            }
+            other => panic!("expected LookAt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn face_target_rejects_out_of_range_x() {
+        let body = r#"{"x":1.5,"y":0.0}"#;
+        assert!(matches!(parse_face_target(body), Err(JsonError::BadValue)));
+    }
+
+    #[test]
+    fn face_target_rejects_out_of_range_y() {
+        let body = r#"{"x":0.0,"y":-1.5}"#;
+        assert!(matches!(parse_face_target(body), Err(JsonError::BadValue)));
+    }
+
+    #[test]
+    fn face_target_rejects_missing_required_keys() {
+        assert!(matches!(
+            parse_face_target(r#"{"y":0.0}"#),
+            Err(JsonError::MissingKey("x"))
+        ));
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0}"#),
+            Err(JsonError::MissingKey("y"))
+        ));
+    }
+
+    #[test]
+    fn face_target_rejects_unknown_keys() {
+        let body = r#"{"x":0.0,"y":0.0,"face_id":3}"#;
+        assert!(matches!(
+            parse_face_target(body),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn face_target_rejects_duplicate_keys() {
+        // Closed-schema parsers reject `last-wins` repeats on every
+        // field so a typo doesn't silently override an earlier value.
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0,"x":0.5,"y":0.0}"#),
+            Err(JsonError::DuplicateKey("x"))
+        ));
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0,"y":0.0,"y":0.5}"#),
+            Err(JsonError::DuplicateKey("y"))
+        ));
+        assert!(matches!(
+            parse_face_target(r#"{"x":0.0,"y":0.0,"hold_ms":1,"hold_ms":2}"#),
+            Err(JsonError::DuplicateKey("hold_ms"))
+        ));
+    }
+
+    #[test]
+    fn face_target_lower_edges_pan_left_and_tilt_up() {
+        // Mirror of the right-edge / down test — covers the negative
+        // half of the FOV mapping.
+        let body = r#"{"x":-1.0,"y":-1.0}"#;
+        match parse_face_target(body).unwrap() {
+            RemoteCommand::LookAt { target, .. } => {
+                assert!(
+                    (target.pan_deg + stackchan_core::HALF_FOV_H_DEG).abs() < 0.01,
+                    "x=-1 should map to -HALF_FOV_H_DEG; got {}",
+                    target.pan_deg
+                );
+                assert!(
+                    (target.tilt_deg - stackchan_core::HALF_FOV_V_DEG).abs() < 0.01,
+                    "y=-1 should map to +HALF_FOV_V_DEG; got {}",
+                    target.tilt_deg
+                );
+            }
+            other => panic!("expected LookAt, got {other:?}"),
+        }
     }
 }
