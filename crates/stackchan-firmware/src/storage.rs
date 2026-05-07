@@ -327,6 +327,33 @@ where
         self.write_file(CAPTURE_FILE, frame)
     }
 
+    /// Read the most recent camera capture from `/sd/CAPTURE.565`.
+    /// Returns `Ok(None)` if no capture exists yet — that's the
+    /// before-first-capture state, not an error.
+    ///
+    /// The returned `Vec<u8>` carries the raw QVGA RGB565 big-endian
+    /// frame as written by `write_capture` (320 × 240 × 2 = 153 600
+    /// bytes for a fresh CoreS3 GC0308 frame). Caller renders.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial / failed read.
+    pub fn read_capture(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(CAPTURE_FILE, Mode::ReadOnly) else {
+            return Ok(None);
+        };
+        let len = file.length() as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        Ok(Some(buf))
+    }
+
     /// Delete every operator-visible file the firmware writes:
     /// `STACKCHAN.RON`, the staging file, `BONDS.BIN`, the bonds
     /// staging file, and the camera capture. Missing files are not
