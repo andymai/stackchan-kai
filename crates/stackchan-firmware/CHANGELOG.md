@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.60.0...stackchan-firmware-v0.61.0) (2026-05-07)
+
+
+### Features
+
+* **net:** MCP take_photo — capture trigger + snapshot URL ([#268](https://github.com/andymai/stackchan-kai/issues/268)) ([0eb1c4b](https://github.com/andymai/stackchan-kai/commit/0eb1c4b907e854a641e0a19124fb940b865cd544))
+
 ## [0.60.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.59.0...stackchan-firmware-v0.60.0) (2026-05-07)
 
 
