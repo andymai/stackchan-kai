@@ -34,6 +34,7 @@ pub mod ir;
 pub mod leds;
 pub mod net;
 pub mod power;
+pub mod reminders;
 pub mod sd_spi;
 pub mod storage;
 pub mod touch;

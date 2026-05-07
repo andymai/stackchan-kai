@@ -1138,6 +1138,14 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(chime_task) failed: {}", defmt::Debug2Format(&e));
     }
 
+    // Reminder dispatcher — drains due reminders at 1 Hz and routes
+    // them through `REMOTE_COMMAND_SIGNAL` for the speak path. The
+    // queue is empty at boot so the task is a low-cost noop until an
+    // operator schedules one via MCP `create_reminder`.
+    if let Err(e) = spawner.spawn(stackchan_firmware::reminders::reminders_task()) {
+        defmt::panic!("spawn(reminders_task) failed: {}", defmt::Debug2Format(&e));
+    }
+
     // BLE peripheral. Shares the same `&'static esp_radio::Controller`
     // as Wi-Fi — coex (enabled via the `coex` feature on `esp-radio`)
     // schedules airtime between the two stacks. The BLE address +

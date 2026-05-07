@@ -618,6 +618,9 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
 /// - `enter_pairing(duration_ms?: integer)`
 /// - `set_volume(level: integer)`
 /// - `set_mute(muted: bool)`
+/// - `create_reminder(fire_in_secs: integer, phrase: string) -> { id }`
+/// - `list_reminders() -> { reminders: [...] }`
+/// - `cancel_reminder(id: integer)`
 /// - `get_state()`
 ///
 /// Schemas are minimal — no enum constraints on emotion / mood /
@@ -633,6 +636,9 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"enter_pairing","description":"Open an ESP-NOW pairing window for the configured duration so an external remote can register.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
     r#"{"name":"set_volume","description":"Set the speaker volume in percent (0..=100). Persists to STACKCHAN.RON; survives reboot.","inputSchema":{"type":"object","properties":{"level":{"type":"integer","minimum":0,"maximum":100}},"required":["level"]}},"#,
     r#"{"name":"set_mute","description":"Mute or unmute the speaker without losing the persisted volume level. Persists to STACKCHAN.RON.","inputSchema":{"type":"object","properties":{"muted":{"type":"boolean"}},"required":["muted"]}},"#,
+    r#"{"name":"create_reminder","description":"Schedule a baked phrase to play in N seconds. Returns the reminder id. Runtime-only — does not survive reboot.","inputSchema":{"type":"object","properties":{"fire_in_secs":{"type":"integer","minimum":1,"maximum":432000},"phrase":{"type":"string"}},"required":["fire_in_secs","phrase"]}},"#,
+    r#"{"name":"list_reminders","description":"Return the currently-scheduled reminders.","inputSchema":{"type":"object","properties":{}}},"#,
+    r#"{"name":"cancel_reminder","description":"Cancel a previously-scheduled reminder by id. Returns 404 / not-found if no matching reminder exists.","inputSchema":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}},"#,
     r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );

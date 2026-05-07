@@ -967,12 +967,100 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "create_reminder" => match json::parse_create_reminder(arguments) {
+            Ok(req) => {
+                let create_req = crate::reminders::CreateRequest {
+                    fire_in_secs: u64::from(req.fire_in_secs),
+                    phrase: req.phrase,
+                };
+                match crate::reminders::add_reminder(embassy_time::Instant::now(), create_req) {
+                    Ok(reminder_id) => {
+                        let body = format!(r#"{{"id":{reminder_id}}}"#);
+                        render_success(id, &render_tool_text_result(&body))
+                    }
+                    Err(e) => render_error(
+                        Some(id),
+                        JsonRpcErrorCode::InvalidParams,
+                        reminder_error_detail(e),
+                    ),
+                }
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "list_reminders" => {
+            let body = render_reminders_json(&crate::reminders::list_reminders());
+            render_success(id, &render_tool_text_result(&body))
+        }
+        "cancel_reminder" => match json::parse_cancel_reminder(arguments) {
+            Ok(reminder_id) => {
+                if crate::reminders::cancel_reminder(reminder_id) {
+                    render_success(id, &render_tool_text_result("reminder cancelled"))
+                } else {
+                    render_error(
+                        Some(id),
+                        JsonRpcErrorCode::InvalidParams,
+                        "no reminder with that id",
+                    )
+                }
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         "get_state" => {
             let snap = snapshot::read();
             render_success(id, &render_tool_text_result(&state_body(snap)))
         }
         _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
     }
+}
+
+/// Map a [`crate::reminders::ReminderError`] to a `&'static str`
+/// MCP error detail. Mirrors [`audio_persist_detail`] in shape.
+const fn reminder_error_detail(e: crate::reminders::ReminderError) -> &'static str {
+    use crate::reminders::ReminderError;
+    match e {
+        ReminderError::NotInTheFuture => "fire_in_secs must be > 0",
+        ReminderError::HorizonExceeded => "fire_in_secs exceeds the 5-day horizon",
+        ReminderError::QueueFull => "reminder list is full",
+    }
+}
+
+/// Render the reminder list as a compact JSON object — no allocation
+/// beyond the `String` — for the MCP `list_reminders` text payload.
+fn render_reminders_json(
+    list: &heapless::Vec<crate::reminders::Reminder, { crate::reminders::MAX_REMINDERS }>,
+) -> String {
+    use core::fmt::Write as _;
+    let mut out = String::new();
+    out.push_str(r#"{"reminders":["#);
+    let now = embassy_time::Instant::now();
+    for (idx, r) in list.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        // Convert the monotonic deadline back into a relative
+        // "fires in N seconds" so the operator-facing surface stays
+        // shielded from boot-relative ticks. Saturating subtraction
+        // keeps already-due reminders at 0 instead of underflowing.
+        let remaining_secs = r.deadline.saturating_duration_since(now).as_secs();
+        let phrase = r.phrase;
+        let _ = write!(
+            out,
+            r#"{{"id":{},"fire_in_secs":{},"phrase":"{}"}}"#,
+            r.id,
+            remaining_secs,
+            json::phrase_wire_str(phrase),
+        );
+    }
+    out.push_str("]}");
+    out
 }
 
 /// Map a non-`Persisted` [`crate::audio::AudioPersistOutcome`] to a
