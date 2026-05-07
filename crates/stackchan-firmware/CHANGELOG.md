@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.54.0...stackchan-firmware-v0.55.0) (2026-05-07)
+
+
+### Features
+
+* **core:** runtime palette swap with named presets ([#252](https://github.com/andymai/stackchan-kai/issues/252)) ([e77ad86](https://github.com/andymai/stackchan-kai/commit/e77ad86f81e411ee97512d15e8a0ccafa7aea439))
+
 ## [0.54.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.53.0...stackchan-firmware-v0.54.0) (2026-05-07)
 
 
