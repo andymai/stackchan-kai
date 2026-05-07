@@ -5,6 +5,62 @@ All notable changes are documented here. Format follows
 [SemVer](https://semver.org/) with the v0.x caveats in
 [STABILITY.md](STABILITY.md).
 
+## [Unreleased] — v0.2.0 parity push
+
+The desk-toy surface keeps growing while staying fully local — no LLM, no
+cloud. Per-crate version bumps land on each PR via release-please; this
+section summarises the milestone work in human terms.
+
+### Avatar surface
+
+- Speech-bubble text overlay drawn above the face, with a TTL the
+  `BubbleExpiry` modifier sweeps each frame.
+- Decorator badges (heart, sweat, sleep, anger, shy) sit on top of
+  the base face. Emotion edges trigger `Angry` / `Shy` automatically;
+  the existing reactive triggers still fire `Heart` / `Sweat` / `Sleep`.
+- Runtime color palette swap through named presets (`default` / `dark`
+  / `cute` / `dog`) — affects the four "skin" colours of the avatar
+  while symbolic overlays keep their dedicated colours.
+- Lifelike-gaze fallback: `LostTargetSearch` modifier emits a brief
+  directional saccade after a tracked target disappears, with sourced
+  200 ms saccade latency and 0.5–1.5 s microsaccade intervals.
+- Optional soliloquy mode (`behavior.soliloquy_enabled`) — random
+  idle bubbles at random intervals; yields gracefully to operator-set
+  bubbles. Off by default.
+- Optional hourly chime (`behavior.hourly_chime_enabled`) — a short
+  `WakeChirp` at every wall-clock top-of-hour. Off by default; gated
+  on an SNTP-synced RTC.
+
+### Networking + control plane
+
+- mDNS extends from hostname-only `A` records to full DNS-SD service
+  advertising for `_stackchan._tcp.local.` (PTR + SRV + TXT + A).
+  TXT carries `kai=1` as a variant marker so kai-aware clients gate
+  on extension endpoints; a generic Bonjour browser still lists the
+  device alongside upstream stackchan units.
+- ESP-NOW gains a TX path: pose-mirror frames when the head moves
+  plus a heartbeat liveness signal, broadcast on the configured
+  channel. RX continues to gate on the static-peer allowlist plus an
+  opt-in pairing window.
+- New HTTP routes: `POST /face-target` (normalised camera coordinates
+  for an external CV pipeline), `POST /palette`, `POST /head/offsets`
+  (runtime servo zero-point correction layered on top of the
+  compile-time trim).
+- MCP gains `set_volume` / `set_mute` / `create_reminder` /
+  `list_reminders` / `cancel_reminder`. Reminders are monotonic
+  (fire-in-N-seconds), in-RAM, capped with a five-day horizon.
+- Time configuration honours the `time.tz` field at boot — a small
+  catalog of named IANA zones plus `Etc/GMT±N` is enough for the
+  desk-toy use case without pulling in a real timezone library.
+
+### Stability + plumbing
+
+- Modifier registry capacity bumped to accommodate the new
+  symbolic-overlay and fallback-gaze modifiers.
+- Greptile-driven post-merge fix on the ESP-NOW TX path: the
+  dispatcher no longer starves under inbound traffic and no longer
+  latches a NaN pose into the delta-comparison cache.
+
 ## [0.1.0] — 2026-04-23
 
 First release. CoreS3 boots to a double-buffered 320×240 face that blinks,
