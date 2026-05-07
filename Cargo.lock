@@ -4744,6 +4744,7 @@ name = "stackchan-net"
 version = "0.2.13"
 dependencies = [
  "ed25519-compact",
+ "heapless 0.8.0",
  "ron",
  "serde",
  "stackchan-core",

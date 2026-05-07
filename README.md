@@ -101,7 +101,9 @@ Discovery and inter-device:
 
 - **mDNS** — `<hostname>.local` plus DNS-SD service records (`_stackchan._tcp.local.`)
   carrying a `kai=1` variant marker so kai-aware clients gate on extension endpoints
-  while a generic Bonjour browser still lists the device alongside upstream stackchan units
+  while a generic Bonjour browser still lists the device alongside upstream stackchan units.
+  TXT also publishes live `yaw=` / `pitch=` (one decimal, ≤100 ms refresh with a 1 s heartbeat)
+  so a follower mimicking head pose tracks the leader without an HTTP round-trip
 - **ESP-NOW** — peer-allowlisted RX driving the same `RemoteCommand` plumbing as HTTP,
   plus a TX path that broadcasts pose-mirror + heartbeat frames so multiple units can
   choreograph against each other

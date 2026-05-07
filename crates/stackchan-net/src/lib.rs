@@ -57,6 +57,7 @@ pub mod esp_now;
 pub mod http_command;
 pub mod http_parse;
 pub mod mcp;
+pub mod mdns_pose;
 pub mod ota;
 
 pub use bare::{parse_ron_bare, render_ron_bare};
