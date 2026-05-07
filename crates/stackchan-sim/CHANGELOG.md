@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.15.0...stackchan-sim-v0.16.0) (2026-05-07)
+
+
+### Features
+
+* **core:** mood presets + closed-eye smile on Petted ([#219](https://github.com/andymai/stackchan-kai/issues/219)) ([03c4a51](https://github.com/andymai/stackchan-kai/commit/03c4a51583f7f029de272014dad69faf81a0a984))
+
 ## [0.15.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.14.0...stackchan-sim-v0.15.0) (2026-05-07)
 
 
