@@ -84,6 +84,7 @@
 mod attention_from_tracking;
 mod blink;
 mod breath;
+mod bubble_expiry;
 mod decorator_expiry;
 mod decorator_from_body_touch;
 mod decorator_from_emotion;
@@ -120,6 +121,7 @@ pub use attention_from_tracking::{
 };
 pub use blink::Blink;
 pub use breath::Breath;
+pub use bubble_expiry::BubbleExpiry;
 pub use decorator_expiry::DecoratorExpiry;
 pub use decorator_from_body_touch::{DecoratorFromBodyTouch, HEART_HOLD_MS};
 pub use decorator_from_emotion::{DECORATOR_EMOTION_HOLD_MS, DecoratorFromEmotion};

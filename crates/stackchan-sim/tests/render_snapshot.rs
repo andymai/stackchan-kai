@@ -15,7 +15,7 @@
 
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use stackchan_core::modifiers::StyleFromEmotion;
-use stackchan_core::{Decorator, DecoratorState, Director, Emotion, Entity, Instant};
+use stackchan_core::{BubbleState, Decorator, DecoratorState, Director, Emotion, Entity, Instant};
 use stackchan_sim::Framebuffer;
 
 /// LCD canvas width the firmware targets.
@@ -234,6 +234,62 @@ fn distinct_decorators_render_distinct_frames() {
             );
         }
     }
+}
+
+/// A populated speech bubble must render visibly different from the
+/// no-bubble baseline, regardless of which face is showing underneath.
+#[test]
+fn bubble_overlay_paints_pixels_outside_baseline() {
+    let mut baseline = Framebuffer::new(WIDTH, HEIGHT);
+    Entity::default()
+        .face
+        .draw(&mut baseline)
+        .expect("Framebuffer DrawTarget is Infallible");
+
+    let mut entity = Entity::default();
+    entity.face.bubble = Some(BubbleState {
+        text: "hi",
+        // Far in the future — the renderer draws regardless of expiry.
+        expires_at: Instant::from_millis(u64::MAX / 2),
+    });
+    let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+    entity
+        .face
+        .draw(&mut fb)
+        .expect("Framebuffer DrawTarget is Infallible");
+    assert_ne!(
+        fb.as_slice(),
+        baseline.as_slice(),
+        "bubble overlay should paint pixels outside the no-bubble baseline"
+    );
+}
+
+/// A bubble with text long enough to overflow the maximum frame width
+/// must still render — the draw code truncates rather than panicking
+/// or overflowing the framebuffer.
+#[test]
+fn bubble_overlay_handles_oversized_text() {
+    let mut entity = Entity::default();
+    entity.face.bubble = Some(BubbleState {
+        // Far longer than the bubble can hold (~28 chars at FONT_10X20
+        // on a 320 px frame minus padding); the draw code truncates.
+        text: "this is a deliberately very long speech bubble text that overflows",
+        expires_at: Instant::from_millis(u64::MAX / 2),
+    });
+    let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+    entity
+        .face
+        .draw(&mut fb)
+        .expect("Framebuffer DrawTarget is Infallible");
+    // No assertion on pixels beyond "draw didn't panic and produced
+    // something different from baseline" — visual truncation is
+    // covered by the no-overflow guarantee inside `draw_bubble`.
+    let mut baseline = Framebuffer::new(WIDTH, HEIGHT);
+    Entity::default()
+        .face
+        .draw(&mut baseline)
+        .expect("Framebuffer DrawTarget is Infallible");
+    assert_ne!(fb.as_slice(), baseline.as_slice());
 }
 
 #[test]

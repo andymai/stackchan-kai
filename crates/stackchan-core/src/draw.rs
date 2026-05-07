@@ -29,13 +29,16 @@ use embedded_graphics::{
     Drawable,
     draw_target::DrawTarget,
     geometry::{Point as EgPoint, Size},
+    mono_font::{MonoTextStyle, ascii::FONT_10X20},
     pixelcolor::{Rgb565, RgbColor},
     primitives::{
         Circle, Ellipse, Line, Polyline, Primitive, PrimitiveStyle, PrimitiveStyleBuilder,
         Rectangle,
     },
+    text::{Alignment, Baseline, Text, TextStyleBuilder},
 };
 
+use crate::bubble::BubbleState;
 use crate::decorator::{Decorator, DecoratorState};
 use crate::face::{Eye, EyePhase, Face, Mouth, SCALE_DEFAULT};
 
@@ -131,6 +134,9 @@ impl Face {
         draw_mouth(&self.mouth, self.style.mouth_curve, target)?;
         if let Some(state) = self.decorator {
             draw_decorator(state, target)?;
+        }
+        if let Some(state) = self.bubble {
+            draw_bubble(state, target)?;
         }
         Ok(())
     }
@@ -469,6 +475,127 @@ where
                 .draw(target)?;
         }
     }
+    Ok(())
+}
+
+/// Speech-bubble outer-rect colour — black border around the
+/// white text background. Reads as a clean callout against the
+/// white face background.
+const BUBBLE_BORDER_COLOR: Rgb565 = Rgb565::BLACK;
+/// Speech-bubble fill colour — slightly off-white so the bubble
+/// reads as a separate layer, not a hole punched through the face.
+/// Light gray = `Rgb565::new(28, 56, 28)` (~#E0E0E0).
+const BUBBLE_FILL_COLOR: Rgb565 = Rgb565::new(28, 56, 28);
+/// Speech-bubble text colour.
+const BUBBLE_TEXT_COLOR: Rgb565 = Rgb565::BLACK;
+/// Speech-bubble border stroke width.
+const BUBBLE_BORDER_STROKE: u32 = 2;
+/// Vertical padding inside the bubble (top + bottom of text area).
+const BUBBLE_VERTICAL_PADDING: i32 = 6;
+/// Horizontal padding inside the bubble (left + right of text).
+const BUBBLE_HORIZONTAL_PADDING: i32 = 8;
+/// Speech-bubble anchor Y — top of the bubble, just below the
+/// frame's top edge. Anchors at the top so the bubble doesn't
+/// occlude the eyes (which sit at y≈110).
+const BUBBLE_ANCHOR_Y: i32 = 4;
+/// Frame-edge clearance — how close the bubble can come to the
+/// left / right edge of the framebuffer. Prevents the border from
+/// landing on the screen-edge pixel column.
+const BUBBLE_EDGE_CLEARANCE: i32 = 4;
+/// Maximum bubble width, in pixels. Inferred from the framebuffer
+/// width assumption (320 px); covers the full top of the frame
+/// minus the edge clearance on both sides.
+const BUBBLE_MAX_WIDTH: i32 = 320 - 2 * BUBBLE_EDGE_CLEARANCE;
+/// `FONT_10X20` glyph width — used to measure rendered text width
+/// without round-tripping through `embedded_graphics`'s text
+/// metrics API.
+const BUBBLE_GLYPH_WIDTH: i32 = 10;
+/// `FONT_10X20` glyph height — see [`BUBBLE_GLYPH_WIDTH`].
+const BUBBLE_GLYPH_HEIGHT: i32 = 20;
+
+/// Compute the bubble's drawn rectangle in framebuffer coordinates,
+/// given the text length in characters. Returns `(top_left, size)`.
+/// Width is text-derived but clamped to [`BUBBLE_MAX_WIDTH`] so a
+/// runaway-length text never overflows the frame; the renderer
+/// truncates the visible characters at the same boundary.
+const fn bubble_rect(char_count: usize) -> (EgPoint, Size) {
+    let chars = if char_count == 0 { 1 } else { char_count };
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+    let raw_text_w = chars as i32 * BUBBLE_GLYPH_WIDTH;
+    let max_text_w = BUBBLE_MAX_WIDTH - 2 * BUBBLE_HORIZONTAL_PADDING;
+    let text_w = if raw_text_w > max_text_w {
+        max_text_w
+    } else {
+        raw_text_w
+    };
+    let total_w = text_w + 2 * BUBBLE_HORIZONTAL_PADDING;
+    let total_h = BUBBLE_GLYPH_HEIGHT + 2 * BUBBLE_VERTICAL_PADDING;
+    // Centred horizontally on the 320 px frame.
+    let top_left_x = (320 - total_w) / 2;
+    #[allow(clippy::cast_sign_loss)]
+    let size = Size::new(total_w as u32, total_h as u32);
+    (EgPoint::new(top_left_x, BUBBLE_ANCHOR_Y), size)
+}
+
+/// Draw the speech bubble: a bordered rounded-rect-style callout
+/// (rendered as a regular rectangle for `no_std`-friendly simplicity)
+/// with the bubble text rendered in `FONT_10X20` inside it.
+fn draw_bubble<D>(state: BubbleState, target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    // Truncate at the maximum visible character count for the bubble
+    // width. The bubble never word-wraps; firmware feeds short
+    // phrase-pool strings.
+    let max_visible_chars =
+        ((BUBBLE_MAX_WIDTH - 2 * BUBBLE_HORIZONTAL_PADDING) / BUBBLE_GLYPH_WIDTH).max(1);
+    #[allow(clippy::cast_sign_loss)]
+    let visible_char_cap = max_visible_chars as usize;
+    let visible_text = if state.text.chars().count() > visible_char_cap {
+        // Byte-truncate at a char boundary corresponding to the cap.
+        let mut byte_end = 0;
+        for (i, (idx, _)) in state.text.char_indices().enumerate() {
+            if i == visible_char_cap {
+                break;
+            }
+            byte_end = idx + state.text[idx..].chars().next().map_or(0, char::len_utf8);
+        }
+        &state.text[..byte_end]
+    } else {
+        state.text
+    };
+    let visible_chars = visible_text.chars().count();
+
+    let (top_left, size) = bubble_rect(visible_chars);
+
+    // Filled background.
+    Rectangle::new(top_left, size)
+        .into_styled(fill(BUBBLE_FILL_COLOR))
+        .draw(target)?;
+    // Border on top.
+    Rectangle::new(top_left, size)
+        .into_styled(stroke(BUBBLE_BORDER_COLOR, BUBBLE_BORDER_STROKE))
+        .draw(target)?;
+
+    // Text centre point: horizontal midpoint of the bubble, vertical
+    // midpoint of the inner area (which sits one glyph-height tall
+    // inside the padded rect).
+    #[allow(clippy::cast_possible_wrap)]
+    let center_x = top_left.x + (size.width / 2) as i32;
+    let baseline_y = top_left.y + BUBBLE_VERTICAL_PADDING + BUBBLE_GLYPH_HEIGHT / 2;
+
+    let character_style = MonoTextStyle::new(&FONT_10X20, BUBBLE_TEXT_COLOR);
+    let text_style = TextStyleBuilder::new()
+        .alignment(Alignment::Center)
+        .baseline(Baseline::Middle)
+        .build();
+    Text::with_text_style(
+        visible_text,
+        EgPoint::new(center_x, baseline_y),
+        character_style,
+        text_style,
+    )
+    .draw(target)?;
     Ok(())
 }
 

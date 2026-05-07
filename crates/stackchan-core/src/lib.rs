@@ -27,6 +27,7 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
+pub mod bubble;
 pub mod clock;
 pub mod decorator;
 pub mod director;
@@ -49,6 +50,7 @@ pub mod skill;
 pub mod skills;
 pub mod voice;
 
+pub use bubble::BubbleState;
 pub use clock::{Clock, Instant};
 pub use decorator::{Decorator, DecoratorState};
 pub use director::{

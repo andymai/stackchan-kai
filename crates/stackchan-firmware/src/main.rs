@@ -74,12 +74,12 @@ use mipidsi::{
 use stackchan_core::{
     Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
-        AttentionFromTracking, Blink, Breath, DecoratorExpiry, DecoratorFromBodyTouch,
-        DecoratorFromEmotion, DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake,
-        DormancyFromActivity, EmotionCycle, EmotionFromAmbient, EmotionFromBattery,
-        EmotionFromIntent, EmotionFromRemote, EmotionFromTouch, EmotionFromVoice,
-        GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent, IdleDrift,
-        IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
+        AttentionFromTracking, Blink, Breath, BubbleExpiry, DecoratorExpiry,
+        DecoratorFromBodyTouch, DecoratorFromEmotion, DecoratorFromListening, DecoratorFromLoud,
+        DecoratorFromShake, DormancyFromActivity, EmotionCycle, EmotionFromAmbient,
+        EmotionFromBattery, EmotionFromIntent, EmotionFromRemote, EmotionFromTouch,
+        EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent,
+        IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
         MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, StyleFromEmotion,
         StyleFromIntent, StyleFromMood,
     },
@@ -231,6 +231,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut petting = Petting::new();
     let mut handling = Handling::new();
     let mut intent_from_body_touch = IntentFromBodyTouch::new();
+    let mut bubble_expiry = BubbleExpiry::new();
     let mut decorator_expiry = DecoratorExpiry::new();
     let mut decorator_from_emotion = DecoratorFromEmotion::new();
     let mut decorator_from_body_touch = DecoratorFromBodyTouch::new();
@@ -313,6 +314,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     // (phase, priority, registration_order).
     director
         .add_modifier(&mut decorator_expiry)
+        .expect("registry full");
+    director
+        .add_modifier(&mut bubble_expiry)
         .expect("registry full");
     director
         .add_modifier(&mut decorator_from_emotion)
