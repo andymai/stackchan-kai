@@ -55,6 +55,7 @@ pub mod config;
 pub mod error;
 pub mod http_command;
 pub mod http_parse;
+pub mod mcp;
 
 pub use bare::{parse_ron_bare, render_ron_bare};
 pub use bare_json::{merge_settings_with_current, parse_settings_json, render_settings_json};

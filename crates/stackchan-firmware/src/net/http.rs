@@ -363,6 +363,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/volume") => handle_post_volume(socket, body).await,
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
+        ("POST", "/mcp") => handle_post_mcp(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
         ("GET", "/camera/snapshot") => handle_get_camera_snapshot(socket).await,
@@ -680,6 +681,157 @@ async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
     MOOD_SIGNAL.signal(mood);
     defmt::info!("http: POST /mood → {}", mood.wire_str());
     write_no_content(socket).await
+}
+
+/// `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP.
+///
+/// Reads a JSON-RPC request, dispatches to one of `initialize` /
+/// `tools/list` / `tools/call`, and returns the response. Tools wrap
+/// the existing control-plane primitives (`set_emotion`, `set_mood`,
+/// `look_at`, `speak`, `get_state`); the bridge is mechanical and the
+/// MCP module in `stackchan-net` does the parsing.
+///
+/// All responses use HTTP 200 — JSON-RPC errors live in the body's
+/// `error` field. The exception is a malformed JSON envelope, which
+/// returns 400 since the request never made it into the protocol.
+async fn handle_post_mcp(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    use stackchan_net::mcp::{
+        INITIALIZE_RESULT_JSON, JsonRpcErrorCode, TOOLS_LIST_RESULT_JSON, find_object_field,
+        find_string_field, parse_request, render_error, render_success, render_tool_text_result,
+    };
+
+    let req = match parse_request(body) {
+        Ok(r) => r,
+        Err(e) => {
+            defmt::warn!("http: POST /mcp parse failed ({=str})", e.detail);
+            let resp = render_error(None, e.code, e.detail);
+            return write_json(socket, 400, &resp).await;
+        }
+    };
+
+    let resp = match req.method {
+        "initialize" => render_success(req.id, INITIALIZE_RESULT_JSON),
+        "tools/list" => render_success(req.id, TOOLS_LIST_RESULT_JSON),
+        "tools/call" => {
+            let Some(params) = req.params_raw else {
+                let r = render_error(
+                    Some(req.id),
+                    JsonRpcErrorCode::InvalidParams,
+                    "tools/call requires params",
+                );
+                return write_json(socket, 200, &r).await;
+            };
+            let tool_name = match find_string_field(params, "name") {
+                Ok(Some(n)) => n,
+                Ok(None) => {
+                    let r = render_error(
+                        Some(req.id),
+                        JsonRpcErrorCode::InvalidParams,
+                        "missing 'name' field",
+                    );
+                    return write_json(socket, 200, &r).await;
+                }
+                Err(e) => {
+                    let r = render_error(Some(req.id), e.code, e.detail);
+                    return write_json(socket, 200, &r).await;
+                }
+            };
+            let arguments = find_object_field(params, "arguments")
+                .ok()
+                .flatten()
+                .unwrap_or("{}");
+            mcp_dispatch_tool(req.id, tool_name, arguments)
+        }
+        _ => render_error(
+            Some(req.id),
+            JsonRpcErrorCode::MethodNotFound,
+            "unknown JSON-RPC method",
+        ),
+    };
+    let _ = render_tool_text_result; // re-export pin
+    write_json(socket, 200, &resp).await
+}
+
+/// Dispatch a `tools/call` request to the matching control-plane
+/// primitive. Returns a fully-rendered JSON-RPC response (success or
+/// error) string ready for `write_json`.
+fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
+    use stackchan_net::mcp::{
+        JsonRpcErrorCode, render_error, render_success, render_tool_text_result,
+    };
+
+    match tool {
+        "set_emotion" => match json::parse_set_emotion(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("emotion enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "set_mood" => match json::parse_mood(arguments) {
+            Ok(mood) => {
+                crate::net::http::MOOD_SIGNAL.signal(mood);
+                render_success(id, &render_tool_text_result("mood enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "look_at" => match json::parse_look_at(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("look-at enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "speak" => match json::parse_speak(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("phrase enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "get_state" => {
+            let snap = snapshot::read();
+            render_success(id, &render_tool_text_result(&state_body(snap)))
+        }
+        _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
+    }
+}
+
+/// Map a `JsonError` from the JSON parser into a static detail
+/// string. The parser's error variants don't carry message text, so
+/// we lookup-table here. Returns `&'static str` so the
+/// `render_error` call doesn't need a trailing `String`.
+const fn tool_parse_detail(e: &JsonError) -> &'static str {
+    use JsonError as E;
+    match e {
+        E::NotAnObject => "params is not an object",
+        E::Unterminated => "unterminated JSON",
+        E::MissingKey(_) => "missing required key",
+        E::UnknownKey => "unknown key in params",
+        E::DuplicateKey(_) => "duplicate key in params",
+        E::BadValue => "wrong type or out-of-range value",
+        E::UnknownEmotion => "unknown emotion",
+        E::UnknownPhrase => "unknown phrase",
+        E::UnknownLocale => "unknown locale",
+        E::UnknownMood => "unknown mood",
+        E::VolumeOutOfRange(_) => "volume out of range",
+    }
 }
 
 /// `POST /camera/mode` — parse `{"enabled": <bool>}`, update the
