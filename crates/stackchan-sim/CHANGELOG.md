@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.13.1...stackchan-sim-v0.14.0) (2026-05-07)
+
+
+### Features
+
+* **core:** expand emotion palette with 7 new variants ([#216](https://github.com/andymai/stackchan-kai/issues/216)) ([21f6b20](https://github.com/andymai/stackchan-kai/commit/21f6b20dd497f82f8f9efbda134b87869e5f69f4))
+
 ## [0.13.1](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.13.0...stackchan-sim-v0.13.1) (2026-05-01)
 
 ## [0.13.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.12.2...stackchan-sim-v0.13.0) (2026-04-30)
