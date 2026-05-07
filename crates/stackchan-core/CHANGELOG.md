@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.28.0...stackchan-core-v0.28.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* v0.2.0 quality pass — bug fixes + tests + cleanup ([#273](https://github.com/andymai/stackchan-kai/issues/273)) ([b007cbf](https://github.com/andymai/stackchan-kai/commit/b007cbffc7f27db4f525e070c70a6d722a64e53b))
+
 ## [0.28.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.27.0...stackchan-core-v0.28.0) (2026-05-07)
 
 

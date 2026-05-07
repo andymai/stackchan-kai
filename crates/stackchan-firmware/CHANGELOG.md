@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.0...stackchan-firmware-v0.62.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* v0.2.0 quality pass — bug fixes + tests + cleanup ([#273](https://github.com/andymai/stackchan-kai/issues/273)) ([b007cbf](https://github.com/andymai/stackchan-kai/commit/b007cbffc7f27db4f525e070c70a6d722a64e53b))
+
 ## [0.62.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.61.0...stackchan-firmware-v0.62.0) (2026-05-07)
 
 
