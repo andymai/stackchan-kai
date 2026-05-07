@@ -889,10 +889,11 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
 const fn audio_persist_detail(outcome: crate::audio::AudioPersistOutcome) -> &'static str {
     use crate::audio::AudioPersistOutcome;
     match outcome {
-        // The success path is already filtered out by the call site;
-        // the variant is unreachable here but const-match needs every
-        // arm covered.
-        AudioPersistOutcome::Persisted => "ok",
+        // The success path is filtered out at the call site before we
+        // get here. A distinct sentinel makes any accidental future
+        // call with `Persisted` self-describing inside a -32603
+        // response rather than a misleading "ok".
+        AudioPersistOutcome::Persisted => "audio persisted (unexpected for error path)",
         AudioPersistOutcome::NoSnapshot => "config snapshot unavailable",
         AudioPersistOutcome::NoStorage => "no SD card mounted",
         AudioPersistOutcome::WriteFailed => "config write failed",
