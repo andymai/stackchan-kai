@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.53.0...stackchan-firmware-v0.54.0) (2026-05-07)
+
+
+### Features
+
+* **core:** Soliloquy modifier — opt-in autonomous bubble beats ([#250](https://github.com/andymai/stackchan-kai/issues/250)) ([18c108c](https://github.com/andymai/stackchan-kai/commit/18c108c56cd85076c29046383a1f45d0cacc9bb2))
+
 ## [0.53.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.52.0...stackchan-firmware-v0.53.0) (2026-05-07)
 
 
