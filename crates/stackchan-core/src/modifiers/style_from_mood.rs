@@ -3,19 +3,24 @@
 //! [`super::StyleFromEmotion`] already wrote.
 //!
 //! Runs at priority `-7` in [`Phase::Expression`] — after
-//! `StyleFromEmotion` (`-10`) and `StyleFromIntent` (`-5`), but before
-//! [`super::Blink`] / [`super::Breath`] (`0`) so the cadence modifiers
-//! see the final mood-adjusted scale.
+//! `StyleFromEmotion` (`-10`) but *before* `StyleFromIntent` (`-5`),
+//! and before [`super::Blink`] / [`super::Breath`] (`0`) so the
+//! cadence modifiers see the final mood-adjusted scale. The
+//! before-`StyleFromIntent` ordering is currently incidental — the
+//! two write to disjoint fields (cadence vs blush/eye-curve), so the
+//! interleaving is a no-op today. If a future
+//! `StyleFromIntent` field overlaps with cadence, swap priorities
+//! to keep mood as the final word.
 //!
 //! ## Composition
 //!
 //! - `face.style.blink_rate_scale *= mood.blink_multiplier()`
 //! - `face.style.breath_depth_scale *= mood.breath_multiplier()`
 //!
-//! Idle-drift amplitude is scaled by the modifier itself reading
-//! `mood.drift_multiplier()` — the drift modifiers don't currently
-//! carry a runtime scale, so a follow-up can plumb that through; for
-//! now this modifier covers the two dominant cadence axes.
+//! `Mood::drift_multiplier` is also defined on the type but isn't
+//! consumed yet — it'll plumb through `IdleDrift` / `IdleHeadDrift`
+//! once those grow runtime scales. Keeping it on the type now means
+//! the public API doesn't have to break later.
 //!
 //! [`Mood`]: crate::mood::Mood
 //! [`Phase::Expression`]: crate::director::Phase::Expression
