@@ -407,6 +407,13 @@ fn validate_esp_now(c: &EspNowConfig) -> Result<(), ConfigError> {
     if !c.peer_mac.is_empty() && parse_mac(&c.peer_mac).is_none() {
         return Err(ConfigError::InvalidEspNowMac(c.peer_mac.clone()));
     }
+    // Encrypted-static-peer requires both PMK + LMK. Pinning here so
+    // an inconsistent triple (peer_mac + pmk set, lmk left blank)
+    // can't drop the firmware into a silent unencrypted-unicast
+    // fallback.
+    if !c.peer_mac.is_empty() && !is_redacted_or_empty(&c.pmk_hex) && c.lmk_hex.is_empty() {
+        return Err(ConfigError::InvalidEspNowKey("lmk_hex"));
+    }
     if let Some(ch) = c.channel
         && !(1..=14).contains(&ch)
     {
@@ -439,7 +446,7 @@ fn is_valid_hex_key(s: &str) -> bool {
 #[must_use]
 pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
     let bytes = s.as_bytes();
-    let bare = match bytes.len() {
+    let valid = match bytes.len() {
         12 => bytes.iter().all(u8::is_ascii_hexdigit),
         17 => {
             // `xx:xx:xx:xx:xx:xx` — colons at positions 2, 5, 8, 11, 14.
@@ -452,7 +459,7 @@ pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
         }
         _ => return None,
     };
-    if !bare {
+    if !valid {
         return None;
     }
     let mut out = [0_u8; 6];
@@ -671,6 +678,31 @@ mod tests {
             validate(&c),
             Err(ConfigError::InvalidEspNowTxRate(21))
         ));
+    }
+
+    #[test]
+    fn validate_rejects_static_peer_with_pmk_but_no_lmk() {
+        // peer_mac + pmk_hex set without lmk_hex would silently
+        // register an encrypted peer with no per-peer key. Reject.
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.peer_mac = "aa:bb:cc:dd:ee:ff".to_string();
+        c.esp_now.pmk_hex = "0123456789abcdef0123456789abcdef".to_string();
+        // lmk_hex left empty.
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidEspNowKey("lmk_hex"))
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_static_peer_with_no_encryption() {
+        // peer_mac + lmk + pmk all empty — open-mode static peer is
+        // valid. Only the (peer + pmk + no-lmk) triple is rejected.
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.esp_now.peer_mac = "aa:bb:cc:dd:ee:ff".to_string();
+        assert!(validate(&c).is_ok());
     }
 
     #[test]
