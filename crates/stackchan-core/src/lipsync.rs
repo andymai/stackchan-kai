@@ -118,7 +118,13 @@ pub const VISEME_HIGH_ZCR_HZ: f32 = 2_000.0;
 /// [`Ff`]: Viseme::Ff
 #[must_use]
 pub fn classify_viseme(rms: f32, zcr_hz: f32) -> Viseme {
-    if !rms.is_finite() || !zcr_hz.is_finite() || rms < VISEME_SILENCE_RMS {
+    // The `zcr_hz < 0.0` guard makes the function match its doc
+    // contract — production callers (sign-flip counters) never produce
+    // a negative rate, but a future caller deriving ZCR from a signed
+    // correlation could, and a negative value would otherwise pass
+    // through to `zcr_hz < VISEME_LOW_ZCR_HZ` and erroneously return
+    // `Aa` for what's effectively garbage input.
+    if !rms.is_finite() || !zcr_hz.is_finite() || rms < VISEME_SILENCE_RMS || zcr_hz < 0.0 {
         return Viseme::Closed;
     }
     if zcr_hz < VISEME_LOW_ZCR_HZ {
@@ -211,6 +217,15 @@ mod tests {
         // /s/ /f/ /sh/ — broadband noise reads as high ZCR.
         assert_eq!(classify_viseme(0.5, 2_000.0), Viseme::Ff);
         assert_eq!(classify_viseme(0.5, 5_000.0), Viseme::Ff);
+    }
+
+    #[test]
+    fn classifier_treats_negative_zcr_as_silence() {
+        // Production callers (sign-flip counters) can't produce a
+        // negative rate, but a signed-correlation caller could; the
+        // doc contract treats it as garbage and the guard must too.
+        assert_eq!(classify_viseme(0.5, -1.0), Viseme::Closed);
+        assert_eq!(classify_viseme(0.5, -10_000.0), Viseme::Closed);
     }
 
     #[test]
