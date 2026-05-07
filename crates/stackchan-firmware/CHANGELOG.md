@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.1...stackchan-firmware-v0.62.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* round-2 review — disk race in runtime_store + stuck FLASH on OTA fail ([#275](https://github.com/andymai/stackchan-kai/issues/275)) ([e10a31c](https://github.com/andymai/stackchan-kai/commit/e10a31c3a617cdb21834e19eb4da5e1127c9ad70))
+
 ## [0.62.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.0...stackchan-firmware-v0.62.1) (2026-05-07)
 
 
