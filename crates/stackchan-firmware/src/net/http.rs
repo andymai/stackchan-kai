@@ -697,7 +697,7 @@ async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), 
 async fn handle_post_mcp(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     use stackchan_net::mcp::{
         INITIALIZE_RESULT_JSON, JsonRpcErrorCode, TOOLS_LIST_RESULT_JSON, find_object_field,
-        find_string_field, parse_request, render_error, render_success, render_tool_text_result,
+        find_string_field, parse_request, render_error, render_success,
     };
 
     let req = match parse_request(body) {
@@ -748,7 +748,6 @@ async fn handle_post_mcp(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), H
             "unknown JSON-RPC method",
         ),
     };
-    let _ = render_tool_text_result; // re-export pin
     write_json(socket, 200, &resp).await
 }
 

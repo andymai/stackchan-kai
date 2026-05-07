@@ -180,6 +180,12 @@ pub fn parse_request(body: &str) -> Result<ParsedRequest<'_>, ParseError> {
     let mut id: Option<RequestId> = None;
     let mut method: Option<&str> = None;
     let mut params_raw: Option<&str> = None;
+    // `first` rather than the byte position because leading whitespace
+    // before `{`, or whitespace between `{` and the first key, would
+    // otherwise push `pos > 1` past the first iteration and trip the
+    // comma-required guard before any key has been read. Same pattern
+    // as `find_string_field` / `find_object_field` below.
+    let mut first = true;
 
     loop {
         pos = skip_ws(bytes, pos);
@@ -189,7 +195,7 @@ pub fn parse_request(body: &str) -> Result<ParsedRequest<'_>, ParseError> {
         if bytes[pos] == b'}' {
             break;
         }
-        if pos > 1 {
+        if !first {
             // Expect a comma between members. Tolerate whitespace.
             if bytes[pos] != b',' {
                 return Err(ParseError::parse("expected ',' between members"));
@@ -197,6 +203,7 @@ pub fn parse_request(body: &str) -> Result<ParsedRequest<'_>, ParseError> {
             pos += 1;
             pos = skip_ws(bytes, pos);
         }
+        first = false;
         let (key, after_key) = read_string(bytes, pos)?;
         pos = skip_ws(bytes, after_key);
         if pos >= bytes.len() || bytes[pos] != b':' {
@@ -268,10 +275,14 @@ fn skip_ws(bytes: &[u8], start: usize) -> usize {
 }
 
 /// Read a JSON string starting at position `start` (which must point
-/// at a `"`). Supports the basic escapes the MCP wire surface needs
-/// (`\\`, `\"`, `\n`, `\r`, `\t`, `\/`); rejects unknown escapes.
-/// Returns the string slice (without quotes) and the position after
-/// the closing quote.
+/// at a `"`). Supports `\\`, `\"`, `\n`, `\r`, `\t`, `\b`, `\f`, `\/`;
+/// `\uXXXX` Unicode escapes are *not* supported and reject as a
+/// `ParseError`. The MCP wire surface in practice doesn't carry
+/// Unicode-escaped strings — clients write CJK / emoji as raw UTF-8 —
+/// but an LLM-generated body that uses `ja` for `"ja"`
+/// would be rejected here. Document the gap explicitly so a future
+/// schema change is aware before adding a field where the limitation
+/// would matter (a free-text `phrase` argument, for example).
 ///
 /// The slice is borrowed from the input — no allocation, no escape
 /// processing for the consumer side. Method names and tool names
@@ -685,6 +696,25 @@ mod tests {
     fn parse_request_rejects_garbage() {
         let err = parse_request("not json").expect_err("should reject");
         assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_handles_leading_whitespace_before_brace() {
+        // Regression: the comma guard used to key off byte position
+        // and reject any input where `pos > 1` at the first key —
+        // which fires for any HTTP body with a leading newline.
+        let body = "\n  \t{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\"}";
+        let req = parse_request(body).expect("leading whitespace should be tolerated");
+        assert_eq!(req.method, "x");
+    }
+
+    #[test]
+    fn parse_request_handles_whitespace_after_opening_brace() {
+        // Regression: same byte-position bug. `{ "jsonrpc": ... }`
+        // (one space after `{`) would have failed.
+        let body = r#"{ "jsonrpc": "2.0", "id": 1, "method": "x" }"#;
+        let req = parse_request(body).expect("inner whitespace should be tolerated");
+        assert_eq!(req.method, "x");
     }
 
     #[test]
