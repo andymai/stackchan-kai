@@ -60,7 +60,9 @@ pub mod ota;
 
 pub use bare::{parse_ron_bare, render_ron_bare};
 pub use bare_json::{merge_settings_with_current, parse_settings_json, render_settings_json};
-pub use config::{AuthConfig, Config, MdnsConfig, TimeConfig, WifiConfig, validate};
+pub use config::{
+    AuthConfig, Config, EspNowConfig, MdnsConfig, TimeConfig, WifiConfig, parse_mac, validate,
+};
 #[cfg(feature = "parse")]
 pub use config::{parse_ron, render_ron};
 pub use error::ConfigError;
