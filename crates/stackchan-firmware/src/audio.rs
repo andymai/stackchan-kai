@@ -1036,8 +1036,16 @@ async fn run_tx_loop<BUFFER>(
         // Per-batch envelope accumulator. RMS of outgoing samples gives
         // us a backend-agnostic lip-sync envelope when the source
         // can't supply a richer hint via `AudioSource::lip_sync`.
+        // Zero-crossing tracking (`zero_crossings` counts sign flips
+        // between consecutive samples; `prev_sample` carries state
+        // across the inner loop) is folded in here rather than in a
+        // separate task because the DMA push closure already iterates
+        // every outgoing sample — adding a sign-flip counter is one
+        // extra branch per sample with no extra heap/queue footprint.
         let mut sum_sq: f32 = 0.0;
         let mut sample_count: u32 = 0;
+        let mut zero_crossings: u32 = 0;
+        let mut prev_sample: Option<i16> = None;
         let mut had_explicit_lip_sync: Option<stackchan_core::lipsync::LipSync> = None;
 
         let result = tx_transfer
@@ -1047,6 +1055,12 @@ async fn run_tx_loop<BUFFER>(
                     let sample = sampler.next_sample();
                     let s = f32::from(sample);
                     sum_sq += s * s;
+                    if let Some(prev) = prev_sample
+                        && (prev.is_negative() != sample.is_negative())
+                    {
+                        zero_crossings += 1;
+                    }
+                    prev_sample = Some(sample);
                     let bytes = sample.to_le_bytes();
                     buf[i * 2] = bytes[0];
                     buf[i * 2 + 1] = bytes[1];
@@ -1084,7 +1098,21 @@ async fn run_tx_loop<BUFFER>(
                     sum_sq / count_f32
                 };
                 let rms_norm = (mean_sq / FULL_SCALE_SQ).sqrt().min(1.0);
-                stackchan_core::lipsync::LipSync::envelope(rms_norm)
+                // ZCR in Hz: (sign flips / sample interval) × sample
+                // rate. We saw `sample_count - 1` sample intervals
+                // (no flip can happen before the second sample).
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "zero_crossings <= sample_count <= 2048; exact in f32"
+                )]
+                let zcr_hz = if sample_count >= 2 {
+                    let intervals = sample_count - 1;
+                    (zero_crossings as f32 / intervals as f32) * SAMPLE_RATE_HZ as f32
+                } else {
+                    0.0
+                };
+                let viseme = stackchan_core::lipsync::classify_viseme(rms_norm, zcr_hz);
+                stackchan_core::lipsync::LipSync::with_viseme(rms_norm, viseme)
             });
             TX_LIP_SYNC_SIGNAL.signal(hint);
         }
