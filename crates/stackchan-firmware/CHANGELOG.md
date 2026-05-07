@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.47.0...stackchan-firmware-v0.48.0) (2026-05-07)
+
+
+### Features
+
+* **firmware:** register LostTargetSearch in render task director ([#238](https://github.com/andymai/stackchan-kai/issues/238)) ([84ecc9e](https://github.com/andymai/stackchan-kai/commit/84ecc9ebcddbc79493b4a1a80c5544640cd7a73b))
+
 ## [0.47.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.46.0...stackchan-firmware-v0.47.0) (2026-05-07)
 
 
