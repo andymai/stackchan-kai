@@ -819,6 +819,9 @@ fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "enter_pairing" => match json::parse_enter_pairing(arguments) {
             Ok(cmd) => {
+                if let RemoteCommand::EnterPairing { duration_ms } = cmd {
+                    crate::net::esp_now::open_pair_window(duration_ms);
+                }
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
                 render_success(id, &render_tool_text_result("pairing window opened"))
             }
@@ -1035,6 +1038,13 @@ async fn handle_remote(
     match command {
         Ok(cmd) => {
             defmt::info!("http: remote command {}", defmt::Debug2Format(&cmd));
+            // EnterPairing has two consumers: the avatar-side modifier
+            // (visual decorator + chirp) and the radio-side ESP-NOW
+            // task (open peer-registration window). Signal both before
+            // forwarding the command to the modifier.
+            if let RemoteCommand::EnterPairing { duration_ms } = cmd {
+                crate::net::esp_now::open_pair_window(duration_ms);
+            }
             REMOTE_COMMAND_SIGNAL.signal(cmd);
             write_no_content(socket).await
         }

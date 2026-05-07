@@ -1045,6 +1045,16 @@ async fn main(spawner: Spawner) -> ! {
     )) {
         defmt::panic!("spawn(wifi_task) failed: {}", defmt::Debug2Format(&e));
     }
+    // ESP-NOW receive task. Boots inert when `esp_now.enabled = false`
+    // — the task exits without claiming the radio queue. With it
+    // enabled, `interfaces.esp_now` is the handle gated behind the
+    // `esp-now` feature on `esp-radio`.
+    if let Err(e) = spawner.spawn(net::esp_now::esp_now_task(
+        interfaces.esp_now,
+        net_config.esp_now.clone(),
+    )) {
+        defmt::panic!("spawn(esp_now_task) failed: {}", defmt::Debug2Format(&e));
+    }
     let sntp_rtc_bus = I2cDevice::new(board_io.i2c_bus);
     if let Err(e) = spawner.spawn(net::sntp::sntp_task(
         net_stack,
