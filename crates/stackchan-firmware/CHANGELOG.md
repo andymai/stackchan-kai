@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.52.0...stackchan-firmware-v0.53.0) (2026-05-07)
+
+
+### Features
+
+* **net:** apply time.tz from STACKCHAN.RON to boot wall-clock ([#248](https://github.com/andymai/stackchan-kai/issues/248)) ([5226ef0](https://github.com/andymai/stackchan-kai/commit/5226ef04f50df71ccf27295584380297ae302fe0))
+
 ## [0.52.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.51.0...stackchan-firmware-v0.52.0) (2026-05-07)
 
 
