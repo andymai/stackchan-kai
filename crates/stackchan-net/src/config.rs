@@ -275,8 +275,10 @@ impl Default for EspNowConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 pub struct TimeConfig {
-    /// IANA timezone label (e.g. `"UTC"`, `"America/Los_Angeles"`).
-    /// Currently parsed but unused — the BM8563 RTC stores UTC.
+    /// IANA timezone label (e.g. `"UTC"`, `"Etc/GMT+8"`,
+    /// `"America/Los_Angeles"`). Pass to [`tz_offset_minutes`] for the
+    /// signed minutes-from-UTC value. The BM8563 RTC always stores
+    /// UTC; the offset is applied only at display time.
     pub tz: String,
     /// SNTP servers to query in order. The firmware tries each with
     /// a 5-second timeout before falling back to the next.
@@ -290,6 +292,70 @@ impl Default for TimeConfig {
             sntp_servers: vec!["pool.ntp.org".to_string()],
         }
     }
+}
+
+/// Resolve a timezone label to a signed minutes-from-UTC offset.
+///
+/// Recognised forms:
+///
+/// - `"UTC"` / `"Z"` — zero offset.
+/// - `"Etc/GMT+N"` / `"Etc/GMT-N"` — explicit offset; **note the
+///   IANA sign-inversion convention**, so `Etc/GMT-9` is `+9` hours
+///   (Tokyo) and `Etc/GMT+8` is `-8` hours (Pacific Standard Time).
+/// - A small lookup table of common named zones at their **standard
+///   time** offset (no DST handling): `Asia/Tokyo`, `Asia/Shanghai`,
+///   `Asia/Singapore`, `Asia/Kolkata`, `Asia/Seoul`,
+///   `Europe/London`, `Europe/Paris`, `Europe/Berlin`,
+///   `Europe/Moscow`, `America/New_York`, `America/Chicago`,
+///   `America/Denver`, `America/Los_Angeles`, `America/Anchorage`,
+///   `Pacific/Honolulu`, `Australia/Sydney`, `Pacific/Auckland`.
+///
+/// Anything else returns `None`; callers should treat that as
+/// "fall back to UTC and log a warning." The intent is to cover the
+/// common cases without bundling a full tz database; users in
+/// DST-affected zones can either swap the label seasonally or use
+/// the explicit `Etc/GMT±N` form.
+#[must_use]
+pub fn tz_offset_minutes(tz: &str) -> Option<i32> {
+    if tz.eq_ignore_ascii_case("UTC") || tz.eq_ignore_ascii_case("Z") {
+        return Some(0);
+    }
+    if let Some(rest) = tz.strip_prefix("Etc/GMT") {
+        // Form is `Etc/GMT[+-]N` where N is 0..=14. The IANA sign
+        // convention is inverted relative to ISO 8601, hence the
+        // negation below.
+        let (sign, digits) = match rest.as_bytes().first() {
+            Some(b'+') => (-1_i32, &rest[1..]),
+            Some(b'-') => (1_i32, &rest[1..]),
+            _ => return None,
+        };
+        let hours: i32 = digits.parse().ok()?;
+        if !(0..=14).contains(&hours) {
+            return None;
+        }
+        return Some(sign * hours * 60);
+    }
+    // Common named zones at standard time. DST-disclaimer applies.
+    let minutes = match tz {
+        "Asia/Tokyo" | "Asia/Seoul" => 9 * 60,
+        "Asia/Shanghai" | "Asia/Singapore" | "Asia/Hong_Kong" | "Asia/Taipei"
+        | "Australia/Perth" => 8 * 60,
+        "Asia/Kolkata" => 5 * 60 + 30,
+        "Europe/London" | "Africa/Casablanca" => 0,
+        "Europe/Paris" | "Europe/Berlin" | "Europe/Madrid" | "Europe/Rome" | "Europe/Amsterdam"
+        | "Africa/Lagos" => 60,
+        "Europe/Moscow" | "Africa/Cairo" => 3 * 60,
+        "America/New_York" | "America/Toronto" => -5 * 60,
+        "America/Chicago" | "America/Mexico_City" => -6 * 60,
+        "America/Denver" | "America/Phoenix" => -7 * 60,
+        "America/Los_Angeles" | "America/Vancouver" => -8 * 60,
+        "America/Anchorage" => -9 * 60,
+        "Pacific/Honolulu" => -10 * 60,
+        "Australia/Sydney" | "Australia/Melbourne" => 10 * 60,
+        "Pacific/Auckland" => 12 * 60,
+        _ => return None,
+    };
+    Some(minutes)
 }
 
 /// Parse + validate a RON document into a [`Config`].
@@ -716,5 +782,53 @@ mod tests {
         c.esp_now.channel = Some(6);
         c.esp_now.tx_rate_hz = 5;
         assert!(validate(&c).is_ok());
+    }
+
+    #[test]
+    fn tz_offset_utc_aliases() {
+        assert_eq!(tz_offset_minutes("UTC"), Some(0));
+        assert_eq!(tz_offset_minutes("utc"), Some(0));
+        assert_eq!(tz_offset_minutes("Z"), Some(0));
+        assert_eq!(tz_offset_minutes("z"), Some(0));
+    }
+
+    #[test]
+    fn tz_offset_etc_gmt_inverts_sign_per_iana_convention() {
+        // IANA's `Etc/GMT-9` is in fact +9 hours (Tokyo) — sign is
+        // inverted. `Etc/GMT+8` is -8 hours (PST).
+        assert_eq!(tz_offset_minutes("Etc/GMT-9"), Some(9 * 60));
+        assert_eq!(tz_offset_minutes("Etc/GMT+8"), Some(-8 * 60));
+        assert_eq!(tz_offset_minutes("Etc/GMT-0"), Some(0));
+        assert_eq!(tz_offset_minutes("Etc/GMT+0"), Some(0));
+    }
+
+    #[test]
+    fn tz_offset_etc_gmt_rejects_out_of_range() {
+        assert_eq!(tz_offset_minutes("Etc/GMT+15"), None);
+        assert_eq!(tz_offset_minutes("Etc/GMT-15"), None);
+    }
+
+    #[test]
+    fn tz_offset_etc_gmt_rejects_missing_sign() {
+        assert_eq!(tz_offset_minutes("Etc/GMT9"), None);
+    }
+
+    #[test]
+    fn tz_offset_named_zones_at_standard_time() {
+        assert_eq!(tz_offset_minutes("Asia/Tokyo"), Some(9 * 60));
+        assert_eq!(tz_offset_minutes("Asia/Kolkata"), Some(5 * 60 + 30));
+        assert_eq!(tz_offset_minutes("America/Los_Angeles"), Some(-8 * 60));
+        assert_eq!(tz_offset_minutes("Europe/Berlin"), Some(60));
+        assert_eq!(tz_offset_minutes("Pacific/Auckland"), Some(12 * 60));
+    }
+
+    #[test]
+    fn tz_offset_unknown_returns_none() {
+        // Caller falls back to UTC + log warning.
+        assert_eq!(tz_offset_minutes("Mars/Olympus_Mons"), None);
+        assert_eq!(tz_offset_minutes(""), None);
+        // Case sensitivity is intentional for IANA names — typos
+        // shouldn't quietly succeed.
+        assert_eq!(tz_offset_minutes("asia/tokyo"), None);
     }
 }
