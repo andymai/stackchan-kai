@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.56.0...stackchan-firmware-v0.57.0) (2026-05-07)
+
+
+### Features
+
+* **net:** ESP-NOW TX path — pose-mirror + heartbeat broadcast ([#255](https://github.com/andymai/stackchan-kai/issues/255)) ([38fb5f4](https://github.com/andymai/stackchan-kai/commit/38fb5f46fde74d724338163e1c57dcd677c3bd86))
+
 ## [0.56.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.55.0...stackchan-firmware-v0.56.0) (2026-05-07)
 
 
