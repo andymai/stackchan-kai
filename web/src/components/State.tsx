@@ -8,6 +8,8 @@ export function State() {
       <dl class="row">
         <dt>Emotion</dt>
         <dd>{snapshot()?.emotion ?? "—"}</dd>
+        <dt>Mood</dt>
+        <dd>{snapshot()?.mood ?? "—"}</dd>
         <dt>Decorator</dt>
         <dd>{snapshot()?.decorator ?? "—"}</dd>
         <dt>Head pose</dt>

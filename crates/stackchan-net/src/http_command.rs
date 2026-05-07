@@ -20,7 +20,7 @@
 //! parsed in their entirety with [`core::str::FromStr`].
 
 use stackchan_core::voice::{Locale, PhraseId, Priority};
-use stackchan_core::{Emotion, Pose, RemoteCommand};
+use stackchan_core::{Emotion, Mood, Pose, RemoteCommand};
 
 /// Default hold window when the request body omits `hold_ms`.
 pub const DEFAULT_HOLD_MS: u32 = 30_000;
@@ -51,6 +51,8 @@ pub enum JsonError {
     UnknownPhrase,
     /// Locale string didn't match any [`Locale`] variant.
     UnknownLocale,
+    /// Mood string didn't match any [`Mood`] variant.
+    UnknownMood,
     /// `audio.volume_pct` value outside the documented `0..=100`
     /// range. Carries the offending value so the firmware's `400`
     /// response body is self-describing.
@@ -213,6 +215,39 @@ pub fn parse_volume(body: &str) -> Result<u8, JsonError> {
     }
     #[allow(clippy::cast_possible_truncation)]
     Ok(level as u8)
+}
+
+/// Parse a `POST /mood` body into a [`Mood`].
+///
+/// Required: `mood` (string). No optional fields.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys,
+/// unknown keys, malformed JSON shape, or unrecognised mood strings.
+pub fn parse_mood(body: &str) -> Result<Mood, JsonError> {
+    let mut mood: Option<Mood> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "mood" => {
+                if mood.is_some() {
+                    return Err(JsonError::DuplicateKey("mood"));
+                }
+                let raw = scanner.read_string()?;
+                mood = Some(match raw {
+                    "neutral" => Mood::Neutral,
+                    "calm" => Mood::Calm,
+                    "playful" => Mood::Playful,
+                    "focus" => Mood::Focus,
+                    "sleepy" => Mood::Sleepy,
+                    _ => return Err(JsonError::UnknownMood),
+                });
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    mood.ok_or(JsonError::MissingKey("mood"))
 }
 
 /// Parse a `POST /mute` body into a `bool`.
@@ -640,6 +675,37 @@ mod tests {
         assert!(matches!(
             parse_look_at(body),
             Err(JsonError::DuplicateKey("pan_deg"))
+        ));
+    }
+
+    #[test]
+    fn parse_mood_accepts_every_wire_string() {
+        // Iterate `Mood::ALL` so adding a variant in core surfaces
+        // here automatically (after a parser arm is added).
+        for &variant in Mood::ALL {
+            let wire = variant.wire_str();
+            let body = alloc::format!(r#"{{"mood":"{wire}"}}"#);
+            assert_eq!(
+                parse_mood(&body).unwrap(),
+                variant,
+                "round-trip failed for `{wire}`"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_mood_rejects_unknown_mood() {
+        assert!(matches!(
+            parse_mood(r#"{"mood":"zen"}"#),
+            Err(JsonError::UnknownMood)
+        ));
+    }
+
+    #[test]
+    fn parse_mood_rejects_missing_key() {
+        assert!(matches!(
+            parse_mood("{}"),
+            Err(JsonError::MissingKey("mood"))
         ));
     }
 

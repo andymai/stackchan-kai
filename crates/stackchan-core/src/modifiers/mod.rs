@@ -110,6 +110,7 @@ mod mouth_from_audio;
 mod remote_command;
 mod style_from_emotion;
 mod style_from_intent;
+mod style_from_mood;
 
 pub use attention_from_tracking::{
     AttentionFromTracking, FACE_LOCK_HITS, FACE_RELEASE_MISSES, TRACKING_LOCK_TICKS,
@@ -169,4 +170,7 @@ pub use mouth_from_audio::{
 };
 pub use remote_command::RemoteCommandModifier;
 pub use style_from_emotion::StyleFromEmotion;
-pub use style_from_intent::{PETTING_BLUSH_BUMP, StyleFromIntent};
+pub use style_from_intent::{
+    PETTING_BLUSH_BUMP, PETTING_EYE_CURVE_BUMP, PETTING_OPEN_WEIGHT_CAP, StyleFromIntent,
+};
+pub use style_from_mood::StyleFromMood;

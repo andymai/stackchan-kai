@@ -144,6 +144,11 @@ const DASHBOARD_GZ: &[u8] = include_bytes!("../../../../web/dist/index.html.gz")
 /// render task drains will overwrite the first.
 pub static REMOTE_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, RemoteCommand> = Signal::new();
 
+/// Latest mood the operator has selected via `POST /mood`. Drained by
+/// the render task into `entity.mind.mood` ahead of `Director::run`.
+/// Latest-wins semantics; persistence ships in a follow-up.
+pub static MOOD_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Mood> = Signal::new();
+
 /// Number of concurrent HTTP worker tasks. Each worker holds its own
 /// rx/tx buffers and accepts one connection at a time.
 ///
@@ -357,6 +362,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("POST", "/volume") => handle_post_volume(socket, body).await,
         ("POST", "/mute") => handle_post_mute(socket, body).await,
+        ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/camera/mode") => handle_post_camera_mode(socket, body).await,
         ("POST", "/camera/capture") => handle_post_camera_capture(socket).await,
         ("POST", "/restart") => handle_post_restart(socket).await,
@@ -655,6 +661,26 @@ async fn audio_persist_to_http(
     }
 }
 
+/// `POST /mood` — parse `{"mood": "<string>"}`, push the new mood at
+/// the render task via [`MOOD_SIGNAL`]. Runtime-only; persistence
+/// across reboots ships in a follow-up that touches the RON schema.
+async fn handle_post_mood(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let mood = match json::parse_mood(body) {
+        Ok(m) => m,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /mood parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    MOOD_SIGNAL.signal(mood);
+    defmt::info!("http: POST /mood → {}", mood.wire_str());
+    write_no_content(socket).await
+}
+
 /// `POST /camera/mode` — parse `{"enabled": <bool>}`, update the
 /// avatar snapshot, and signal the render task to flip the LCD.
 /// Display-only — tracking continues in either mode. No SD writeback;
@@ -852,6 +878,7 @@ fn state_body(s: AvatarSnapshot) -> String {
     format!(
         "{{\
 \"emotion\":\"{emotion}\",\
+\"mood\":\"{mood}\",\
 \"decorator\":{decorator},\
 \"head_pose\":{{\"pan_deg\":{pan:.2},\"tilt_deg\":{tilt:.2}}},\
 \"head_actual\":{actual},\
@@ -861,6 +888,7 @@ fn state_body(s: AvatarSnapshot) -> String {
 \"camera_mode\":{camera_mode}\
 }}\n",
         emotion = s.emotion.wire_str(),
+        mood = s.mood.wire_str(),
         pan = s.head_pose.pan_deg,
         tilt = s.head_pose.tilt_deg,
         connected = s.wifi.connected,

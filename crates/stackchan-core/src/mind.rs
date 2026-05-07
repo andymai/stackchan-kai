@@ -24,6 +24,7 @@
 use crate::clock::Instant;
 use crate::emotion::Emotion;
 use crate::head::Pose;
+use crate::mood::Mood;
 
 /// The entity's current felt state.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -319,6 +320,12 @@ pub struct Mind {
     /// [`crate::modifiers::IdleHeadDrift`] to silence the head servos
     /// when nothing's happening in the room.
     pub dormancy: Dormancy,
+    /// Operator-selected energy baseline. Persistent across emotion
+    /// changes; set by `STACKCHAN.RON` config and the HTTP control
+    /// plane, never written by reactive modifiers. Consumed by
+    /// [`crate::modifiers::StyleFromMood`] which scales blink rate,
+    /// breath depth, and idle drift on top of the per-emotion targets.
+    pub mood: Mood,
     /// Persistent facts.
     pub memory: Memory,
 }

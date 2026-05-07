@@ -196,6 +196,8 @@ pub enum Field {
     Engagement,
     /// `entity.mind.dormancy`
     Dormancy,
+    /// `entity.mind.mood`
+    Mood,
 
     // ---- Voice ----
     /// `entity.voice.chirp_request`
@@ -254,6 +256,7 @@ impl Field {
         Self::Attention,
         Self::Engagement,
         Self::Dormancy,
+        Self::Mood,
         Self::ChirpRequest,
         Self::UtteranceRequest,
         Self::IsSpeaking,
@@ -299,7 +302,8 @@ impl Field {
             | Self::Intent
             | Self::Attention
             | Self::Engagement
-            | Self::Dormancy => FieldGroup::Mind,
+            | Self::Dormancy
+            | Self::Mood => FieldGroup::Mind,
             Self::ChirpRequest | Self::UtteranceRequest | Self::IsSpeaking => FieldGroup::Voice,
             Self::TapPending | Self::RemotePending | Self::RemoteCommand => FieldGroup::Input,
         }
@@ -401,6 +405,7 @@ impl Field {
             Self::Attention => before.mind.attention != after.mind.attention,
             Self::Engagement => before.mind.engagement != after.mind.engagement,
             Self::Dormancy => before.mind.dormancy != after.mind.dormancy,
+            Self::Mood => before.mind.mood != after.mind.mood,
             Self::ChirpRequest => before.voice.chirp_request != after.voice.chirp_request,
             Self::UtteranceRequest => {
                 before.voice.utterance_request != after.voice.utterance_request
@@ -816,7 +821,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            41,
+            42,
             "update Field::ALL when adding variants"
         );
     }
