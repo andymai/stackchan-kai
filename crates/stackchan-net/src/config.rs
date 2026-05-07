@@ -303,12 +303,14 @@ impl Default for TimeConfig {
 ///   IANA sign-inversion convention**, so `Etc/GMT-9` is `+9` hours
 ///   (Tokyo) and `Etc/GMT+8` is `-8` hours (Pacific Standard Time).
 /// - A small lookup table of common named zones at their **standard
-///   time** offset (no DST handling): `Asia/Tokyo`, `Asia/Shanghai`,
-///   `Asia/Singapore`, `Asia/Kolkata`, `Asia/Seoul`,
-///   `Europe/London`, `Europe/Paris`, `Europe/Berlin`,
-///   `Europe/Moscow`, `America/New_York`, `America/Chicago`,
-///   `America/Denver`, `America/Los_Angeles`, `America/Anchorage`,
-///   `Pacific/Honolulu`, `Australia/Sydney`, `Pacific/Auckland`.
+///   time** offset (no DST handling). The exhaustive list lives in
+///   the function body — refer there as the source of truth, not
+///   here. Coverage skews toward the timezones Stack-chan operators
+///   most often configure: APAC, mainland Europe, the Americas, plus
+///   a few common African / Pacific zones. Special cases:
+///   - `Africa/Casablanca` is `UTC+1` (Morocco's 2018 permanent shift,
+///     not `UTC+0` as a naïve EU-Western reading would suggest).
+///   - `Africa/Cairo` is Egypt Standard Time `UTC+2`.
 ///
 /// Anything else returns `None`; callers should treat that as
 /// "fall back to UTC and log a warning." The intent is to cover the
@@ -341,10 +343,16 @@ pub fn tz_offset_minutes(tz: &str) -> Option<i32> {
         "Asia/Shanghai" | "Asia/Singapore" | "Asia/Hong_Kong" | "Asia/Taipei"
         | "Australia/Perth" => 8 * 60,
         "Asia/Kolkata" => 5 * 60 + 30,
-        "Europe/London" | "Africa/Casablanca" => 0,
+        "Europe/London" => 0,
         "Europe/Paris" | "Europe/Berlin" | "Europe/Madrid" | "Europe/Rome" | "Europe/Amsterdam"
-        | "Africa/Lagos" => 60,
-        "Europe/Moscow" | "Africa/Cairo" => 3 * 60,
+        | "Africa/Lagos"
+        // Morocco moved permanently to UTC+1 in Oct 2018 when they stopped
+        // reverting from DST. IANA reflects UTC+1 year-round.
+        | "Africa/Casablanca" => 60,
+        // Cairo runs Egypt Standard Time (EET, UTC+2) — DST has flipped on
+        // and off historically; the standard offset is the durable choice.
+        "Africa/Cairo" => 2 * 60,
+        "Europe/Moscow" => 3 * 60,
         "America/New_York" | "America/Toronto" => -5 * 60,
         "America/Chicago" | "America/Mexico_City" => -6 * 60,
         "America/Denver" | "America/Phoenix" => -7 * 60,
@@ -820,6 +828,16 @@ mod tests {
         assert_eq!(tz_offset_minutes("America/Los_Angeles"), Some(-8 * 60));
         assert_eq!(tz_offset_minutes("Europe/Berlin"), Some(60));
         assert_eq!(tz_offset_minutes("Pacific/Auckland"), Some(12 * 60));
+    }
+
+    #[test]
+    fn tz_offset_special_case_african_zones() {
+        // Morocco moved permanently to UTC+1 in 2018; Egypt is UTC+2.
+        // Both warrant explicit pins so a future cleanup that
+        // alphabetises arms doesn't silently regress them.
+        assert_eq!(tz_offset_minutes("Africa/Casablanca"), Some(60));
+        assert_eq!(tz_offset_minutes("Africa/Cairo"), Some(2 * 60));
+        assert_eq!(tz_offset_minutes("Africa/Lagos"), Some(60));
     }
 
     #[test]
