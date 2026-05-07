@@ -484,7 +484,9 @@ where
 const BUBBLE_BORDER_COLOR: Rgb565 = Rgb565::BLACK;
 /// Speech-bubble fill colour — slightly off-white so the bubble
 /// reads as a separate layer, not a hole punched through the face.
-/// Light gray = `Rgb565::new(28, 56, 28)` (~#E0E0E0).
+/// `Rgb565::new(28, 56, 28)` quantises to roughly `#E6E3E6` after the
+/// (5,6,5)-bit channel scaling — a barely perceptible lavender-tinged
+/// neutral that does not compete with the avatar palette.
 const BUBBLE_FILL_COLOR: Rgb565 = Rgb565::new(28, 56, 28);
 /// Speech-bubble text colour.
 const BUBBLE_TEXT_COLOR: Rgb565 = Rgb565::BLACK;
@@ -498,14 +500,17 @@ const BUBBLE_HORIZONTAL_PADDING: i32 = 8;
 /// frame's top edge. Anchors at the top so the bubble doesn't
 /// occlude the eyes (which sit at y≈110).
 const BUBBLE_ANCHOR_Y: i32 = 4;
+/// Framebuffer width assumption used for centring. The render target
+/// is the same 320×240 LCD canvas as the rest of the avatar
+/// (matches `crates/stackchan-firmware/src/framebuffer.rs::WIDTH`).
+const BUBBLE_FB_WIDTH: i32 = 320;
 /// Frame-edge clearance — how close the bubble can come to the
 /// left / right edge of the framebuffer. Prevents the border from
 /// landing on the screen-edge pixel column.
 const BUBBLE_EDGE_CLEARANCE: i32 = 4;
-/// Maximum bubble width, in pixels. Inferred from the framebuffer
-/// width assumption (320 px); covers the full top of the frame
+/// Maximum bubble width, in pixels. Covers the full top of the frame
 /// minus the edge clearance on both sides.
-const BUBBLE_MAX_WIDTH: i32 = 320 - 2 * BUBBLE_EDGE_CLEARANCE;
+const BUBBLE_MAX_WIDTH: i32 = BUBBLE_FB_WIDTH - 2 * BUBBLE_EDGE_CLEARANCE;
 /// `FONT_10X20` glyph width — used to measure rendered text width
 /// without round-tripping through `embedded_graphics`'s text
 /// metrics API.
@@ -530,8 +535,8 @@ const fn bubble_rect(char_count: usize) -> (EgPoint, Size) {
     };
     let total_w = text_w + 2 * BUBBLE_HORIZONTAL_PADDING;
     let total_h = BUBBLE_GLYPH_HEIGHT + 2 * BUBBLE_VERTICAL_PADDING;
-    // Centred horizontally on the 320 px frame.
-    let top_left_x = (320 - total_w) / 2;
+    // Centred horizontally on the framebuffer.
+    let top_left_x = (BUBBLE_FB_WIDTH - total_w) / 2;
     #[allow(clippy::cast_sign_loss)]
     let size = Size::new(total_w as u32, total_h as u32);
     (EgPoint::new(top_left_x, BUBBLE_ANCHOR_Y), size)
@@ -553,14 +558,17 @@ where
     let visible_char_cap = max_visible_chars as usize;
     let visible_text = if state.text.chars().count() > visible_char_cap {
         // Byte-truncate at a char boundary corresponding to the cap.
-        let mut byte_end = 0;
-        for (i, (idx, _)) in state.text.char_indices().enumerate() {
-            if i == visible_char_cap {
-                break;
-            }
-            byte_end = idx + state.text[idx..].chars().next().map_or(0, char::len_utf8);
-        }
-        &state.text[..byte_end]
+        // `char_indices().nth(cap)` yields the (byte, char) of the
+        // *next* char past the cap — its byte index is exactly where
+        // we slice. Falls back to the full string when `nth` is None,
+        // i.e. when the text has fewer chars than the cap (defensive;
+        // the outer length check already short-circuits this path).
+        let split = state
+            .text
+            .char_indices()
+            .nth(visible_char_cap)
+            .map_or(state.text.len(), |(idx, _)| idx);
+        &state.text[..split]
     } else {
         state.text
     };

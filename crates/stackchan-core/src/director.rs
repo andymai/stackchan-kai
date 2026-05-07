@@ -33,7 +33,7 @@ use crate::modifier::Modifier;
 use crate::skill::{Skill, SkillStatus};
 
 /// Maximum number of modifiers a [`Director`] can hold.
-pub const MODIFIER_CAP: usize = 32;
+pub const MODIFIER_CAP: usize = 48;
 
 /// Maximum number of skills a [`Director`] can hold.
 pub const SKILL_CAP: usize = 16;
