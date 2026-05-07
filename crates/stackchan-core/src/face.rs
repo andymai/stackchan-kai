@@ -184,6 +184,11 @@ pub struct Face {
     /// firmware-side MCP `speak` short-circuit) populate this field;
     /// [`crate::modifiers::BubbleExpiry`] clears it on deadline.
     pub bubble: Option<crate::bubble::BubbleState>,
+    /// Active colour palette. Picks the background / eye / mouth /
+    /// cheek colours used by the renderer. Decorator and bubble
+    /// overlays keep their own dedicated colours so a palette swap
+    /// doesn't desaturate the symbolic-overlay layer's distinctness.
+    pub palette: crate::palette::Palette,
 }
 
 impl Default for Face {
@@ -218,6 +223,7 @@ impl Default for Face {
             style: Style::default(),
             decorator: None,
             bubble: None,
+            palette: crate::palette::Palette::Default,
         }
     }
 }

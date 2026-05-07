@@ -20,7 +20,7 @@
 //! parsed in their entirety with [`core::str::FromStr`].
 
 use stackchan_core::voice::{Locale, PhraseId, Priority};
-use stackchan_core::{Emotion, Mood, Pose, RemoteCommand};
+use stackchan_core::{Emotion, Mood, Palette, Pose, RemoteCommand};
 
 /// Default hold window when the request body omits `hold_ms`.
 pub const DEFAULT_HOLD_MS: u32 = 30_000;
@@ -53,6 +53,8 @@ pub enum JsonError {
     UnknownLocale,
     /// Mood string didn't match any [`Mood`] variant.
     UnknownMood,
+    /// Palette string didn't match any [`Palette`] variant.
+    UnknownPalette,
     /// `audio.volume_pct` value outside the documented `0..=100`
     /// range. Carries the offending value so the firmware's `400`
     /// response body is self-describing.
@@ -327,6 +329,42 @@ pub fn parse_mood(body: &str) -> Result<Mood, JsonError> {
         Ok(())
     })?;
     mood.ok_or(JsonError::MissingKey("mood"))
+}
+
+/// Parse a `POST /palette` body into a [`Palette`].
+///
+/// Required: `palette` (string, lowercase wire form). No optional
+/// fields. Vocabulary is whatever [`Palette::from_wire_str`] knows;
+/// anything else returns [`JsonError::UnknownPalette`].
+///
+/// Returns the bare [`Palette`] rather than wrapping in a
+/// [`RemoteCommand`] — palette is not a hold-with-timer surface
+/// (operator selects a theme; theme persists until they pick another),
+/// so the dispatch path is direct: HTTP signals the render task with
+/// the new palette, render task writes `face.palette`.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing/unknown keys, malformed JSON, or
+/// unrecognised palette strings.
+pub fn parse_palette(body: &str) -> Result<Palette, JsonError> {
+    let mut palette: Option<Palette> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "palette" => {
+                if palette.is_some() {
+                    return Err(JsonError::DuplicateKey("palette"));
+                }
+                let raw = scanner.read_string()?;
+                palette = Palette::from_wire_str(raw)
+                    .ok_or(JsonError::UnknownPalette)
+                    .map(Some)?;
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    palette.ok_or(JsonError::MissingKey("palette"))
 }
 
 /// Default listen-window duration when `POST /listen` omits the

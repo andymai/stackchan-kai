@@ -45,6 +45,7 @@ pub mod modifier;
 pub mod modifiers;
 pub mod mood;
 pub mod motor;
+pub mod palette;
 pub mod perception;
 pub mod skill;
 pub mod skills;
@@ -70,6 +71,7 @@ pub use mind::{Affect, Attention, Autonomy, Dormancy, Engagement, Intent, Mind, 
 pub use modifier::Modifier;
 pub use mood::Mood;
 pub use motor::Motor;
+pub use palette::{Palette, PaletteColors};
 pub use perception::{
     BodyTouch, HALF_FOV_H_DEG, HALF_FOV_V_DEG, MAX_TRACKING_CANDIDATES, Perception,
     TargetCandidate, TrackingMotion, TrackingObservation,
