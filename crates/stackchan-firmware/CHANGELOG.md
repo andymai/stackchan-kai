@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.51.0...stackchan-firmware-v0.52.0) (2026-05-07)
+
+
+### Features
+
+* **net:** POST /face-target endpoint for external CV servers ([#245](https://github.com/andymai/stackchan-kai/issues/245)) ([5679121](https://github.com/andymai/stackchan-kai/commit/567912114c923349654d6b0d4235ac3dad985b0c))
+
 ## [0.51.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.50.0...stackchan-firmware-v0.51.0) (2026-05-07)
 
 
