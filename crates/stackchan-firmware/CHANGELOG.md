@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.50.0...stackchan-firmware-v0.51.0) (2026-05-07)
+
+
+### Features
+
+* **net:** MCP set_volume + set_mute tools ([#244](https://github.com/andymai/stackchan-kai/issues/244)) ([bf38c8b](https://github.com/andymai/stackchan-kai/commit/bf38c8b09a892117dad555ae14ee61724e787357))
+
 ## [0.50.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.49.0...stackchan-firmware-v0.50.0) (2026-05-07)
 
 
