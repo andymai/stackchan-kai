@@ -37,8 +37,8 @@
 //!   `/look-at` so cognition modifiers don't have to distinguish the
 //!   command source.
 //! - `POST /palette` — JSON `{"palette": "<name>"}`. Switches the
-//!   avatar's colour palette at runtime. Runtime-only;
-//!   persistence ships alongside the NVS `RuntimeStore`. Vocabulary
+//!   avatar's colour palette at runtime; persisted to
+//!   `/sd/RUNTIME.RON` so a reboot restores the selection. Vocabulary
 //!   matches `Palette::wire_str` (default / dark / cute / dog).
 //! - `GET  /head/offsets` — current operator-applied yaw/tilt zero
 //!   correction (degrees). Returns `{"yaw_offset_deg":F,"tilt_offset_deg":F}`.
@@ -170,9 +170,11 @@ const DASHBOARD_GZ: &[u8] = include_bytes!("../../../../web/dist/index.html.gz")
 /// render task drains will overwrite the first.
 pub static REMOTE_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, RemoteCommand> = Signal::new();
 
-/// Latest mood the operator has selected via `POST /mood`. Drained by
-/// the render task into `entity.mind.mood` ahead of `Director::run`.
-/// Latest-wins semantics; persistence ships in a follow-up.
+/// Latest mood the operator has selected via `POST /mood`.
+///
+/// Drained by the render task into `entity.mind.mood` ahead of
+/// `Director::run`. Latest-wins semantics; the selection survives
+/// reboots via `/sd/RUNTIME.RON` (see `runtime_store::update_mood`).
 pub static MOOD_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Mood> = Signal::new();
 
 /// Latest palette the operator has selected via `POST /palette`.
@@ -764,8 +766,9 @@ async fn handle_get_head_offsets(socket: &mut TcpSocket<'_>) -> Result<(), HttpE
 
 /// `POST /head/offsets` — parse the JSON body and push the new
 /// offsets at the head task via
-/// [`crate::head::OFFSETS_SIGNAL`]. Runtime-only — persistence
-/// across reboots ships alongside the NVS `RuntimeStore` follow-up.
+/// [`crate::head::OFFSETS_SIGNAL`]. Runtime-only; head offsets are
+/// not yet enrolled in the SD-backed `RuntimeStore` and reset on
+/// reboot.
 async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let offsets = match json::parse_head_offsets(body) {
         Ok(o) => o,
@@ -783,6 +786,12 @@ async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Res
         tilt_offset_deg: offsets.tilt_offset_deg,
     };
     crate::head::OFFSETS_SIGNAL.signal(firmware_offsets);
+    // Also publish to the read-back cache directly so an immediate
+    // `GET /head/offsets` from the same client doesn't lag behind
+    // the head task's signal-drain (which only runs at the 50 Hz
+    // tick, leaving a small POST-then-GET window where the read
+    // returns the prior value).
+    crate::head::OFFSETS_CACHE.lock(|cell| cell.set(firmware_offsets));
     defmt::info!(
         "http: POST /head/offsets → yaw={=f32} tilt={=f32}",
         firmware_offsets.yaw_offset_deg,
@@ -1253,6 +1262,29 @@ const MAX_OTA_REQUEST_BYTES: usize = stackchan_net::ota::OTA_HEADER_LEN
 /// the HTTP module without any new constants.
 const OTA_RECV_CHUNK_BYTES: usize = 1024;
 
+/// Single-flight latch on `POST /firmware/update`.
+///
+/// `HTTP_WORKER_COUNT` workers can otherwise each spin up their own
+/// PSRAM-backed body buffer in parallel, OOM-ing the heap on a
+/// flood of concurrent OTA requests (4 × ~4 MiB > available
+/// PSRAM after the framebuffer + heap overhead). One in-flight
+/// upload at a time is the right concurrency for an irreversible
+/// reboot anyway.
+static OTA_IN_FLIGHT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// RAII helper that releases the `OTA_IN_FLIGHT` latch on every
+/// non-reboot exit path of [`handle_post_firmware_update`]. A
+/// successful flash soft-resets before drop runs, which is fine —
+/// the latch's only job is to gate concurrent attempts in the
+/// pre-reboot window.
+struct OtaInFlightGuard;
+
+impl Drop for OtaInFlightGuard {
+    fn drop(&mut self) {
+        OTA_IN_FLIGHT.store(false, core::sync::atomic::Ordering::Release);
+    }
+}
+
 /// `POST /firmware/update` — accept an SCFW-framed firmware image,
 /// verify the ed25519 signature against the build-time public key,
 /// stream the payload into the inactive OTA slot, flip the
@@ -1273,6 +1305,19 @@ async fn handle_post_firmware_update(
     already_buffered: &[u8],
     auth_token: Option<&str>,
 ) -> Result<(), HttpError> {
+    use core::sync::atomic::Ordering;
+    if OTA_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        defmt::warn!("http: POST /firmware/update — refused, another OTA in flight");
+        return write_text(socket, 409, "ota already in flight; retry after reboot\n").await;
+    }
+    // Defer-style guard: clear the latch on every exit. Successful
+    // updates soft-reset before this runs (so the latch never
+    // releases — which is correct: the reboot is the only outcome
+    // we want after a verified flash).
+    let _release = OtaInFlightGuard;
     if !crate::ota::ota_enabled() {
         defmt::warn!("http: POST /firmware/update — OTA compiled out");
         return write_text(

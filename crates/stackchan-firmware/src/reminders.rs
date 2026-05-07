@@ -19,8 +19,9 @@
 //!
 //! ## Persistence
 //!
-//! None — the list lives in RAM and resets on reboot. Persistence
-//! across reboots ships alongside the NVS `RuntimeStore` follow-up.
+//! None — the list lives in RAM and resets on reboot. Reminders are
+//! short-horizon by definition (5-day cap); the operator-tooling
+//! cost of re-arming after a reboot is acceptable.
 
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -191,9 +192,25 @@ pub async fn reminders_task() {
                 locale: Locale::En,
                 priority: Priority::Normal,
             });
+            // The render task drains REMOTE_COMMAND_SIGNAL once per
+            // ~33 ms render frame; signalling a second reminder
+            // before that drain runs would silently overwrite the
+            // first (Signal is single-waker, latest-wins). Pace
+            // bursts so each signalled command is consumed before
+            // the next replaces it.
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(
+                REMINDER_BURST_SPACING_MS,
+            ))
+            .await;
         }
     }
 }
+
+/// Spacing between back-to-back reminder fires when several land
+/// due in the same tick. Sized comfortably above the 33 ms render
+/// cadence so the consumer drains `REMOTE_COMMAND_SIGNAL` between
+/// each push.
+const REMINDER_BURST_SPACING_MS: u64 = 100;
 
 #[cfg(test)]
 mod tests {

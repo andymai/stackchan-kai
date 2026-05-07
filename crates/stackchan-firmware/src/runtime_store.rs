@@ -164,19 +164,29 @@ pub async fn load_into_cache() -> RuntimeState {
 /// already updated, so the runtime change still takes effect; only
 /// the across-reboot persistence is lost).
 pub async fn update_palette(palette: Palette) -> bool {
-    let mut state = current();
-    state.palette = palette;
-    set_cache(state);
-    persist(state).await
+    let snapshot = mutate(|s| s.palette = palette);
+    persist(snapshot).await
 }
 
 /// Update the mood field and persist the cache. Same semantics as
 /// [`update_palette`].
 pub async fn update_mood(mood: Mood) -> bool {
-    let mut state = current();
-    state.mood = mood;
-    set_cache(state);
-    persist(state).await
+    let snapshot = mutate(|s| s.mood = mood);
+    persist(snapshot).await
+}
+
+/// Apply `f` to the cache atomically (read + modify + write happen
+/// inside one critical section) and return the post-mutation
+/// snapshot. The previous shape — `current()` then `set_cache(...)`
+/// — left a window where a second `update_*` could clobber the
+/// first axis between the read and the set.
+fn mutate(f: impl FnOnce(&mut RuntimeState)) -> RuntimeState {
+    CACHE.lock(|cell| {
+        let mut s = cell.get();
+        f(&mut s);
+        cell.set(s);
+        s
+    })
 }
 
 /// Render `state` and atomically replace `/sd/RUNTIME.RON`.

@@ -1526,6 +1526,83 @@ mod tests {
     }
 
     #[test]
+    fn create_reminder_parses_required_fields() {
+        let body = r#"{"fire_in_secs":60,"phrase":"wake_chirp"}"#;
+        let req = parse_create_reminder(body).unwrap();
+        assert_eq!(req.fire_in_secs, 60);
+        assert_eq!(req.phrase, PhraseId::WakeChirp);
+    }
+
+    #[test]
+    fn create_reminder_rejects_missing_fire_in_secs() {
+        let body = r#"{"phrase":"wake_chirp"}"#;
+        assert!(matches!(
+            parse_create_reminder(body),
+            Err(JsonError::MissingKey("fire_in_secs"))
+        ));
+    }
+
+    #[test]
+    fn create_reminder_rejects_missing_phrase() {
+        let body = r#"{"fire_in_secs":60}"#;
+        assert!(matches!(
+            parse_create_reminder(body),
+            Err(JsonError::MissingKey("phrase"))
+        ));
+    }
+
+    #[test]
+    fn create_reminder_rejects_unknown_phrase() {
+        let body = r#"{"fire_in_secs":60,"phrase":"nope"}"#;
+        assert!(matches!(
+            parse_create_reminder(body),
+            Err(JsonError::UnknownPhrase)
+        ));
+    }
+
+    #[test]
+    fn create_reminder_rejects_unknown_key() {
+        let body = r#"{"fire_in_secs":60,"phrase":"wake_chirp","extra":1}"#;
+        assert!(matches!(
+            parse_create_reminder(body),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn create_reminder_rejects_duplicate_key() {
+        let body = r#"{"fire_in_secs":60,"fire_in_secs":120,"phrase":"wake_chirp"}"#;
+        assert!(matches!(
+            parse_create_reminder(body),
+            Err(JsonError::DuplicateKey("fire_in_secs"))
+        ));
+    }
+
+    #[test]
+    fn cancel_reminder_parses_id() {
+        let body = r#"{"id":42}"#;
+        assert_eq!(parse_cancel_reminder(body).unwrap(), 42);
+    }
+
+    #[test]
+    fn cancel_reminder_rejects_missing_id() {
+        let body = "{}";
+        assert!(matches!(
+            parse_cancel_reminder(body),
+            Err(JsonError::MissingKey("id"))
+        ));
+    }
+
+    #[test]
+    fn cancel_reminder_rejects_unknown_key() {
+        let body = r#"{"id":1,"extra":2}"#;
+        assert!(matches!(
+            parse_cancel_reminder(body),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
     fn face_target_lower_edges_pan_left_and_tilt_up() {
         // Mirror of the right-edge / down test — covers the negative
         // half of the FOV mapping.
