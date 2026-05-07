@@ -250,6 +250,39 @@ pub fn parse_mood(body: &str) -> Result<Mood, JsonError> {
     mood.ok_or(JsonError::MissingKey("mood"))
 }
 
+/// Default listen-window duration when `POST /listen` omits the
+/// `duration_ms` field. Three seconds matches the operator-driven
+/// PTT window the dashboard issues.
+pub const DEFAULT_LISTEN_DURATION_MS: u32 = 3_000;
+
+/// Parse a `POST /listen` body into a [`RemoteCommand::StartListen`].
+///
+/// All fields are optional — an empty `{}` body opens a default
+/// 3-second listen window. Optional `duration_ms` (integer) overrides.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for unknown keys, malformed JSON
+/// shape, or non-integer `duration_ms`.
+pub fn parse_start_listen(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut duration_ms: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "duration_ms" => {
+                if duration_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("duration_ms"));
+                }
+                duration_ms = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(RemoteCommand::StartListen {
+        duration_ms: duration_ms.unwrap_or(DEFAULT_LISTEN_DURATION_MS),
+    })
+}
+
 /// Parse a `POST /mute` body into a `bool`.
 ///
 /// Required: `muted` (boolean). No optional fields.

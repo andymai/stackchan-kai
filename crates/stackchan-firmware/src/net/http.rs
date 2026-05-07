@@ -360,6 +360,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
+        ("POST", "/listen") => handle_remote(socket, json::parse_start_listen(body)).await,
         ("POST", "/volume") => handle_post_volume(socket, body).await,
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
@@ -797,6 +798,17 @@ fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
             Ok(cmd) => {
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
                 render_success(id, &render_tool_text_result("phrase enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "start_listen" => match json::parse_start_listen(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("listen window opened"))
             }
             Err(e) => render_error(
                 Some(id),

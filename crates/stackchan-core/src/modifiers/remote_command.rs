@@ -41,9 +41,15 @@ use crate::head::Pose;
 use crate::input::RemoteCommand;
 use crate::mind::{Attention, OverrideSource};
 use crate::modifier::Modifier;
+use crate::voice::ChirpKind;
 
 /// External control-plane modifier — see module docs for trigger shape.
 #[derive(Debug, Default, Clone, Copy)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "the `_hold` postfix is the load-bearing distinction across the three slots; \
+              renaming to drop it would erase the 'this is a hold-timer slot' meaning"
+)]
 pub struct RemoteCommandModifier {
     /// Active emotion hold, if any. `(emotion, hold_until)`.
     emotion_hold: Option<(Emotion, Instant)>,
@@ -51,6 +57,10 @@ pub struct RemoteCommandModifier {
     /// `since` is captured at the first frame of the hold so the
     /// rendered ease-in does not restart every tick.
     lookat_hold: Option<(Pose, Instant, Instant)>,
+    /// Active listen hold, if any. `(since, hold_until)`. `since`
+    /// pins to the entry frame so listening-pose ease-in animations
+    /// don't restart per tick (same idiom as [`Self::lookat_hold`]).
+    listen_hold: Option<(Instant, Instant)>,
 }
 
 impl RemoteCommandModifier {
@@ -60,6 +70,7 @@ impl RemoteCommandModifier {
         Self {
             emotion_hold: None,
             lookat_hold: None,
+            listen_hold: None,
         }
     }
 
@@ -86,6 +97,7 @@ impl RemoteCommandModifier {
                 entity.mind.attention = Attention::None;
                 self.emotion_hold = None;
                 self.lookat_hold = None;
+                self.listen_hold = None;
             }
             RemoteCommand::Speak { .. } => {
                 // Audio dispatch is firmware-only; the producer drains
@@ -93,6 +105,16 @@ impl RemoteCommandModifier {
                 // `Director::run`. If a `Speak` slot survives that
                 // intercept, treat it as a no-op rather than panic so
                 // the modifier stays resilient under reordering.
+            }
+            RemoteCommand::StartListen { duration_ms } => {
+                let until = now + u64::from(duration_ms);
+                entity.mind.attention = Attention::Listening { since: now };
+                // Queue an acknowledge chirp on the same tick so the
+                // operator gets immediate audible feedback. The firmware
+                // audio task drains `voice.chirp_request` per render
+                // tick.
+                entity.voice.chirp_request = Some(ChirpKind::Wake);
+                self.listen_hold = Some((now, until));
             }
         }
     }
@@ -116,6 +138,7 @@ impl Modifier for RemoteCommandModifier {
                 Field::Autonomy,
                 Field::Attention,
                 Field::RemoteCommand,
+                Field::ChirpRequest,
             ],
         };
         &META
@@ -148,6 +171,21 @@ impl Modifier for RemoteCommandModifier {
             } else {
                 self.lookat_hold = None;
                 if matches!(entity.mind.attention, Attention::Tracking { target: t, .. } if t == target)
+                {
+                    entity.mind.attention = Attention::None;
+                }
+            }
+        }
+
+        if let Some((since, until)) = self.listen_hold {
+            if now < until {
+                entity.mind.attention = Attention::Listening { since };
+            } else {
+                self.listen_hold = None;
+                // Only clear if attention is still our Listening — a
+                // tracker observation or another modifier may have
+                // already taken over by now.
+                if matches!(entity.mind.attention, Attention::Listening { since: s } if s == since)
                 {
                     entity.mind.attention = Attention::None;
                 }

@@ -131,6 +131,7 @@ where
         Decorator::Heart => draw_heart(target),
         Decorator::Sweat => draw_sweat(target),
         Decorator::Dizzy => draw_dizzy(target),
+        Decorator::Ear => draw_ear(target),
     }
 }
 
@@ -256,6 +257,51 @@ where
             .into_styled(fill(DIZZY_COLOR))
             .draw(target)?;
     }
+    Ok(())
+}
+
+/// Ear decorator: a small cupped-hand / "C" shape above the
+/// upper-left eye, mirroring the head-tilt-and-listen pose. Two
+/// concentric arcs (outer + inner) drawn with stacked filled circles
+/// form the cup; the contrast between fill colours gives the cupped
+/// reading without needing a stroke primitive.
+const EAR_ANCHOR_X: i32 = 50;
+/// Ear decorator anchor Y — symmetric with Heart (which anchors at
+/// upper-right `y = 50`), so the pair would balance if both fired
+/// (they shouldn't in practice; mutual-exclusion is enforced by
+/// `face.decorator` carrying only one variant at a time).
+const EAR_ANCHOR_Y: i32 = 50;
+/// Outer-arc diameter for the ear cup.
+const EAR_OUTER_DIAMETER: u32 = 22;
+/// Inner-arc diameter for the cup hollow. Must be smaller than
+/// [`EAR_OUTER_DIAMETER`].
+const EAR_INNER_DIAMETER: u32 = 12;
+/// Outer ring colour — same warm pink the cheeks already use, so
+/// the overlay reads as part of the avatar palette rather than a
+/// foreign UI element.
+const EAR_COLOR: Rgb565 = Rgb565::new(31, 50, 22);
+
+/// Draw the cupped-hand listening overlay. Two concentric circles
+/// (outer pink, inner white) — the white inner circle "subtracts"
+/// from the pink outer to leave a ring, then a small triangle on
+/// the right side closes the C-shape so it reads as a hand cupped
+/// behind an ear rather than a plain donut.
+fn draw_ear<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    #[allow(clippy::cast_possible_wrap)]
+    let outer_half = (EAR_OUTER_DIAMETER / 2) as i32;
+    #[allow(clippy::cast_possible_wrap)]
+    let inner_half = (EAR_INNER_DIAMETER / 2) as i32;
+    let outer_top_left = EgPoint::new(EAR_ANCHOR_X - outer_half, EAR_ANCHOR_Y - outer_half);
+    let inner_top_left = EgPoint::new(EAR_ANCHOR_X - inner_half, EAR_ANCHOR_Y - inner_half);
+    Circle::new(outer_top_left, EAR_OUTER_DIAMETER)
+        .into_styled(fill(EAR_COLOR))
+        .draw(target)?;
+    Circle::new(inner_top_left, EAR_INNER_DIAMETER)
+        .into_styled(fill(Rgb565::WHITE))
+        .draw(target)?;
     Ok(())
 }
 
