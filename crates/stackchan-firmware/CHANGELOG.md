@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.43.0...stackchan-firmware-v0.44.0) (2026-05-07)
+
+
+### Features
+
+* **net:** minimal MCP server endpoint over JSON-RPC 2.0 ([#227](https://github.com/andymai/stackchan-kai/issues/227)) ([2f11294](https://github.com/andymai/stackchan-kai/commit/2f11294de88743baf1dc0164b207f5d30b41b95a))
+
 ## [0.43.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.42.0...stackchan-firmware-v0.43.0) (2026-05-07)
 
 
