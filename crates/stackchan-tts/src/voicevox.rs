@@ -114,7 +114,10 @@ pub fn synthesis_path(speaker_id: u16) -> String {
 /// Percent-encode an arbitrary UTF-8 string per RFC 3986
 /// `unreserved`. Allocates worst-case `3 * input.len()` bytes.
 fn percent_encode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+    // Pre-allocate the worst case so the primary use-case (Japanese
+    // TTS text where every UTF-8 byte percent-encodes to 3 chars)
+    // doesn't reallocate mid-loop.
+    let mut out = String::with_capacity(input.len() * 3);
     for byte in input.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
             out.push(byte as char);
@@ -220,7 +223,14 @@ pub fn parse_wav(bytes: &[u8], expected_sample_rate_hz: u32) -> Result<WavHeader
         let body_start = cursor + 8;
         let body_end = body_start.saturating_add(size);
         if body_end > bytes.len() {
-            return Err(WavError::NoDataChunk);
+            // A truncated `fmt ` is a malformed format header, not a
+            // missing-data-chunk situation — return the more precise
+            // error so the caller can distinguish the two.
+            return Err(if id == b"fmt " {
+                WavError::BadFormat
+            } else {
+                WavError::NoDataChunk
+            });
         }
 
         match id {
