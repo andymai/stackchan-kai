@@ -228,12 +228,15 @@ fn classify_query(msg: &[u8], hostname: &str) -> QueryKind {
     }
     let qtype = u16::from_be_bytes([msg[after_name], msg[after_name + 1]]);
 
-    // `A` query for our hostname.
-    if qtype == 1 && matches_local_hostname(&qname, hostname) {
+    // `A` (1) or `ANY` (255) query for our hostname. Avahi resolvers
+    // sometimes follow an SRV resolution with an `ANY` for the host
+    // name; treating `ANY` as host-A here keeps `avahi-browse -r`
+    // resolves from timing out.
+    if (qtype == 1 || qtype == 255) && matches_local_hostname(&qname, hostname) {
         return QueryKind::HostA;
     }
-    // `PTR` query for our service type. `ANY` (255) is also a valid
-    // mDNS query type; treat it as service-type if the name matches.
+    // `PTR` query for our service type. `ANY` is also a valid mDNS
+    // query type; treat it as service-type if the name matches.
     if (qtype == 12 || qtype == 255) && qname.eq_ignore_ascii_case("_stackchan._tcp.local") {
         return QueryKind::ServicePtr;
     }
@@ -600,19 +603,21 @@ mod tests {
     fn announcement_srv_record_carries_http_port() {
         let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
         let mut out = [0u8; MAX_DNS_BYTES];
-        let _ = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        let n = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
         // SRV RDATA is priority(0,0) + weight(0,0) + port — search
-        // for the literal HTTP port in the announcement bytes.
+        // for the literal HTTP port in the live announcement bytes
+        // (scanning the full 512-byte buffer would risk a vacuous
+        // hit in the zero-padded tail).
         let port_be = ADVERTISED_HTTP_PORT.to_be_bytes();
         assert!(
-            out.windows(2).any(|w| w == port_be),
+            out[..n].windows(2).any(|w| w == port_be),
             "advertised HTTP port not encoded in announcement"
         );
     }
 
     #[test]
     fn announcement_fits_in_buffer_for_long_hostname() {
-        // 32-character hostname — comfortably under the 63-byte
+        // 33-character hostname — comfortably under the 63-byte
         // single-label DNS cap and representative of real fleets.
         let host = "stackchan-abcdef0123456789-abcdef";
         assert_eq!(host.len(), 33);
