@@ -119,6 +119,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        soliloquy_enabled: {},",
         config.behavior.soliloquy_enabled
     );
+    let _ = writeln!(
+        out,
+        "        hourly_chime_enabled: {},",
+        config.behavior.hourly_chime_enabled
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -471,10 +476,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse the `behavior: (soliloquy_enabled)` block.
+    /// Parse the `behavior: (soliloquy_enabled, hourly_chime_enabled)`
+    /// block. Both fields default to `false` if absent.
     fn parse_behavior(&mut self) -> Result<BehaviorConfig, ConfigError> {
         self.expect_char('(')?;
         let mut soliloquy_enabled: Option<bool> = None;
+        let mut hourly_chime_enabled: Option<bool> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -486,6 +493,7 @@ impl<'a> Parser<'a> {
             self.skip_ws_and_comments();
             match key {
                 "soliloquy_enabled" => soliloquy_enabled = Some(self.parse_bool()?),
+                "hourly_chime_enabled" => hourly_chime_enabled = Some(self.parse_bool()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -495,6 +503,7 @@ impl<'a> Parser<'a> {
         }
         Ok(BehaviorConfig {
             soliloquy_enabled: soliloquy_enabled.unwrap_or(false),
+            hourly_chime_enabled: hourly_chime_enabled.unwrap_or(false),
         })
     }
 

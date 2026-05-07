@@ -292,6 +292,14 @@ pub struct BehaviorConfig {
     /// follow-up that adds the corresponding phrase pool to the
     /// baked TTS catalog).
     pub soliloquy_enabled: bool,
+    /// When `true`, the firmware emits a chirp at the top of every
+    /// wall-clock hour (00, 01, ..., 23). Off by default so a
+    /// desk-toy in a quiet office stays quiet; operators opt in via
+    /// the boot config or `PUT /settings`. The task waits for an
+    /// SNTP-synced wall clock before scheduling, then resyncs after
+    /// each chime so a mid-day clock correction doesn't drift the
+    /// next-fire time.
+    pub hourly_chime_enabled: bool,
 }
 
 /// Time / SNTP configuration.

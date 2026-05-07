@@ -1129,6 +1129,15 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(mdns_task) failed: {}", defmt::Debug2Format(&e));
     }
 
+    // Hourly chime — opt-in via `behavior.hourly_chime_enabled`. The
+    // task exits early when disabled, so the spawn is unconditional.
+    if let Err(e) = spawner.spawn(stackchan_firmware::chime::chime_task(
+        board_io.i2c_bus,
+        net_config.behavior.hourly_chime_enabled,
+    )) {
+        defmt::panic!("spawn(chime_task) failed: {}", defmt::Debug2Format(&e));
+    }
+
     // BLE peripheral. Shares the same `&'static esp_radio::Controller`
     // as Wi-Fi — coex (enabled via the `coex` feature on `esp-radio`)
     // schedules airtime between the two stacks. The BLE address +
