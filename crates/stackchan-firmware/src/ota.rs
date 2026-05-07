@@ -51,8 +51,9 @@ use stackchan_net::ota::{OTA_PUBLIC_KEY_LEN, OtaImageError, parse_and_verify};
 
 /// Build-time-baked Ed25519 public key (32 bytes), parsed from the
 /// `STACKCHAN_OTA_PUBLIC_KEY` env var as 64 lowercase hex chars.
-/// `None` disables OTA at compile time.
-pub const OTA_PUBLIC_KEY: Option<[u8; OTA_PUBLIC_KEY_LEN]> =
+/// `None` disables OTA at compile time. Module-private — callers
+/// use [`ota_enabled`] for the feature-flag check.
+const OTA_PUBLIC_KEY: Option<[u8; OTA_PUBLIC_KEY_LEN]> =
     match option_env!("STACKCHAN_OTA_PUBLIC_KEY") {
         Some(hex) => Some(decode_hex_pubkey(hex)),
         None => None,

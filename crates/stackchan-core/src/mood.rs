@@ -183,4 +183,23 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn wire_str_round_trip_for_all_variants() {
+        // Pins the exact string each variant maps to. A future
+        // rename in `wire_str` without an update here will trip
+        // this rather than silently breaking persisted runtime
+        // state and HTTP body parsers downstream.
+        for &m in Mood::ALL {
+            let s = m.wire_str();
+            assert_eq!(Mood::from_wire_str(s), Some(m));
+        }
+    }
+
+    #[test]
+    fn from_wire_str_rejects_unknown() {
+        assert_eq!(Mood::from_wire_str(""), None);
+        assert_eq!(Mood::from_wire_str("NEUTRAL"), None); // case sensitive
+        assert_eq!(Mood::from_wire_str("ecstatic"), None);
+    }
 }

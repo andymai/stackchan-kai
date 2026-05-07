@@ -483,8 +483,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // Drain the latest palette selection from `POST /palette`.
         // Same latest-wins semantics as MOOD_SIGNAL — the palette
         // persists across operator-driven changes and emotion swings,
-        // and only flips on explicit re-selection (or reboot, since
-        // palette persistence is a follow-up).
+        // and only flips on explicit re-selection. The selection
+        // itself survives reboots via /sd/RUNTIME.RON (see
+        // `runtime_store::update_palette`).
         if let Some(palette) = net::http::PALETTE_SIGNAL.try_take() {
             entity.face.palette = palette;
         }

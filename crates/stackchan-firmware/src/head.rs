@@ -108,9 +108,8 @@ pub static HEAD_POSE_ACTUAL_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Sign
 /// [`TILT_TRIM_DEG`]: the const trims absorb the per-unit servo
 /// encoder offset (a hardware property of the assembled module);
 /// `OFFSETS` absorbs day-of mounting / cabling differences that an
-/// operator wants to dial in without reflashing. Stored runtime-only
-/// in v0.2.0 — persistence across reboots ships alongside the NVS
-/// `RuntimeStore` follow-up.
+/// operator wants to dial in without reflashing. Not yet enrolled in
+/// the SD-backed `RuntimeStore` — head offsets reset on reboot.
 pub static OFFSETS_SIGNAL: Signal<CriticalSectionRawMutex, HeadOffsets> = Signal::new();
 
 /// Operator-supplied head zero-point correction; latched in the head

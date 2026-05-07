@@ -386,8 +386,11 @@ async fn send_heartbeat(sender: &mut esp_radio::esp_now::EspNowSender<'_>) -> bo
 
 /// Allowlist check: accept frames from the configured static peer
 /// always; accept anything during a pairing window; drop the rest.
-/// Broadcast-destination frames pass — the firmware is the intended
-/// audience for the broadcast pattern that bulk operator tooling uses.
+///
+/// Broadcasts from random senders fall through to the pairing-window
+/// gate intentionally — accepting unicast operator commands from the
+/// LAN at large would be an open RX port, so the broadcast pattern
+/// only helps once an operator has explicitly opened pairing.
 fn is_allowlisted(
     frame: &ReceivedData,
     static_peer: Option<[u8; 6]>,
@@ -395,12 +398,7 @@ fn is_allowlisted(
     now: Instant,
 ) -> bool {
     let src = frame.info.src_address;
-    if let Some(allowed) = static_peer
-        && src == allowed
-    {
-        return true;
-    }
-    if frame.info.dst_address == BROADCAST_ADDRESS && static_peer == Some(src) {
+    if static_peer == Some(src) {
         return true;
     }
     window.refresh_and_check(now)
@@ -434,10 +432,6 @@ const fn hex_nibble(b: u8) -> Option<u8> {
         _ => None,
     }
 }
-
-/// Default pairing window when the HTTP route is hit without explicit
-/// duration. Mirrors `stackchan_net::http_command::DEFAULT_PAIRING_DURATION_MS`.
-pub const PAIR_WINDOW_DEFAULT_MS: u64 = 30_000;
 
 /// Open the pairing window for `duration_ms`. Producer-side helper
 /// for the HTTP route + MCP tool: signals [`PAIR_WINDOW`] with the

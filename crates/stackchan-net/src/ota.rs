@@ -206,7 +206,7 @@ pub fn build_header(payload_len: u32) -> [u8; OTA_HEADER_LEN] {
 /// Length of an Ed25519 public key in bytes.
 pub const OTA_PUBLIC_KEY_LEN: usize = 32;
 
-/// Failure modes for [`verify_signature`].
+/// Failure modes for `verify_signature`.
 ///
 /// `MalformedKey` is the only structurally-impossible variant in
 /// production (the firmware's build-time public key is checked
@@ -233,10 +233,14 @@ pub enum VerifyError {
 /// embeds in the firmware at build time. The matching signing key
 /// stays on the operator's host and never enters the firmware.
 ///
+/// `pub(crate)` — production callers use [`parse_and_verify`]
+/// instead; the crate-internal split keeps the test surface
+/// granular without leaking a parse-then-verify-yourself shape.
+///
 /// # Errors
 ///
 /// See [`VerifyError`].
-pub fn verify_signature(
+pub(crate) fn verify_signature(
     image: &ParsedImage<'_>,
     public_key: &[u8; OTA_PUBLIC_KEY_LEN],
 ) -> Result<(), VerifyError> {
@@ -255,7 +259,8 @@ pub fn verify_signature(
 /// # Errors
 ///
 /// [`OtaImageError`] — either a framing problem from
-/// [`parse_image`] or a signature problem from [`verify_signature`].
+/// [`parse_image`] or a signature problem from the crate-internal
+/// `verify_signature`.
 pub fn parse_and_verify<'a>(
     bytes: &'a [u8],
     public_key: &[u8; OTA_PUBLIC_KEY_LEN],
@@ -268,7 +273,7 @@ pub fn parse_and_verify<'a>(
 /// Top-level OTA failure surface.
 ///
 /// Either a framing error from [`parse_image`] or a verification
-/// error from [`verify_signature`]. Used by [`parse_and_verify`] so
+/// error from `verify_signature`. Used by [`parse_and_verify`] so
 /// handlers have a single error type to map onto HTTP status codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OtaImageError {
