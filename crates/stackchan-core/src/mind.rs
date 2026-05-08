@@ -2,8 +2,7 @@
 //!
 //! [`Mind`] holds [`Affect`] (current emotion), [`Autonomy`]
 //! (manual-override gating), [`Intent`] (current goal), and
-//! [`Attention`] (current focus). [`Memory`] is a marker type
-//! reserved for future cross-boot persistence. Modifiers in
+//! [`Attention`] (current focus). Modifiers in
 //! [`Phase::Affect`] write `mind.affect.emotion` and
 //! `mind.autonomy.manual_until`; skills write `mind.intent` and
 //! `mind.attention`; modifiers in [`Phase::Expression`] and
@@ -346,14 +345,9 @@ pub enum BodyGesture {
     Release,
 }
 
-/// Persistent facts the entity remembers across boots. Placeholder
-/// marker type; not yet populated.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Memory;
-
 /// The cognitive layer of the entity. Sub-component shape is stable;
-/// new fields land on `Affect` / `Autonomy` / `Intent` / `Attention` /
-/// `Memory` without breaking modifiers that read `Mind`.
+/// new fields land on `Affect` / `Autonomy` / `Intent` / `Attention`
+/// without breaking modifiers that read `Mind`.
 ///
 /// `PartialEq` only — [`Attention::Tracking`] holds a [`Pose`] with
 /// f32 fields, which leak through here.
@@ -390,6 +384,4 @@ pub struct Mind {
     /// a head-pet motion modifier ignores anything older than its
     /// own reaction window). `None` until the first gesture lands.
     pub last_gesture: Option<(BodyGesture, Instant)>,
-    /// Persistent facts.
-    pub memory: Memory,
 }
