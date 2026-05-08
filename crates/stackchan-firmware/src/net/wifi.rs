@@ -21,26 +21,41 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Timer};
 use esp_radio::wifi::{ClientConfig, ModeConfig, WifiController, WifiEvent};
 
-/// Public link-state signal — downstream tasks (SNTP, HTTP, mDNS)
-/// `wait()` on it to gate their own startup against the connect.
+/// Number of independent receivers the [`WIFI_LINK_WATCH`] supports.
 ///
-/// `Signal` is single-consumer: it stores one waker, so multiple
-/// concurrent `.wait().await` callers will lose all but the
-/// last-registered. SNTP and mDNS each have a single instance and
-/// loop on the signal, so this works for them. Multi-instance
-/// consumers (the HTTP worker pool) must use [`LINK_READY`] instead.
-pub static WIFI_LINK_SIGNAL: Signal<CriticalSectionRawMutex, WifiLinkState> = Signal::new();
+/// Sized for the current consumers (SNTP + mDNS) plus headroom for a
+/// future BLE link-state characteristic or HTTP worker subscription
+/// without re-touching this constant. Each slot is cheap (one
+/// generation counter), so over-provisioning here is fine.
+pub const WIFI_LINK_WATCH_RECEIVERS: usize = 4;
+
+/// Public link-state watch — downstream tasks (SNTP, mDNS, …) take a
+/// receiver each and loop on `.changed()` to gate their own work.
+///
+/// Was a `Signal<…, WifiLinkState>` until 2026-05; embassy's `Signal`
+/// stores only one waker, so two tasks awaiting the same `Signal`
+/// race — whichever registers second overwrites the first task's
+/// waker, and the first task starves until something else wakes it.
+/// In practice that meant either SNTP never time-synced or mDNS never
+/// advertised, depending on spawn order. `Watch` is the multi-consumer
+/// equivalent: each receiver tracks its own last-seen generation, so
+/// every consumer wakes on every transition.
+pub static WIFI_LINK_WATCH: Watch<
+    CriticalSectionRawMutex,
+    WifiLinkState,
+    WIFI_LINK_WATCH_RECEIVERS,
+> = Watch::new();
 
 /// Latched "link has been up at least once" flag.
 ///
 /// Set the first time [`wifi_task`] observes a [`WifiLinkState::Connected`]
-/// transition; never cleared. Multiple consumers can read this
-/// concurrently without the single-waker contention that
-/// [`WIFI_LINK_SIGNAL`] has — used by the HTTP worker pool to gate
-/// each worker's first accept call.
+/// transition; never cleared. Used by the HTTP worker pool to gate
+/// each worker's first accept call without consuming a
+/// [`WIFI_LINK_WATCH`] receiver slot per worker.
 pub static LINK_READY: AtomicBool = AtomicBool::new(false);
 
 /// Soft-reconfig signal — replace the active Wi-Fi credentials.
@@ -107,7 +122,7 @@ pub async fn wifi_task(
     loop {
         if creds.ssid.trim().is_empty() {
             defmt::info!("wifi: no SSID configured, idle");
-            WIFI_LINK_SIGNAL.signal(WifiLinkState::Disconnected);
+            WIFI_LINK_WATCH.sender().send(WifiLinkState::Disconnected);
             creds = WIFI_RECONFIG.wait().await;
             continue;
         }
@@ -120,7 +135,7 @@ pub async fn wifi_task(
                 "wifi: set_config rejected ({}); waiting for next provisioning",
                 defmt::Debug2Format(&e)
             );
-            WIFI_LINK_SIGNAL.signal(WifiLinkState::Disconnected);
+            WIFI_LINK_WATCH.sender().send(WifiLinkState::Disconnected);
             creds = WIFI_RECONFIG.wait().await;
             continue;
         }
@@ -159,14 +174,14 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
     let mut backoff_idx: usize = 0;
     loop {
         defmt::info!("wifi: connecting to ssid={=str}", ssid);
-        WIFI_LINK_SIGNAL.signal(WifiLinkState::Connecting);
+        WIFI_LINK_WATCH.sender().send(WifiLinkState::Connecting);
 
         let connect_outcome = select(controller.connect_async(), WIFI_RECONFIG.wait()).await;
         match connect_outcome {
             Either::First(Ok(())) => {
                 defmt::info!("wifi: connected");
                 crate::event_log::record(crate::event_log::Kind::Lifecycle, "wifi: connected");
-                WIFI_LINK_SIGNAL.signal(WifiLinkState::Connected);
+                WIFI_LINK_WATCH.sender().send(WifiLinkState::Connected);
                 LINK_READY.store(true, Ordering::Release);
                 backoff_idx = 0;
 
@@ -182,7 +197,7 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
                             crate::event_log::Kind::Warn,
                             "wifi: link dropped",
                         );
-                        WIFI_LINK_SIGNAL.signal(WifiLinkState::Disconnected);
+                        WIFI_LINK_WATCH.sender().send(WifiLinkState::Disconnected);
                     }
                     Either::Second(new_creds) => {
                         defmt::info!(
@@ -190,7 +205,7 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
                             new_creds.ssid.as_str()
                         );
                         let _ = controller.disconnect_async().await;
-                        WIFI_LINK_SIGNAL.signal(WifiLinkState::Disconnected);
+                        WIFI_LINK_WATCH.sender().send(WifiLinkState::Disconnected);
                         return new_creds;
                     }
                 }
@@ -202,7 +217,7 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
                     defmt::Debug2Format(&e),
                     backoff_ms
                 );
-                WIFI_LINK_SIGNAL.signal(WifiLinkState::Disconnected);
+                WIFI_LINK_WATCH.sender().send(WifiLinkState::Disconnected);
 
                 let wait_outcome = select(
                     Timer::after(Duration::from_millis(backoff_ms)),

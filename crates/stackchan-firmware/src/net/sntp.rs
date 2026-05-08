@@ -16,7 +16,7 @@ use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_time::{Duration, Timer, with_timeout};
 use embedded_hal_async::i2c::I2c as AsyncI2c;
 
-use super::wifi::{WIFI_LINK_SIGNAL, WifiLinkState};
+use super::wifi::{WIFI_LINK_WATCH, WifiLinkState};
 
 /// SNTP / NTP epoch is 1900-01-01; Unix is 1970-01-01. Difference in
 /// seconds — used to fold the transmit-timestamp seconds field into a
@@ -29,7 +29,7 @@ const PER_SERVER_TIMEOUT_SECS: u64 = 5;
 
 /// Re-sync cadence after a successful sync. Hourly is enough — the
 /// BM8563's stock crystal drifts <30 s/day. Re-syncs also fire on every
-/// `WIFI_LINK_SIGNAL::Connected` transition (handled by the outer loop).
+/// `WIFI_LINK_WATCH::Connected` transition (handled by the outer loop).
 const RESYNC_INTERVAL_SECS: u64 = 3_600;
 
 /// Concrete shared-I²C handle the firmware threads through every async
@@ -65,11 +65,17 @@ pub async fn sntp_task(stack: Stack<'static>, rtc_bus: SharedI2cBus, servers: Ve
         );
     }
 
+    let Some(mut link) = WIFI_LINK_WATCH.receiver() else {
+        defmt::error!("sntp: WIFI_LINK_WATCH receiver slot exhausted; parking");
+        park_forever().await;
+    };
+
     loop {
-        // Wait for an active link before each sync attempt. `wait()`
-        // returns whatever the wifi task last published — including the
-        // initial `Disconnected`, so we re-check before dispatching.
-        if !matches!(WIFI_LINK_SIGNAL.wait().await, WifiLinkState::Connected) {
+        // Wait for an active link before each sync attempt. `changed()`
+        // returns the next published value (including the first one if
+        // wifi_task already published before this task spawned), so we
+        // still re-check the variant before dispatching.
+        if !matches!(link.changed().await, WifiLinkState::Connected) {
             continue;
         }
         // Give DHCP a moment to settle once the link is up. Without an
