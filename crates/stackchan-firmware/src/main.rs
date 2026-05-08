@@ -113,12 +113,21 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[used]
 static _APP_DESC_ANCHOR: &esp_bootloader_esp_idf::EspAppDesc = &ESP_APP_DESC;
 
-/// Panic handler. Halts the core; esp-rtos emits the trace over RTT
-/// before we arrive here (via `--catch-hardfault` on the probe-rs side).
+/// Panic handler. Records the panic into the persistent crash latch
+/// and triggers a software reset so the device recovers without
+/// human intervention. The next boot's main loop reads the latch
+/// and writes it to `/sd/CRASH.LOG` for post-mortem fetch via
+/// `GET /crash`.
+///
+/// `loop {}` is the fallback if the latch write returns (it
+/// shouldn't — `record_panic` is `fn () -> ()`, but the safety
+/// guard against re-entrant panics may early-return without
+/// resetting). The watchdog will catch us either way.
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     defmt::error!("panic: {}", defmt::Display2Format(info));
-    loop {}
+    stackchan_firmware::crash::record_panic(info);
+    esp_hal::system::software_reset();
 }
 
 /// Internal SRAM heap, registered first so short-lived allocations (embassy
@@ -1094,6 +1103,22 @@ async fn main(spawner: Spawner) -> ! {
             // first request — and so the SSE stream stays consistent
             // with what the amp actually applies at boot.
             net::snapshot::update_audio(cfg.audio);
+            // If the previous boot panicked, the crash latch in RTC
+            // fast RAM still holds the message + location. Drain it
+            // now (clears the magic atomically) and write the
+            // rendered log to /sd/CRASH.LOG so `GET /crash` can
+            // surface it to the operator. A failed SD write is
+            // logged but not fatal — defmt still has the panic line
+            // for anyone watching the console.
+            if let Some(snap) = stackchan_firmware::crash::consume_latch() {
+                defmt::warn!(
+                    "crash recovery: previous boot panicked at {=str}:{=u32} — saving to SD",
+                    snap.file_str(),
+                    snap.line,
+                );
+                let log = stackchan_firmware::crash::render_log_entry(&snap, "panic");
+                let _ = storage::with_storage(|s| s.write_crash(&log)).await;
+            }
             // Restore the operator-tuned palette + mood from the
             // SD-backed runtime store. Tolerant of a missing /
             // malformed file: any failure leaves the cache (and the
