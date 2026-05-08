@@ -12,7 +12,7 @@ export function FaceGeometry() {
       await postJson("/face-geometry", { geometry });
       showToast(`face → ${geometry}`);
     } catch (e) {
-      showToast((e as Error).message, true);
+      showToast(e instanceof Error ? e.message : String(e), true);
     }
   };
 
