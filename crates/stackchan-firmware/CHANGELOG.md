@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.66.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.66.0...stackchan-firmware-v0.66.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **firmware:** WIFI_LINK_SIGNAL multi-consumer race — replace with Watch ([#294](https://github.com/andymai/stackchan-kai/issues/294)) ([17e03be](https://github.com/andymai/stackchan-kai/commit/17e03be05ca3264b812b25318eb4c69f46c88985))
+
 ## [0.66.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.65.0...stackchan-firmware-v0.66.0) (2026-05-08)
 
 
