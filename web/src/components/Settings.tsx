@@ -1,15 +1,7 @@
 import { createSignal, onMount } from "solid-js";
 import { authedFetch, setAuthToken } from "../auth";
 import { showToast, snapshot } from "../store";
-import type { Settings as SettingsType, Tracker } from "../types";
-
-const TRACKER_DEFAULT: Tracker = {
-  fov_h_deg: 62.0,
-  fov_v_deg: 49.0,
-  target_smoothing_alpha: 1.0,
-  flip_x: false,
-  flip_y: false,
-};
+import type { Settings as SettingsType } from "../types";
 
 export function Settings() {
   const [ssid, setSsid] = createSignal("");
@@ -19,11 +11,6 @@ export function Settings() {
   const [sntp, setSntp] = createSignal("");
   const [token, setToken] = createSignal("");
   const [tz, setTz] = createSignal("UTC");
-  // Tracker is round-tripped opaquely — the Calibration component
-  // owns the editing UI. Without this preservation, every Save
-  // here would reset tracker to firmware defaults via the
-  // `unwrap_or_default()` in the bare_json parser.
-  const [tracker, setTracker] = createSignal<Tracker>(TRACKER_DEFAULT);
 
   const load = async () => {
     try {
@@ -44,7 +31,6 @@ export function Settings() {
       setSntp(c.time.sntp_servers.join(", "));
       setToken(c.auth.token);
       setTz(c.time.tz);
-      setTracker(c.tracker);
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), true);
     }
@@ -54,23 +40,36 @@ export function Settings() {
 
   const submit = async (ev: Event) => {
     ev.preventDefault();
-    const audio = snapshot()?.audio ?? { volume_pct: 50, muted: false };
-    const body: SettingsType = {
-      wifi: { ssid: ssid(), psk: psk(), country: country().toUpperCase() },
-      mdns: { hostname: hostname() },
-      time: {
-        tz: tz(),
-        sntp_servers: sntp()
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      },
-      auth: { token: token() },
-      audio,
-      tracker: tracker(),
-    };
-    const newToken = body.auth.token;
     try {
+      // Re-fetch immediately before PUT so we merge against the
+      // latest persisted state, not the snapshot captured at mount.
+      // Without this, a Calibration "Save tracker" mid-session would
+      // be clobbered when the operator subsequently saves through
+      // this form — the form would PUT the stale tracker block.
+      const freshRes = await fetch("/settings");
+      if (!freshRes.ok) {
+        if (freshRes.status === 503) {
+          throw new Error("settings unavailable (no SD card)");
+        }
+        throw new Error(`GET /settings: ${freshRes.status}`);
+      }
+      const fresh = (await freshRes.json()) as SettingsType;
+      const audio = snapshot()?.audio ?? fresh.audio;
+      const body: SettingsType = {
+        wifi: { ssid: ssid(), psk: psk(), country: country().toUpperCase() },
+        mdns: { hostname: hostname() },
+        time: {
+          tz: tz(),
+          sntp_servers: sntp()
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        },
+        auth: { token: token() },
+        audio,
+        tracker: fresh.tracker,
+      };
+      const newToken = body.auth.token;
       const res = await authedFetch("/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -99,7 +98,7 @@ export function Settings() {
           : "saved — applied without reboot",
       );
     } catch (e) {
-      showToast((e as Error).message, true);
+      showToast(e instanceof Error ? e.message : String(e), true);
     }
   };
 
@@ -126,7 +125,7 @@ export function Settings() {
       setTimeout(() => URL.revokeObjectURL(url), 0);
       showToast("backup downloaded");
     } catch (e) {
-      showToast((e as Error).message, true);
+      showToast(e instanceof Error ? e.message : String(e), true);
     }
   };
 
