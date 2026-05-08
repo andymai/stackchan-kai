@@ -85,21 +85,27 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
         park_forever().await;
     }
 
-    let mut rx_meta = [PacketMetadata::EMPTY; 4];
-    let mut rx_buf = [0u8; MAX_DNS_BYTES];
-    let mut tx_meta = [PacketMetadata::EMPTY; 4];
-    let mut tx_buf = [0u8; MAX_DNS_BYTES];
-
+    // Acquire the receiver before any await; `Watch::receiver()`
+    // initialises the receiver's generation counter to the watch's
+    // *current* generation, so a publish that lands between task
+    // spawn and this line would be invisible to a subsequent
+    // `.changed().await`. The first read uses `.get()` instead,
+    // which returns the stored value (or waits for the first
+    // publish) regardless of when this receiver was created.
     let Some(mut link) = WIFI_LINK_WATCH.receiver() else {
         defmt::error!("mdns: WIFI_LINK_WATCH receiver slot exhausted; parking");
         park_forever().await;
     };
 
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf = [0u8; MAX_DNS_BYTES];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf = [0u8; MAX_DNS_BYTES];
+
+    let mut state = link.get().await;
     loop {
-        // Wait for a Connected link before binding the socket.
-        // embassy-net needs the IPv4 address to encode A-record
-        // answers, and join_multicast_group needs the link up.
-        if !matches!(link.changed().await, WifiLinkState::Connected) {
+        if !matches!(state, WifiLinkState::Connected) {
+            state = link.changed().await;
             continue;
         }
 
@@ -108,6 +114,7 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
         if let Err(e) = socket.bind(MDNS_PORT) {
             defmt::warn!("mdns: bind failed ({:?})", e);
             Timer::after(Duration::from_secs(5)).await;
+            state = link.changed().await;
             continue;
         }
         if let Err(e) = stack.join_multicast_group(MDNS_MULTICAST) {
@@ -117,6 +124,7 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
             // back to waiting for the next link transition rather
             // than busy-looping.
             Timer::after(Duration::from_secs(60)).await;
+            state = link.changed().await;
             continue;
         }
 
@@ -124,6 +132,7 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
             defmt::warn!("mdns: no IPv4 lease yet; will retry");
             socket.close();
             Timer::after(Duration::from_secs(2)).await;
+            state = link.changed().await;
             continue;
         };
 
@@ -149,6 +158,9 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
 
         let _ = stack.leave_multicast_group(MDNS_MULTICAST);
         socket.close();
+        // serve_loop returned (link dropped or socket failure) —
+        // wait for the next state transition before re-binding.
+        state = link.changed().await;
     }
 }
 
