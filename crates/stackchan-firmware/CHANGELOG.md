@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.67.0...stackchan-firmware-v0.67.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **firmware:** WIFI_LINK_WATCH cold-boot race — seed via get() then loop on changed() ([#299](https://github.com/andymai/stackchan-kai/issues/299)) ([2853fd6](https://github.com/andymai/stackchan-kai/commit/2853fd6bd523f12e0ff1eef0ab147b08864fb8f4))
+
 ## [0.67.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.66.1...stackchan-firmware-v0.67.0) (2026-05-08)
 
 
