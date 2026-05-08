@@ -5,6 +5,7 @@ import { State } from "./components/State";
 import { Emotion } from "./components/Emotion";
 import { Listen } from "./components/Listen";
 import { Mood } from "./components/Mood";
+import { FaceGeometry } from "./components/FaceGeometry";
 import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
 import { Camera } from "./components/Camera";
@@ -52,6 +53,7 @@ export function App() {
         <State />
         <Emotion />
         <Mood />
+        <FaceGeometry />
         <LookAt />
         <Audio />
         <Speak />

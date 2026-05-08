@@ -191,6 +191,16 @@ pub static MOOD_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Mood> = 
 /// follow-up alongside the NVS `RuntimeStore`.
 pub static PALETTE_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Palette> = Signal::new();
 
+/// Latest face-geometry preset the operator has selected via
+/// `POST /face-geometry` or MCP `set_face_geometry`.
+///
+/// Drained by the render task, which calls `Face::set_geometry` so
+/// dynamic state (blink phase, mouth open amount) survives the swap.
+/// Latest-wins; persisted to `/sd/RUNTIME.RON` via
+/// `runtime_store::update_face_geometry`.
+pub static FACE_GEOMETRY_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::FaceGeometry> =
+    Signal::new();
+
 /// Latest dance script uploaded via `POST /dance`.
 ///
 /// Drained by the render task into `DancePlayer` via
@@ -449,6 +459,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/palette") => handle_post_palette(socket, body).await,
+        ("POST", "/face-geometry") => handle_post_face_geometry(socket, body).await,
         ("POST", "/sleep") => handle_post_sleep(socket).await,
         ("POST", "/wake") => handle_post_wake(socket).await,
         ("GET", "/head/offsets") => handle_get_head_offsets(socket).await,
@@ -872,6 +883,30 @@ async fn handle_post_palette(socket: &mut TcpSocket<'_>, body: &str) -> Result<(
     write_no_content(socket).await
 }
 
+/// `POST /face-geometry` — parse `{"geometry": "<string>"}`, push the
+/// selected preset at the render task via [`FACE_GEOMETRY_SIGNAL`],
+/// and persist the choice to `/sd/RUNTIME.RON` so a reboot restores it.
+async fn handle_post_face_geometry(
+    socket: &mut TcpSocket<'_>,
+    body: &str,
+) -> Result<(), HttpError> {
+    let geometry = match json::parse_face_geometry(body) {
+        Ok(g) => g,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /face-geometry parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    FACE_GEOMETRY_SIGNAL.signal(geometry);
+    let _ = crate::runtime_store::update_face_geometry(geometry).await;
+    defmt::info!("http: POST /face-geometry → {}", geometry.wire_str());
+    write_no_content(socket).await
+}
+
 /// `POST /sleep` — empty body. Drops eyes shut, head limp, LED ring
 /// dark, audio TX paused. Wake via `POST /wake`, MCP `wake`, any
 /// touch (`FT6336U` or `Si12T` body pads), or `AXP2101` short-press.
@@ -991,6 +1026,18 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 crate::net::http::MOOD_SIGNAL.signal(mood);
                 let _ = crate::runtime_store::update_mood(mood).await;
                 render_success(id, &render_tool_text_result("mood enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "set_face_geometry" => match json::parse_face_geometry(arguments) {
+            Ok(geometry) => {
+                FACE_GEOMETRY_SIGNAL.signal(geometry);
+                let _ = crate::runtime_store::update_face_geometry(geometry).await;
+                render_success(id, &render_tool_text_result("face geometry enqueued"))
             }
             Err(e) => render_error(
                 Some(id),
@@ -1233,6 +1280,7 @@ const fn tool_parse_detail(e: &JsonError) -> &'static str {
         E::UnknownLocale => "unknown locale",
         E::UnknownMood => "unknown mood",
         E::UnknownPalette => "unknown palette",
+        E::UnknownFaceGeometry => "unknown face geometry",
         E::VolumeOutOfRange(_) => "volume out of range",
     }
 }
@@ -1678,6 +1726,7 @@ fn state_body(s: AvatarSnapshot) -> String {
         "{{\
 \"emotion\":\"{emotion}\",\
 \"mood\":\"{mood}\",\
+\"face_geometry\":\"{face_geometry}\",\
 \"decorator\":{decorator},\
 \"head_pose\":{{\"pan_deg\":{pan:.2},\"tilt_deg\":{tilt:.2}}},\
 \"head_actual\":{actual},\
@@ -1688,6 +1737,7 @@ fn state_body(s: AvatarSnapshot) -> String {
 }}\n",
         emotion = s.emotion.wire_str(),
         mood = s.mood.wire_str(),
+        face_geometry = s.face_geometry.wire_str(),
         pan = s.head_pose.pan_deg,
         tilt = s.head_pose.tilt_deg,
         connected = s.wifi.connected,

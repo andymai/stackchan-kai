@@ -21,6 +21,7 @@ export type AudioState = {
 export type AvatarSnapshot = {
   emotion: string;
   mood: string;
+  face_geometry: string;
   decorator: string | null;
   head_pose: Pose;
   head_actual: Pose | null;

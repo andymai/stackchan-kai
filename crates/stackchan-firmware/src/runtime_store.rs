@@ -24,6 +24,7 @@
 //! ```text
 //! palette=cute
 //! mood=playful
+//! face_geometry=chibi
 //! ```
 //!
 //! Trailing blank lines and unknown keys are tolerated (forward
@@ -37,7 +38,7 @@ use core::fmt::Write as _;
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use stackchan_core::{Mood, Palette};
+use stackchan_core::{FaceGeometry, Mood, Palette};
 
 /// In-memory snapshot of the runtime state. Defaults match the
 /// avatar's neutral resting look so a brand-new device reads the
@@ -51,6 +52,10 @@ pub struct RuntimeState {
     /// Current operator-selected mood baseline. Mirrored into
     /// `entity.mind.mood` on boot via the firmware's `MOOD_SIGNAL`.
     pub mood: Mood,
+    /// Current operator-selected face geometry preset. Applied to
+    /// `entity.face` on boot via the firmware's
+    /// `FACE_GEOMETRY_SIGNAL`.
+    pub face_geometry: FaceGeometry,
 }
 
 /// Render a [`RuntimeState`] to its line-based wire form.
@@ -59,6 +64,7 @@ pub fn render(state: &RuntimeState) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "palette={}", state.palette.wire_str());
     let _ = writeln!(out, "mood={}", state.mood.wire_str());
+    let _ = writeln!(out, "face_geometry={}", state.face_geometry.wire_str());
     out
 }
 
@@ -90,6 +96,11 @@ pub fn parse(input: &str) -> RuntimeState {
                     out.mood = m;
                 }
             }
+            "face_geometry" => {
+                if let Some(g) = FaceGeometry::from_wire_str(value.trim()) {
+                    out.face_geometry = g;
+                }
+            }
             _ => {}
         }
     }
@@ -111,6 +122,7 @@ static CACHE: Mutex<CriticalSectionRawMutex, Cell<RuntimeState>> =
     Mutex::new(Cell::new(RuntimeState {
         palette: Palette::Default,
         mood: Mood::Neutral,
+        face_geometry: FaceGeometry::Default,
     }));
 
 /// Snapshot the current cache.
@@ -175,6 +187,13 @@ pub async fn update_mood(mood: Mood) -> bool {
     persist().await
 }
 
+/// Update the face-geometry field and persist the cache. Same
+/// semantics as [`update_palette`].
+pub async fn update_face_geometry(geometry: FaceGeometry) -> bool {
+    mutate(|s| s.face_geometry = geometry);
+    persist().await
+}
+
 /// Apply `f` to the cache atomically — read + modify + write happen
 /// inside one critical section.
 ///
@@ -235,32 +254,48 @@ mod tests {
         let s = RuntimeState {
             palette: Palette::Cute,
             mood: Mood::Playful,
+            face_geometry: FaceGeometry::Chibi,
         };
         assert_eq!(render_then_parse(&s), s);
     }
 
     #[test]
     fn parse_tolerates_blank_lines_and_extra_whitespace() {
-        let input = "\n  palette = dark\n\n   mood=focus\n";
+        let input = "\n  palette = dark\n\n   mood=focus\n  face_geometry = wide \n";
         let s = parse(input);
         assert_eq!(s.palette, Palette::Dark);
         assert_eq!(s.mood, Mood::Focus);
+        assert_eq!(s.face_geometry, FaceGeometry::Wide);
     }
 
     #[test]
     fn parse_skips_unknown_keys() {
-        let input = "palette=cute\nfuture_field=hello\nmood=playful\n";
+        let input = "palette=cute\nfuture_field=hello\nmood=playful\nface_geometry=sleepy\n";
         let s = parse(input);
         assert_eq!(s.palette, Palette::Cute);
         assert_eq!(s.mood, Mood::Playful);
+        assert_eq!(s.face_geometry, FaceGeometry::Sleepy);
     }
 
     #[test]
     fn parse_falls_back_on_unknown_enum_value() {
-        let input = "palette=rainbow\nmood=ecstatic\n";
+        let input = "palette=rainbow\nmood=ecstatic\nface_geometry=compact\n";
         let s = parse(input);
         assert_eq!(s.palette, Palette::default());
         assert_eq!(s.mood, Mood::default());
+        assert_eq!(s.face_geometry, FaceGeometry::default());
+    }
+
+    #[test]
+    fn parse_omitted_face_geometry_yields_default() {
+        // Older firmware that wrote palette + mood only must still
+        // parse cleanly under a newer firmware that knows about
+        // face_geometry.
+        let input = "palette=cute\nmood=playful\n";
+        let s = parse(input);
+        assert_eq!(s.palette, Palette::Cute);
+        assert_eq!(s.mood, Mood::Playful);
+        assert_eq!(s.face_geometry, FaceGeometry::default());
     }
 
     #[test]

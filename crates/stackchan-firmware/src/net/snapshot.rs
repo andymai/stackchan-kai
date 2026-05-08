@@ -14,7 +14,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::Instant as EmbassyInstant;
 use stackchan_core::head::Pose;
-use stackchan_core::{Decorator, Emotion, Mood};
+use stackchan_core::{Decorator, Emotion, FaceGeometry, Mood};
 use stackchan_net::config::AudioConfig;
 
 /// Battery snapshot — published by the power task.
@@ -72,6 +72,10 @@ pub struct AvatarSnapshot {
     /// Operator-selected energy baseline. Mirrors `entity.mind.mood`;
     /// HTTP `POST /mood` updates this through `MOOD_SIGNAL`.
     pub mood: Mood,
+    /// Operator-selected face geometry preset. Mirrors
+    /// `entity.face.geometry`; HTTP `POST /face-geometry` and MCP
+    /// `set_face_geometry` update this through `FACE_GEOMETRY_SIGNAL`.
+    pub face_geometry: FaceGeometry,
 }
 
 impl AvatarSnapshot {
@@ -101,6 +105,7 @@ impl AvatarSnapshot {
             && self.camera_mode == other.camera_mode
             && self.decorator == other.decorator
             && self.mood == other.mood
+            && self.face_geometry == other.face_geometry
     }
 }
 
@@ -116,6 +121,7 @@ impl Default for AvatarSnapshot {
             camera_mode: false,
             decorator: None,
             mood: Mood::Neutral,
+            face_geometry: FaceGeometry::Default,
         }
     }
 }
@@ -142,6 +148,7 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
         camera_mode: false,
         decorator: None,
         mood: Mood::Neutral,
+        face_geometry: FaceGeometry::Default,
     }));
 
 /// Replace the avatar/head fields. Called per render tick.
@@ -151,6 +158,7 @@ pub fn update_avatar(
     head_actual: Option<Pose>,
     decorator: Option<Decorator>,
     mood: Mood,
+    face_geometry: FaceGeometry,
 ) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
@@ -159,6 +167,7 @@ pub fn update_avatar(
         s.head_actual = head_actual;
         s.decorator = decorator;
         s.mood = mood;
+        s.face_geometry = face_geometry;
         cell.set(s);
     });
 }

@@ -497,6 +497,14 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         if let Some(palette) = net::http::PALETTE_SIGNAL.try_take() {
             entity.face.palette = palette;
         }
+        // Drain the latest face-geometry preset. Routed through
+        // `Face::set_geometry` so blink phase / mouth open amount
+        // survive the swap — a geometry change mid-blink continues
+        // the blink at the new baseline radii rather than snapping
+        // eyes open.
+        if let Some(geometry) = net::http::FACE_GEOMETRY_SIGNAL.try_take() {
+            entity.face.set_geometry(geometry);
+        }
         // Drain a freshly-uploaded dance script from `POST /dance`
         // into `entity.input.dance_script`; the `DancePlayer`
         // modifier consumes it inside `Director::run`. Latest-wins.
@@ -662,6 +670,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
             Some(entity.motor.head_pose_actual),
             entity.face.decorator.map(|d| d.kind),
             entity.mind.mood,
+            entity.face.geometry,
         );
         // Push the latest snapshot to any connected SSE subscribers.
         // Throttled internally so a 30 Hz render doesn't firehose
@@ -1092,10 +1101,12 @@ async fn main(spawner: Spawner) -> ! {
             let runtime = stackchan_firmware::runtime_store::load_into_cache().await;
             net::http::PALETTE_SIGNAL.signal(runtime.palette);
             net::http::MOOD_SIGNAL.signal(runtime.mood);
+            net::http::FACE_GEOMETRY_SIGNAL.signal(runtime.face_geometry);
             defmt::info!(
-                "runtime store: restored palette={=str} mood={=str}",
+                "runtime store: restored palette={=str} mood={=str} face_geometry={=str}",
                 runtime.palette.wire_str(),
                 runtime.mood.wire_str(),
+                runtime.face_geometry.wire_str(),
             );
             cfg
         }
