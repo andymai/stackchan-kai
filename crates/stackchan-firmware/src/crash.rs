@@ -146,10 +146,11 @@ pub fn consume_latch() -> Option<CrashSnapshot> {
 /// SD card. Future versions may add fields (boot count, reset
 /// reason, firmware version) — readers tolerate unknown keys.
 ///
-/// Embedded newlines in the panic message are escaped to `\n` so
-/// each key occupies exactly one line — otherwise a `panic!("a\nb")`
-/// would split the `message=` value across two lines and break any
-/// downstream parser that splits on `\n`.
+/// Embedded carriage returns and newlines in the panic message are
+/// escaped to `\r` / `\n` so each key occupies exactly one line —
+/// otherwise a `panic!("a\nb")` splits the `message=` value across
+/// two lines, and a `panic!("a\rb")` corrupts the line in any
+/// terminal that interprets `\r` as a column reset.
 #[must_use]
 pub fn render_log_entry(snap: &CrashSnapshot, reset_reason: &str) -> alloc::string::String {
     use core::fmt::Write as _;
@@ -157,7 +158,7 @@ pub fn render_log_entry(snap: &CrashSnapshot, reset_reason: &str) -> alloc::stri
     let _ = writeln!(out, "reset_reason={reset_reason}");
     let _ = writeln!(out, "file={}", snap.file_str());
     let _ = writeln!(out, "line={}", snap.line);
-    let escaped = snap.message_str().replace('\n', r"\n");
+    let escaped = snap.message_str().replace('\r', r"\r").replace('\n', r"\n");
     let _ = writeln!(out, "message={escaped}");
     out
 }
