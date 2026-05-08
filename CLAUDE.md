@@ -120,4 +120,4 @@ Conventional-commit check at `.githooks/commit-msg`.
 
 Boot-time network + auth config lives at `/sd/STACKCHAN.RON` — schema in [`stackchan-net::config`](crates/stackchan-net/src/config.rs), atomic writeback via `PUT /settings`. The firmware boots offline if the SD card is absent.
 
-Face geometry is hardcoded in `stackchan-core::face`. Later releases may add RON-configurable appearance.
+Face geometry is operator-selectable via `POST /face-geometry` and MCP `set_face_geometry`. Presets are defined as the [`FaceGeometry`](crates/stackchan-core/src/face.rs) enum in `stackchan-core`; the active selection is persisted to `/sd/RUNTIME.RON` alongside palette + mood and restored on boot.
