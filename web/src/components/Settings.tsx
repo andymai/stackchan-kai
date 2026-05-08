@@ -1,7 +1,15 @@
 import { createSignal, onMount } from "solid-js";
 import { authedFetch, setAuthToken } from "../auth";
 import { showToast, snapshot } from "../store";
-import type { Settings as SettingsType } from "../types";
+import type { Settings as SettingsType, Tracker } from "../types";
+
+const TRACKER_DEFAULT: Tracker = {
+  fov_h_deg: 62.0,
+  fov_v_deg: 49.0,
+  target_smoothing_alpha: 1.0,
+  flip_x: false,
+  flip_y: false,
+};
 
 export function Settings() {
   const [ssid, setSsid] = createSignal("");
@@ -11,6 +19,11 @@ export function Settings() {
   const [sntp, setSntp] = createSignal("");
   const [token, setToken] = createSignal("");
   const [tz, setTz] = createSignal("UTC");
+  // Tracker is round-tripped opaquely — the Calibration component
+  // owns the editing UI. Without this preservation, every Save
+  // here would reset tracker to firmware defaults via the
+  // `unwrap_or_default()` in the bare_json parser.
+  const [tracker, setTracker] = createSignal<Tracker>(TRACKER_DEFAULT);
 
   const load = async () => {
     try {
@@ -31,8 +44,9 @@ export function Settings() {
       setSntp(c.time.sntp_servers.join(", "));
       setToken(c.auth.token);
       setTz(c.time.tz);
+      setTracker(c.tracker);
     } catch (e) {
-      showToast((e as Error).message, true);
+      showToast(e instanceof Error ? e.message : String(e), true);
     }
   };
 
@@ -53,6 +67,7 @@ export function Settings() {
       },
       auth: { token: token() },
       audio,
+      tracker: tracker(),
     };
     const newToken = body.auth.token;
     try {
