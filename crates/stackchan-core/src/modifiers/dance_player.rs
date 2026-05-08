@@ -174,8 +174,8 @@ impl Modifier for DancePlayer {
         };
 
         let elapsed = now.saturating_duration_since(active.started_at);
-        // Saturating cast: scripts longer than ~49 days truncate the
-        // offset and re-sample from the beginning of the keyframe
+        // Scripts longer than ~49 days truncate the offset (wrapping
+        // cast) and re-sample from the beginning of the keyframe
         // list. Acceptable — anything close to that limit is well
         // outside the design envelope.
         #[allow(
