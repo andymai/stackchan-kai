@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.65.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.64.0...stackchan-firmware-v0.65.0) (2026-05-08)
+
+
+### Features
+
+* dance choreography — POST /dance keyframe stream + DancePlayer modifier ([#288](https://github.com/andymai/stackchan-kai/issues/288)) ([2695ed0](https://github.com/andymai/stackchan-kai/commit/2695ed06de7679d856f3685fc76d184958501951))
+
 ## [0.64.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.63.0...stackchan-firmware-v0.64.0) (2026-05-08)
 
 
