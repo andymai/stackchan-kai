@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.66.1...stackchan-firmware-v0.67.0) (2026-05-08)
+
+
+### Features
+
+* **firmware:** crash recovery — RTC-RAM panic latch + /sd/CRASH.LOG + dashboard banner ([#297](https://github.com/andymai/stackchan-kai/issues/297)) ([f1e29e1](https://github.com/andymai/stackchan-kai/commit/f1e29e19601f740d607eb4fa7dcfde31b50619d8))
+
 ## [0.66.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.66.0...stackchan-firmware-v0.66.1) (2026-05-08)
 
 
