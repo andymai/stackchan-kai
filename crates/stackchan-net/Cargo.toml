@@ -43,3 +43,8 @@ thiserror = { version = "2", default-features = false }
 # host. Held in `stackchan-net` (not the firmware crate) so the verify
 # path is host-testable through `parse_image` + `verify_signature`.
 ed25519-compact = { version = "2", default-features = false }
+# `heapless::String` for fixed-cap pose-TXT formatting in
+# [`mdns_pose::format_pose_kv`]. The firmware crate already pins the
+# 0.8 line elsewhere; matching the pin here keeps the resolver from
+# pulling a second copy.
+heapless = "0.8"

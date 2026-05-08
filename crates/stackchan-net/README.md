@@ -59,6 +59,10 @@ shape of the on-disk config and the RON file `PUT /settings` round-trips.
 - `src/ble_command.rs` — fixed-length wire-format codecs for the
   BLE audio + avatar control characteristics, with stable byte
   mappings for `Emotion` / `PhraseId` / `Locale`
+- `src/mdns_pose.rs` — throttling decision + TXT key formatting for
+  the mDNS responder's live `yaw=` / `pitch=` advertisement. The
+  embassy task lives in the firmware crate; this module hosts the
+  pure logic so it stays on the host CI test path.
 - `src/error.rs` — `ConfigError` (parse / serialize / validation variants)
 - `tests/golden_config.rs` + `tests/fixtures/*.ron` — round-trip and
   validation coverage against hand-written fixtures

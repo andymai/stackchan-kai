@@ -15,20 +15,34 @@
 //! - `SRV` `<hostname>._stackchan._tcp.local.` → priority 0 weight 0
 //!   port 80 target `<hostname>.local.`
 //! - `TXT` `<hostname>._stackchan._tcp.local.` → `txtvers=1`,
-//!   `version=<crate>`, `path=/`, `mcp=/mcp`, `kai=1`
+//!   `version=<crate>`, `path=/`, `mcp=/mcp`, `kai=1`,
+//!   `yaw=<deg>`, `pitch=<deg>`
 //!
 //! The `kai=1` key is the variant marker — meganetaaan-line clients
 //! ignore it, kai-aware clients use it to gate access to extension
 //! endpoints (MCP, palette, soliloquy config). The other keys mirror
 //! the upstream stackchan / m5stack-avatar convention so a generic
 //! Bonjour browser shows the device alongside upstream units.
+//!
+//! `yaw` and `pitch` carry the live commanded head pose in degrees
+//! (one decimal place, matches the meganetaaan `mimic_main` mod's
+//! advertisement convention so a kai unit can lead a mixed-firmware
+//! mimic stack). The pose advertisement runs as a periodic publisher
+//! racing against the query loop. The throttling policy (publish
+//! interval, deadband, heartbeat) lives in
+//! [`stackchan_net::mdns_pose::PoseAnnouncer`] so it can be
+//! host-tested without an esp toolchain.
 
 use alloc::string::String;
 
+use embassy_futures::select::{Either, select};
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant as EmbassyInstant, Timer};
+use stackchan_core::Pose;
+use stackchan_net::mdns_pose::{POSE_PUBLISH_MIN_INTERVAL_MS, PoseAnnouncer, format_pose_kv};
 
+use super::snapshot;
 use super::wifi::{WIFI_LINK_SIGNAL, WifiLinkState};
 
 /// IPv4 mDNS multicast group + port.
@@ -119,14 +133,25 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
         );
 
         // Send unsolicited announcement once.
-        send_announcement(&socket, &hostname, our_ip).await;
+        let initial_pose = current_pose();
+        send_announcement(&socket, &hostname, our_ip, initial_pose).await;
+        let mut announcer = PoseAnnouncer::new();
+        announcer.record_publish(initial_pose, EmbassyInstant::now().as_millis());
 
-        // Serve queries until the link drops or anything errors out.
-        serve_loop(&socket, &hostname, our_ip).await;
+        // Serve queries + periodic pose updates until the link drops
+        // or anything errors out.
+        serve_loop(&socket, &hostname, our_ip, &mut announcer).await;
 
         let _ = stack.leave_multicast_group(MDNS_MULTICAST);
         socket.close();
     }
+}
+
+/// Read the current commanded head pose from the avatar snapshot.
+/// Mirrors what the HTTP `GET /state` route reads — non-destructive,
+/// no `Signal::try_take` race against the head task.
+fn current_pose() -> Pose {
+    snapshot::read().head_pose
 }
 
 /// Park forever — used by the empty-hostname idle path.
@@ -136,46 +161,84 @@ async fn park_forever() -> ! {
     }
 }
 
-/// Listen for queries; respond when one matches our hostname or the
-/// service type we advertise.
-async fn serve_loop(socket: &UdpSocket<'_>, hostname: &str, our_ip: embassy_net::Ipv4Address) {
+/// Listen for queries while periodically publishing fresh pose
+/// announcements. Both branches share the socket; the `select` race
+/// guarantees the periodic publisher fires even when no query is
+/// inbound, while still answering queries with sub-millisecond
+/// latency between timer ticks.
+async fn serve_loop(
+    socket: &UdpSocket<'_>,
+    hostname: &str,
+    our_ip: embassy_net::Ipv4Address,
+    announcer: &mut PoseAnnouncer,
+) {
     let mut buf = [0u8; MAX_DNS_BYTES];
     loop {
-        let (n, peer) = match socket.recv_from(&mut buf).await {
-            Ok(p) => p,
-            Err(e) => {
+        let race = select(
+            socket.recv_from(&mut buf),
+            Timer::after(Duration::from_millis(POSE_PUBLISH_MIN_INTERVAL_MS)),
+        )
+        .await;
+
+        match race {
+            Either::First(Ok((n, peer))) => {
+                if n < 12 {
+                    continue;
+                }
+                let kind = classify_query(&buf[..n], hostname);
+                if matches!(kind, QueryKind::None) {
+                    continue;
+                }
+                // Both A and service-type queries are answered with
+                // the same announcement payload — building one record
+                // set keeps the wire surface uniform and avoids drift
+                // between the unsolicited and reactive paths.
+                let mut resp = [0u8; MAX_DNS_BYTES];
+                let resp_id = u16::from_be_bytes([buf[0], buf[1]]);
+                let pose = current_pose();
+                let Some(len) = build_announcement(&mut resp, resp_id, hostname, our_ip, pose)
+                else {
+                    continue;
+                };
+
+                // Multicast peer is the standard mDNS path; unicast
+                // clients also exist but multicasting reaches everyone
+                // subscribed.
+                let target = embassy_net::IpEndpoint::new(MDNS_MULTICAST, MDNS_PORT);
+                if let Err(e) = socket.send_to(&resp[..len], target).await {
+                    defmt::warn!(
+                        "mdns: send response to {} failed ({:?})",
+                        defmt::Debug2Format(&peer.endpoint.addr),
+                        e,
+                    );
+                } else {
+                    // A query response carries the current pose just
+                    // like a periodic update, so stamp the announcer
+                    // — otherwise a steady stream of queries would
+                    // leave the announcer thinking pose is stale and
+                    // emit redundant unsolicited multicasts right
+                    // after each reactive answer.
+                    announcer.record_publish(pose, EmbassyInstant::now().as_millis());
+                }
+            }
+            Either::First(Err(e)) => {
                 defmt::warn!("mdns: recv error ({:?})", e);
                 return;
             }
-        };
-        if n < 12 {
-            continue;
-        }
-
-        let kind = classify_query(&buf[..n], hostname);
-        if matches!(kind, QueryKind::None) {
-            continue;
-        }
-
-        // Both A and service-type queries are answered with the same
-        // announcement payload — building one record set keeps the
-        // wire surface uniform and avoids drift between the
-        // unsolicited and reactive paths.
-        let mut resp = [0u8; MAX_DNS_BYTES];
-        let resp_id = u16::from_be_bytes([buf[0], buf[1]]);
-        let Some(len) = build_announcement(&mut resp, resp_id, hostname, our_ip) else {
-            continue;
-        };
-
-        // Multicast peer is the standard mDNS path; unicast clients
-        // also exist but multicasting reaches everyone subscribed.
-        let target = embassy_net::IpEndpoint::new(MDNS_MULTICAST, MDNS_PORT);
-        if let Err(e) = socket.send_to(&resp[..len], target).await {
-            defmt::warn!(
-                "mdns: send response to {} failed ({:?})",
-                defmt::Debug2Format(&peer.endpoint.addr),
-                e,
-            );
+            Either::Second(()) => {
+                let pose = current_pose();
+                if !announcer.should_publish(pose, EmbassyInstant::now().as_millis()) {
+                    continue;
+                }
+                send_announcement(socket, hostname, our_ip, pose).await;
+                // Snap the publish stamp *after* the send completes,
+                // matching the query-response branch above. The two
+                // branches now agree on what "publish window starts"
+                // means; otherwise the periodic branch would record
+                // the start slightly earlier than the actual send and
+                // its throttle window would run slightly short.
+                announcer.record_publish(pose, EmbassyInstant::now().as_millis());
+            }
         }
     }
 }
@@ -186,9 +249,10 @@ async fn send_announcement(
     socket: &UdpSocket<'_>,
     hostname: &str,
     our_ip: embassy_net::Ipv4Address,
+    pose: Pose,
 ) {
     let mut resp = [0u8; MAX_DNS_BYTES];
-    let Some(len) = build_announcement(&mut resp, 0, hostname, our_ip) else {
+    let Some(len) = build_announcement(&mut resp, 0, hostname, our_ip, pose) else {
         return;
     };
     let target = embassy_net::IpEndpoint::new(MDNS_MULTICAST, MDNS_PORT);
@@ -292,11 +356,15 @@ fn matches_local_hostname(qname: &str, hostname: &str) -> bool {
 /// compression is performed — at our message sizes the duplication
 /// is well under the 512-byte budget and avoids the pointer-bookkeeping
 /// that compression requires.
+///
+/// `pose` is encoded into the TXT record as the live `yaw` / `pitch`
+/// keys — see [`write_txt_answer`].
 fn build_announcement(
     out: &mut [u8; MAX_DNS_BYTES],
     transaction_id: u16,
     hostname: &str,
     our_ip: embassy_net::Ipv4Address,
+    pose: Pose,
 ) -> Option<usize> {
     // Header: response, authoritative, ANCOUNT=4.
     out[0..2].copy_from_slice(&transaction_id.to_be_bytes());
@@ -309,7 +377,7 @@ fn build_announcement(
     let mut off = 12;
     off = write_ptr_answer(out, off, hostname)?;
     off = write_srv_answer(out, off, hostname, ADVERTISED_HTTP_PORT)?;
-    off = write_txt_answer(out, off, hostname)?;
+    off = write_txt_answer(out, off, hostname, pose)?;
     off = write_a_answer(out, off, hostname, our_ip)?;
     Some(off)
 }
@@ -386,10 +454,15 @@ fn write_srv_answer(
 }
 
 /// TXT answer: name `<instance>`, RDATA = length-prefixed strings.
+///
+/// Includes the live commanded head pose as `yaw=<deg>` and
+/// `pitch=<deg>` (one decimal). Followers in a mimic stack lift these
+/// straight off the TXT without needing the HTTP plane.
 fn write_txt_answer(
     out: &mut [u8; MAX_DNS_BYTES],
     mut off: usize,
     hostname: &str,
+    pose: Pose,
 ) -> Option<usize> {
     let instance_labels: [&[u8]; 4] = [
         hostname.as_bytes(),
@@ -408,15 +481,23 @@ fn write_txt_answer(
     // RFC 6763 §6.7. `version` mirrors upstream stackchan TXT for
     // browser parity. `kai=1` is the variant marker that gates
     // kai-only routes (MCP / palette / behavior config).
-    for kv in [
-        b"txtvers=1" as &[u8],
+    off = write_txt_string(out, off, b"txtvers=1")?;
+    off = write_txt_string(
+        out,
+        off,
         concat!("version=", env!("CARGO_PKG_VERSION")).as_bytes(),
-        b"path=/",
-        b"mcp=/mcp",
-        b"kai=1",
-    ] {
-        off = write_txt_string(out, off, kv)?;
-    }
+    )?;
+    off = write_txt_string(out, off, b"path=/")?;
+    off = write_txt_string(out, off, b"mcp=/mcp")?;
+    off = write_txt_string(out, off, b"kai=1")?;
+
+    // Pose keys — `yaw` / `pitch` follow meganetaaan `mimic_main`'s
+    // naming so a kai unit can lead a mixed-firmware mimic stack
+    // without a translation layer on the follower side.
+    let yaw_kv = format_pose_kv("yaw", pose.pan_deg)?;
+    off = write_txt_string(out, off, yaw_kv.as_bytes())?;
+    let pitch_kv = format_pose_kv("pitch", pose.tilt_deg)?;
+    off = write_txt_string(out, off, pitch_kv.as_bytes())?;
 
     let rdlen = u16::try_from(off - rdata_start).ok()?;
     out.get_mut(rdlen_off..rdlen_off + 2)?
@@ -582,7 +663,7 @@ mod tests {
     fn build_announcement_round_trip() {
         let ip = embassy_net::Ipv4Address::new(192, 168, 1, 42);
         let mut out = [0u8; MAX_DNS_BYTES];
-        let n = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        let n = build_announcement(&mut out, 0, "stackchan", ip, Pose::default()).unwrap();
         // Header: QR=1 AA=1, ANCOUNT=4 (PTR + SRV + TXT + A).
         assert_eq!(u16::from_be_bytes([out[2], out[3]]), 0x8400);
         assert_eq!(u16::from_be_bytes([out[6], out[7]]), 4);
@@ -595,7 +676,7 @@ mod tests {
     fn announcement_contains_service_type_and_kai_marker() {
         let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
         let mut out = [0u8; MAX_DNS_BYTES];
-        let n = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        let n = build_announcement(&mut out, 0, "stackchan", ip, Pose::default()).unwrap();
         let bytes = &out[..n];
         // The service-type label sequence appears in the PTR owner.
         let needle = b"\x0a_stackchan\x04_tcp\x05local\x00";
@@ -615,7 +696,7 @@ mod tests {
     fn announcement_srv_record_carries_http_port() {
         let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
         let mut out = [0u8; MAX_DNS_BYTES];
-        let n = build_announcement(&mut out, 0, "stackchan", ip).unwrap();
+        let n = build_announcement(&mut out, 0, "stackchan", ip, Pose::default()).unwrap();
         // SRV RDATA is priority(0,0) + weight(0,0) + port — search
         // for the literal HTTP port in the live announcement bytes
         // (scanning the full 512-byte buffer would risk a vacuous
@@ -635,6 +716,25 @@ mod tests {
         assert_eq!(host.len(), 33);
         let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
         let mut out = [0u8; MAX_DNS_BYTES];
-        assert!(build_announcement(&mut out, 0, host, ip).is_some());
+        assert!(build_announcement(&mut out, 0, host, ip, Pose::default()).is_some());
+    }
+
+    #[test]
+    fn announcement_includes_pose_keys() {
+        let ip = embassy_net::Ipv4Address::new(10, 0, 0, 1);
+        let mut out = [0u8; MAX_DNS_BYTES];
+        let pose = Pose::new(12.3, -4.5);
+        let n = build_announcement(&mut out, 0, "stackchan", ip, pose).unwrap();
+        let bytes = &out[..n];
+        let yaw_needle = b"yaw=12.3";
+        assert!(
+            bytes.windows(yaw_needle.len()).any(|w| w == yaw_needle),
+            "yaw TXT key missing from announcement"
+        );
+        let pitch_needle = b"pitch=-4.5";
+        assert!(
+            bytes.windows(pitch_needle.len()).any(|w| w == pitch_needle),
+            "pitch TXT key missing from announcement"
+        );
     }
 }
