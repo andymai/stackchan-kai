@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.30.0...stackchan-core-v0.31.0) (2026-05-08)
+
+
+### Features
+
+* face geometry presets — POST /face-geometry + selectable silhouettes ([#290](https://github.com/andymai/stackchan-kai/issues/290)) ([cbe2d4f](https://github.com/andymai/stackchan-kai/commit/cbe2d4f1f354ae0d534e1718f5cc0272b1fa1ef0))
+
 ## [0.30.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.29.0...stackchan-core-v0.30.0) (2026-05-08)
 
 

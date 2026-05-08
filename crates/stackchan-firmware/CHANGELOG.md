@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.66.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.65.0...stackchan-firmware-v0.66.0) (2026-05-08)
+
+
+### Features
+
+* face geometry presets — POST /face-geometry + selectable silhouettes ([#290](https://github.com/andymai/stackchan-kai/issues/290)) ([cbe2d4f](https://github.com/andymai/stackchan-kai/commit/cbe2d4f1f354ae0d534e1718f5cc0272b1fa1ef0))
+
 ## [0.65.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.64.0...stackchan-firmware-v0.65.0) (2026-05-08)
 
 
