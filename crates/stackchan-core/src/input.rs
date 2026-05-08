@@ -49,6 +49,19 @@ pub enum RemoteCommand {
         /// Hold duration in milliseconds.
         hold_ms: u32,
     },
+    /// Set [`crate::Attention::Point`] toward an explicit 3D world
+    /// point and hold for `hold_ms`. Right-handed coordinates with
+    /// `+Z` forward, `+X` right, `+Y` up; only the direction matters
+    /// (target distance is irrelevant). The modifier graph converts
+    /// the point to a head pose via [`crate::Pose::from_xyz_lookat`];
+    /// targets at the origin (singularity) are rejected by the
+    /// firmware-side parser before this variant ever lands.
+    LookAtPoint {
+        /// Cartesian world point `(x, y, z)`.
+        target: (f32, f32, f32),
+        /// Hold duration in milliseconds.
+        hold_ms: u32,
+    },
     /// Clear any active emotion or look-at hold and return to
     /// autonomous behavior.
     Reset,

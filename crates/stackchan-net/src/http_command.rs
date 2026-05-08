@@ -143,6 +143,67 @@ pub fn parse_look_at(body: &str) -> Result<RemoteCommand, JsonError> {
     })
 }
 
+/// Parse a `POST /look-at-point` body into a
+/// [`RemoteCommand::LookAtPoint`].
+///
+/// Required: `x`, `y`, `z` (all numbers in arbitrary world units —
+/// only direction matters; right-handed coordinates with `+Z`
+/// forward). Optional: `hold_ms` (integer, defaults to
+/// [`DEFAULT_HOLD_MS`]).
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for missing required keys, unknown
+/// keys, malformed JSON shape, or a target at the singularity (origin).
+pub fn parse_look_at_point(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut x: Option<f32> = None;
+    let mut y: Option<f32> = None;
+    let mut z: Option<f32> = None;
+    let mut hold_ms: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "x" => {
+                if x.is_some() {
+                    return Err(JsonError::DuplicateKey("x"));
+                }
+                x = Some(parse_f32(scanner)?);
+            }
+            "y" => {
+                if y.is_some() {
+                    return Err(JsonError::DuplicateKey("y"));
+                }
+                y = Some(parse_f32(scanner)?);
+            }
+            "z" => {
+                if z.is_some() {
+                    return Err(JsonError::DuplicateKey("z"));
+                }
+                z = Some(parse_f32(scanner)?);
+            }
+            "hold_ms" => {
+                if hold_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("hold_ms"));
+                }
+                hold_ms = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    let x = x.ok_or(JsonError::MissingKey("x"))?;
+    let y = y.ok_or(JsonError::MissingKey("y"))?;
+    let z = z.ok_or(JsonError::MissingKey("z"))?;
+    // Reject the singularity at the source; the modifier graph would
+    // otherwise have to handle a None pose every tick of the hold.
+    if stackchan_core::Pose::from_xyz_lookat(x, y, z).is_none() {
+        return Err(JsonError::BadValue);
+    }
+    Ok(RemoteCommand::LookAtPoint {
+        target: (x, y, z),
+        hold_ms: hold_ms.unwrap_or(DEFAULT_HOLD_MS),
+    })
+}
+
 /// Parse a `POST /face-target` body into a [`RemoteCommand::LookAt`].
 ///
 /// Required: `x`, `y` (both numbers in normalised frame coordinates
@@ -1080,6 +1141,92 @@ mod tests {
         // fields.
         let body = r#"{"pan_deg":+3.5,"tilt_deg":0.0}"#;
         assert!(matches!(parse_look_at(body), Err(JsonError::BadValue)));
+    }
+
+    #[test]
+    fn look_at_point_with_explicit_hold() {
+        let body = r#"{"x":1.0,"y":0.5,"z":2.0,"hold_ms":15000}"#;
+        match parse_look_at_point(body).unwrap() {
+            RemoteCommand::LookAtPoint { target, hold_ms } => {
+                assert_eq!(target, (1.0, 0.5, 2.0));
+                assert_eq!(hold_ms, 15_000);
+            }
+            other => panic!("expected LookAtPoint, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn look_at_point_defaults_hold_when_omitted() {
+        let body = r#"{"x":0.0,"y":0.0,"z":1.0}"#;
+        match parse_look_at_point(body).unwrap() {
+            RemoteCommand::LookAtPoint { hold_ms, .. } => assert_eq!(hold_ms, DEFAULT_HOLD_MS),
+            other => panic!("expected LookAtPoint, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn look_at_point_rejects_missing_axis() {
+        for body in [
+            r#"{"y":0.0,"z":1.0}"#,
+            r#"{"x":0.0,"z":1.0}"#,
+            r#"{"x":0.0,"y":0.0}"#,
+        ] {
+            assert!(
+                matches!(parse_look_at_point(body), Err(JsonError::MissingKey(_))),
+                "expected MissingKey for body {body}",
+            );
+        }
+    }
+
+    #[test]
+    fn look_at_point_rejects_duplicate_key() {
+        let body = r#"{"x":0.0,"x":1.0,"y":0.0,"z":1.0}"#;
+        assert!(matches!(
+            parse_look_at_point(body),
+            Err(JsonError::DuplicateKey("x"))
+        ));
+    }
+
+    #[test]
+    fn look_at_point_rejects_unknown_key() {
+        let body = r#"{"x":0.0,"y":0.0,"z":1.0,"speed":1.0}"#;
+        assert!(matches!(
+            parse_look_at_point(body),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn look_at_point_rejects_origin_singularity() {
+        // The IK helper returns None at the origin; the parser must
+        // surface this as BadValue so the modifier graph never sees a
+        // None pose. This is the main domain-logic gate at the edge
+        // — guarding it explicitly catches a future epsilon tweak that
+        // would silently let near-origin targets through.
+        let body = r#"{"x":0.0,"y":0.0,"z":0.0}"#;
+        assert!(matches!(
+            parse_look_at_point(body),
+            Err(JsonError::BadValue)
+        ));
+    }
+
+    #[test]
+    fn look_at_point_rejects_nan_and_infinity() {
+        // Same singularity gate; from_xyz_lookat returns None on
+        // non-finite inputs, parser turns that into BadValue.
+        for body in [
+            r#"{"x":0.0,"y":0.0,"z":1e400}"#, // Inf
+            // The hand-rolled parser feeds the value to f32::from_str,
+            // which doesn't parse "NaN"/"Infinity" tokens, so those
+            // would already be BadValue at the number-parse stage.
+            // Test the singularity path with a near-origin instead:
+            r#"{"x":0.0000001,"y":0.0,"z":0.0}"#,
+        ] {
+            assert!(
+                matches!(parse_look_at_point(body), Err(JsonError::BadValue)),
+                "expected BadValue for body {body}",
+            );
+        }
     }
 
     #[test]

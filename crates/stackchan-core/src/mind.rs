@@ -161,6 +161,27 @@ pub enum Attention {
         /// When the tracking attention began.
         since: Instant,
     },
+    /// Aiming at an explicit 3D world point. Right-handed coordinates
+    /// with `+Z` forward (head's natural gaze axis), `+X` right, `+Y`
+    /// up; units are arbitrary (only direction matters).
+    ///
+    /// Set by the operator surface — HTTP `POST /look-at-point`, MCP
+    /// tool `robot.look_at_point`, ESP-NOW remote command — when a
+    /// caller wants 3D control rather than the existing pan/tilt 2D
+    /// shape. Read by
+    /// [`crate::modifiers::HeadFromAttention`] and
+    /// [`crate::modifiers::GazeFromAttention`], which convert the
+    /// point into a head pose via [`Pose::from_xyz_lookat`].
+    ///
+    /// The singularity at the origin is honoured: when `(x, y, z) ==
+    /// (0, 0, 0)` the conversion returns `None` and consumers fall
+    /// back to neutral pose.
+    Point {
+        /// Cartesian world point `(x, y, z)`.
+        target: (f32, f32, f32),
+        /// When this attention began.
+        since: Instant,
+    },
 }
 
 /// Face-lock engagement state.

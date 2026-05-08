@@ -426,6 +426,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("PUT", "/settings") => handle_put_settings(socket, body).await,
         ("POST", "/emotion") => handle_remote(socket, json::parse_set_emotion(body)).await,
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
+        ("POST", "/look-at-point") => handle_remote(socket, json::parse_look_at_point(body)).await,
         ("POST", "/face-target") => handle_remote(socket, json::parse_face_target(body)).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,

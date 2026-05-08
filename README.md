@@ -89,7 +89,7 @@ and the firmware exposes a LAN-only HTTP control plane:
 
 - `GET /` — operator dashboard, single-page HTML embedded in the binary
 - `GET /state/stream` — live state via Server-Sent Events
-- `POST /emotion`, `/look-at`, `/face-target`, `/reset`, `/speak` — manual override
+- `POST /emotion`, `/look-at`, `/look-at-point`, `/face-target`, `/reset`, `/speak` — manual override
 - `POST /volume`, `/mute`, `/mood`, `/palette`, `/head/offsets` — runtime control surface
 - `POST /sleep`, `/wake` — sleep mode (eyes shut / head limp / LED dark / audio paused). Wake via the route, MCP tool, any touch, or the side power button.
 - `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP for AI agent integrations (`set_emotion`, `look_at`, `speak`, `set_volume`, `create_reminder` / `list_reminders` / `cancel_reminder`, …)
