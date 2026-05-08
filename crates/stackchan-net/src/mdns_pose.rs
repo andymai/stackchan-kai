@@ -241,13 +241,13 @@ mod tests {
         // Realistic worst case after the head driver's ±60° clamp;
         // no truncation expected.
         let s = format_pose_kv("pitch", -59.95).unwrap();
-        // `{:.1}` rounds -59.95 to -60.0 (banker's rounding via Rust's
-        // default round-half-to-even on the IEEE 754 representation).
-        // Either form is acceptable for the wire — assert one of them.
+        // `{:.1}` rounds to the nearest tenth, so `-59.95` lands at
+        // either `-60.0` or `-59.9` depending on the IEEE 754
+        // representation of the literal — both are acceptable for the
+        // wire. Any other output would indicate a formatting bug.
         assert!(
-            s.as_str() == "pitch=-60.0"
-                || s.as_str() == "pitch=-59.9"
-                || s.as_str() == "pitch=-59.0"
+            s.as_str() == "pitch=-60.0" || s.as_str() == "pitch=-59.9",
+            "unexpected format: {s:?}"
         );
     }
 }

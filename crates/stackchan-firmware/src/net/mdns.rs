@@ -227,12 +227,17 @@ async fn serve_loop(
             }
             Either::Second(()) => {
                 let pose = current_pose();
-                let now_ms = EmbassyInstant::now().as_millis();
-                if !announcer.should_publish(pose, now_ms) {
+                if !announcer.should_publish(pose, EmbassyInstant::now().as_millis()) {
                     continue;
                 }
                 send_announcement(socket, hostname, our_ip, pose).await;
-                announcer.record_publish(pose, now_ms);
+                // Snap the publish stamp *after* the send completes,
+                // matching the query-response branch above. The two
+                // branches now agree on what "publish window starts"
+                // means; otherwise the periodic branch would record
+                // the start slightly earlier than the actual send and
+                // its throttle window would run slightly short.
+                announcer.record_publish(pose, EmbassyInstant::now().as_millis());
             }
         }
     }
