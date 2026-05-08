@@ -18,9 +18,10 @@
 
 use stackchan_core::modifiers::{
     DEFAULT_CENTRE_PRESS, DEFAULT_LEFT_PRESS, DEFAULT_RIGHT_PRESS, DEFAULT_SWIPE_BACKWARD,
-    DEFAULT_SWIPE_FORWARD, IntentFromBodyTouch,
+    DEFAULT_SWIPE_FORWARD, HEADPET_REACTION_ATTACK_MS, HEADPET_REACTION_TOTAL_MS,
+    HeadFromBodyGesture, IntentFromBodyTouch,
 };
-use stackchan_core::{BodyTouch, Director, Emotion, Entity, Instant, OverrideSource};
+use stackchan_core::{BodyGesture, BodyTouch, Director, Emotion, Entity, Instant, OverrideSource};
 
 const TICK_MS: u64 = 33;
 
@@ -134,4 +135,91 @@ fn no_perception_keeps_neutral() {
     run_for(&mut director, &mut entity, 0, 30);
     assert_eq!(entity.mind.affect.emotion, Emotion::Neutral);
     assert!(entity.mind.autonomy.manual_until.is_none());
+}
+
+#[test]
+fn intent_from_body_touch_stamps_last_gesture_on_press_swipe_release() {
+    let mut entity = Entity::default();
+    let mut gesture = IntentFromBodyTouch::new();
+    let mut director = Director::new();
+    director.add_modifier(&mut gesture).unwrap();
+
+    // Press fires Press(zones).
+    entity.perception.body_touch = Some(BodyTouch {
+        centre: 3,
+        ..BodyTouch::default()
+    });
+    director.run(&mut entity, Instant::from_millis(0));
+    assert!(matches!(
+        entity.mind.last_gesture,
+        Some((BodyGesture::Press { centre: 3, .. }, _))
+    ));
+
+    // Slide right → SwipeForward.
+    entity.perception.body_touch = Some(BodyTouch {
+        right: 3,
+        ..BodyTouch::default()
+    });
+    director.run(&mut entity, Instant::from_millis(100));
+    assert!(matches!(
+        entity.mind.last_gesture,
+        Some((BodyGesture::SwipeForward, _))
+    ));
+
+    // Release → Release.
+    entity.perception.body_touch = Some(BodyTouch::default());
+    director.run(&mut entity, Instant::from_millis(200));
+    assert!(matches!(
+        entity.mind.last_gesture,
+        Some((BodyGesture::Release, _))
+    ));
+}
+
+#[test]
+fn swipe_drives_head_pet_reaction_through_director() {
+    // Drive the full Affect→Motion chain: IntentFromBodyTouch sets
+    // emotion + stamps last_gesture; HeadFromBodyGesture reads
+    // last_gesture and applies a randomized head-pose nudge.
+    let mut entity = Entity::default();
+    let mut gesture = IntentFromBodyTouch::new();
+    let mut head_pet = HeadFromBodyGesture::new();
+    let mut director = Director::new();
+    director.add_modifier(&mut gesture).unwrap();
+    director.add_modifier(&mut head_pet).unwrap();
+
+    // Press → Swipe.
+    entity.perception.body_touch = Some(BodyTouch {
+        left: 3,
+        ..BodyTouch::default()
+    });
+    director.run(&mut entity, Instant::from_millis(0));
+    entity.perception.body_touch = Some(BodyTouch {
+        right: 3,
+        ..BodyTouch::default()
+    });
+    director.run(&mut entity, Instant::from_millis(50));
+
+    // Advance to the envelope peak. The pose should now reflect the
+    // head-pet nudge.
+    director.run(
+        &mut entity,
+        Instant::from_millis(50 + HEADPET_REACTION_ATTACK_MS),
+    );
+    assert!(
+        entity.motor.head_pose.pan_deg.abs() > 0.5 || entity.motor.head_pose.tilt_deg.abs() > 0.5,
+        "expected head pose to reflect the swipe-driven pet reaction at peak, got {:?}",
+        entity.motor.head_pose,
+    );
+
+    // After total reaction window, the pose should return to the
+    // upstream baseline (zero, since no other Motion modifier wrote).
+    director.run(
+        &mut entity,
+        Instant::from_millis(50 + HEADPET_REACTION_TOTAL_MS + 200),
+    );
+    assert!(
+        entity.motor.head_pose.pan_deg.abs() < 0.01 && entity.motor.head_pose.tilt_deg.abs() < 0.01,
+        "expected head pose to settle back to zero after reaction window, got {:?}",
+        entity.motor.head_pose,
+    );
 }

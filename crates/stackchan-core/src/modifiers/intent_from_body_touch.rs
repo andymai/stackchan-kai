@@ -19,8 +19,9 @@ use crate::clock::Instant;
 use crate::director::{Field, ModifierMeta, Phase};
 use crate::emotion::Emotion;
 use crate::entity::Entity;
-use crate::mind::OverrideSource;
+use crate::mind::{BodyGesture, OverrideSource};
 use crate::modifier::Modifier;
+use crate::perception::BodyTouch;
 
 /// Default emotion set on `Press` of the left zone (no centre touch).
 pub const DEFAULT_LEFT_PRESS: Emotion = Emotion::Sleepy;
@@ -130,12 +131,13 @@ impl Modifier for IntentFromBodyTouch {
             name: "IntentFromBodyTouch",
             description: "State-machine gesture recognition on perception.body_touch \
                           (Si12T petting strip): Press emits per-zone emotion, \
-                          SwipeForward/Backward emit Happy/Surprised. Mirrors M5Stack's \
-                          reference hal_head_touch.cpp gesture model.",
+                          SwipeForward/Backward emit Happy/Surprised, every transition \
+                          stamps mind.last_gesture for downstream reaction modifiers. \
+                          Mirrors M5Stack's reference hal_head_touch.cpp gesture model.",
             phase: Phase::Affect,
             priority: 0,
             reads: &[Field::BodyTouch],
-            writes: &[Field::Emotion, Field::Autonomy],
+            writes: &[Field::Emotion, Field::Autonomy, Field::Gesture],
         };
         &META
     }
@@ -162,6 +164,7 @@ impl Modifier for IntentFromBodyTouch {
                     return;
                 };
                 pin_emotion(entity, emotion, self.hold_ms);
+                stamp_gesture(entity, press_gesture(touch));
                 self.state = State::Touched {
                     initial_position: touch.position(),
                 };
@@ -171,18 +174,37 @@ impl Modifier for IntentFromBodyTouch {
                 let delta = touch.position() - initial_position;
                 if delta >= self.swipe_delta {
                     pin_emotion(entity, self.mapping.swipe_forward, self.hold_ms);
+                    stamp_gesture(entity, BodyGesture::SwipeForward);
                     self.state = State::Swiping;
                 } else if delta <= -self.swipe_delta {
                     pin_emotion(entity, self.mapping.swipe_backward, self.hold_ms);
+                    stamp_gesture(entity, BodyGesture::SwipeBackward);
                     self.state = State::Swiping;
                 }
             }
             (State::Touched { .. } | State::Swiping, false) => {
                 // Release: return to Idle, no emotion change.
+                stamp_gesture(entity, BodyGesture::Release);
                 self.state = State::Idle;
             }
         }
     }
+}
+
+/// Capture the current touch zones into a [`BodyGesture::Press`].
+const fn press_gesture(touch: BodyTouch) -> BodyGesture {
+    BodyGesture::Press {
+        left: touch.left,
+        centre: touch.centre,
+        right: touch.right,
+    }
+}
+
+/// Stamp a fresh gesture on `mind.last_gesture` with the current
+/// tick. Reaction modifiers in later phases gate on this.
+const fn stamp_gesture(entity: &mut Entity, gesture: BodyGesture) {
+    let now = entity.tick.now;
+    entity.mind.last_gesture = Some((gesture, now));
 }
 
 /// Write emotion + autonomy hold for any body-touch gesture.

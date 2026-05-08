@@ -78,10 +78,10 @@ use stackchan_core::{
         DecoratorFromBodyTouch, DecoratorFromEmotion, DecoratorFromListening, DecoratorFromLoud,
         DecoratorFromShake, DormancyFromActivity, EmotionCycle, EmotionFromAmbient,
         EmotionFromBattery, EmotionFromIntent, EmotionFromRemote, EmotionFromTouch,
-        EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromEmotion, HeadFromIntent,
-        IdleDrift, IdleHeadDrift, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
-        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, Soliloquy,
-        StyleFromEmotion, StyleFromIntent, StyleFromMood,
+        EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromBodyGesture,
+        HeadFromEmotion, HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch,
+        IntentFromLoud, LostTargetSearch, MicrosaccadeFromAttention, MouthFromAudio,
+        RemoteCommandModifier, Soliloquy, StyleFromEmotion, StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -226,6 +226,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut head_from_attention = HeadFromAttention::new();
     let mut lost_target_search = LostTargetSearch::new();
     let mut head_from_intent = HeadFromIntent::new();
+    let mut head_from_body_gesture = HeadFromBodyGesture::new();
     let mut mouth_from_audio = MouthFromAudio::new();
     let mut listening = Listening::new();
     let mut petting = Petting::new();
@@ -365,6 +366,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .add_modifier(&mut head_from_intent)
         .expect("registry full");
     director
+        .add_modifier(&mut head_from_body_gesture)
+        .expect("registry full");
+    director
         .add_modifier(&mut mouth_from_audio)
         .expect("registry full");
     director
@@ -394,7 +398,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 

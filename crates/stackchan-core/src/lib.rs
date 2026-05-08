@@ -67,7 +67,9 @@ pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
 pub use lipsync::{
     LipSync, VISEME_HIGH_ZCR_HZ, VISEME_LOW_ZCR_HZ, VISEME_SILENCE_RMS, Viseme, classify_viseme,
 };
-pub use mind::{Affect, Attention, Autonomy, Dormancy, Engagement, Intent, Mind, OverrideSource};
+pub use mind::{
+    Affect, Attention, Autonomy, BodyGesture, Dormancy, Engagement, Intent, Mind, OverrideSource,
+};
 pub use modifier::Modifier;
 pub use mood::Mood;
 pub use motor::Motor;
