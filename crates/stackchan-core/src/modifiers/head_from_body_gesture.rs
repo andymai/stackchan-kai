@@ -221,9 +221,16 @@ fn envelope(elapsed: u64, attack_ms: u64, total_ms: u64) -> f32 {
 }
 
 /// Derive `(pan_sign, tilt_sign)` from a firing instant via a
-/// splitmix-style hash on the millisecond count. Output values are
-/// `±1.0`; same `at` always produces the same pair so the sim's
-/// golden assertions stay stable.
+/// splitmix-style hash on the millisecond count.
+///
+/// Pan returns `±1.0` randomly. **Tilt is always `+1.0`** — a head-pet
+/// is physically a head-lift response (chin rises), and the asymmetric
+/// pose clamp ([`crate::head::MIN_TILT_DEG`] is `0.0`) silently
+/// swallows negative tilt at the resting position. Without this bias,
+/// roughly half of pet reactions would produce no visible tilt.
+///
+/// Same `at` always produces the same pan sign so the sim's golden
+/// assertions stay stable.
 const fn random_signs(at: Instant) -> (f32, f32) {
     let ms = at.as_millis();
     // SplitMix64 finalizer — cheap, well-distributed bit mixer.
@@ -232,8 +239,7 @@ const fn random_signs(at: Instant) -> (f32, f32) {
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^= z >> 31;
     let pan_sign = if z & 1 == 0 { 1.0 } else { -1.0 };
-    let tilt_sign = if (z >> 1) & 1 == 0 { 1.0 } else { -1.0 };
-    (pan_sign, tilt_sign)
+    (pan_sign, 1.0)
 }
 
 #[cfg(test)]
@@ -362,12 +368,65 @@ mod tests {
     }
 
     #[test]
-    fn random_signs_are_pm_one() {
-        // Sweep a few timestamps; outputs are always ±1.
+    fn random_signs_pan_is_pm_one() {
+        // Sweep a few timestamps; pan magnitude is always 1.
         for ms in [0u64, 1, 2, 3, 100, 12_345, 999_999] {
-            let (pan, tilt) = random_signs(Instant::from_millis(ms));
+            let (pan, _) = random_signs(Instant::from_millis(ms));
             assert!(pan.abs() == 1.0);
-            assert!(tilt.abs() == 1.0);
+        }
+    }
+
+    #[test]
+    fn random_signs_tilt_always_positive() {
+        // Regression guard: tilt MUST always be +1.0 across the
+        // timestamp distribution. Negative tilt clamps to 0 at the
+        // resting pose (`MIN_TILT_DEG = 0`), making half of all
+        // pet reactions invisible. A future tweak that re-randomises
+        // tilt will fail here before it ships.
+        for ms in [
+            0u64,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            100,
+            12_345,
+            999_999,
+            u64::MAX / 2,
+        ] {
+            let (_, tilt) = random_signs(Instant::from_millis(ms));
+            assert_eq!(tilt, 1.0, "tilt must be +1.0 at ms={ms}, got {tilt}");
+        }
+    }
+
+    #[test]
+    fn pet_reaction_visible_from_resting_pose() {
+        // Regression guard for the negative-tilt-clamp bug. With the
+        // upstream pose at the resting position (tilt = 0 = MIN_TILT_DEG),
+        // a swipe must still produce a visible head nudge. Sweep
+        // several gesture timestamps to exercise the random pan signs.
+        for at_ms in [0u64, 1, 17, 100, 12_345, 999_999] {
+            let mut m = HeadFromBodyGesture::new();
+            let mut entity = Entity::default();
+            // Resting pose — both axes at the lower clamp.
+            entity.motor.head_pose = Pose::new(0.0, 0.0);
+            entity.mind.last_gesture =
+                Some((BodyGesture::SwipeForward, Instant::from_millis(at_ms)));
+            entity.tick.now = Instant::from_millis(at_ms);
+            m.update(&mut entity);
+            // Re-apply the upstream pose like the firmware render
+            // loop does, then advance to the envelope peak.
+            entity.motor.head_pose = Pose::new(0.0, 0.0);
+            entity.tick.now = Instant::from_millis(at_ms + HEADPET_REACTION_ATTACK_MS);
+            m.update(&mut entity);
+            assert!(
+                entity.motor.head_pose.tilt_deg > 0.5,
+                "swipe at ms={at_ms} produced no visible tilt from resting pose: {:?}",
+                entity.motor.head_pose,
+            );
         }
     }
 
