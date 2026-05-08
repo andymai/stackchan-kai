@@ -75,6 +75,16 @@ pub struct Entity {
     pub events: Events,
     /// Per-frame timing. Stamped by [`crate::Director::run`].
     pub tick: Tick,
+    /// Operator-driven LED-ring colour override.
+    ///
+    /// `Some([r, g, b])` forces every LED on the WS2812 ring to this
+    /// colour, skipping the emotion / intent / breath mapping inside
+    /// [`crate::leds::render_leds`]. `None` (the default) restores
+    /// autonomous LED behaviour.
+    ///
+    /// Set by [`crate::modifiers::DancePlayer`] while a script holds
+    /// the RGB channel; cleared when the script ends.
+    pub led_override: Option<[u8; 3]>,
 }
 
 impl Entity {

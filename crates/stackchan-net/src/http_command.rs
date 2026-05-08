@@ -689,7 +689,7 @@ pub fn parse_enter_pairing(body: &str) -> Result<RemoteCommand, JsonError> {
 /// Single-pass byte cursor over the body. Each parse helper advances
 /// past the value it consumes (without consuming the trailing comma
 /// or `}` — those belong to [`visit_object`]).
-struct Scanner<'a> {
+pub(crate) struct Scanner<'a> {
     /// The body's raw bytes.
     bytes: &'a [u8],
     /// Read position into [`Scanner::bytes`].
@@ -698,7 +698,7 @@ struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
     /// Construct a scanner positioned at the start of `input`.
-    const fn new(input: &'a str) -> Self {
+    pub(crate) const fn new(input: &'a str) -> Self {
         Self {
             bytes: input.as_bytes(),
             pos: 0,
@@ -706,26 +706,26 @@ impl<'a> Scanner<'a> {
     }
 
     /// Advance past any ASCII whitespace at the current position.
-    fn skip_ws(&mut self) {
+    pub(crate) fn skip_ws(&mut self) {
         while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
             self.pos += 1;
         }
     }
 
     /// Peek the byte at the current position without advancing.
-    fn peek(&self) -> Option<u8> {
+    pub(crate) fn peek(&self) -> Option<u8> {
         self.bytes.get(self.pos).copied()
     }
 
     /// Read the byte at the current position and advance one byte.
-    fn bump(&mut self) -> Option<u8> {
+    pub(crate) fn bump(&mut self) -> Option<u8> {
         let b = self.peek()?;
         self.pos += 1;
         Some(b)
     }
 
     /// Skip whitespace and require the next byte to be `byte`.
-    fn expect(&mut self, byte: u8) -> Result<(), JsonError> {
+    pub(crate) fn expect(&mut self, byte: u8) -> Result<(), JsonError> {
         self.skip_ws();
         if self.bump() == Some(byte) {
             Ok(())
@@ -737,7 +737,7 @@ impl<'a> Scanner<'a> {
     /// Read a `"..."` literal without escape support. The opening
     /// quote is consumed when the helper enters; on success returns
     /// the inner slice and the trailing quote has been consumed.
-    fn read_string(&mut self) -> Result<&'a str, JsonError> {
+    pub(crate) fn read_string(&mut self) -> Result<&'a str, JsonError> {
         self.skip_ws();
         if self.bump() != Some(b'"') {
             return Err(JsonError::BadValue);
@@ -767,7 +767,7 @@ impl<'a> Scanner<'a> {
     /// — `u32::from_str` already rejects it, so without this gate
     /// the wire surface would be inconsistent across the integer
     /// and float fields.
-    fn read_number(&mut self) -> Result<&'a str, JsonError> {
+    pub(crate) fn read_number(&mut self) -> Result<&'a str, JsonError> {
         self.skip_ws();
         if self.peek() == Some(b'+') {
             return Err(JsonError::BadValue);
@@ -828,7 +828,7 @@ where
 /// `Emotion::wire_str` round-trip target — see the
 /// `emotion_wire_str_round_trips_through_parser` test for the live
 /// pin against `Emotion::ALL`.
-fn parse_emotion(scanner: &mut Scanner<'_>) -> Result<Emotion, JsonError> {
+pub(crate) fn parse_emotion(scanner: &mut Scanner<'_>) -> Result<Emotion, JsonError> {
     let raw = scanner.read_string()?;
     match raw {
         "neutral" => Ok(Emotion::Neutral),
@@ -900,7 +900,7 @@ fn parse_locale(scanner: &mut Scanner<'_>) -> Result<Locale, JsonError> {
 }
 
 /// Parse a contiguous number-shaped run as a `u32`.
-fn parse_u32(scanner: &mut Scanner<'_>) -> Result<u32, JsonError> {
+pub(crate) fn parse_u32(scanner: &mut Scanner<'_>) -> Result<u32, JsonError> {
     scanner
         .read_number()?
         .parse::<u32>()
@@ -919,7 +919,7 @@ fn parse_u16(scanner: &mut Scanner<'_>) -> Result<u16, JsonError> {
 }
 
 /// Parse a contiguous number-shaped run as an `f32`.
-fn parse_f32(scanner: &mut Scanner<'_>) -> Result<f32, JsonError> {
+pub(crate) fn parse_f32(scanner: &mut Scanner<'_>) -> Result<f32, JsonError> {
     scanner
         .read_number()?
         .parse::<f32>()

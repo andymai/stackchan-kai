@@ -27,8 +27,11 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
+extern crate alloc;
+
 pub mod bubble;
 pub mod clock;
+pub mod dance;
 pub mod decorator;
 pub mod director;
 pub mod draw;
