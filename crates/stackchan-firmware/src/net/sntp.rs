@@ -51,6 +51,18 @@ pub async fn sntp_task(stack: Stack<'static>, rtc_bus: SharedI2cBus, servers: Ve
         park_forever().await;
     }
 
+    // Acquire the receiver before any await. `Watch::receiver()`
+    // initialises the receiver's generation counter to the watch's
+    // *current* generation; if `wifi_task` ever publishes between
+    // task spawn and this line, that publish becomes invisible to a
+    // subsequent `.changed().await`. The first read uses `.get()`
+    // which returns the stored value (or waits for the first
+    // publish) regardless of when this receiver was created.
+    let Some(mut link) = WIFI_LINK_WATCH.receiver() else {
+        defmt::error!("sntp: WIFI_LINK_WATCH receiver slot exhausted; parking");
+        park_forever().await;
+    };
+
     let mut rx_meta = [PacketMetadata::EMPTY; 4];
     let mut rx_buf = [0u8; 256];
     let mut tx_meta = [PacketMetadata::EMPTY; 4];
@@ -65,40 +77,40 @@ pub async fn sntp_task(stack: Stack<'static>, rtc_bus: SharedI2cBus, servers: Ve
         );
     }
 
-    let Some(mut link) = WIFI_LINK_WATCH.receiver() else {
-        defmt::error!("sntp: WIFI_LINK_WATCH receiver slot exhausted; parking");
-        park_forever().await;
-    };
-
+    // Seed with the current value (or wait for the first publish);
+    // every subsequent iteration waits on `.changed()` for the next
+    // transition, matching the original "sync once per link cycle"
+    // design.
+    let mut state = link.get().await;
     loop {
-        // Wait for an active link before each sync attempt. `changed()`
-        // returns the next published value (including the first one if
-        // wifi_task already published before this task spawned), so we
-        // still re-check the variant before dispatching.
-        if !matches!(link.changed().await, WifiLinkState::Connected) {
-            continue;
-        }
-        // Give DHCP a moment to settle once the link is up. Without an
-        // assigned address the UDP socket can't route the request.
-        Timer::after(Duration::from_secs(1)).await;
+        if matches!(state, WifiLinkState::Connected) {
+            // Give DHCP a moment to settle once the link is up.
+            // Without an assigned address the UDP socket can't
+            // route the request.
+            Timer::after(Duration::from_secs(1)).await;
 
-        let mut socket =
-            UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
-        if let Err(e) = socket.bind(0) {
-            defmt::warn!("sntp: bind failed ({:?})", e);
-            sleep_until_resync().await;
-            continue;
+            let mut socket =
+                UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+            match socket.bind(0) {
+                Ok(()) => {
+                    let synced = try_sync_once(&stack, &socket, &servers, &mut rtc).await;
+                    socket.close();
+                    if synced {
+                        sleep_until_resync().await;
+                    } else {
+                        // No server answered — back off briefly
+                        // before the next attempt rather than
+                        // busy-looping the link signal.
+                        Timer::after(Duration::from_secs(30)).await;
+                    }
+                }
+                Err(e) => {
+                    defmt::warn!("sntp: bind failed ({:?})", e);
+                    sleep_until_resync().await;
+                }
+            }
         }
-
-        let synced = try_sync_once(&stack, &socket, &servers, &mut rtc).await;
-        socket.close();
-        if synced {
-            sleep_until_resync().await;
-        } else {
-            // No server answered — back off briefly before the next
-            // attempt rather than busy-looping the link signal.
-            Timer::after(Duration::from_secs(30)).await;
-        }
+        state = link.changed().await;
     }
 }
 
