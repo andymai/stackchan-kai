@@ -1,6 +1,7 @@
 import { onCleanup, onMount } from "solid-js";
 import { connectStream } from "./store";
 import { ConnStatus } from "./components/ConnStatus";
+import { CrashBanner } from "./components/CrashBanner";
 import { State } from "./components/State";
 import { Emotion } from "./components/Emotion";
 import { Listen } from "./components/Listen";
@@ -51,6 +52,7 @@ export function App() {
           <h1>Stack-chan</h1>
           <ConnStatus />
         </header>
+        <CrashBanner />
         <State />
         <Emotion />
         <Mood />

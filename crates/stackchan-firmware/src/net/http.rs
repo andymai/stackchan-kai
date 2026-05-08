@@ -460,6 +460,8 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/palette") => handle_post_palette(socket, body).await,
         ("POST", "/face-geometry") => handle_post_face_geometry(socket, body).await,
+        ("GET", "/crash") => handle_get_crash(socket).await,
+        ("POST", "/crash/clear") => handle_post_crash_clear(socket).await,
         ("POST", "/sleep") => handle_post_sleep(socket).await,
         ("POST", "/wake") => handle_post_wake(socket).await,
         ("GET", "/head/offsets") => handle_get_head_offsets(socket).await,
@@ -905,6 +907,44 @@ async fn handle_post_face_geometry(
     let _ = crate::runtime_store::update_face_geometry(geometry).await;
     defmt::info!("http: POST /face-geometry → {}", geometry.wire_str());
     write_no_content(socket).await
+}
+
+/// `GET /crash` — return the most recent panic log written by the
+/// boot path from the persistent RTC crash latch.
+///
+/// Body is the raw rendered log entry — line-delimited `key=value`
+/// pairs (`reset_reason`, `file`, `line`, `message`). Returns 404
+/// if no crash has been recorded since the last clear, 503 if the
+/// SD card is absent or unreadable.
+async fn handle_get_crash(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let outcome = crate::storage::with_storage(crate::storage::FirmwareStorage::read_crash).await;
+    match outcome {
+        Some(Ok(Some(text))) => write_text(socket, 200, &text).await,
+        Some(Ok(None)) => write_text(socket, 404, "no crash recorded\n").await,
+        Some(Err(e)) => {
+            defmt::warn!("http: GET /crash read failed ({})", defmt::Debug2Format(&e));
+            write_text(socket, 500, "crash log read failed\n").await
+        }
+        None => write_text(socket, 503, "no SD card mounted\n").await,
+    }
+}
+
+/// `POST /crash/clear` — empty body. Deletes `/sd/CRASH.LOG` so
+/// subsequent `GET /crash` calls return 404. Idempotent: clearing
+/// when no log exists returns 204.
+async fn handle_post_crash_clear(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+    let outcome = crate::storage::with_storage(crate::storage::FirmwareStorage::delete_crash).await;
+    match outcome {
+        Some(Ok(())) => write_no_content(socket).await,
+        Some(Err(e)) => {
+            defmt::warn!(
+                "http: POST /crash/clear failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            write_text(socket, 500, "crash log delete failed\n").await
+        }
+        None => write_text(socket, 503, "no SD card mounted\n").await,
+    }
 }
 
 /// `POST /sleep` — empty body. Drops eyes shut, head limp, LED ring

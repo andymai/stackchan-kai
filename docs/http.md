@@ -29,6 +29,8 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
 | GET    | `/head/offsets`  | Current yaw + tilt zero-point offsets               |
 | POST   | `/head/offsets`  | Update yaw + tilt zero-point offsets (runtime-only) |
+| GET    | `/crash`         | Most recent panic log (404 if none recorded)        |
+| POST   | `/crash/clear`   | Delete `/sd/CRASH.LOG` (idempotent)                 |
 | POST   | `/emotion`       | Set affect with hold timer                          |
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |

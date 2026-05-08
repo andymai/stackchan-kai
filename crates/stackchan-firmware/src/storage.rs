@@ -148,6 +148,21 @@ const MAX_BONDS_BYTES: u32 = 1024;
 /// 153 600 bytes; convertible with a one-line numpy reshape.
 const CAPTURE_FILE: &str = "CAPTURE.565";
 
+/// Filename for the most recent crash log. Written by the boot path
+/// when the persistent latch in RTC fast RAM contains a valid panic
+/// snapshot. Single-slot — each new crash overwrites the prior log,
+/// matching the operator workflow ("device rebooted unexpectedly,
+/// what happened?"); a multi-entry archive would force log rotation
+/// and partition planning that's out of scope at v1.
+const CRASH_FILE: &str = "CRASH.LOG";
+
+/// Cap on the crash log we'll read back. The renderer in
+/// [`crate::crash::render_log_entry`] currently emits ~400 bytes for
+/// a max-truncated panic (4 fields × ~MSG/FILE caps). 2 KiB leaves
+/// headroom for future fields (boot count, reset reason variants,
+/// firmware version) without unbounded SRAM growth at read time.
+const MAX_CRASH_BYTES: u32 = 2048;
+
 /// Storage / FAT errors. Logged via `defmt::Format` at the firmware
 /// boundary; the operator triages from the boot log.
 #[derive(Debug, defmt::Format)]
@@ -386,6 +401,69 @@ where
         self.write_file(CAPTURE_FILE, frame)
     }
 
+    /// Truncate-write a rendered crash-log entry into
+    /// `/sd/CRASH.LOG`. No staging dance — the operator workflow is
+    /// "boot saw a previous crash, write the latest"; partial
+    /// writes get overwritten by the next reboot or the operator
+    /// clearing it via `POST /crash/clear`.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying SPI / FAT failure.
+    pub fn write_crash(&mut self, rendered: &str) -> Result<(), StorageError> {
+        self.write_file(CRASH_FILE, rendered.as_bytes())
+    }
+
+    /// Read `/sd/CRASH.LOG` as raw UTF-8 text. Returns `Ok(None)` if
+    /// the file is absent — that's the steady-state "no recent
+    /// crash" condition, not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial / failed read,
+    /// [`StorageError::TooLarge`] if the file exceeds
+    /// [`MAX_CRASH_BYTES`], [`StorageError::NotUtf8`] if the bytes
+    /// don't decode as UTF-8.
+    pub fn read_crash(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(CRASH_FILE, Mode::ReadOnly) else {
+            return Ok(None);
+        };
+        let len = file.length();
+        if len > MAX_CRASH_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = len as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        let text = alloc::string::String::from_utf8(buf).map_err(|_| StorageError::NotUtf8)?;
+        Ok(Some(text))
+    }
+
+    /// Delete `/sd/CRASH.LOG`. `Ok(())` if the file is absent
+    /// (idempotent). Used by `POST /crash/clear`.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying SPI / FAT failure
+    /// other than the file-not-found case.
+    pub fn delete_crash(&mut self) -> Result<(), StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        match root.delete_file_in_dir(CRASH_FILE) {
+            Ok(()) | Err(embedded_sdmmc::Error::NotFound) => Ok(()),
+            Err(_) => Err(StorageError::Write),
+        }
+    }
+
     /// Read the most recent camera capture from `/sd/CAPTURE.565`.
     /// Returns `Ok(None)` if no capture exists yet — that's the
     /// before-first-capture state, not an error.
@@ -452,6 +530,7 @@ where
             BONDS_FILE,
             BONDS_STAGING_FILE,
             CAPTURE_FILE,
+            CRASH_FILE,
         ] {
             // FileNotFound is the expected case for any file the
             // operator never wrote — keep going. Anything else is a

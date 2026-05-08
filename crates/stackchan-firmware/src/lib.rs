@@ -26,6 +26,7 @@ pub mod button;
 pub mod camera;
 pub mod chime;
 pub mod clock;
+pub mod crash;
 pub mod event_log;
 pub mod framebuffer;
 pub mod head;
