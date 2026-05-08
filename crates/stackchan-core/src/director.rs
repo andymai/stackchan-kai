@@ -104,6 +104,10 @@ pub enum FieldGroup {
     Voice,
     /// Pending firmware → modifier inputs (`entity.input.*`).
     Input,
+    /// Operator-driven output overrides that bypass the autonomous
+    /// per-frame mappings (`entity.led_override` and any future
+    /// peers).
+    Output,
 }
 
 /// Fine-grained identifiers for the entity's mutable surface.
@@ -203,6 +207,10 @@ pub enum Field {
     /// `entity.mind.last_gesture`
     Gesture,
 
+    // ---- Output overrides ----
+    /// `entity.led_override`
+    LedOverride,
+
     // ---- Voice ----
     /// `entity.voice.chirp_request`
     ChirpRequest,
@@ -218,6 +226,8 @@ pub enum Field {
     RemotePending,
     /// `entity.input.remote_command`
     RemoteCommand,
+    /// `entity.input.dance_script`
+    DanceScript,
 }
 
 impl Field {
@@ -312,7 +322,10 @@ impl Field {
             | Self::Mood
             | Self::Gesture => FieldGroup::Mind,
             Self::ChirpRequest | Self::UtteranceRequest | Self::IsSpeaking => FieldGroup::Voice,
-            Self::TapPending | Self::RemotePending | Self::RemoteCommand => FieldGroup::Input,
+            Self::TapPending | Self::RemotePending | Self::RemoteCommand | Self::DanceScript => {
+                FieldGroup::Input
+            }
+            Self::LedOverride => FieldGroup::Output,
         }
     }
 
@@ -320,6 +333,12 @@ impl Field {
     /// `after`. Used by the debug-mode write enforcement in
     /// [`Director::run`] to detect undeclared mutations.
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "tabular dispatch over the Field enum — one arm per variant; \
+                  splitting by group reduces clarity and would scatter the \
+                  variant→backing-field map across helpers"
+    )]
     pub fn changed(self, before: &Entity, after: &Entity) -> bool {
         match self {
             Self::LeftEyePhase => before.face.left_eye.phase != after.face.left_eye.phase,
@@ -423,6 +442,14 @@ impl Field {
             Self::TapPending => before.input.tap_pending != after.input.tap_pending,
             Self::RemotePending => before.input.remote_pending != after.input.remote_pending,
             Self::RemoteCommand => before.input.remote_command != after.input.remote_command,
+            Self::DanceScript => {
+                // `Arc<DanceScript>` equality compares ptr first then
+                // recurses on `DanceScript: PartialEq` for differing
+                // pointers. Cheap enough for the per-tick dirty
+                // check.
+                before.input.dance_script != after.input.dance_script
+            }
+            Self::LedOverride => before.led_override != after.led_override,
         }
     }
 }

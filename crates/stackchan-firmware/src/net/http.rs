@@ -191,6 +191,18 @@ pub static MOOD_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Mood> = 
 /// follow-up alongside the NVS `RuntimeStore`.
 pub static PALETTE_SIGNAL: Signal<CriticalSectionRawMutex, stackchan_core::Palette> = Signal::new();
 
+/// Latest dance script uploaded via `POST /dance`.
+///
+/// Drained by the render task into `DancePlayer` via
+/// `dance_player.load_script(script, now)` so the player anchors at
+/// the upload instant. Latest-wins: a new upload mid-dance replaces
+/// the active script. The script lives behind an `Arc` so the
+/// signal handoff is cheap — no copy of the keyframe vector.
+pub static DANCE_SCRIPT_SIGNAL: Signal<
+    CriticalSectionRawMutex,
+    alloc::sync::Arc<stackchan_core::dance::DanceScript>,
+> = Signal::new();
+
 /// Number of concurrent HTTP worker tasks. Each worker holds its own
 /// rx/tx buffers and accepts one connection at a time.
 ///
@@ -428,6 +440,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/look-at") => handle_remote(socket, json::parse_look_at(body)).await,
         ("POST", "/look-at-point") => handle_remote(socket, json::parse_look_at_point(body)).await,
         ("POST", "/face-target") => handle_remote(socket, json::parse_face_target(body)).await,
+        ("POST", "/dance") => handle_post_dance(socket, body).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("POST", "/listen") => handle_remote(socket, json::parse_start_listen(body)).await,
@@ -738,6 +751,34 @@ async fn audio_persist_to_http(
         AudioPersistOutcome::NoStorage => write_text(socket, 503, "no SD card mounted\n").await,
         AudioPersistOutcome::WriteFailed => write_text(socket, 500, "config write failed\n").await,
     }
+}
+
+/// `POST /dance` — parse the keyframe stream, hand the script off
+/// to the render task's `DancePlayer` via [`DANCE_SCRIPT_SIGNAL`].
+///
+/// Body shape per [`stackchan_net::dance::parse_dance`]: a top-level
+/// object with a `keyframes` array. Each keyframe carries `at_ms`
+/// plus any subset of motion / avatar / RGB channel fields.
+///
+/// Returns `204 No Content` on a parsed-and-handed-off script, `400`
+/// with the parser error on malformed input.
+async fn handle_post_dance(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    use alloc::sync::Arc;
+    let script = match stackchan_net::dance::parse_dance(body) {
+        Ok(s) => s,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /dance parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let msg = format!("invalid dance script: {e:?}\n");
+            return write_text(socket, 400, &msg).await;
+        }
+    };
+    let len = script.keyframes.len();
+    DANCE_SCRIPT_SIGNAL.signal(Arc::new(script));
+    defmt::info!("http: POST /dance → {=usize} keyframes loaded", len);
+    write_no_content(socket).await
 }
 
 /// `POST /mood` — parse `{"mood": "<string>"}`, push the new mood

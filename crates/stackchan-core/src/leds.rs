@@ -208,35 +208,45 @@ const fn rgb888_to_565(r: u8, g: u8, b: u8) -> u16 {
 
 /// Render the LED ring for the current [`Entity`] state.
 ///
-/// Writes all [`LED_COUNT`] pixels of `out` with a uniform colour
-/// derived from `entity.mind.affect.emotion`, dimmed by both the
-/// global brightness cap and the current breath-envelope phase at
-/// `now`. Deterministic with respect to `(entity.mind.affect.emotion,
-/// now)` — host-testable.
+/// Writes all [`LED_COUNT`] pixels of `out` with a uniform colour.
+///
+/// - When [`Entity::led_override`] is `Some`, the requested RGB
+///   triple is written verbatim (no breath dim, no intent flash) —
+///   this is the operator/dance-script override path.
+/// - Otherwise the colour is derived from `entity.mind.affect.emotion`
+///   via the private `palette_for` mapping, dimmed by both the global
+///   brightness cap and the current breath-envelope phase at `now`.
+///   Deterministic with respect to `(entity.led_override,
+///   entity.mind.intent, entity.mind.affect.emotion, now)` —
+///   host-testable.
 pub fn render_leds(entity: &Entity, now: Instant, out: &mut LedFrame) {
-    let base = palette_for(entity.mind.intent, entity.mind.affect.emotion);
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "bitmasked to 8 bits before truncation"
-    )]
-    let (r_raw, g_raw, b_raw) = (
-        ((base >> 16) & 0xFF) as u8,
-        ((base >> 8) & 0xFF) as u8,
-        (base & 0xFF) as u8,
-    );
-    // `Startled` pins brightness to peak — the breath dim is
-    // suppressed so the ring reads as a "flash" for the hold
-    // duration. Other intents follow the breath envelope.
-    let brightness = if matches!(entity.mind.intent, Intent::Startled) {
-        BRIGHTNESS_PEAK
+    let pixel = if let Some([r, g, b]) = entity.led_override {
+        rgb888_to_565(r, g, b)
     } else {
-        breath_brightness(now)
+        let base = palette_for(entity.mind.intent, entity.mind.affect.emotion);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "bitmasked to 8 bits before truncation"
+        )]
+        let (r_raw, g_raw, b_raw) = (
+            ((base >> 16) & 0xFF) as u8,
+            ((base >> 8) & 0xFF) as u8,
+            (base & 0xFF) as u8,
+        );
+        // `Startled` pins brightness to peak — the breath dim is
+        // suppressed so the ring reads as a "flash" for the hold
+        // duration. Other intents follow the breath envelope.
+        let brightness = if matches!(entity.mind.intent, Intent::Startled) {
+            BRIGHTNESS_PEAK
+        } else {
+            breath_brightness(now)
+        };
+        rgb888_to_565(
+            scale_channel(r_raw, brightness),
+            scale_channel(g_raw, brightness),
+            scale_channel(b_raw, brightness),
+        )
     };
-    let pixel = rgb888_to_565(
-        scale_channel(r_raw, brightness),
-        scale_channel(g_raw, brightness),
-        scale_channel(b_raw, brightness),
-    );
     for slot in &mut out.0 {
         *slot = pixel;
     }

@@ -12,6 +12,9 @@
 //! Consumer side: the modifier checks the field each tick, and if set,
 //! reads + clears it.
 
+use alloc::sync::Arc;
+
+use crate::dance::DanceScript;
 use crate::emotion::Emotion;
 use crate::head::Pose;
 use crate::voice::{Locale, PhraseId, Priority};
@@ -114,8 +117,10 @@ pub enum RemoteCommand {
 /// back to their default.
 ///
 /// Only `PartialEq` (not `Eq`) because [`RemoteCommand`] carries a
-/// [`Pose`] with `f32` fields.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+/// [`Pose`] with `f32` fields. Not `Copy` because `dance_script`
+/// holds an `Arc` — the `Arc` clone is intentional on the consume
+/// path.
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Input {
     /// Tap edge from the touch sensor or power button. Consumed by
     /// [`crate::modifiers::EmotionFromTouch`].
@@ -126,4 +131,10 @@ pub struct Input {
     /// Most recent external control-plane command. Consumed by
     /// [`crate::modifiers::RemoteCommandModifier`].
     pub remote_command: Option<RemoteCommand>,
+    /// Pending dance script uploaded via `POST /dance` and waiting
+    /// for [`crate::modifiers::DancePlayer`] to consume it. Cleared
+    /// (set to `None`) by the player on the tick it loads the
+    /// script. The `Arc` makes the firmware → modifier handoff
+    /// O(1) regardless of keyframe count.
+    pub dance_script: Option<Arc<DanceScript>>,
 }

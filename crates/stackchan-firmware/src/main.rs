@@ -74,7 +74,7 @@ use mipidsi::{
 use stackchan_core::{
     Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
-        AttentionFromTracking, Blink, Breath, BubbleExpiry, DecoratorExpiry,
+        AttentionFromTracking, Blink, Breath, BubbleExpiry, DancePlayer, DecoratorExpiry,
         DecoratorFromBodyTouch, DecoratorFromEmotion, DecoratorFromListening, DecoratorFromLoud,
         DecoratorFromShake, DormancyFromActivity, EmotionCycle, EmotionFromAmbient,
         EmotionFromBattery, EmotionFromIntent, EmotionFromRemote, EmotionFromTouch,
@@ -227,6 +227,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut lost_target_search = LostTargetSearch::new();
     let mut head_from_intent = HeadFromIntent::new();
     let mut head_from_body_gesture = HeadFromBodyGesture::new();
+    let mut dance_player = DancePlayer::new();
     let mut mouth_from_audio = MouthFromAudio::new();
     let mut listening = Listening::new();
     let mut petting = Petting::new();
@@ -369,6 +370,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .add_modifier(&mut head_from_body_gesture)
         .expect("registry full");
     director
+        .add_modifier(&mut dance_player)
+        .expect("registry full");
+    director
         .add_modifier(&mut mouth_from_audio)
         .expect("registry full");
     director
@@ -398,7 +402,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
@@ -492,6 +496,12 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         // `runtime_store::update_palette`).
         if let Some(palette) = net::http::PALETTE_SIGNAL.try_take() {
             entity.face.palette = palette;
+        }
+        // Drain a freshly-uploaded dance script from `POST /dance`
+        // into `entity.input.dance_script`; the `DancePlayer`
+        // modifier consumes it inside `Director::run`. Latest-wins.
+        if let Some(script) = net::http::DANCE_SCRIPT_SIGNAL.try_take() {
+            entity.input.dance_script = Some(script);
         }
         // Drain the latest IMU reading.
         if let Some(m) = imu::IMU_SIGNAL.try_take() {
