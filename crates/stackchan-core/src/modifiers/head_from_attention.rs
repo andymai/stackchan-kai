@@ -90,10 +90,26 @@ pub struct HeadFromAttention {
     /// unless currently easing out.
     release_since: Option<Instant>,
     /// Smoothed tracking target (single-pole low-pass over the live
-    /// `Attention::Tracking{target}`). `None` between Tracking runs;
-    /// the next entry to Tracking re-anchors at the live target so
-    /// there's no overshoot from a stale value.
+    /// `Attention::Tracking{target}` or the IK-converted
+    /// `Attention::Point{target}`). `None` between active runs; the
+    /// next entry re-anchors at the live target so there's no overshoot
+    /// from a stale value.
     smoothed_target: Option<Pose>,
+    /// Which attention variant produced the active `smoothed_target`.
+    /// Tracked so an atomic `Tracking` ↔ `Point` swap (skipping
+    /// `Attention::None`) resets the smoother — otherwise the new arm
+    /// would chase from the prior arm's pose.
+    smoothed_source: Option<SmoothedSource>,
+}
+
+/// Discriminant for which attention variant currently owns
+/// [`HeadFromAttention::smoothed_target`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmoothedSource {
+    /// `Attention::Tracking` produced the smoothed target.
+    Tracking,
+    /// `Attention::Point` produced the smoothed target (after IK).
+    Point,
 }
 
 impl HeadFromAttention {
@@ -106,6 +122,7 @@ impl HeadFromAttention {
             listen_since: None,
             release_since: None,
             smoothed_target: None,
+            smoothed_source: None,
         }
     }
 }
@@ -229,10 +246,16 @@ impl Modifier for HeadFromAttention {
                     // filter smooths jittery per-frame centroids.
                     //
                     // On entry to Tracking the smoother anchors at the
-                    // live target (no chase from a stale value).
-                    let prev = self.smoothed_target.unwrap_or(target);
+                    // live target (no chase from a stale value). Re-anchor
+                    // also when switching from the Point source so the
+                    // 3D pose isn't carried into 2D tracking.
+                    let prev = match self.smoothed_source {
+                        Some(SmoothedSource::Tracking) => self.smoothed_target.unwrap_or(target),
+                        _ => target,
+                    };
                     let smoothed = lerp_pose(prev, target);
                     self.smoothed_target = Some(smoothed);
+                    self.smoothed_source = Some(SmoothedSource::Tracking);
                     (
                         smoothed.pan_deg - upstream_pan,
                         smoothed.tilt_deg - upstream_tilt,
@@ -249,9 +272,18 @@ impl Modifier for HeadFromAttention {
                     // fall through to no contribution), then run the
                     // same low-pass smoother as the Tracking branch.
                     if let Some(point_target) = Pose::from_xyz_lookat(x, y, z).map(Pose::clamped) {
-                        let prev = self.smoothed_target.unwrap_or(point_target);
+                        // Re-anchor on entry or on a Tracking → Point
+                        // swap so the 2D pose isn't carried into the
+                        // 3D IK target.
+                        let prev = match self.smoothed_source {
+                            Some(SmoothedSource::Point) => {
+                                self.smoothed_target.unwrap_or(point_target)
+                            }
+                            _ => point_target,
+                        };
                         let smoothed = lerp_pose(prev, point_target);
                         self.smoothed_target = Some(smoothed);
+                        self.smoothed_source = Some(SmoothedSource::Point);
                         (
                             smoothed.pan_deg - upstream_pan,
                             smoothed.tilt_deg - upstream_tilt,
@@ -260,13 +292,16 @@ impl Modifier for HeadFromAttention {
                         // Origin / NaN / Inf — drop the smoother and
                         // contribute nothing this tick.
                         self.smoothed_target = None;
+                        self.smoothed_source = None;
                         (0.0, 0.0)
                     }
                 }
                 (None, Attention::Listening { .. } | Attention::None) => {
-                    // Drop the smoother anchor so a future Tracking run
-                    // re-anchors at the live target (no stale chase).
+                    // Drop the smoother anchor so a future Tracking /
+                    // Point run re-anchors at the live target (no
+                    // stale chase).
                     self.smoothed_target = None;
+                    self.smoothed_source = None;
                     // Tilt-only contribution, eased by the listen / release
                     // anchors. Pan stays at zero (no contribution).
                     let target_tilt = match (self.listen_since, self.release_since) {
@@ -655,5 +690,87 @@ mod tests {
         // Pan contribution should be zero (no attention, no
         // listening ease for pan).
         assert_eq!(m.last_pan_deg, 0.0);
+    }
+
+    #[test]
+    fn tracking_to_point_swap_re_anchors_smoother() {
+        // Atomic Tracking → Point swap (skipping Attention::None):
+        // the smoother MUST re-anchor at the IK target rather than
+        // chase from the prior tracking pose. Without the
+        // smoothed_source discriminant, the Point arm's
+        // `unwrap_or(point_target)` would carry the 2D tracking pose
+        // forward and produce a brief smooth chase from the 2D pose
+        // to the 3D point.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+
+        // Settle into a tracking pose far from where the point will land.
+        entity.mind.attention = tracking(Pose::new(20.0, 5.0));
+        for t in 0..40 {
+            entity.tick.now = Instant::from_millis(t * 33);
+            m.update(&mut entity);
+        }
+        let after_tracking = entity.motor.head_pose;
+        assert!(
+            (after_tracking.pan_deg - 20.0).abs() < 0.5,
+            "tracking should have settled at +20°, got {after_tracking:?}",
+        );
+
+        // Atomic swap to a 3D point straight ahead (yaw = 0). Re-apply
+        // the upstream pose first so the diff-and-undo comparison is
+        // honest (mimics what the firmware render task does each
+        // frame).
+        entity.motor.head_pose = after_tracking;
+        entity.mind.attention = Attention::Point {
+            target: (0.0, 0.0, 1.0),
+            since: Instant::from_millis(40 * 33),
+        };
+        entity.tick.now = Instant::from_millis(40 * 33);
+        m.update(&mut entity);
+
+        // First tick after the swap: head should snap toward the IK
+        // target (yaw ≈ 0), not blend from the +20° tracking pose. If
+        // the smoother had inherited the tracking state, we'd expect
+        // a value close to +20° (one frame's lerp toward 0 is
+        // ~20 × (1 - 0.22) ≈ 15.6°).
+        assert!(
+            entity.motor.head_pose.pan_deg.abs() < 1.0,
+            "Tracking → Point swap should snap to IK target ≈ 0°, got {:?}",
+            entity.motor.head_pose,
+        );
+    }
+
+    #[test]
+    fn point_to_tracking_swap_re_anchors_smoother() {
+        // Symmetric guard for the reverse swap.
+        let mut m = HeadFromAttention::new();
+        let mut entity = Entity::default();
+
+        // Settle into a Point hold pointing hard right (+X, +Z).
+        entity.mind.attention = Attention::Point {
+            target: (1.0, 0.0, 0.0),
+            since: Instant::from_millis(0),
+        };
+        for t in 0..40 {
+            entity.tick.now = Instant::from_millis(t * 33);
+            m.update(&mut entity);
+        }
+        let after_point = entity.motor.head_pose;
+        // Point at +X,+Z=0 → atan2(1,0) = 90°, clamped to MAX_PAN_DEG.
+        assert!(after_point.pan_deg > 30.0);
+
+        // Swap to a centre-pointing tracking target.
+        entity.motor.head_pose = after_point;
+        entity.mind.attention = tracking(Pose::new(0.0, 0.0));
+        entity.tick.now = Instant::from_millis(40 * 33);
+        m.update(&mut entity);
+
+        // Should snap toward the new tracking target on entry rather
+        // than chase from the prior point pose.
+        assert!(
+            entity.motor.head_pose.pan_deg.abs() < 1.0,
+            "Point → Tracking swap should snap to 0°, got {:?}",
+            entity.motor.head_pose,
+        );
     }
 }
