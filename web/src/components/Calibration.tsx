@@ -1,18 +1,11 @@
 import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { authedFetch, postJson } from "../auth";
 import { showToast, snapshot } from "../store";
+import { TRACKER_DEFAULT } from "../types";
 import type { HeadOffsets, Settings as SettingsType, Tracker } from "../types";
 
 const FRAME_WIDTH = 320;
 const FRAME_HEIGHT = 240;
-
-const TRACKER_DEFAULT: Tracker = {
-  fov_h_deg: 62.0,
-  fov_v_deg: 49.0,
-  target_smoothing_alpha: 1.0,
-  flip_x: false,
-  flip_y: false,
-};
 
 const HEAD_OFFSETS_DEFAULT: HeadOffsets = {
   yaw_offset_deg: 0,
@@ -46,10 +39,6 @@ export function Calibration() {
   const [offsets, setOffsets] = createSignal<HeadOffsets>(HEAD_OFFSETS_DEFAULT);
   const [autoCapture, setAutoCapture] = createSignal(false);
   const [hasSnapshot, setHasSnapshot] = createSignal(false);
-  // Cached opaque copy of the rest of /settings so we can PUT just
-  // the tracker block without clobbering wifi / mdns / time / auth.
-  // The Settings component does the same thing in reverse.
-  const [settingsCache, setSettingsCache] = createSignal<SettingsType | null>(null);
   let canvasRef: HTMLCanvasElement | undefined;
   let captureTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -65,7 +54,6 @@ export function Calibration() {
         return;
       }
       const c = (await res.json()) as SettingsType;
-      setSettingsCache(c);
       setTracker(c.tracker);
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), true);
@@ -92,13 +80,20 @@ export function Calibration() {
   });
 
   const saveTracker = async () => {
-    const cache = settingsCache();
-    if (!cache) {
-      showToast("reload settings first", true);
-      return;
-    }
-    const body: SettingsType = { ...cache, tracker: tracker() };
     try {
+      // Re-fetch immediately before PUT so we merge against the
+      // latest persisted state, not a snapshot captured at mount.
+      // Without this, a Settings save mid-session would clobber the
+      // tracker change we're about to make — and vice versa.
+      const freshRes = await fetch("/settings");
+      if (!freshRes.ok) {
+        if (freshRes.status === 503) {
+          throw new Error("settings unavailable (no SD card)");
+        }
+        throw new Error(`GET /settings: ${freshRes.status}`);
+      }
+      const fresh = (await freshRes.json()) as SettingsType;
+      const body: SettingsType = { ...fresh, tracker: tracker() };
       const res = await authedFetch("/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -110,8 +105,6 @@ export function Calibration() {
       }
       const reply = (await res.json().catch(() => ({}))) as { reboot_required?: boolean };
       showToast(reply.reboot_required ? "tracker saved — reboot to apply" : "tracker saved");
-      // Refresh the cache so the next save sees the persisted state.
-      setSettingsCache(body);
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), true);
     }

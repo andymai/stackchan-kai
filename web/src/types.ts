@@ -39,6 +39,18 @@ export type Tracker = {
   flip_y: boolean;
 };
 
+// Mirrors `stackchan_net::config::TrackerSettings::DEFAULT`. The
+// dashboard only consults this as a fallback when /settings is
+// unreachable (e.g. SD card absent); on a healthy device the values
+// always come from the firmware's GET /settings response.
+export const TRACKER_DEFAULT: Tracker = {
+  fov_h_deg: 62.0,
+  fov_v_deg: 49.0,
+  target_smoothing_alpha: 1.0,
+  flip_x: false,
+  flip_y: false,
+};
+
 export type HeadOffsets = {
   yaw_offset_deg: number;
   tilt_offset_deg: number;
