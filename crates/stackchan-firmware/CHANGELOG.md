@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.64.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.63.0...stackchan-firmware-v0.64.0) (2026-05-08)
+
+
+### Features
+
+* **core:** HeadFromBodyGesture — randomized head nudge on swipe / press ([#285](https://github.com/andymai/stackchan-kai/issues/285)) ([1b8f5da](https://github.com/andymai/stackchan-kai/commit/1b8f5daf9c570ad25a8211997c7ca4e5edb2fbb6))
+* **firmware:** mDNS pose TXT — yaw/pitch live advertisement ([#284](https://github.com/andymai/stackchan-kai/issues/284)) ([fd3bbec](https://github.com/andymai/stackchan-kai/commit/fd3bbec49abd9c4978284cbf50d69b0593280f56))
+
 ## [0.63.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.62.3...stackchan-firmware-v0.63.0) (2026-05-07)
 
 
