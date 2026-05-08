@@ -119,10 +119,10 @@ static _APP_DESC_ANCHOR: &esp_bootloader_esp_idf::EspAppDesc = &ESP_APP_DESC;
 /// and writes it to `/sd/CRASH.LOG` for post-mortem fetch via
 /// `GET /crash`.
 ///
-/// `loop {}` is the fallback if the latch write returns (it
-/// shouldn't — `record_panic` is `fn () -> ()`, but the safety
-/// guard against re-entrant panics may early-return without
-/// resetting). The watchdog will catch us either way.
+/// `software_reset()` is the diverging terminator — it returns `!`,
+/// so the compiler sees a complete `!` path. The watchdog fires as
+/// a belt-and-suspenders backstop if the reset peripheral itself
+/// were to stall.
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     defmt::error!("panic: {}", defmt::Display2Format(info));
@@ -1117,7 +1117,21 @@ async fn main(spawner: Spawner) -> ! {
                     snap.line,
                 );
                 let log = stackchan_firmware::crash::render_log_entry(&snap, "panic");
-                let _ = storage::with_storage(|s| s.write_crash(&log)).await;
+                // Match the SD-write outcome so a failure logs the
+                // panic body to defmt; without this the message
+                // disappears across the reboot if SD write fails.
+                match storage::with_storage(|s| s.write_crash(&log)).await {
+                    Some(Ok(())) => {}
+                    Some(Err(e)) => defmt::warn!(
+                        "crash recovery: SD write failed ({}); message={=str}",
+                        defmt::Debug2Format(&e),
+                        snap.message_str(),
+                    ),
+                    None => defmt::warn!(
+                        "crash recovery: storage not mounted; message={=str}",
+                        snap.message_str(),
+                    ),
+                }
             }
             // Restore the operator-tuned palette + mood from the
             // SD-backed runtime store. Tolerant of a missing /
