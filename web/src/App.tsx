@@ -9,6 +9,7 @@ import { FaceGeometry } from "./components/FaceGeometry";
 import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
 import { Camera } from "./components/Camera";
+import { Calibration } from "./components/Calibration";
 import { Events } from "./components/Events";
 import { Recovery } from "./components/Recovery";
 import { Sensors } from "./components/Sensors";
@@ -60,6 +61,7 @@ export function App() {
         <Listen />
         <Pair />
         <Camera />
+        <Calibration />
         <Sensors />
         <TaskHealth />
         <Events />

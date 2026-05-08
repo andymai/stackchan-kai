@@ -31,12 +31,26 @@ export type AvatarSnapshot = {
   camera_mode: boolean;
 };
 
+export type Tracker = {
+  fov_h_deg: number;
+  fov_v_deg: number;
+  target_smoothing_alpha: number;
+  flip_x: boolean;
+  flip_y: boolean;
+};
+
+export type HeadOffsets = {
+  yaw_offset_deg: number;
+  tilt_offset_deg: number;
+};
+
 export type Settings = {
   wifi: { ssid: string; psk: string; country: string };
   mdns: { hostname: string };
   time: { tz: string; sntp_servers: string[] };
   auth: { token: string };
   audio: AudioState;
+  tracker: Tracker;
 };
 
 export type Imu = {

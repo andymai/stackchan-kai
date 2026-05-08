@@ -24,8 +24,11 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/`              | Operator dashboard (HTML + JS, embedded in firmware) |
 | GET    | `/health`        | Uptime, firmware version, free heap                  |
 | GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio |
+| GET    | `/sensors`       | Live IMU / ambient / audio-RMS / body-touch sample   |
 | GET    | `/camera/snapshot` | Most recent `/sd/CAPTURE.565` frame as raw QVGA RGB565 BE |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
+| GET    | `/head/offsets`  | Current yaw + tilt zero-point offsets               |
+| POST   | `/head/offsets`  | Update yaw + tilt zero-point offsets (runtime-only) |
 | POST   | `/emotion`       | Set affect with hold timer                          |
 | POST   | `/look-at`       | Aim head + eyes with hold timer                     |
 | POST   | `/reset`         | Clear active emotion / look-at hold                 |
@@ -33,6 +36,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/listen`        | Open a 3-second listen window — Ear decorator + ack chirp |
 | POST   | `/pair`          | Open ESP-NOW pairing window with hold timer         |
 | POST   | `/mood`          | Set the operator-selected energy baseline (runtime-only) |
+| POST   | `/palette`       | Pick the avatar's colour palette (skin / eye / mouth) |
 | POST   | `/dance`         | Play a JSON keyframe script (head + emotion + decorator + LED) |
 | POST   | `/face-geometry` | Pick a face-geometry preset (eye + mouth baseline silhouette) |
 | POST   | `/mcp`           | JSON-RPC 2.0 / MCP endpoint (initialize, tools/list, tools/call) |
