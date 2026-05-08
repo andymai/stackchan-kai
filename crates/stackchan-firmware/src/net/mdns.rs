@@ -2,7 +2,7 @@
 //! advertising for `_stackchan._tcp.local.`.
 //!
 //! Joins the IPv4 mDNS multicast group `224.0.0.251:5353` and emits an
-//! unsolicited announcement on every `WIFI_LINK_SIGNAL::Connected`
+//! unsolicited announcement on every `WIFI_LINK_WATCH::Connected`
 //! transition so phones / laptops / Bonjour browsers pick up the
 //! device without an explicit query. Inbound A queries for
 //! `<hostname>.local` and PTR queries for the service type are
@@ -43,7 +43,7 @@ use stackchan_core::Pose;
 use stackchan_net::mdns_pose::{POSE_PUBLISH_MIN_INTERVAL_MS, PoseAnnouncer, format_pose_kv};
 
 use super::snapshot;
-use super::wifi::{WIFI_LINK_SIGNAL, WifiLinkState};
+use super::wifi::{WIFI_LINK_WATCH, WifiLinkState};
 
 /// IPv4 mDNS multicast group + port.
 const MDNS_MULTICAST: embassy_net::IpAddress =
@@ -90,11 +90,16 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
     let mut tx_meta = [PacketMetadata::EMPTY; 4];
     let mut tx_buf = [0u8; MAX_DNS_BYTES];
 
+    let Some(mut link) = WIFI_LINK_WATCH.receiver() else {
+        defmt::error!("mdns: WIFI_LINK_WATCH receiver slot exhausted; parking");
+        park_forever().await;
+    };
+
     loop {
         // Wait for a Connected link before binding the socket.
         // embassy-net needs the IPv4 address to encode A-record
         // answers, and join_multicast_group needs the link up.
-        if !matches!(WIFI_LINK_SIGNAL.wait().await, WifiLinkState::Connected) {
+        if !matches!(link.changed().await, WifiLinkState::Connected) {
             continue;
         }
 
