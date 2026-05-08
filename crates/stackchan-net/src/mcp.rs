@@ -612,6 +612,7 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
 ///
 /// - `set_emotion(emotion: string, hold_ms?: integer)`
 /// - `set_mood(mood: string)`
+/// - `set_face_geometry(geometry: string)`
 /// - `look_at(pan_deg: number, tilt_deg: number, hold_ms?: integer)`
 /// - `speak(phrase: string, locale?: string)`
 /// - `start_listen(duration_ms?: integer)`
@@ -633,6 +634,7 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"tools":["#,
     r#"{"name":"set_emotion","description":"Set the avatar's emotion with an optional hold timer (milliseconds). Vocabulary: neutral, happy, sad, sleepy, surprised, angry, doubt, boring, hi, loved, curious, confused, mad.","inputSchema":{"type":"object","properties":{"emotion":{"type":"string"},"hold_ms":{"type":"integer"}},"required":["emotion"]}},"#,
     r#"{"name":"set_mood","description":"Set the operator-selected mood baseline. Vocabulary: neutral, calm, playful, focus, sleepy.","inputSchema":{"type":"object","properties":{"mood":{"type":"string"}},"required":["mood"]}},"#,
+    r#"{"name":"set_face_geometry","description":"Set the avatar's face geometry preset — swaps the eye + mouth baseline silhouette while preserving emotion-driven modulators. Vocabulary: default, chibi, wide, sleepy. Persists across reboots via the runtime store.","inputSchema":{"type":"object","properties":{"geometry":{"type":"string"}},"required":["geometry"]}},"#,
     r#"{"name":"look_at","description":"Aim the avatar's head at a pan/tilt target in degrees, with an optional hold timer.","inputSchema":{"type":"object","properties":{"pan_deg":{"type":"number"},"tilt_deg":{"type":"number"},"hold_ms":{"type":"integer"}},"required":["pan_deg","tilt_deg"]}},"#,
     r#"{"name":"speak","description":"Play a baked phrase or chirp through the speaker.","inputSchema":{"type":"object","properties":{"phrase":{"type":"string"},"locale":{"type":"string"}},"required":["phrase"]}},"#,
     r#"{"name":"start_listen","description":"Open a listen window: queue an acknowledge chirp, set Attention::Listening, arm the Ear decorator. Default 3000 ms.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,

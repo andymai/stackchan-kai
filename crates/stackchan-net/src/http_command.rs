@@ -20,7 +20,7 @@
 //! parsed in their entirety with [`core::str::FromStr`].
 
 use stackchan_core::voice::{Locale, PhraseId, Priority};
-use stackchan_core::{Emotion, Mood, Palette, Pose, RemoteCommand};
+use stackchan_core::{Emotion, FaceGeometry, Mood, Palette, Pose, RemoteCommand};
 
 /// Default hold window when the request body omits `hold_ms`.
 pub const DEFAULT_HOLD_MS: u32 = 30_000;
@@ -55,6 +55,8 @@ pub enum JsonError {
     UnknownMood,
     /// Palette string didn't match any [`Palette`] variant.
     UnknownPalette,
+    /// Geometry string didn't match any [`FaceGeometry`] variant.
+    UnknownFaceGeometry,
     /// `audio.volume_pct` value outside the documented `0..=100`
     /// range. Carries the offending value so the firmware's `400`
     /// response body is self-describing.
@@ -426,6 +428,38 @@ pub fn parse_palette(body: &str) -> Result<Palette, JsonError> {
         Ok(())
     })?;
     palette.ok_or(JsonError::MissingKey("palette"))
+}
+
+/// Parse a `POST /face-geometry` body into a [`FaceGeometry`].
+///
+/// Required: `geometry` (string, lowercase wire form). Vocabulary is
+/// whatever [`FaceGeometry::from_wire_str`] knows; anything else
+/// returns [`JsonError::UnknownFaceGeometry`]. No optional fields —
+/// the preset persists until the operator picks another (see
+/// `runtime_store::update_face_geometry`).
+///
+/// # Errors
+///
+/// [`JsonError`] for missing/unknown keys, malformed JSON, or
+/// unrecognised geometry strings.
+pub fn parse_face_geometry(body: &str) -> Result<FaceGeometry, JsonError> {
+    let mut geometry: Option<FaceGeometry> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "geometry" => {
+                if geometry.is_some() {
+                    return Err(JsonError::DuplicateKey("geometry"));
+                }
+                let raw = scanner.read_string()?;
+                geometry = FaceGeometry::from_wire_str(raw)
+                    .ok_or(JsonError::UnknownFaceGeometry)
+                    .map(Some)?;
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    geometry.ok_or(JsonError::MissingKey("geometry"))
 }
 
 /// Maximum absolute value for either head-offset axis, in degrees.
@@ -1617,6 +1651,50 @@ mod tests {
         assert!(matches!(
             parse_palette(r#"{"palette":"dark","palette":"cute"}"#),
             Err(JsonError::DuplicateKey("palette"))
+        ));
+    }
+
+    #[test]
+    fn face_geometry_accepts_each_known_name() {
+        for &g in stackchan_core::FaceGeometry::ALL {
+            let body = format!("{{\"geometry\":\"{}\"}}", g.wire_str());
+            assert_eq!(
+                parse_face_geometry(&body).unwrap(),
+                g,
+                "round-trip failed for {g:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn face_geometry_rejects_missing_key() {
+        assert!(matches!(
+            parse_face_geometry("{}"),
+            Err(JsonError::MissingKey("geometry"))
+        ));
+    }
+
+    #[test]
+    fn face_geometry_rejects_unknown_name() {
+        assert!(matches!(
+            parse_face_geometry(r#"{"geometry":"compact"}"#),
+            Err(JsonError::UnknownFaceGeometry)
+        ));
+    }
+
+    #[test]
+    fn face_geometry_rejects_unknown_top_level_key() {
+        assert!(matches!(
+            parse_face_geometry(r#"{"preset":"chibi"}"#),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn face_geometry_rejects_duplicate_key() {
+        assert!(matches!(
+            parse_face_geometry(r#"{"geometry":"chibi","geometry":"wide"}"#),
+            Err(JsonError::DuplicateKey("geometry"))
         ));
     }
 

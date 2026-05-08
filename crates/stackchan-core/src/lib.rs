@@ -63,7 +63,10 @@ pub use director::{
 pub use emotion::Emotion;
 pub use entity::{Entity, Tick};
 pub use events::Events;
-pub use face::{Eye, EyePhase, Face, Mouth, Point, SCALE_DEFAULT, Style};
+pub use face::{
+    Eye, EyeBaseline, EyePhase, Face, FaceGeometry, Mouth, MouthBaseline, Point, SCALE_DEFAULT,
+    Style,
+};
 pub use head::{HeadDriver, MAX_PAN_DEG, MAX_TILT_DEG, MIN_TILT_DEG, Pose};
 pub use input::{Input, RemoteCommand};
 pub use leds::{BRIGHTNESS_PEAK, LED_COUNT, LedFrame, render_leds};
