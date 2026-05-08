@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.28.1...stackchan-core-v0.29.0) (2026-05-08)
+
+
+### Features
+
+* **core:** HeadFromBodyGesture — randomized head nudge on swipe / press ([#285](https://github.com/andymai/stackchan-kai/issues/285)) ([1b8f5da](https://github.com/andymai/stackchan-kai/commit/1b8f5daf9c570ad25a8211997c7ca4e5edb2fbb6))
+
 ## [0.28.1](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.28.0...stackchan-core-v0.28.1) (2026-05-07)
 
 
