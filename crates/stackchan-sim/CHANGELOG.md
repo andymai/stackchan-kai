@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.18.0...stackchan-sim-v0.19.0) (2026-05-08)
+
+
+### Features
+
+* dance choreography — POST /dance keyframe stream + DancePlayer modifier ([#288](https://github.com/andymai/stackchan-kai/issues/288)) ([2695ed0](https://github.com/andymai/stackchan-kai/commit/2695ed06de7679d856f3685fc76d184958501951))
+
 ## [0.18.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.17.4...stackchan-sim-v0.18.0) (2026-05-08)
 
 
