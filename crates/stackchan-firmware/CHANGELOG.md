@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.73.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.72.0...stackchan-firmware-v0.73.0) (2026-05-13)
+
+
+### Features
+
+* **firmware:** ES7210 PCM frame ring buffer ([#315](https://github.com/andymai/stackchan-kai/issues/315)) ([0e792ef](https://github.com/andymai/stackchan-kai/commit/0e792ef4d6bf429e0dbe78757c1ddec07ff89361))
+
 ## [0.72.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.71.0...stackchan-firmware-v0.72.0) (2026-05-13)
 
 
