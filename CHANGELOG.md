@@ -19,6 +19,11 @@ section summarises the milestone work in human terms.
   Full) at the source so a one-percent gauge twitch doesn't
   re-trigger the renderer's dirty-check; the charging flag adds a
   small bolt overlay when USB power is present.
+- `IdleMicroExpression` modifier: random small vertical perturbation
+  of `mouth.center.y` every 2–6 s. Complements the eye-only
+  `IdleDrift` so a long-quiet face shows mouth-side liveness too;
+  composes additively with `Breath` via independent
+  per-modifier offset tracking.
 - Speech-bubble text overlay drawn above the face, with a TTL the
   `BubbleExpiry` modifier sweeps each frame.
 - Decorator badges (heart, sweat, dizzy, ear, pairing, angry, shy)

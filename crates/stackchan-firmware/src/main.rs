@@ -80,9 +80,9 @@ use stackchan_core::{
         EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
         EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention,
         HeadFromBodyGesture, HeadFromEmotion, HeadFromIntent, IdleDrift, IdleHeadDrift,
-        IntentFromBodyTouch, IntentFromLoud, LostTargetSearch, MicrosaccadeFromAttention,
-        MouthFromAudio, RemoteCommandModifier, Soliloquy, StyleFromEmotion, StyleFromIntent,
-        StyleFromMood,
+        IdleMicroExpression, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
+        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, Soliloquy,
+        StyleFromEmotion, StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -195,7 +195,12 @@ type LcdDisplay = mipidsi::Display<
     clippy::too_many_lines,
     reason = "tick body composes 12+ modifiers + sensor drains + render — splitting fragments the per-frame ordering invariants"
 )]
-async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift_seed: NonZeroU32) {
+async fn render_task(
+    mut display: LcdDisplay,
+    drift_seed: NonZeroU32,
+    head_drift_seed: NonZeroU32,
+    micro_expression_seed: NonZeroU32,
+) {
     let clock = HalClock;
     let mut fb = Framebuffer::new();
     defmt::debug!(
@@ -232,6 +237,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     // eye drift and head glance don't fall into a shared rhythm.
     let mut drift = IdleDrift::with_seed(drift_seed);
     let mut head_drift = IdleHeadDrift::with_seed(head_drift_seed);
+    let mut idle_micro_expression = IdleMicroExpression::with_seed(micro_expression_seed);
     let mut head_from_emotion = HeadFromEmotion::new();
     let mut head_from_attention = HeadFromAttention::new();
     let mut lost_target_search = LostTargetSearch::new();
@@ -346,6 +352,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     director.add_modifier(&mut blink).expect("registry full");
     director.add_modifier(&mut breath).expect("registry full");
     director.add_modifier(&mut drift).expect("registry full");
+    director
+        .add_modifier(&mut idle_micro_expression)
+        .expect("registry full");
     // Phase::Decoration — expiry first (priority -10), then trigger
     // modifiers in priority order. Sits between Expression and Motion
     // so decorators read final emotion / style state but don't influence
@@ -429,7 +438,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + BatteryOverlayFromPerception + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleMicroExpression + BatteryOverlayFromPerception + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
@@ -1331,13 +1340,20 @@ async fn main(spawner: Spawner) -> ! {
     };
     let drift_seed = sample_seed();
     let head_drift_seed = sample_seed();
+    let micro_expression_seed = sample_seed();
     defmt::info!(
-        "idle seeds: eye={=u32:#010x} head={=u32:#010x}",
+        "idle seeds: eye={=u32:#010x} head={=u32:#010x} micro_expr={=u32:#010x}",
         drift_seed.get(),
-        head_drift_seed.get()
+        head_drift_seed.get(),
+        micro_expression_seed.get()
     );
 
-    if let Err(e) = spawner.spawn(render_task(display, drift_seed, head_drift_seed)) {
+    if let Err(e) = spawner.spawn(render_task(
+        display,
+        drift_seed,
+        head_drift_seed,
+        micro_expression_seed,
+    )) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
     if let Err(e) = spawner.spawn(head_task(board_io.head)) {
