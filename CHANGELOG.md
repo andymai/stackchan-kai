@@ -78,7 +78,7 @@ section summarises the milestone work in human terms.
   `behavior.audio_debug_udp_target`. A new task subscribes to
   `AUDIO_FRAME_PUBSUB` and forwards each 20 ms frame as a raw
   little-endian `s16` UDP datagram, listenable on the host with
-  `nc -lu <port> | aplay -r 16000 -f S16_LE -c 1 -t raw`. Empty
+  `nc -lu <ip> <port> | aplay -r 16000 -f S16_LE -c 1 -t raw`. Empty
   target parks the task with no resource cost. Bench-only; see
   [docs/audio-debug.md](./docs/audio-debug.md).
 

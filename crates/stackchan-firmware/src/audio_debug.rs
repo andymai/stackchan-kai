@@ -77,46 +77,62 @@ pub async fn audio_debug_task(stack: Stack<'static>, target: String) -> ! {
     let mut tx_meta = [PacketMetadata::EMPTY; 4];
     let mut tx_buf = [0_u8; DATAGRAM_BYTES + 64];
 
-    let mut state = link.get().await;
+    // Outer loop: wait for the link to be Connected, then stream
+    // until either the link drops or a transient socket error breaks
+    // the inner loop. Never block on `link.changed()` mid-stream — a
+    // transient send_to failure leaves the link Connected, so a
+    // blocking wait would stall the task until the next real
+    // disconnect/reconnect cycle. Instead, the inner loop selects
+    // across both the link receiver and the next-frame subscriber
+    // so link changes are observed promptly.
     loop {
-        if !matches!(state, WifiLinkState::Connected) {
+        let mut state = link.get().await;
+        while !matches!(state, WifiLinkState::Connected) {
             state = link.changed().await;
-            continue;
         }
         let mut socket =
             UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
         if let Err(e) = socket.bind(0) {
             defmt::warn!("audio-debug: bind failed ({:?}); backing off", e);
             embassy_time::Timer::after(embassy_time::Duration::from_secs(5)).await;
-            state = link.changed().await;
             continue;
         }
 
         defmt::info!("audio-debug: socket ready, streaming");
         loop {
-            let frame = match subscriber.next_message().await {
-                WaitResult::Message(f) => f,
-                WaitResult::Lagged(n) => {
-                    defmt::warn!("audio-debug: lagged {=u64} frames", n);
-                    continue;
+            use embassy_futures::select::{Either, select};
+            let next = select(subscriber.next_message(), link.changed()).await;
+            match next {
+                Either::First(WaitResult::Message(frame)) => {
+                    let mut buf = [0_u8; DATAGRAM_BYTES];
+                    for (i, &sample) in frame.samples.iter().enumerate() {
+                        let le = sample.to_le_bytes();
+                        buf[i * 2] = le[0];
+                        buf[i * 2 + 1] = le[1];
+                    }
+                    if let Err(e) = socket.send_to(&buf, endpoint).await {
+                        defmt::warn!(
+                            "audio-debug: send_to failed: {:?}; reopening socket",
+                            defmt::Debug2Format(&e),
+                        );
+                        break;
+                    }
                 }
-            };
-            let mut buf = [0_u8; DATAGRAM_BYTES];
-            for (i, &sample) in frame.samples.iter().enumerate() {
-                let le = sample.to_le_bytes();
-                buf[i * 2] = le[0];
-                buf[i * 2 + 1] = le[1];
-            }
-            if let Err(e) = socket.send_to(&buf, endpoint).await {
-                defmt::warn!(
-                    "audio-debug: send_to failed: {:?}; reopening socket",
-                    defmt::Debug2Format(&e),
-                );
-                break;
+                Either::First(WaitResult::Lagged(n)) => {
+                    defmt::warn!("audio-debug: lagged {=u64} frames", n);
+                }
+                Either::Second(new_state) => {
+                    if !matches!(new_state, WifiLinkState::Connected) {
+                        defmt::info!("audio-debug: link dropped, closing socket");
+                        break;
+                    }
+                    // Otherwise the link bounced through some other
+                    // intermediate state and re-stabilised at Connected
+                    // — keep streaming.
+                }
             }
         }
         socket.close();
-        state = link.changed().await;
     }
 }
 
