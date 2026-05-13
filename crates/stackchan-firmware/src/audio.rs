@@ -48,7 +48,7 @@
 
 use alloc::boxed::Box;
 use aw88298::Aw88298;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
@@ -458,6 +458,63 @@ pub struct AudioRms(pub f32);
 /// current mic state, not queued history.
 pub static AUDIO_RMS_SIGNAL: Signal<CriticalSectionRawMutex, AudioRms> = Signal::new();
 
+/// Number of i16 samples per [`AudioFrame`].
+///
+/// 320 samples at [`SAMPLE_RATE_HZ`] is 20 ms — the canonical streaming
+/// window for wake-word inference (microWakeWord, Porcupine) and small
+/// enough that an STT consumer adds bounded latency.
+pub const AUDIO_FRAME_SAMPLES: usize = 320;
+
+/// Backlog depth for [`AUDIO_FRAME_CHANNEL`].
+///
+/// `8` frames × 20 ms = 160 ms of buffered audio. Lets a consumer that
+/// stalls briefly (TLS handshake, SD write) catch up without losing
+/// samples, while keeping the worst-case static footprint bounded
+/// (~5 KB).
+pub const AUDIO_FRAME_CHANNEL_DEPTH: usize = 8;
+
+/// One PCM capture frame published by [`run_rms_loop`].
+///
+/// Mono 16-bit signed samples at [`SAMPLE_RATE_HZ`]. Each frame is
+/// `AUDIO_FRAME_SAMPLES` long; consumers reassemble a continuous
+/// stream by concatenating in `sequence` order.
+#[derive(Clone)]
+pub struct AudioFrame {
+    /// Raw PCM samples, little-endian-derived `i16`.
+    pub samples: [i16; AUDIO_FRAME_SAMPLES],
+    /// Monotonic wrapping frame counter since boot. A gap in this
+    /// sequence across two consecutive `try_receive` calls means the
+    /// channel overflowed (or a DMA error discarded an in-flight
+    /// frame) and the consumer missed frames in between — see
+    /// [`AUDIO_FRAME_DROPPED`] for the cumulative drop count. Use
+    /// `wrapping_sub` when comparing consecutive values so the counter
+    /// rolls over correctly at [`u32::MAX`].
+    pub sequence: u32,
+}
+
+/// PCM capture channel — single-producer ([`run_rms_loop`]) /
+/// single-consumer.
+///
+/// When no consumer is attached the producer pushes frames until the
+/// channel fills, then drops with the `AUDIO_FRAME_DROPPED` counter
+/// ticking. The cost of the unused channel is the static buffer
+/// (~5 KB) plus one `try_send` per 20 ms tick; small enough that
+/// shipping the producer without a consumer is fine.
+pub static AUDIO_FRAME_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    AudioFrame,
+    AUDIO_FRAME_CHANNEL_DEPTH,
+> = Channel::new();
+
+/// Cumulative count of frames the producer successfully enqueued onto
+/// [`AUDIO_FRAME_CHANNEL`] since boot. Read-only outside the audio task.
+pub static AUDIO_FRAME_CAPTURED: AtomicU32 = AtomicU32::new(0);
+
+/// Cumulative count of frames the producer dropped because the channel
+/// was full at push time. A consumer is healthy iff this counter stays
+/// flat; sustained growth means it's not draining fast enough.
+pub static AUDIO_FRAME_DROPPED: AtomicU32 = AtomicU32::new(0);
+
 /// `true` while the TX feeder has a clip in flight.
 ///
 /// Set / cleared once per DMA push (~32 ms cadence) inside
@@ -798,6 +855,15 @@ async fn run_rms_loop<BUFFER>(
     // Wrapping window counter; only used to throttle the diagnostic log.
     let mut window_no: u32 = 0;
 
+    // PCM frame producer state. Each sample fed into `accumulate` for
+    // RMS is also pushed into `frame_buf`; when full, the buffer is
+    // wrapped into an `AudioFrame` and try-sent onto
+    // `AUDIO_FRAME_CHANNEL`. Decoupled from the RMS window cadence so
+    // a future tweak to either doesn't churn the other.
+    let mut frame_buf = [0_i16; AUDIO_FRAME_SAMPLES];
+    let mut frame_pos: usize = 0;
+    let mut frame_sequence: u32 = 0;
+
     // Rate-limit the DMA-pop warning. The `Late` failure mode is
     // self-perpetuating in `read_dma_circular_async` — once the
     // descriptor chain wraps past the read pointer, every subsequent
@@ -837,6 +903,13 @@ async fn run_rms_loop<BUFFER>(
                 sum_sq = 0.0;
                 count = 0;
                 byte_carry = None;
+                // Discard the in-flight frame: continuing to fill it
+                // after a DMA gap would splice pre- and post-gap
+                // samples into a single AudioFrame with no sequence
+                // discontinuity for the consumer to detect. Drop the
+                // partial frame on the floor instead — the next frame
+                // boundary lines up with the resync.
+                frame_pos = 0;
                 Timer::after(Duration::from_millis(10)).await;
                 continue;
             }
@@ -851,7 +924,9 @@ async fn run_rms_loop<BUFFER>(
         // previous pop, if any.
         if let Some(low) = byte_carry.take() {
             if let Some((&high, rest)) = bytes.split_first() {
-                accumulate(&mut sum_sq, &mut count, i16::from_le_bytes([low, high]));
+                let sample = i16::from_le_bytes([low, high]);
+                accumulate(&mut sum_sq, &mut count, sample);
+                push_frame_sample(&mut frame_buf, &mut frame_pos, &mut frame_sequence, sample);
                 bytes = rest;
             } else {
                 byte_carry = Some(low);
@@ -861,11 +936,9 @@ async fn run_rms_loop<BUFFER>(
 
         let mut chunks = bytes.chunks_exact(2);
         for pair in &mut chunks {
-            accumulate(
-                &mut sum_sq,
-                &mut count,
-                i16::from_le_bytes([pair[0], pair[1]]),
-            );
+            let sample = i16::from_le_bytes([pair[0], pair[1]]);
+            accumulate(&mut sum_sq, &mut count, sample);
+            push_frame_sample(&mut frame_buf, &mut frame_pos, &mut frame_sequence, sample);
 
             if count >= RMS_WINDOW_SAMPLES {
                 // `count` is bounded by `RMS_WINDOW_SAMPLES` (528 in
@@ -897,6 +970,42 @@ async fn run_rms_loop<BUFFER>(
         // Stash an odd trailing byte for the next pop.
         byte_carry = chunks.remainder().first().copied();
     }
+}
+
+/// Push one sample into the in-flight capture frame.
+///
+/// When the frame fills, wraps the buffer into an [`AudioFrame`] and
+/// try-sends it onto [`AUDIO_FRAME_CHANNEL`]; on success bumps
+/// [`AUDIO_FRAME_CAPTURED`], on overflow bumps [`AUDIO_FRAME_DROPPED`]
+/// (the channel is full so a consumer is lagging). Either way, the
+/// local sequence counter advances and the producer starts the next
+/// frame without blocking — dropping is intentional backpressure.
+#[inline]
+fn push_frame_sample(
+    frame_buf: &mut [i16; AUDIO_FRAME_SAMPLES],
+    frame_pos: &mut usize,
+    frame_sequence: &mut u32,
+    sample: i16,
+) {
+    frame_buf[*frame_pos] = sample;
+    *frame_pos += 1;
+    if *frame_pos < AUDIO_FRAME_SAMPLES {
+        return;
+    }
+    let frame = AudioFrame {
+        samples: *frame_buf,
+        sequence: *frame_sequence,
+    };
+    match AUDIO_FRAME_CHANNEL.try_send(frame) {
+        Ok(()) => {
+            AUDIO_FRAME_CAPTURED.fetch_add(1, Ordering::Relaxed);
+        }
+        Err(embassy_sync::channel::TrySendError::Full(_)) => {
+            AUDIO_FRAME_DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    *frame_sequence = frame_sequence.wrapping_add(1);
+    *frame_pos = 0;
 }
 
 /// Add one i16 sample's contribution to the running window accumulator.
