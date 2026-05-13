@@ -40,10 +40,12 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use stackchan_core::{FaceGeometry, Mood, Palette};
 
+use crate::head::HeadOffsets;
+
 /// In-memory snapshot of the runtime state. Defaults match the
 /// avatar's neutral resting look so a brand-new device reads the
 /// same state a missing-file fallback would produce.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct RuntimeState {
     /// Current operator-selected palette. Mirrored into
     /// `entity.face.palette` on boot via the firmware's
@@ -56,6 +58,11 @@ pub struct RuntimeState {
     /// `entity.face` on boot via the firmware's
     /// `FACE_GEOMETRY_SIGNAL`.
     pub face_geometry: FaceGeometry,
+    /// Operator-supplied head zero-point correction. Persisted so a
+    /// reboot doesn't reset a freshly-dialled offset; mirrored into
+    /// [`crate::head::OFFSETS_SIGNAL`] + the [`crate::head::OFFSETS_CACHE`]
+    /// at boot.
+    pub head_offsets: HeadOffsets,
 }
 
 /// Render a [`RuntimeState`] to its line-based wire form.
@@ -65,6 +72,20 @@ pub fn render(state: &RuntimeState) -> String {
     let _ = writeln!(out, "palette={}", state.palette.wire_str());
     let _ = writeln!(out, "mood={}", state.mood.wire_str());
     let _ = writeln!(out, "face_geometry={}", state.face_geometry.wire_str());
+    // Two decimal places match the resolution operators dial via
+    // `POST /head/offsets` (the JSON parser accepts any f32). Stored
+    // separately so a future bump in precision doesn't fight the wire
+    // format.
+    let _ = writeln!(
+        out,
+        "head_yaw_offset={:.2}",
+        state.head_offsets.yaw_offset_deg
+    );
+    let _ = writeln!(
+        out,
+        "head_tilt_offset={:.2}",
+        state.head_offsets.tilt_offset_deg
+    );
     out
 }
 
@@ -101,6 +122,16 @@ pub fn parse(input: &str) -> RuntimeState {
                     out.face_geometry = g;
                 }
             }
+            "head_yaw_offset" => {
+                if let Ok(v) = value.trim().parse::<f32>() {
+                    out.head_offsets.yaw_offset_deg = v;
+                }
+            }
+            "head_tilt_offset" => {
+                if let Ok(v) = value.trim().parse::<f32>() {
+                    out.head_offsets.tilt_offset_deg = v;
+                }
+            }
             _ => {}
         }
     }
@@ -123,6 +154,10 @@ static CACHE: Mutex<CriticalSectionRawMutex, Cell<RuntimeState>> =
         palette: Palette::Default,
         mood: Mood::Neutral,
         face_geometry: FaceGeometry::Default,
+        head_offsets: HeadOffsets {
+            yaw_offset_deg: 0.0,
+            tilt_offset_deg: 0.0,
+        },
     }));
 
 /// Snapshot the current cache.
@@ -194,6 +229,13 @@ pub async fn update_face_geometry(geometry: FaceGeometry) -> bool {
     persist().await
 }
 
+/// Update the head-offsets field and persist the cache. Same
+/// semantics as [`update_palette`].
+pub async fn update_head_offsets(offsets: HeadOffsets) -> bool {
+    mutate(|s| s.head_offsets = offsets);
+    persist().await
+}
+
 /// Apply `f` to the cache atomically — read + modify + write happen
 /// inside one critical section.
 ///
@@ -255,8 +297,31 @@ mod tests {
             palette: Palette::Cute,
             mood: Mood::Playful,
             face_geometry: FaceGeometry::Chibi,
+            head_offsets: HeadOffsets {
+                yaw_offset_deg: 1.25,
+                tilt_offset_deg: -3.5,
+            },
         };
         assert_eq!(render_then_parse(&s), s);
+    }
+
+    #[test]
+    fn parse_omitted_head_offsets_yields_zero() {
+        // Older firmware that wrote only palette/mood/face_geometry
+        // must still parse cleanly under a newer firmware that knows
+        // about head_offsets.
+        let input = "palette=cute\nmood=playful\nface_geometry=chibi\n";
+        let s = parse(input);
+        assert!(s.head_offsets.yaw_offset_deg.abs() < f32::EPSILON);
+        assert!(s.head_offsets.tilt_offset_deg.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parse_head_offsets_round_trips() {
+        let input = "head_yaw_offset=2.50\nhead_tilt_offset=-1.75\n";
+        let s = parse(input);
+        assert!((s.head_offsets.yaw_offset_deg - 2.5).abs() < f32::EPSILON);
+        assert!((s.head_offsets.tilt_offset_deg - (-1.75)).abs() < f32::EPSILON);
     }
 
     #[test]
