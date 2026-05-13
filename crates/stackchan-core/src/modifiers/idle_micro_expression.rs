@@ -223,6 +223,43 @@ mod tests {
     }
 
     #[test]
+    fn fine_grained_ticks_with_baseline_drift_still_undo_cleanly() {
+        // Step at 1 ms granularity over a long span. Between fires
+        // we mutate `mouth.center.y` from "outside" to mimic Breath
+        // applying its own offset; the modifier must still remove
+        // only *its* prior contribution and leave the baseline drift
+        // untouched.
+        let mut entity = at(0);
+        let baseline = entity.face.mouth.center.y;
+        let mut m = IdleMicroExpression::with_seed(NonZeroU32::new(13).unwrap());
+
+        let mut external_drift: i32 = 0;
+        let mut last_module_dy: i32 = 0;
+
+        for ms in 0..=DEFAULT_INTERVAL_MAX_MS * 5 {
+            // "Breath-like" external offset advances each ms.
+            let next_drift = i32::try_from(ms / 100).unwrap_or(i32::MAX) % 5 - 2;
+            entity.face.mouth.center.y += next_drift - external_drift;
+            external_drift = next_drift;
+
+            // What the modifier had contributed before this tick.
+            let module_before = entity.face.mouth.center.y - baseline - external_drift;
+            assert_eq!(module_before, last_module_dy);
+
+            entity.tick.now = Instant::from_millis(ms);
+            m.update(&mut entity);
+
+            // What the modifier contributed after this tick.
+            let module_after = entity.face.mouth.center.y - baseline - external_drift;
+            assert!(
+                module_after.abs() <= DEFAULT_MAX_MOUTH_Y_PX,
+                "modifier offset escaped bound at ms={ms}: {module_after}"
+            );
+            last_module_dy = module_after;
+        }
+    }
+
+    #[test]
     fn ticks_before_due_do_not_perturb() {
         let mut entity = at(0);
         let mut m = IdleMicroExpression::new();
