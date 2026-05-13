@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.32.0...stackchan-core-v0.33.0) (2026-05-13)
+
+
+### Features
+
+* **core:** IdleMicroExpression — random mouth-y nudges at 2–6s ([#305](https://github.com/andymai/stackchan-kai/issues/305)) ([427fa19](https://github.com/andymai/stackchan-kai/commit/427fa19d96b6c2b461fcf7927ab08aa2c5b60b7f))
+
 ## [0.32.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.31.0...stackchan-core-v0.32.0) (2026-05-13)
 
 
