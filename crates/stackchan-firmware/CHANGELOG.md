@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.74.0...stackchan-firmware-v0.75.0) (2026-05-13)
+
+
+### Features
+
+* **mcp:** expose push_toast tool + refactor /toast onto parse_toast ([#320](https://github.com/andymai/stackchan-kai/issues/320)) ([2b6da1d](https://github.com/andymai/stackchan-kai/commit/2b6da1d4800b03bc7c189ae2c8a7edb93ec468eb))
+
 ## [0.74.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.73.0...stackchan-firmware-v0.74.0) (2026-05-13)
 
 
