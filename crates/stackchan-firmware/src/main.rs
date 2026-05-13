@@ -1388,6 +1388,20 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(mdns_task) failed: {}", defmt::Debug2Format(&e));
     }
 
+    // UDP audio debug stream — opt-in via
+    // `behavior.audio_debug_udp_target`. Empty target parks the task
+    // immediately; non-empty subscribes to AUDIO_FRAME_PUBSUB and
+    // forwards each frame as a raw little-endian s16 datagram.
+    if let Err(e) = spawner.spawn(stackchan_firmware::audio_debug::audio_debug_task(
+        net_stack,
+        net_config.behavior.audio_debug_udp_target.clone(),
+    )) {
+        defmt::panic!(
+            "spawn(audio_debug_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
+    }
+
     // Hourly chime — opt-in via `behavior.hourly_chime_enabled`. The
     // task exits early when disabled, so the spawn is unconditional.
     if let Err(e) = spawner.spawn(stackchan_firmware::chime::chime_task(

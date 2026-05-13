@@ -19,6 +19,7 @@ extern crate alloc;
 
 pub mod ambient;
 pub mod audio;
+pub mod audio_debug;
 pub mod ble;
 pub mod board;
 pub mod body_touch;
