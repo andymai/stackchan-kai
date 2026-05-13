@@ -481,6 +481,13 @@ pub const AUDIO_FRAME_PUBSUB_DEPTH: usize = 8;
 /// planned set with one slot to spare for ad-hoc benches.
 pub const AUDIO_FRAME_MAX_SUBSCRIBERS: usize = 4;
 
+/// Maximum simultaneous publishers on [`AUDIO_FRAME_PUBSUB`].
+///
+/// Only [`run_rms_loop`] produces frames; pinned at `1` to make the
+/// single-producer contract explicit at the type level and catch an
+/// accidental second publisher at compile time.
+pub const AUDIO_FRAME_MAX_PUBLISHERS: usize = 1;
+
 /// One PCM capture frame published by [`run_rms_loop`].
 ///
 /// Mono 16-bit signed samples at [`SAMPLE_RATE_HZ`]. Each frame is
@@ -517,7 +524,7 @@ pub static AUDIO_FRAME_PUBSUB: embassy_sync::pubsub::PubSubChannel<
     AudioFrame,
     AUDIO_FRAME_PUBSUB_DEPTH,
     AUDIO_FRAME_MAX_SUBSCRIBERS,
-    1,
+    AUDIO_FRAME_MAX_PUBLISHERS,
 > = embassy_sync::pubsub::PubSubChannel::new();
 
 /// Cumulative count of frames the producer published onto
