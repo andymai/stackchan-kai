@@ -451,6 +451,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/look-at-point") => handle_remote(socket, json::parse_look_at_point(body)).await,
         ("POST", "/face-target") => handle_remote(socket, json::parse_face_target(body)).await,
         ("POST", "/dance") => handle_post_dance(socket, body).await,
+        ("POST", "/motion") => handle_post_motion(socket, body).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("POST", "/listen") => handle_remote(socket, json::parse_start_listen(body)).await,
@@ -792,6 +793,29 @@ async fn handle_post_dance(socket: &mut TcpSocket<'_>, body: &str) -> Result<(),
     let len = script.keyframes.len();
     DANCE_SCRIPT_SIGNAL.signal(Arc::new(script));
     defmt::info!("http: POST /dance → {=usize} keyframes loaded", len);
+    write_no_content(socket).await
+}
+
+/// `POST /motion` — JSON `{"motion": "greet"|"nod"|"shake"|"laugh"}`.
+/// Looks the variant up in [`NamedMotion::from_wire_str`], hands the
+/// baked [`DanceScript`] off to [`DANCE_SCRIPT_SIGNAL`] so the
+/// existing `DancePlayer` modifier drives the gesture. Returns 400
+/// on an unknown motion name, 204 otherwise.
+async fn handle_post_motion(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    use alloc::sync::Arc;
+    let motion = match json::parse_motion(body) {
+        Ok(m) => m,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /motion parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let msg = format!("invalid motion: {e:?}\n");
+            return write_text(socket, 400, &msg).await;
+        }
+    };
+    DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
+    defmt::info!("http: POST /motion → {=str}", motion.wire_str());
     write_no_content(socket).await
 }
 
@@ -1148,6 +1172,20 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "play_motion" => {
+            use alloc::sync::Arc;
+            match json::parse_motion(arguments) {
+                Ok(motion) => {
+                    DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
+                    render_success(id, &render_tool_text_result("motion enqueued"))
+                }
+                Err(e) => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InvalidParams,
+                    tool_parse_detail(&e),
+                ),
+            }
+        }
         "start_listen" => match json::parse_start_listen(arguments) {
             Ok(cmd) => {
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
@@ -1362,6 +1400,7 @@ const fn tool_parse_detail(e: &JsonError) -> &'static str {
         E::UnknownMood => "unknown mood",
         E::UnknownPalette => "unknown palette",
         E::UnknownFaceGeometry => "unknown face geometry",
+        E::UnknownMotion => "unknown motion",
         E::VolumeOutOfRange(_) => "volume out of range",
     }
 }
