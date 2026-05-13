@@ -66,12 +66,14 @@ section summarises the milestone work in human terms.
 
 ### Audio
 
-- ES7210 PCM capture beyond RMS. The audio task now publishes
-  20 ms (320-sample) frames onto `AUDIO_FRAME_CHANNEL` alongside the
-  existing `AUDIO_RMS_SIGNAL`, with cumulative `AUDIO_FRAME_CAPTURED`
-  and `AUDIO_FRAME_DROPPED` counters for diagnostics. Foundation for
-  the wake-word + push-to-talk + UDP audio debug paths; consumer-side
-  code lands in follow-up PRs.
+- ES7210 PCM capture beyond RMS. The audio task publishes 20 ms
+  (320-sample) frames onto `AUDIO_FRAME_PUBSUB` (a `PubSubChannel`
+  with one publisher and up to four subscribers) alongside the
+  existing `AUDIO_RMS_SIGNAL`. Per-subscriber lag surfaces as
+  `WaitResult::Lagged(n)` rather than producer-side failure;
+  `AUDIO_FRAME_CAPTURED` tracks total publishes for health probing.
+  Foundation for the wake-word + push-to-talk + UDP audio debug
+  paths; consumer-side code lands in follow-up PRs.
 
 ### Networking + control plane
 

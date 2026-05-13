@@ -50,7 +50,8 @@ use alloc::boxed::Box;
 use aw88298::Aw88298;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, pubsub::PubSubBehavior,
+    signal::Signal,
 };
 use embassy_time::{Delay, Duration, Timer};
 use es7210::Es7210;
@@ -465,13 +466,27 @@ pub static AUDIO_RMS_SIGNAL: Signal<CriticalSectionRawMutex, AudioRms> = Signal:
 /// enough that an STT consumer adds bounded latency.
 pub const AUDIO_FRAME_SAMPLES: usize = 320;
 
-/// Backlog depth for [`AUDIO_FRAME_CHANNEL`].
+/// Backlog depth for [`AUDIO_FRAME_PUBSUB`].
 ///
-/// `8` frames × 20 ms = 160 ms of buffered audio. Lets a consumer that
-/// stalls briefly (TLS handshake, SD write) catch up without losing
-/// samples, while keeping the worst-case static footprint bounded
-/// (~5 KB).
-pub const AUDIO_FRAME_CHANNEL_DEPTH: usize = 8;
+/// `8` frames × 20 ms = 160 ms of buffered audio. Lets a subscriber
+/// that stalls briefly (TLS handshake, SD write) catch up without
+/// losing samples, while keeping the static footprint bounded
+/// (`8 × AudioFrame` ≈ 5 KB).
+pub const AUDIO_FRAME_PUBSUB_DEPTH: usize = 8;
+
+/// Maximum simultaneous subscribers on [`AUDIO_FRAME_PUBSUB`].
+///
+/// Future audio consumers — wake-word inference, push-to-talk
+/// capture, UDP debug stream — each take one slot. `4` covers the
+/// planned set with one slot to spare for ad-hoc benches.
+pub const AUDIO_FRAME_MAX_SUBSCRIBERS: usize = 4;
+
+/// Maximum simultaneous publishers on [`AUDIO_FRAME_PUBSUB`].
+///
+/// Only [`run_rms_loop`] produces frames; pinned at `1` to make the
+/// single-producer contract explicit at the type level and catch an
+/// accidental second publisher at compile time.
+pub const AUDIO_FRAME_MAX_PUBLISHERS: usize = 1;
 
 /// One PCM capture frame published by [`run_rms_loop`].
 ///
@@ -482,38 +497,42 @@ pub const AUDIO_FRAME_CHANNEL_DEPTH: usize = 8;
 pub struct AudioFrame {
     /// Raw PCM samples, little-endian-derived `i16`.
     pub samples: [i16; AUDIO_FRAME_SAMPLES],
-    /// Monotonic wrapping frame counter since boot. A gap in this
-    /// sequence across two consecutive `try_receive` calls means the
-    /// channel overflowed (or a DMA error discarded an in-flight
-    /// frame) and the consumer missed frames in between — see
-    /// [`AUDIO_FRAME_DROPPED`] for the cumulative drop count. Use
-    /// `wrapping_sub` when comparing consecutive values so the counter
-    /// rolls over correctly at [`u32::MAX`].
+    /// Monotonic wrapping frame counter since boot. A subscriber that
+    /// falls behind sees `embassy_sync::pubsub::WaitResult::Lagged(n)`
+    /// from `Subscriber::next_message`; sequence gaps in successive
+    /// `Message` reads also indicate a DMA error discarded an
+    /// in-flight frame. Use `wrapping_sub` when comparing consecutive
+    /// values so the counter rolls over correctly at [`u32::MAX`].
     pub sequence: u32,
 }
 
-/// PCM capture channel — single-producer ([`run_rms_loop`]) /
-/// single-consumer.
+/// PCM capture pub-sub — single-publisher ([`run_rms_loop`]) /
+/// multi-subscriber.
 ///
-/// When no consumer is attached the producer pushes frames until the
-/// channel fills, then drops with the `AUDIO_FRAME_DROPPED` counter
-/// ticking. The cost of the unused channel is the static buffer
-/// (~5 KB) plus one `try_send` per 20 ms tick; small enough that
-/// shipping the producer without a consumer is fine.
-pub static AUDIO_FRAME_CHANNEL: Channel<
+/// Each subscriber gets its own read cursor; a lagging subscriber
+/// receives `WaitResult::Lagged(n_missed)` on its next read rather
+/// than blocking the publisher or stalling other subscribers. The
+/// publisher uses `publish_immediate` which never blocks — capacity
+/// pressure is observed via `Lagged` at the consumer, not via a
+/// drop counter at the producer.
+///
+/// `AUDIO_FRAME_PUBSUB_DEPTH × AudioFrame` ≈ 5 KB static. The
+/// per-subscriber state lives inside `Subscriber<'_, …>` and is
+/// freed on drop.
+pub static AUDIO_FRAME_PUBSUB: embassy_sync::pubsub::PubSubChannel<
     CriticalSectionRawMutex,
     AudioFrame,
-    AUDIO_FRAME_CHANNEL_DEPTH,
-> = Channel::new();
+    AUDIO_FRAME_PUBSUB_DEPTH,
+    AUDIO_FRAME_MAX_SUBSCRIBERS,
+    AUDIO_FRAME_MAX_PUBLISHERS,
+> = embassy_sync::pubsub::PubSubChannel::new();
 
-/// Cumulative count of frames the producer successfully enqueued onto
-/// [`AUDIO_FRAME_CHANNEL`] since boot. Read-only outside the audio task.
+/// Cumulative count of frames the producer published onto
+/// [`AUDIO_FRAME_PUBSUB`] since boot.
+///
+/// Read-only outside the audio task; useful as a health probe
+/// (should advance at ~50 Hz = `1000 ms / 20 ms` per audio-task tick).
 pub static AUDIO_FRAME_CAPTURED: AtomicU32 = AtomicU32::new(0);
-
-/// Cumulative count of frames the producer dropped because the channel
-/// was full at push time. A consumer is healthy iff this counter stays
-/// flat; sustained growth means it's not draining fast enough.
-pub static AUDIO_FRAME_DROPPED: AtomicU32 = AtomicU32::new(0);
 
 /// `true` while the TX feeder has a clip in flight.
 ///
@@ -857,8 +876,8 @@ async fn run_rms_loop<BUFFER>(
 
     // PCM frame producer state. Each sample fed into `accumulate` for
     // RMS is also pushed into `frame_buf`; when full, the buffer is
-    // wrapped into an `AudioFrame` and try-sent onto
-    // `AUDIO_FRAME_CHANNEL`. Decoupled from the RMS window cadence so
+    // wrapped into an `AudioFrame` and published on
+    // `AUDIO_FRAME_PUBSUB`. Decoupled from the RMS window cadence so
     // a future tweak to either doesn't churn the other.
     let mut frame_buf = [0_i16; AUDIO_FRAME_SAMPLES];
     let mut frame_pos: usize = 0;
@@ -975,11 +994,11 @@ async fn run_rms_loop<BUFFER>(
 /// Push one sample into the in-flight capture frame.
 ///
 /// When the frame fills, wraps the buffer into an [`AudioFrame`] and
-/// try-sends it onto [`AUDIO_FRAME_CHANNEL`]; on success bumps
-/// [`AUDIO_FRAME_CAPTURED`], on overflow bumps [`AUDIO_FRAME_DROPPED`]
-/// (the channel is full so a consumer is lagging). Either way, the
-/// local sequence counter advances and the producer starts the next
-/// frame without blocking — dropping is intentional backpressure.
+/// publishes it on [`AUDIO_FRAME_PUBSUB`] via `publish_immediate`
+/// (non-blocking; per-subscriber lag surfaces as
+/// [`embassy_sync::pubsub::WaitResult::Lagged`] on their next read,
+/// not as a producer-side failure). Bumps [`AUDIO_FRAME_CAPTURED`]
+/// and advances the local sequence counter.
 #[inline]
 fn push_frame_sample(
     frame_buf: &mut [i16; AUDIO_FRAME_SAMPLES],
@@ -996,14 +1015,8 @@ fn push_frame_sample(
         samples: *frame_buf,
         sequence: *frame_sequence,
     };
-    match AUDIO_FRAME_CHANNEL.try_send(frame) {
-        Ok(()) => {
-            AUDIO_FRAME_CAPTURED.fetch_add(1, Ordering::Relaxed);
-        }
-        Err(embassy_sync::channel::TrySendError::Full(_)) => {
-            AUDIO_FRAME_DROPPED.fetch_add(1, Ordering::Relaxed);
-        }
-    }
+    AUDIO_FRAME_PUBSUB.publish_immediate(frame);
+    AUDIO_FRAME_CAPTURED.fetch_add(1, Ordering::Relaxed);
     *frame_sequence = frame_sequence.wrapping_add(1);
     *frame_pos = 0;
 }
