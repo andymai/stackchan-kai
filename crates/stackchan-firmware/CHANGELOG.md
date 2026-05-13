@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.74.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.73.0...stackchan-firmware-v0.74.0) (2026-05-13)
+
+
+### Features
+
+* **firmware:** UDP audio debug stream ([#318](https://github.com/andymai/stackchan-kai/issues/318)) ([5d67433](https://github.com/andymai/stackchan-kai/commit/5d67433204376a230dd7497c868ca0927dcf47bf))
+
 ## [0.73.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.72.0...stackchan-firmware-v0.73.0) (2026-05-13)
 
 
