@@ -150,6 +150,12 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
 ///
 /// Currently infallible — kept as `Result` for symmetry with
 /// [`crate::render_ron`].
+#[allow(
+    clippy::too_many_lines,
+    reason = "single linear render: emitting one schema-v1 JSON document end to end. \
+              Splitting per nested object fragments the layout review and would force \
+              callers through a builder API for no readability gain."
+)]
 pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<String, ConfigError> {
     let mut out = String::new();
     out.push('{');
@@ -238,12 +244,17 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
     out.push_str("},\"behavior\":{");
     let _ = write!(
         out,
-        "\"soliloquy_enabled\":{},\"hourly_chime_enabled\":{},\"battery_icon_enabled\":{},\"toast_overlay_enabled\":{},\"auto_torque_release_ms\":{}",
+        "\"soliloquy_enabled\":{},\"hourly_chime_enabled\":{},\"battery_icon_enabled\":{},\"toast_overlay_enabled\":{},\"auto_torque_release_ms\":{},",
         config.behavior.soliloquy_enabled,
         config.behavior.hourly_chime_enabled,
         config.behavior.battery_icon_enabled,
         config.behavior.toast_overlay_enabled,
         config.behavior.auto_torque_release_ms,
+    );
+    push_string_field(
+        &mut out,
+        "audio_debug_udp_target",
+        &config.behavior.audio_debug_udp_target,
     );
     out.push_str("}}");
     Ok(out)
@@ -747,6 +758,7 @@ impl<'a> Parser<'a> {
         let mut battery_icon_enabled: Option<bool> = None;
         let mut toast_overlay_enabled: Option<bool> = None;
         let mut auto_torque_release_ms: Option<u32> = None;
+        let mut audio_debug_udp_target: Option<String> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -793,6 +805,15 @@ impl<'a> Parser<'a> {
                     }
                     auto_torque_release_ms = Some(self.parse_u32()?);
                 }
+                "audio_debug_udp_target" => {
+                    if audio_debug_udp_target.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "audio_debug_udp_target",
+                        ));
+                    }
+                    audio_debug_udp_target = Some(self.parse_string()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -806,6 +827,7 @@ impl<'a> Parser<'a> {
             battery_icon_enabled: battery_icon_enabled.unwrap_or(false),
             toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
+            audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
         })
     }
 
@@ -1051,6 +1073,7 @@ mod tests {
                 battery_icon_enabled: true,
                 toast_overlay_enabled: true,
                 auto_torque_release_ms: 30_000,
+                audio_debug_udp_target: "192.168.1.42:5005".to_string(),
             },
         }
     }
@@ -1371,6 +1394,7 @@ mod tests {
                 battery_icon_enabled: true,
                 toast_overlay_enabled: true,
                 auto_torque_release_ms: 30_000,
+                audio_debug_udp_target: "192.168.1.42:5005".to_string(),
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

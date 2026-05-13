@@ -283,7 +283,7 @@ impl Default for EspNowConfig {
 /// `behavior:` block at all — `serde(default)` on the parent populates
 /// it. Operators opt in by adding the block via `PUT /settings` or
 /// editing `STACKCHAN.RON` directly.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 #[allow(
     clippy::struct_excessive_bools,
@@ -328,6 +328,13 @@ pub struct BehaviorConfig {
     /// position write. Useful for desk-toy units that sit idle for
     /// hours and don't need the motors' standing draw.
     pub auto_torque_release_ms: u32,
+    /// UDP target for the audio debug stream, as `"host:port"`. Empty
+    /// disables the debug task. When set, the firmware subscribes to
+    /// `AUDIO_FRAME_PUBSUB` and forwards each 20 ms frame's raw
+    /// little-endian `i16` samples to this address. Pair with the
+    /// canned `aplay` / `nc` receive command in `docs/audio-debug.md`
+    /// to listen on the host. Bench-only — leave empty in production.
+    pub audio_debug_udp_target: String,
 }
 
 /// Time / SNTP configuration.

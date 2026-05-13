@@ -139,6 +139,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        auto_torque_release_ms: {},",
         config.behavior.auto_torque_release_ms
     );
+    push_field(
+        &mut out,
+        "        audio_debug_udp_target",
+        &config.behavior.audio_debug_udp_target,
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -500,6 +505,7 @@ impl<'a> Parser<'a> {
         let mut battery_icon_enabled: Option<bool> = None;
         let mut toast_overlay_enabled: Option<bool> = None;
         let mut auto_torque_release_ms: Option<u32> = None;
+        let mut audio_debug_udp_target: Option<String> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -515,6 +521,7 @@ impl<'a> Parser<'a> {
                 "battery_icon_enabled" => battery_icon_enabled = Some(self.parse_bool()?),
                 "toast_overlay_enabled" => toast_overlay_enabled = Some(self.parse_bool()?),
                 "auto_torque_release_ms" => auto_torque_release_ms = Some(self.parse_u32()?),
+                "audio_debug_udp_target" => audio_debug_udp_target = Some(self.parse_string()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -528,6 +535,7 @@ impl<'a> Parser<'a> {
             battery_icon_enabled: battery_icon_enabled.unwrap_or(false),
             toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
+            audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
         })
     }
 
