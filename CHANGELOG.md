@@ -98,8 +98,10 @@ section summarises the milestone work in human terms.
   (runtime servo zero-point correction layered on top of the
   compile-time trim).
 - MCP gains `set_volume` / `set_mute` / `create_reminder` /
-  `list_reminders` / `cancel_reminder`. Reminders are monotonic
-  (fire-in-N-seconds), in-RAM, capped with a five-day horizon.
+  `list_reminders` / `cancel_reminder` / `push_toast`. Reminders are
+  monotonic (fire-in-N-seconds), in-RAM, capped with a five-day
+  horizon. `push_toast` mirrors `POST /toast` for MCP clients —
+  requires `behavior.toast_overlay_enabled` for the band to render.
 - Time configuration honours the `time.tz` field at boot — a small
   catalog of named IANA zones plus `Etc/GMT±N` is enough for the
   desk-toy use case without pulling in a real timezone library.

@@ -495,6 +495,59 @@ pub fn parse_motion(body: &str) -> Result<NamedMotion, JsonError> {
     motion.ok_or(JsonError::MissingKey("motion"))
 }
 
+/// Parsed body of `POST /toast` / MCP `push_toast`.
+///
+/// Both routes write the result to the firmware's toast slot. The
+/// level is kept as a string here so this crate doesn't need to
+/// duplicate the firmware-side `ToastLevel` enum; the call site
+/// matches `"warn"` / `"error"` and surfaces unknown values as a
+/// 400 / `InvalidParams`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToastRequest {
+    /// Severity tier — `"warn"` or `"error"`.
+    pub level: alloc::string::String,
+    /// Display text. The firmware truncates to its own
+    /// `MAX_TOAST_LEN`; empty is allowed (and renders as a blank
+    /// band, which is operator's-mistake territory).
+    pub message: alloc::string::String,
+}
+
+/// Parse `{"level": "warn"|"error", "message": "..."}` into a
+/// [`ToastRequest`]. The `message` field is optional and defaults to
+/// empty.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing required keys, unknown keys, or
+/// malformed JSON shape.
+pub fn parse_toast(body: &str) -> Result<ToastRequest, JsonError> {
+    use alloc::string::ToString;
+    let mut level: Option<alloc::string::String> = None;
+    let mut message: Option<alloc::string::String> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "level" => {
+                if level.is_some() {
+                    return Err(JsonError::DuplicateKey("level"));
+                }
+                level = Some(scanner.read_string()?.to_string());
+            }
+            "message" => {
+                if message.is_some() {
+                    return Err(JsonError::DuplicateKey("message"));
+                }
+                message = Some(scanner.read_string()?.to_string());
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(ToastRequest {
+        level: level.ok_or(JsonError::MissingKey("level"))?,
+        message: message.unwrap_or_default(),
+    })
+}
+
 /// Maximum absolute value for either head-offset axis, in degrees.
 ///
 /// Larger values risk tipping the head past mechanical safe range

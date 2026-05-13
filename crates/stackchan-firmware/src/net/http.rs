@@ -1001,35 +1001,44 @@ async fn handle_post_wake(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
 /// overlay still requires `toast_overlay_enabled = true` in the boot
 /// config for the toast to actually render.
 async fn handle_post_toast(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
-    use stackchan_net::mcp::find_string_field;
-    let level = match find_string_field(body, "level") {
-        Ok(Some("warn")) => crate::toast::ToastLevel::Warn,
-        Ok(Some("error")) => crate::toast::ToastLevel::Error,
-        Ok(Some(other)) => {
-            defmt::warn!("http: POST /toast unknown level={=str}", other);
-            return write_text(socket, 400, "level must be \"warn\" or \"error\"\n").await;
-        }
-        Ok(None) => {
-            return write_text(socket, 400, "missing level field\n").await;
-        }
-        Err(_) => {
-            return write_text(socket, 400, "malformed JSON body\n").await;
+    let request = match json::parse_toast(body) {
+        Ok(r) => r,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /toast parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let msg = format!("invalid toast: {e:?}\n");
+            return write_text(socket, 400, &msg).await;
         }
     };
-    let message = match find_string_field(body, "message") {
-        Ok(Some(m)) => m,
-        Ok(None) => "",
-        Err(_) => {
-            return write_text(socket, 400, "malformed JSON body\n").await;
-        }
+    let Some(level) = toast_level_from_wire(&request.level) else {
+        defmt::warn!(
+            "http: POST /toast unknown level={=str}",
+            request.level.as_str()
+        );
+        return write_text(socket, 400, "level must be \"warn\" or \"error\"\n").await;
     };
-    crate::toast::push(level, message, crate::clock::HalClock.now());
+    crate::toast::push(level, &request.message, crate::clock::HalClock.now());
     defmt::info!(
         "http: POST /toast level={=?} msg={=str}",
         defmt::Debug2Format(&level),
-        message
+        request.message.as_str()
     );
     write_no_content(socket).await
+}
+
+/// Map the wire string from `parse_toast` onto the firmware's
+/// `ToastLevel` enum. Shared by `POST /toast` and the MCP
+/// `push_toast` tool.
+const fn toast_level_from_wire(s: &str) -> Option<crate::toast::ToastLevel> {
+    // `str` doesn't `match` ergonomically in a const fn; fall back
+    // to byte-equality for the known short labels.
+    match s.as_bytes() {
+        b"warn" => Some(crate::toast::ToastLevel::Warn),
+        b"error" => Some(crate::toast::ToastLevel::Error),
+        _ => None,
+    }
 }
 
 /// `POST /mcp` — JSON-RPC 2.0 endpoint speaking minimal MCP.
@@ -1190,6 +1199,24 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 ),
             }
         }
+        "push_toast" => match json::parse_toast(arguments) {
+            Ok(request) => match toast_level_from_wire(&request.level) {
+                Some(level) => {
+                    crate::toast::push(level, &request.message, crate::clock::HalClock.now());
+                    render_success(id, &render_tool_text_result("toast pushed"))
+                }
+                None => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InvalidParams,
+                    "level must be \"warn\" or \"error\"",
+                ),
+            },
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         "start_listen" => match json::parse_start_listen(arguments) {
             Ok(cmd) => {
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
