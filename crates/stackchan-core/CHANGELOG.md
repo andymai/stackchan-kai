@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.31.0...stackchan-core-v0.32.0) (2026-05-13)
+
+
+### Features
+
+* **core:** on-screen battery overlay (opt-in) ([#304](https://github.com/andymai/stackchan-kai/issues/304)) ([6aa2283](https://github.com/andymai/stackchan-kai/commit/6aa22835ce02313375f46592f3c48ada7b4a77c7))
+
 ## [0.31.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.30.0...stackchan-core-v0.31.0) (2026-05-08)
 
 
