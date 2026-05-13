@@ -40,6 +40,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/mood`          | Set the operator-selected energy baseline (runtime-only) |
 | POST   | `/palette`       | Pick the avatar's colour palette (skin / eye / mouth) |
 | POST   | `/dance`         | Play a JSON keyframe script (head + emotion + decorator + LED) |
+| POST   | `/motion`        | Play a named one-shot motion preset (greet/nod/shake/laugh)   |
 | POST   | `/face-geometry` | Pick a face-geometry preset (eye + mouth baseline silhouette) |
 | POST   | `/mcp`           | JSON-RPC 2.0 / MCP endpoint (initialize, tools/list, tools/call) |
 | POST   | `/volume`        | Set output volume (0–100); persisted to SD           |

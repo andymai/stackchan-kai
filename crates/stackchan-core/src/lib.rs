@@ -47,6 +47,7 @@ pub mod mind;
 pub mod modifier;
 pub mod modifiers;
 pub mod mood;
+pub mod motion;
 pub mod motor;
 pub mod palette;
 pub mod perception;
@@ -78,6 +79,7 @@ pub use mind::{
 };
 pub use modifier::Modifier;
 pub use mood::Mood;
+pub use motion::NamedMotion;
 pub use motor::Motor;
 pub use palette::{Palette, PaletteColors};
 pub use perception::{

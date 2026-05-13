@@ -29,6 +29,11 @@ section summarises the milestone work in human terms.
   any task can call to surface a 3-second warn / error band at the
   bottom of the LCD. Operator-driven verification path exposed at
   `POST /toast` (`{level, message}`).
+- Named one-shot motions: `POST /motion` + MCP `play_motion` route
+  the four canonical gestures (`greet` / `nod` / `shake` / `laugh`)
+  through the existing dance-player path. Each returns the head to
+  baseline pose on exit so a follow-up command starts from a known
+  state.
 - Speech-bubble text overlay drawn above the face, with a TTL the
   `BubbleExpiry` modifier sweeps each frame.
 - Decorator badges (heart, sweat, dizzy, ear, pairing, angry, shy)

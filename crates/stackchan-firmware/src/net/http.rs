@@ -451,6 +451,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/look-at-point") => handle_remote(socket, json::parse_look_at_point(body)).await,
         ("POST", "/face-target") => handle_remote(socket, json::parse_face_target(body)).await,
         ("POST", "/dance") => handle_post_dance(socket, body).await,
+        ("POST", "/motion") => handle_post_motion(socket, body).await,
         ("POST", "/reset") => handle_remote(socket, Ok(RemoteCommand::Reset)).await,
         ("POST", "/speak") => handle_remote(socket, json::parse_speak(body)).await,
         ("POST", "/listen") => handle_remote(socket, json::parse_start_listen(body)).await,
@@ -792,6 +793,34 @@ async fn handle_post_dance(socket: &mut TcpSocket<'_>, body: &str) -> Result<(),
     let len = script.keyframes.len();
     DANCE_SCRIPT_SIGNAL.signal(Arc::new(script));
     defmt::info!("http: POST /dance → {=usize} keyframes loaded", len);
+    write_no_content(socket).await
+}
+
+/// `POST /motion` — JSON `{"motion": "greet"|"nod"|"shake"|"laugh"}`.
+/// Looks the variant up in [`NamedMotion::from_wire_str`], hands the
+/// baked [`DanceScript`] off to [`DANCE_SCRIPT_SIGNAL`] so the
+/// existing `DancePlayer` modifier drives the gesture. Returns 400
+/// on an unknown motion name, 204 otherwise.
+async fn handle_post_motion(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    use alloc::sync::Arc;
+    use stackchan_core::NamedMotion;
+    use stackchan_net::mcp::find_string_field;
+    let name = match find_string_field(body, "motion") {
+        Ok(Some(n)) => n,
+        Ok(None) => {
+            return write_text(socket, 400, "missing motion field\n").await;
+        }
+        Err(_) => {
+            return write_text(socket, 400, "malformed JSON body\n").await;
+        }
+    };
+    let Some(motion) = NamedMotion::from_wire_str(name) else {
+        defmt::warn!("http: POST /motion unknown name={=str}", name);
+        return write_text(socket, 400, "unknown motion\n").await;
+    };
+    let script = motion.script();
+    DANCE_SCRIPT_SIGNAL.signal(Arc::new(script));
+    defmt::info!("http: POST /motion → {=str}", motion.wire_str());
     write_no_content(socket).await
 }
 
@@ -1148,6 +1177,30 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "play_motion" => {
+            use alloc::sync::Arc;
+            use stackchan_core::NamedMotion;
+            use stackchan_net::mcp::find_string_field;
+            match find_string_field(arguments, "motion") {
+                Ok(Some(name)) => NamedMotion::from_wire_str(name).map_or_else(
+                    || render_error(Some(id), JsonRpcErrorCode::InvalidParams, "unknown motion"),
+                    |motion| {
+                        DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
+                        render_success(id, &render_tool_text_result("motion enqueued"))
+                    },
+                ),
+                Ok(None) => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InvalidParams,
+                    "missing motion field",
+                ),
+                Err(_) => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InvalidParams,
+                    "malformed arguments",
+                ),
+            }
+        }
         "start_listen" => match json::parse_start_listen(arguments) {
             Ok(cmd) => {
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
