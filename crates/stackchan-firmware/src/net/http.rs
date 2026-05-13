@@ -880,9 +880,13 @@ async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Res
     // tick, leaving a small POST-then-GET window where the read
     // returns the prior value).
     crate::head::OFFSETS_CACHE.lock(|cell| cell.set(firmware_offsets));
+    // The persist outcome is logged by `runtime_store::persist` itself
+    // (`info!` on success, `warn!` on SD-write failure) — no need to
+    // annotate either side here, which would risk a contradictory
+    // ordering in the serial log if the SD write failed.
     let _ = crate::runtime_store::update_head_offsets(firmware_offsets).await;
     defmt::info!(
-        "http: POST /head/offsets → yaw={=f32} tilt={=f32} (persisted)",
+        "http: POST /head/offsets → yaw={=f32} tilt={=f32}",
         firmware_offsets.yaw_offset_deg,
         firmware_offsets.tilt_offset_deg,
     );

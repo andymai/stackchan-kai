@@ -28,7 +28,7 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/camera/snapshot` | Most recent `/sd/CAPTURE.565` frame as raw QVGA RGB565 BE |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
 | GET    | `/head/offsets`  | Current yaw + tilt zero-point offsets               |
-| POST   | `/head/offsets`  | Update yaw + tilt zero-point offsets (runtime-only) |
+| POST   | `/head/offsets`  | Update yaw + tilt zero-point offsets; persisted to SD |
 | GET    | `/crash`         | Most recent panic log (404 if none recorded)        |
 | POST   | `/crash/clear`   | Delete `/sd/CRASH.LOG` (idempotent)                 |
 | POST   | `/emotion`       | Set affect with hold timer                          |
