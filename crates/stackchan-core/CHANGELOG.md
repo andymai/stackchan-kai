@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.33.0...stackchan-core-v0.34.0) (2026-05-13)
+
+
+### Features
+
+* **core:** named one-shot motions (greet/nod/shake/laugh) ([#308](https://github.com/andymai/stackchan-kai/issues/308)) ([07ae228](https://github.com/andymai/stackchan-kai/commit/07ae228ed432f02d51f3de80d26a19b91126973e))
+
 ## [0.33.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.32.0...stackchan-core-v0.33.0) (2026-05-13)
 
 
