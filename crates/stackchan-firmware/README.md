@@ -68,8 +68,8 @@ EmotionFromTouch → IntentFromBodyTouch → EmotionFromRemote → EmotionFromIn
 EmotionFromVoice → IntentFromLoud → EmotionFromAmbient → EmotionFromBattery →
 AttentionFromTracking → DormancyFromActivity → EmotionCycle → StyleFromEmotion →
 StyleFromIntent → GazeFromAttention → MicrosaccadeFromAttention → Blink → Breath →
-IdleDrift → BatteryOverlayFromPerception → IdleHeadDrift → HeadFromEmotion →
-HeadFromAttention → LostTargetSearch → HeadFromIntent → MouthFromAudio
+IdleDrift → IdleMicroExpression → BatteryOverlayFromPerception → IdleHeadDrift →
+HeadFromEmotion → HeadFromAttention → LostTargetSearch → HeadFromIntent → MouthFromAudio
 ```
 
 Inputs arrive through embassy `Signal` channels from the per-peripheral

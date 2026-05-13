@@ -108,6 +108,7 @@ mod head_from_emotion;
 mod head_from_intent;
 mod idle_drift;
 mod idle_head_drift;
+mod idle_micro_expression;
 mod intent_from_body_touch;
 mod intent_from_loud;
 mod lost_target_search;
@@ -166,6 +167,11 @@ pub use idle_drift::{
 pub use idle_head_drift::{
     GLANCE_EASE_IN_MS, GLANCE_EASE_OUT_MS, GLANCE_HOLD_MS, GLANCE_INTERVAL_MAX_MS,
     GLANCE_INTERVAL_MIN_MS, GLANCE_PAN_MAX_DEG, GLANCE_TILT_MAX_DEG, IdleHeadDrift,
+};
+pub use idle_micro_expression::{
+    DEFAULT_INTERVAL_MAX_MS as IDLE_MICRO_EXPRESSION_INTERVAL_MAX_MS,
+    DEFAULT_INTERVAL_MIN_MS as IDLE_MICRO_EXPRESSION_INTERVAL_MIN_MS,
+    DEFAULT_MAX_MOUTH_Y_PX as IDLE_MICRO_EXPRESSION_MAX_MOUTH_Y_PX, IdleMicroExpression,
 };
 pub use intent_from_body_touch::{
     BODY_GESTURE_HOLD_MS, DEFAULT_CENTRE_PRESS, DEFAULT_LEFT_PRESS, DEFAULT_RIGHT_PRESS,
