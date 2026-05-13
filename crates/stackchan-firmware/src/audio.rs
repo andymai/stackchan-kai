@@ -482,10 +482,13 @@ pub const AUDIO_FRAME_CHANNEL_DEPTH: usize = 8;
 pub struct AudioFrame {
     /// Raw PCM samples, little-endian-derived `i16`.
     pub samples: [i16; AUDIO_FRAME_SAMPLES],
-    /// Monotonic frame counter since boot. A gap in this sequence
-    /// across two consecutive `try_receive` calls means the channel
-    /// overflowed and the consumer dropped frames in between — see
-    /// [`AUDIO_FRAME_DROPPED`] for the cumulative count.
+    /// Monotonic wrapping frame counter since boot. A gap in this
+    /// sequence across two consecutive `try_receive` calls means the
+    /// channel overflowed (or a DMA error discarded an in-flight
+    /// frame) and the consumer missed frames in between — see
+    /// [`AUDIO_FRAME_DROPPED`] for the cumulative drop count. Use
+    /// `wrapping_sub` when comparing consecutive values so the counter
+    /// rolls over correctly at [`u32::MAX`].
     pub sequence: u32,
 }
 
@@ -900,6 +903,13 @@ async fn run_rms_loop<BUFFER>(
                 sum_sq = 0.0;
                 count = 0;
                 byte_carry = None;
+                // Discard the in-flight frame: continuing to fill it
+                // after a DMA gap would splice pre- and post-gap
+                // samples into a single AudioFrame with no sequence
+                // discontinuity for the consumer to detect. Drop the
+                // partial frame on the floor instead — the next frame
+                // boundary lines up with the resync.
+                frame_pos = 0;
                 Timer::after(Duration::from_millis(10)).await;
                 continue;
             }
