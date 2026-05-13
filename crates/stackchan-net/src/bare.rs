@@ -129,6 +129,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        battery_icon_enabled: {},",
         config.behavior.battery_icon_enabled
     );
+    let _ = writeln!(
+        out,
+        "        toast_overlay_enabled: {},",
+        config.behavior.toast_overlay_enabled
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -488,6 +493,7 @@ impl<'a> Parser<'a> {
         let mut soliloquy_enabled: Option<bool> = None;
         let mut hourly_chime_enabled: Option<bool> = None;
         let mut battery_icon_enabled: Option<bool> = None;
+        let mut toast_overlay_enabled: Option<bool> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -501,6 +507,7 @@ impl<'a> Parser<'a> {
                 "soliloquy_enabled" => soliloquy_enabled = Some(self.parse_bool()?),
                 "hourly_chime_enabled" => hourly_chime_enabled = Some(self.parse_bool()?),
                 "battery_icon_enabled" => battery_icon_enabled = Some(self.parse_bool()?),
+                "toast_overlay_enabled" => toast_overlay_enabled = Some(self.parse_bool()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -512,6 +519,7 @@ impl<'a> Parser<'a> {
             soliloquy_enabled: soliloquy_enabled.unwrap_or(false),
             hourly_chime_enabled: hourly_chime_enabled.unwrap_or(false),
             battery_icon_enabled: battery_icon_enabled.unwrap_or(false),
+            toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
         })
     }
 

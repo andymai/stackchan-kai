@@ -238,10 +238,11 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
     out.push_str("},\"behavior\":{");
     let _ = write!(
         out,
-        "\"soliloquy_enabled\":{},\"hourly_chime_enabled\":{},\"battery_icon_enabled\":{}",
+        "\"soliloquy_enabled\":{},\"hourly_chime_enabled\":{},\"battery_icon_enabled\":{},\"toast_overlay_enabled\":{}",
         config.behavior.soliloquy_enabled,
         config.behavior.hourly_chime_enabled,
         config.behavior.battery_icon_enabled,
+        config.behavior.toast_overlay_enabled,
     );
     out.push_str("}}");
     Ok(out)
@@ -743,6 +744,7 @@ impl<'a> Parser<'a> {
         let mut soliloquy_enabled: Option<bool> = None;
         let mut hourly_chime_enabled: Option<bool> = None;
         let mut battery_icon_enabled: Option<bool> = None;
+        let mut toast_overlay_enabled: Option<bool> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -771,6 +773,15 @@ impl<'a> Parser<'a> {
                     }
                     battery_icon_enabled = Some(self.parse_bool()?);
                 }
+                "toast_overlay_enabled" => {
+                    if toast_overlay_enabled.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "toast_overlay_enabled",
+                        ));
+                    }
+                    toast_overlay_enabled = Some(self.parse_bool()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -782,6 +793,7 @@ impl<'a> Parser<'a> {
             soliloquy_enabled: soliloquy_enabled.unwrap_or(false),
             hourly_chime_enabled: hourly_chime_enabled.unwrap_or(false),
             battery_icon_enabled: battery_icon_enabled.unwrap_or(false),
+            toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
         })
     }
 
@@ -1005,6 +1017,7 @@ mod tests {
                 soliloquy_enabled: true,
                 hourly_chime_enabled: false,
                 battery_icon_enabled: true,
+                toast_overlay_enabled: true,
             },
         }
     }
@@ -1323,6 +1336,7 @@ mod tests {
                 soliloquy_enabled: true,
                 hourly_chime_enabled: false,
                 battery_icon_enabled: true,
+                toast_overlay_enabled: true,
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

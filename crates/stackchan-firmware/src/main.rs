@@ -26,7 +26,7 @@ extern crate alloc;
 
 use stackchan_firmware::{
     ambient, audio, ble, board, body_touch, button, camera, clock, event_log, framebuffer, head,
-    imu, ir, leds, net, power, sleep, storage, touch, tracking_trace, wallclock, watchdog,
+    imu, ir, leds, net, power, sleep, storage, toast, touch, tracking_trace, wallclock, watchdog,
 };
 
 use board::{HeadDriverImpl, SharedI2c};
@@ -283,11 +283,19 @@ async fn render_task(
             .is_some_and(|c| c.behavior.battery_icon_enabled);
         BatteryOverlayFromPerception::with_enabled(enabled)
     };
+    let toast_overlay_enabled = stackchan_firmware::storage::CONFIG_SNAPSHOT
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|c| c.behavior.toast_overlay_enabled);
     let mut last_rendered: Option<Face> = None;
     // Last on-screen pairing passkey. Tracked separately from
     // `last_rendered` so a passkey transition forces a redraw even
     // when the avatar face is bit-equal across frames.
     let mut last_passkey: Option<u32> = None;
+    // Last on-screen toast. Same dirty-check escape as `last_passkey`:
+    // a toast push needs to redraw even when the face hasn't changed.
+    let mut last_toast: Option<toast::ToastDisplay> = None;
     // Last instant TX was observed playing. Drives the post-playback
     // tail of the audio_rms gate so the mic doesn't pick up the
     // speaker's residual response immediately after a chirp ends.
@@ -762,11 +770,17 @@ async fn render_task(
             // `motor.head_pose`, which is invisible to this dirty
             // check by construction.
             let current_passkey = ble::read_passkey();
+            let current_toast = if toast_overlay_enabled {
+                toast::current(now)
+            } else {
+                None
+            };
             let face_changed = last_rendered
                 .as_ref()
                 .is_none_or(|prev| *prev != entity.face);
             let passkey_changed = current_passkey != last_passkey;
-            if face_changed || passkey_changed {
+            let toast_changed = current_toast != last_toast;
+            if face_changed || passkey_changed || toast_changed {
                 // Draw is Infallible on `Framebuffer`; the `let _ =`
                 // discards the `Result<(), Infallible>` without
                 // triggering unwrap lints.
@@ -774,10 +788,14 @@ async fn render_task(
                 if let Some(passkey) = current_passkey {
                     draw_passkey_overlay(&mut fb, passkey);
                 }
+                if let Some(t) = current_toast.as_ref() {
+                    draw_toast_overlay(&mut fb, t);
+                }
                 match display.fill_contiguous(&canvas, fb.as_slice().iter().copied()) {
                     Ok(()) => {
                         last_rendered = Some(entity.face);
                         last_passkey = current_passkey;
+                        last_toast = current_toast;
                     }
                     Err(e) => defmt::error!("render: blit failed: {}", defmt::Debug2Format(&e)),
                 }
@@ -786,6 +804,41 @@ async fn render_task(
 
         ticker.next().await;
     }
+}
+
+/// Draw a short toast band across the bottom of the framebuffer.
+/// Colour matches the toast severity (warn = amber, error = red);
+/// text is centred in white `FONT_10X20`.
+fn draw_toast_overlay(fb: &mut Framebuffer, toast: &toast::ToastDisplay) {
+    use embedded_graphics::pixelcolor::RgbColor;
+    let height: u32 = 24;
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "framebuffer dimensions are well under i32::MAX"
+    )]
+    let top_y = FB_HEIGHT as i32 - height as i32;
+    let band = Rectangle::new(EgPoint::new(0, top_y), Size::new(FB_WIDTH, height));
+    let bg = PrimitiveStyleBuilder::new()
+        .fill_color(match toast.level {
+            toast::ToastLevel::Warn => Rgb565::new(31, 40, 0),
+            toast::ToastLevel::Error => Rgb565::new(31, 8, 4),
+        })
+        .build();
+    if band.into_styled(bg).draw(fb).is_err() {
+        return;
+    }
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "framebuffer dimensions are well under i32::MAX"
+    )]
+    // FONT_10X20 baseline sits 16 px below the cell top (4 px
+    // descender below). For the 24 px toast band, anchoring the
+    // baseline at top_y + 18 leaves 2 px of margin above and below
+    // the alphabetic glyph extent — same arithmetic the 32 px
+    // passkey banner uses at y=22.
+    let center = EgPoint::new(FB_WIDTH as i32 / 2, top_y + 18);
+    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    let _ = Text::with_alignment(toast.text.as_str(), center, style, Alignment::Center).draw(fb);
 }
 
 /// Draw a transient pairing-passkey banner across the top of the

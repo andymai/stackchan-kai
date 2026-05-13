@@ -24,6 +24,11 @@ section summarises the milestone work in human terms.
   `IdleDrift` so a long-quiet face shows mouth-side liveness too;
   composes additively with `Breath` via independent
   per-modifier offset tracking.
+- Toast overlay (firmware-only): opt-in via
+  `behavior.toast_overlay_enabled`, with a `crate::toast::push` API
+  any task can call to surface a 3-second warn / error band at the
+  bottom of the LCD. Operator-driven verification path exposed at
+  `POST /toast` (`{level, message}`).
 - Speech-bubble text overlay drawn above the face, with a TTL the
   `BubbleExpiry` modifier sweeps each frame.
 - Decorator badges (heart, sweat, dizzy, ear, pairing, angry, shy)

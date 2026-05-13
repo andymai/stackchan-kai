@@ -44,6 +44,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/mcp`           | JSON-RPC 2.0 / MCP endpoint (initialize, tools/list, tools/call) |
 | POST   | `/volume`        | Set output volume (0–100); persisted to SD           |
 | POST   | `/mute`          | Mute / un-mute output stage; persisted to SD         |
+| POST   | `/toast`         | Push a short toast band (warn / error); 3-second TTL |
 | GET    | `/settings`      | Persisted config (PSK + token redacted)             |
 | PUT    | `/settings`      | Replace persisted config; atomic SD writeback        |
 
