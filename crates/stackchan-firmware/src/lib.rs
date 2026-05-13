@@ -41,6 +41,7 @@ pub mod runtime_store;
 pub mod sd_spi;
 pub mod sleep;
 pub mod storage;
+pub mod toast;
 pub mod touch;
 pub mod tracking_trace;
 pub mod wallclock;

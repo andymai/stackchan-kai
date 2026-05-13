@@ -285,6 +285,11 @@ impl Default for EspNowConfig {
 /// editing `STACKCHAN.RON` directly.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag gates a distinct opt-in behavior; consolidating into bitflags \
+              hides the wire-format key names that operators edit in STACKCHAN.RON"
+)]
 pub struct BehaviorConfig {
     /// When `true`, the firmware writes a randomly-picked
     /// soliloquy line to `face.bubble` at random intervals
@@ -307,6 +312,12 @@ pub struct BehaviorConfig {
     /// at the source so a one-percent change does not re-trigger a
     /// frame redraw.
     pub battery_icon_enabled: bool,
+    /// When `true`, the firmware renders a short toast band at the
+    /// bottom of the screen for any warn / error events posted via
+    /// `crate::toast::push`. Off by default so the avatar's resting
+    /// expression stays clean; operators opt in via the boot config
+    /// or `PUT /settings`. Toasts have a fixed 3-second TTL.
+    pub toast_overlay_enabled: bool,
 }
 
 /// Time / SNTP configuration.

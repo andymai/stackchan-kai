@@ -128,7 +128,7 @@ use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use embedded_io_async::Write as AsyncWrite;
-use stackchan_core::RemoteCommand;
+use stackchan_core::{Clock as _, RemoteCommand};
 use stackchan_net::http_command::{self as json, JsonError};
 use stackchan_net::http_parse::{
     ct_eq, find_subsequence, parse_bearer_token, parse_content_length,
@@ -464,6 +464,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/crash/clear") => handle_post_crash_clear(socket).await,
         ("POST", "/sleep") => handle_post_sleep(socket).await,
         ("POST", "/wake") => handle_post_wake(socket).await,
+        ("POST", "/toast") => handle_post_toast(socket, body).await,
         ("GET", "/head/offsets") => handle_get_head_offsets(socket).await,
         ("POST", "/head/offsets") => handle_post_head_offsets(socket, body).await,
         ("POST", "/mcp") => handle_post_mcp(socket, body).await,
@@ -960,6 +961,46 @@ async fn handle_post_sleep(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> 
 async fn handle_post_wake(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     crate::sleep::SLEEP_SIGNAL.signal(crate::sleep::SleepState::Awake);
     defmt::info!("http: POST /wake → exiting sleep");
+    write_no_content(socket).await
+}
+
+/// `POST /toast` — JSON `{"level":"warn"|"error","message":"..."}`.
+/// Pushes a toast onto the firmware's render-side overlay. Useful for
+/// operator-driven verification when the overlay is enabled via
+/// `behavior.toast_overlay_enabled`.
+///
+/// Returns 400 on a body that fails to parse, 204 otherwise. The
+/// overlay still requires `toast_overlay_enabled = true` in the boot
+/// config for the toast to actually render.
+async fn handle_post_toast(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    use stackchan_net::mcp::find_string_field;
+    let level = match find_string_field(body, "level") {
+        Ok(Some("warn")) => crate::toast::ToastLevel::Warn,
+        Ok(Some("error")) => crate::toast::ToastLevel::Error,
+        Ok(Some(other)) => {
+            defmt::warn!("http: POST /toast unknown level={=str}", other);
+            return write_text(socket, 400, "level must be \"warn\" or \"error\"\n").await;
+        }
+        Ok(None) => {
+            return write_text(socket, 400, "missing level field\n").await;
+        }
+        Err(_) => {
+            return write_text(socket, 400, "malformed JSON body\n").await;
+        }
+    };
+    let message = match find_string_field(body, "message") {
+        Ok(Some(m)) => m,
+        Ok(None) => "",
+        Err(_) => {
+            return write_text(socket, 400, "malformed JSON body\n").await;
+        }
+    };
+    crate::toast::push(level, message, crate::clock::HalClock.now());
+    defmt::info!(
+        "http: POST /toast level={=?} msg={=str}",
+        defmt::Debug2Format(&level),
+        message
+    );
     write_no_content(socket).await
 }
 
