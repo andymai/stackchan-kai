@@ -943,17 +943,27 @@ async fn head_task(mut driver: HeadDriverImpl) {
             || current.tilt_deg.to_bits() != last_commanded.tilt_deg.to_bits();
         if pose_changed {
             last_pose_change_at = now;
-            last_commanded = current;
             if torque_released {
                 match driver.set_torque(true).await {
                     Ok(()) => {
                         defmt::info!("head: torque re-enabled (operator commanded new pose)");
                         torque_released = false;
+                        last_commanded = current;
                     }
                     Err(e) => {
-                        defmt::warn!("head: torque re-enable failed: {}", defmt::Debug2Format(&e))
+                        // Leave `last_commanded` un-advanced so the next
+                        // tick still sees `pose_changed = true` and
+                        // retries the re-enable. Otherwise a transient
+                        // bus glitch would keep the servo slack until
+                        // the operator commanded a *different* pose.
+                        defmt::warn!(
+                            "head: torque re-enable failed: {}; will retry next tick",
+                            defmt::Debug2Format(&e)
+                        );
                     }
                 }
+            } else {
+                last_commanded = current;
             }
         }
         let commanded = offsets.apply(current);
