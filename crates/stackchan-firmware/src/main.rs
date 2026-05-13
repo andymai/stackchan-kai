@@ -831,7 +831,12 @@ fn draw_toast_overlay(fb: &mut Framebuffer, toast: &toast::ToastDisplay) {
         clippy::cast_possible_wrap,
         reason = "framebuffer dimensions are well under i32::MAX"
     )]
-    let center = EgPoint::new(FB_WIDTH as i32 / 2, top_y + 13);
+    // FONT_10X20 baseline sits 16 px below the cell top (4 px
+    // descender below). For the 24 px toast band, anchoring the
+    // baseline at top_y + 18 leaves 2 px of margin above and below
+    // the alphabetic glyph extent — same arithmetic the 32 px
+    // passkey banner uses at y=22.
+    let center = EgPoint::new(FB_WIDTH as i32 / 2, top_y + 18);
     let style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
     let _ = Text::with_alignment(toast.text.as_str(), center, style, Alignment::Center).draw(fb);
 }

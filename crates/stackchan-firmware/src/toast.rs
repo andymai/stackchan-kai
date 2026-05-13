@@ -37,9 +37,10 @@ use stackchan_core::Instant;
 /// warnings doesn't keep occluding the lower-third of the face.
 pub const TOAST_TTL_MS: u64 = 3_000;
 
-/// Maximum byte length of a toast message. Picked to fit one line of
-/// `FONT_8X13` across the 320-px framebuffer with margin to spare.
-pub const MAX_TOAST_LEN: usize = 40;
+/// Maximum byte length of a toast message. Sized for one line of
+/// `FONT_10X20` across the 320-px framebuffer (10 px/char × 32 chars
+/// = 320 px), the font the render path uses for the toast band.
+pub const MAX_TOAST_LEN: usize = 32;
 
 /// Severity tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,10 +87,12 @@ pub fn push(level: ToastLevel, message: &str, now: Instant) {
     SLOT.lock(|cell| cell.set(Some(display)));
 }
 
-/// Push a toast using a `core::fmt::Write` builder. Convenient when
-/// the caller has a `Debug2Format` value or wants to compose a
-/// short structured message without allocating.
-pub fn push_fmt(level: ToastLevel, now: Instant, args: core::fmt::Arguments<'_>) {
+/// Push a toast using a `core::fmt::Write` builder.
+///
+/// Convenient when the caller has a `Debug2Format` value or wants to
+/// compose a short structured message without allocating. Argument
+/// order mirrors [`push`] (level, payload, timestamp).
+pub fn push_fmt(level: ToastLevel, args: core::fmt::Arguments<'_>, now: Instant) {
     let mut buf: heapless::String<MAX_TOAST_LEN> = heapless::String::new();
     let _ = buf.write_fmt(args);
     let display = ToastDisplay {
