@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.71.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.70.0...stackchan-firmware-v0.71.0) (2026-05-13)
+
+
+### Features
+
+* **core:** named one-shot motions (greet/nod/shake/laugh) ([#308](https://github.com/andymai/stackchan-kai/issues/308)) ([07ae228](https://github.com/andymai/stackchan-kai/commit/07ae228ed432f02d51f3de80d26a19b91126973e))
+* **firmware:** auto-torque-release (idle servo power saver) ([#310](https://github.com/andymai/stackchan-kai/issues/310)) ([6bd375d](https://github.com/andymai/stackchan-kai/commit/6bd375dcc9b7feb24d9f79b1eed0696f87339a57))
+
 ## [0.70.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.69.0...stackchan-firmware-v0.70.0) (2026-05-13)
 
 
