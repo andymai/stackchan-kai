@@ -47,6 +47,11 @@ section summarises the milestone work in human terms.
 - Optional hourly chime (`behavior.hourly_chime_enabled`) — a short
   `WakeChirp` at every wall-clock top-of-hour. Off by default; gated
   on an SNTP-synced RTC.
+- Auto-torque-release: `behavior.auto_torque_release_ms` releases
+  holding torque on the `SCServo` pan / tilt motors after the
+  configured idle window with no commanded pose change. The next
+  commanded change re-enables torque before the position write.
+  `0` (default) keeps torque on continuously.
 
 ### Networking + control plane
 

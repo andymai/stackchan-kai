@@ -890,6 +890,11 @@ fn draw_passkey_overlay(fb: &mut Framebuffer, passkey: u32) {
 /// UART write/read failures log at `warn` and continue: a transient
 /// bus glitch shouldn't blank the face or reboot the binary.
 #[embassy_executor::task]
+#[allow(
+    clippy::too_many_lines,
+    reason = "single embassy task body: signal-drain + pose dispatch + torque-saver + read-back \
+              loop. Splitting fragments the long-lived locals the loop carries forward."
+)]
 async fn head_task(mut driver: HeadDriverImpl) {
     /// Poll position every N command ticks. `HEAD_PERIOD_MS` × N = 1 s.
     const POSITION_POLL_EVERY: u32 = 50;
@@ -897,16 +902,27 @@ async fn head_task(mut driver: HeadDriverImpl) {
     const READ_TIMEOUT_MS: u64 = 10;
 
     let clock = HalClock;
+    let auto_release_ms: u64 = u64::from(
+        stackchan_firmware::storage::CONFIG_SNAPSHOT
+            .lock()
+            .await
+            .as_ref()
+            .map_or(0_u32, |c| c.behavior.auto_torque_release_ms),
+    );
     let mut ticker = Ticker::every(Duration::from_millis(HEAD_PERIOD_MS));
     let mut current = stackchan_core::Pose::NEUTRAL;
+    let mut last_commanded = current;
+    let mut last_pose_change_at = clock.now();
+    let mut torque_released = false;
     let mut offsets = head::HeadOffsets::default();
     let mut tick_count: u32 = 0;
     defmt::info!(
-        "head task: {=u64} ms tick, consumes POSE_SIGNAL for SCServo IDs {=u8} (yaw) / {=u8} (pitch), reads actual @ {=u64} ms",
+        "head task: {=u64} ms tick, consumes POSE_SIGNAL for SCServo IDs {=u8} (yaw) / {=u8} (pitch), reads actual @ {=u64} ms, auto-torque-release after {=u64} ms (0 = disabled)",
         HEAD_PERIOD_MS,
         head::YAW_SERVO_ID,
         head::PITCH_SERVO_ID,
         HEAD_PERIOD_MS.saturating_mul(u64::from(POSITION_POLL_EVERY)),
+        auto_release_ms,
     );
     loop {
         watchdog::HEAD.beat();
@@ -922,9 +938,43 @@ async fn head_task(mut driver: HeadDriverImpl) {
                 offsets.tilt_offset_deg,
             );
         }
+        let now = clock.now();
+        let pose_changed = current.pan_deg.to_bits() != last_commanded.pan_deg.to_bits()
+            || current.tilt_deg.to_bits() != last_commanded.tilt_deg.to_bits();
+        if pose_changed {
+            last_pose_change_at = now;
+            last_commanded = current;
+            if torque_released {
+                match driver.set_torque(true).await {
+                    Ok(()) => {
+                        defmt::info!("head: torque re-enabled (operator commanded new pose)");
+                        torque_released = false;
+                    }
+                    Err(e) => {
+                        defmt::warn!("head: torque re-enable failed: {}", defmt::Debug2Format(&e))
+                    }
+                }
+            }
+        }
         let commanded = offsets.apply(current);
-        if let Err(e) = driver.set_pose(commanded, clock.now()).await {
+        if let Err(e) = driver.set_pose(commanded, now).await {
             defmt::warn!("head: SCServo write failed: {}", defmt::Debug2Format(&e));
+        }
+        if auto_release_ms > 0
+            && !torque_released
+            && now.saturating_duration_since(last_pose_change_at) >= auto_release_ms
+        {
+            match driver.set_torque(false).await {
+                Ok(()) => {
+                    defmt::info!(
+                        "head: torque released after {=u64} ms idle (saver: {=u64} ms)",
+                        now.saturating_duration_since(last_pose_change_at),
+                        auto_release_ms,
+                    );
+                    torque_released = true;
+                }
+                Err(e) => defmt::warn!("head: torque release failed: {}", defmt::Debug2Format(&e)),
+            }
         }
         tick_count = tick_count.wrapping_add(1);
         if tick_count.is_multiple_of(POSITION_POLL_EVERY) {
