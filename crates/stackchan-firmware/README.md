@@ -68,7 +68,7 @@ EmotionFromTouch → IntentFromBodyTouch → EmotionFromRemote → EmotionFromIn
 EmotionFromVoice → IntentFromLoud → EmotionFromAmbient → EmotionFromBattery →
 AttentionFromTracking → DormancyFromActivity → EmotionCycle → StyleFromEmotion →
 StyleFromIntent → GazeFromAttention → MicrosaccadeFromAttention → Blink → Breath →
-IdleDrift → IdleHeadDrift → BatteryOverlayFromPerception → HeadFromEmotion →
+IdleDrift → BatteryOverlayFromPerception → IdleHeadDrift → HeadFromEmotion →
 HeadFromAttention → LostTargetSearch → HeadFromIntent → MouthFromAudio
 ```
 

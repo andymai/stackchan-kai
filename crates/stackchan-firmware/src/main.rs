@@ -263,6 +263,12 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut decorator_from_listening = DecoratorFromListening::new();
     let mut decorator_from_loud = DecoratorFromLoud::new();
     let mut decorator_from_shake = DecoratorFromShake::new();
+    // `behavior.battery_icon_enabled` flips at boot via STACKCHAN.RON;
+    // if the operator later toggles it via PUT /settings, the change
+    // takes effect on the next reboot (same as soliloquy_enabled
+    // above). The modifier is always constructed; `enabled = false`
+    // short-circuits its `update` to a no-op so there's no cost when
+    // disabled.
     let mut battery_overlay = {
         let enabled = stackchan_firmware::storage::CONFIG_SNAPSHOT
             .lock()
@@ -423,7 +429,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + BatteryOverlayFromPerception + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + BatteryOverlayFromPerception + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 
