@@ -318,6 +318,16 @@ pub struct BehaviorConfig {
     /// expression stays clean; operators opt in via the boot config
     /// or `PUT /settings`. Toasts have a fixed 3-second TTL.
     pub toast_overlay_enabled: bool,
+    /// Idle window (in milliseconds) after which the firmware
+    /// releases holding torque on the `SCServo` pan / tilt motors. `0`
+    /// disables the saver — torque stays on continuously, matching
+    /// v0.1.0 behaviour. Otherwise, after this many ms with no
+    /// commanded pose change, the head task sends
+    /// `write_torque_enable(false)` to both servos; the next
+    /// commanded change re-enables torque before issuing the
+    /// position write. Useful for desk-toy units that sit idle for
+    /// hours and don't need the motors' standing draw.
+    pub auto_torque_release_ms: u32,
 }
 
 /// Time / SNTP configuration.

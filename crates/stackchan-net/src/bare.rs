@@ -134,6 +134,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        toast_overlay_enabled: {},",
         config.behavior.toast_overlay_enabled
     );
+    let _ = writeln!(
+        out,
+        "        auto_torque_release_ms: {},",
+        config.behavior.auto_torque_release_ms
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -494,6 +499,7 @@ impl<'a> Parser<'a> {
         let mut hourly_chime_enabled: Option<bool> = None;
         let mut battery_icon_enabled: Option<bool> = None;
         let mut toast_overlay_enabled: Option<bool> = None;
+        let mut auto_torque_release_ms: Option<u32> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -508,6 +514,7 @@ impl<'a> Parser<'a> {
                 "hourly_chime_enabled" => hourly_chime_enabled = Some(self.parse_bool()?),
                 "battery_icon_enabled" => battery_icon_enabled = Some(self.parse_bool()?),
                 "toast_overlay_enabled" => toast_overlay_enabled = Some(self.parse_bool()?),
+                "auto_torque_release_ms" => auto_torque_release_ms = Some(self.parse_u32()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -520,6 +527,7 @@ impl<'a> Parser<'a> {
             hourly_chime_enabled: hourly_chime_enabled.unwrap_or(false),
             battery_icon_enabled: battery_icon_enabled.unwrap_or(false),
             toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
+            auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
         })
     }
 
@@ -541,6 +549,26 @@ impl<'a> Parser<'a> {
             return Ok(Some(v));
         }
         Err(bare_err("expected Some(...) or None", ""))
+    }
+
+    /// Parse a contiguous run of decimal digits as a `u32`. Used for
+    /// `behavior.auto_torque_release_ms`. Any digits past `u32::MAX`
+    /// land on `BareParse` rather than wrapping silently.
+    fn parse_u32(&mut self) -> Result<u32, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected unsigned integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let parsed: u32 = digits
+            .parse()
+            .map_err(|_| bare_err("not a u32 literal", digits))?;
+        self.input = rest;
+        Ok(parsed)
     }
 
     /// Parse a contiguous run of decimal digits as a `u8`. Used for

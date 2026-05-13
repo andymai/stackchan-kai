@@ -241,6 +241,23 @@ impl<W: Write> ScsHead<W> {
 }
 
 impl<U: Read + Write> ScsHead<U> {
+    /// Enable or disable holding torque on both servos. Used by the
+    /// firmware's auto-torque-release idle saver: a quiet desk-toy can
+    /// release torque to drop the motors' standing draw, and re-enable
+    /// it on the next commanded pose change. Errors on the first
+    /// failing write — the caller logs + continues so a transient
+    /// glitch doesn't reboot the binary.
+    ///
+    /// # Errors
+    /// Returns the transport error on the first failing write.
+    pub async fn set_torque(&mut self, enabled: bool) -> Result<(), scservo::Error<U::Error>> {
+        self.bus.write_torque_enable(YAW_SERVO_ID, enabled).await?;
+        self.bus
+            .write_torque_enable(PITCH_SERVO_ID, enabled)
+            .await?;
+        Ok(())
+    }
+
     /// Read the live position of both servos, return a `Pose` in the
     /// same commanded-reference-frame as `set_pose` inputs. Useful for
     /// feedback logging + the future `EyeGaze` modifier.
