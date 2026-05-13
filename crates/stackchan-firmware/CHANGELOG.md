@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.72.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.71.0...stackchan-firmware-v0.72.0) (2026-05-13)
+
+
+### Features
+
+* **firmware:** persist head offsets to RUNTIME.RON ([#313](https://github.com/andymai/stackchan-kai/issues/313)) ([f6768c8](https://github.com/andymai/stackchan-kai/commit/f6768c8d02b22b115d2937f60534a44830d8ab82))
+
 ## [0.71.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.70.0...stackchan-firmware-v0.71.0) (2026-05-13)
 
 
