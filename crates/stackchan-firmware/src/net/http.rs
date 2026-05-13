@@ -855,9 +855,8 @@ async fn handle_get_head_offsets(socket: &mut TcpSocket<'_>) -> Result<(), HttpE
 
 /// `POST /head/offsets` — parse the JSON body and push the new
 /// offsets at the head task via
-/// [`crate::head::OFFSETS_SIGNAL`]. Runtime-only; head offsets are
-/// not yet enrolled in the SD-backed `RuntimeStore` and reset on
-/// reboot.
+/// [`crate::head::OFFSETS_SIGNAL`]. Persists to `/sd/RUNTIME.RON`
+/// so a reboot restores the dialled-in trim.
 async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let offsets = match json::parse_head_offsets(body) {
         Ok(o) => o,
@@ -881,6 +880,11 @@ async fn handle_post_head_offsets(socket: &mut TcpSocket<'_>, body: &str) -> Res
     // tick, leaving a small POST-then-GET window where the read
     // returns the prior value).
     crate::head::OFFSETS_CACHE.lock(|cell| cell.set(firmware_offsets));
+    // The persist outcome is logged by `runtime_store::persist` itself
+    // (`info!` on success, `warn!` on SD-write failure) — no need to
+    // annotate either side here, which would risk a contradictory
+    // ordering in the serial log if the SD write failed.
+    let _ = crate::runtime_store::update_head_offsets(firmware_offsets).await;
     defmt::info!(
         "http: POST /head/offsets → yaw={=f32} tilt={=f32}",
         firmware_offsets.yaw_offset_deg,

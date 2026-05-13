@@ -1281,11 +1281,20 @@ async fn main(spawner: Spawner) -> ! {
             net::http::PALETTE_SIGNAL.signal(runtime.palette);
             net::http::MOOD_SIGNAL.signal(runtime.mood);
             net::http::FACE_GEOMETRY_SIGNAL.signal(runtime.face_geometry);
+            // Seed the head task's offset signal + cache directly so
+            // the first head tick already applies the persisted trim.
+            // Without the explicit cache seed, `GET /head/offsets`
+            // would return zero between boot and the head task's
+            // first signal-drain.
+            head::OFFSETS_SIGNAL.signal(runtime.head_offsets);
+            head::OFFSETS_CACHE.lock(|cell| cell.set(runtime.head_offsets));
             defmt::info!(
-                "runtime store: restored palette={=str} mood={=str} face_geometry={=str}",
+                "runtime store: restored palette={=str} mood={=str} face_geometry={=str} head_offsets=({=f32}, {=f32})",
                 runtime.palette.wire_str(),
                 runtime.mood.wire_str(),
                 runtime.face_geometry.wire_str(),
+                runtime.head_offsets.yaw_offset_deg,
+                runtime.head_offsets.tilt_offset_deg,
             );
             cfg
         }

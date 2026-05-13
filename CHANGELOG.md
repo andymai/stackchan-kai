@@ -57,6 +57,12 @@ section summarises the milestone work in human terms.
   configured idle window with no commanded pose change. The next
   commanded change re-enables torque before the position write.
   `0` (default) keeps torque on continuously.
+- Head offsets persist to `/sd/RUNTIME.RON`. Previously,
+  `POST /head/offsets` was runtime-only and a reboot zeroed the
+  dialled trim; now the operator's value rides through the same
+  SD-backed runtime store as `palette` / `mood` / `face_geometry`
+  and is restored to `OFFSETS_CACHE` + signalled to the head task
+  before the first tick.
 
 ### Networking + control plane
 
