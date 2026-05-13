@@ -162,6 +162,8 @@ pub enum Field {
     Decorator,
     /// `entity.face.bubble`
     Bubble,
+    /// `entity.face.battery_overlay`
+    BatteryOverlay,
 
     // ---- Motor ----
     /// `entity.motor.head_pose`
@@ -254,6 +256,7 @@ impl Field {
         Self::BreathDepthScale,
         Self::Decorator,
         Self::Bubble,
+        Self::BatteryOverlay,
         Self::HeadPose,
         Self::HeadPoseActual,
         Self::AccelG,
@@ -302,7 +305,8 @@ impl Field {
             | Self::BlinkRateScale
             | Self::BreathDepthScale
             | Self::Decorator
-            | Self::Bubble => FieldGroup::Face,
+            | Self::Bubble
+            | Self::BatteryOverlay => FieldGroup::Face,
             Self::HeadPose | Self::HeadPoseActual => FieldGroup::Motor,
             Self::AccelG
             | Self::GyroDps
@@ -373,6 +377,7 @@ impl Field {
             }
             Self::Decorator => before.face.decorator != after.face.decorator,
             Self::Bubble => before.face.bubble != after.face.bubble,
+            Self::BatteryOverlay => before.face.battery_overlay != after.face.battery_overlay,
             Self::HeadPose => {
                 before.motor.head_pose.pan_deg.to_bits() != after.motor.head_pose.pan_deg.to_bits()
                     || before.motor.head_pose.tilt_deg.to_bits()
@@ -857,7 +862,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            43,
+            44,
             "update Field::ALL when adding variants"
         );
     }

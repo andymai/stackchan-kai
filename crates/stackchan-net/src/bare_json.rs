@@ -238,8 +238,10 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
     out.push_str("},\"behavior\":{");
     let _ = write!(
         out,
-        "\"soliloquy_enabled\":{},\"hourly_chime_enabled\":{}",
-        config.behavior.soliloquy_enabled, config.behavior.hourly_chime_enabled
+        "\"soliloquy_enabled\":{},\"hourly_chime_enabled\":{},\"battery_icon_enabled\":{}",
+        config.behavior.soliloquy_enabled,
+        config.behavior.hourly_chime_enabled,
+        config.behavior.battery_icon_enabled,
     );
     out.push_str("}}");
     Ok(out)
@@ -733,13 +735,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse the optional `"behavior"` object. Both fields default
+    /// Parse the optional `"behavior"` object. All fields default
     /// to `false` if absent so a JSON body that pre-dates a flag's
     /// introduction round-trips cleanly.
     fn parse_behavior(&mut self) -> Result<BehaviorConfig, ConfigError> {
         self.expect_char('{')?;
         let mut soliloquy_enabled: Option<bool> = None;
         let mut hourly_chime_enabled: Option<bool> = None;
+        let mut battery_icon_enabled: Option<bool> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -762,6 +765,12 @@ impl<'a> Parser<'a> {
                     }
                     hourly_chime_enabled = Some(self.parse_bool()?);
                 }
+                "battery_icon_enabled" => {
+                    if battery_icon_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "battery_icon_enabled"));
+                    }
+                    battery_icon_enabled = Some(self.parse_bool()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -772,6 +781,7 @@ impl<'a> Parser<'a> {
         Ok(BehaviorConfig {
             soliloquy_enabled: soliloquy_enabled.unwrap_or(false),
             hourly_chime_enabled: hourly_chime_enabled.unwrap_or(false),
+            battery_icon_enabled: battery_icon_enabled.unwrap_or(false),
         })
     }
 
@@ -994,6 +1004,7 @@ mod tests {
             behavior: BehaviorConfig {
                 soliloquy_enabled: true,
                 hourly_chime_enabled: false,
+                battery_icon_enabled: true,
             },
         }
     }
@@ -1311,6 +1322,7 @@ mod tests {
             behavior: BehaviorConfig {
                 soliloquy_enabled: true,
                 hourly_chime_enabled: false,
+                battery_icon_enabled: true,
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

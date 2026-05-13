@@ -74,14 +74,15 @@ use mipidsi::{
 use stackchan_core::{
     Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
     modifiers::{
-        AttentionFromTracking, Blink, Breath, BubbleExpiry, DancePlayer, DecoratorExpiry,
-        DecoratorFromBodyTouch, DecoratorFromEmotion, DecoratorFromListening, DecoratorFromLoud,
-        DecoratorFromShake, DormancyFromActivity, EmotionCycle, EmotionFromAmbient,
-        EmotionFromBattery, EmotionFromIntent, EmotionFromRemote, EmotionFromTouch,
-        EmotionFromVoice, GazeFromAttention, HeadFromAttention, HeadFromBodyGesture,
-        HeadFromEmotion, HeadFromIntent, IdleDrift, IdleHeadDrift, IntentFromBodyTouch,
-        IntentFromLoud, LostTargetSearch, MicrosaccadeFromAttention, MouthFromAudio,
-        RemoteCommandModifier, Soliloquy, StyleFromEmotion, StyleFromIntent, StyleFromMood,
+        AttentionFromTracking, BatteryOverlayFromPerception, Blink, Breath, BubbleExpiry,
+        DancePlayer, DecoratorExpiry, DecoratorFromBodyTouch, DecoratorFromEmotion,
+        DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake, DormancyFromActivity,
+        EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
+        EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention,
+        HeadFromBodyGesture, HeadFromEmotion, HeadFromIntent, IdleDrift, IdleHeadDrift,
+        IntentFromBodyTouch, IntentFromLoud, LostTargetSearch, MicrosaccadeFromAttention,
+        MouthFromAudio, RemoteCommandModifier, Soliloquy, StyleFromEmotion, StyleFromIntent,
+        StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -262,6 +263,20 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
     let mut decorator_from_listening = DecoratorFromListening::new();
     let mut decorator_from_loud = DecoratorFromLoud::new();
     let mut decorator_from_shake = DecoratorFromShake::new();
+    // `behavior.battery_icon_enabled` flips at boot via STACKCHAN.RON;
+    // if the operator later toggles it via PUT /settings, the change
+    // takes effect on the next reboot (same as soliloquy_enabled
+    // above). The modifier is always constructed; `enabled = false`
+    // short-circuits its `update` to a no-op so there's no cost when
+    // disabled.
+    let mut battery_overlay = {
+        let enabled = stackchan_firmware::storage::CONFIG_SNAPSHOT
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|c| c.behavior.battery_icon_enabled);
+        BatteryOverlayFromPerception::with_enabled(enabled)
+    };
     let mut last_rendered: Option<Face> = None;
     // Last on-screen pairing passkey. Tracked separately from
     // `last_rendered` so a passkey transition forces a redraw even
@@ -361,6 +376,9 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
         .add_modifier(&mut decorator_from_listening)
         .expect("registry full");
     director
+        .add_modifier(&mut battery_overlay)
+        .expect("registry full");
+    director
         .add_modifier(&mut head_drift)
         .expect("registry full");
     director
@@ -411,7 +429,7 @@ async fn render_task(mut display: LcdDisplay, drift_seed: NonZeroU32, head_drift
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
     defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
+        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + BatteryOverlayFromPerception + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
         FRAME_PERIOD_MS
     );
 

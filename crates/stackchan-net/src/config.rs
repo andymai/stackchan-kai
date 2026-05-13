@@ -300,6 +300,13 @@ pub struct BehaviorConfig {
     /// each chime so a mid-day clock correction doesn't drift the
     /// next-fire time.
     pub hourly_chime_enabled: bool,
+    /// When `true`, the firmware renders a small battery indicator
+    /// in the top-left corner of the face. Off by default so the
+    /// avatar's resting expression stays clean; operators opt in via
+    /// the boot config or `PUT /settings`. The bucket is quantised
+    /// at the source so a one-percent change does not re-trigger a
+    /// frame redraw.
+    pub battery_icon_enabled: bool,
 }
 
 /// Time / SNTP configuration.
