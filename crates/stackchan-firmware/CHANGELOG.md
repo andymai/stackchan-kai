@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.69.0...stackchan-firmware-v0.70.0) (2026-05-13)
+
+
+### Features
+
+* **firmware:** toast log overlay (opt-in) ([#306](https://github.com/andymai/stackchan-kai/issues/306)) ([bc08775](https://github.com/andymai/stackchan-kai/commit/bc08775859fb4c792a032687c6b0d9e6cae9d01d))
+
 ## [0.69.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.68.0...stackchan-firmware-v0.69.0) (2026-05-13)
 
 
