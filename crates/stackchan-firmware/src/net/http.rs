@@ -803,23 +803,18 @@ async fn handle_post_dance(socket: &mut TcpSocket<'_>, body: &str) -> Result<(),
 /// on an unknown motion name, 204 otherwise.
 async fn handle_post_motion(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     use alloc::sync::Arc;
-    use stackchan_core::NamedMotion;
-    use stackchan_net::mcp::find_string_field;
-    let name = match find_string_field(body, "motion") {
-        Ok(Some(n)) => n,
-        Ok(None) => {
-            return write_text(socket, 400, "missing motion field\n").await;
-        }
-        Err(_) => {
-            return write_text(socket, 400, "malformed JSON body\n").await;
+    let motion = match json::parse_motion(body) {
+        Ok(m) => m,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /motion parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let msg = format!("invalid motion: {e:?}\n");
+            return write_text(socket, 400, &msg).await;
         }
     };
-    let Some(motion) = NamedMotion::from_wire_str(name) else {
-        defmt::warn!("http: POST /motion unknown name={=str}", name);
-        return write_text(socket, 400, "unknown motion\n").await;
-    };
-    let script = motion.script();
-    DANCE_SCRIPT_SIGNAL.signal(Arc::new(script));
+    DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
     defmt::info!("http: POST /motion → {=str}", motion.wire_str());
     write_no_content(socket).await
 }
@@ -1179,25 +1174,15 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "play_motion" => {
             use alloc::sync::Arc;
-            use stackchan_core::NamedMotion;
-            use stackchan_net::mcp::find_string_field;
-            match find_string_field(arguments, "motion") {
-                Ok(Some(name)) => NamedMotion::from_wire_str(name).map_or_else(
-                    || render_error(Some(id), JsonRpcErrorCode::InvalidParams, "unknown motion"),
-                    |motion| {
-                        DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
-                        render_success(id, &render_tool_text_result("motion enqueued"))
-                    },
-                ),
-                Ok(None) => render_error(
+            match json::parse_motion(arguments) {
+                Ok(motion) => {
+                    DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
+                    render_success(id, &render_tool_text_result("motion enqueued"))
+                }
+                Err(e) => render_error(
                     Some(id),
                     JsonRpcErrorCode::InvalidParams,
-                    "missing motion field",
-                ),
-                Err(_) => render_error(
-                    Some(id),
-                    JsonRpcErrorCode::InvalidParams,
-                    "malformed arguments",
+                    tool_parse_detail(&e),
                 ),
             }
         }
@@ -1415,6 +1400,7 @@ const fn tool_parse_detail(e: &JsonError) -> &'static str {
         E::UnknownMood => "unknown mood",
         E::UnknownPalette => "unknown palette",
         E::UnknownFaceGeometry => "unknown face geometry",
+        E::UnknownMotion => "unknown motion",
         E::VolumeOutOfRange(_) => "volume out of range",
     }
 }

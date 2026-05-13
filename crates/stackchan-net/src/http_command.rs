@@ -20,7 +20,7 @@
 //! parsed in their entirety with [`core::str::FromStr`].
 
 use stackchan_core::voice::{Locale, PhraseId, Priority};
-use stackchan_core::{Emotion, FaceGeometry, Mood, Palette, Pose, RemoteCommand};
+use stackchan_core::{Emotion, FaceGeometry, Mood, NamedMotion, Palette, Pose, RemoteCommand};
 
 /// Default hold window when the request body omits `hold_ms`.
 pub const DEFAULT_HOLD_MS: u32 = 30_000;
@@ -57,6 +57,8 @@ pub enum JsonError {
     UnknownPalette,
     /// Geometry string didn't match any [`FaceGeometry`] variant.
     UnknownFaceGeometry,
+    /// Motion string didn't match any [`NamedMotion`] variant.
+    UnknownMotion,
     /// `audio.volume_pct` value outside the documented `0..=100`
     /// range. Carries the offending value so the firmware's `400`
     /// response body is self-describing.
@@ -460,6 +462,37 @@ pub fn parse_face_geometry(body: &str) -> Result<FaceGeometry, JsonError> {
         Ok(())
     })?;
     geometry.ok_or(JsonError::MissingKey("geometry"))
+}
+
+/// Parse `{"motion": "<wire>"}` into a [`NamedMotion`].
+///
+/// Used by `POST /motion` and the MCP `play_motion` tool to look up
+/// one of the canonical gesture presets (greet / nod / shake /
+/// laugh). The firmware feeds the resulting [`stackchan_core::DanceScript`]
+/// to the dance-player path.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing / unknown keys, malformed JSON, or
+/// unrecognised motion strings.
+pub fn parse_motion(body: &str) -> Result<NamedMotion, JsonError> {
+    let mut motion: Option<NamedMotion> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "motion" => {
+                if motion.is_some() {
+                    return Err(JsonError::DuplicateKey("motion"));
+                }
+                let raw = scanner.read_string()?;
+                motion = NamedMotion::from_wire_str(raw)
+                    .ok_or(JsonError::UnknownMotion)
+                    .map(Some)?;
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    motion.ok_or(JsonError::MissingKey("motion"))
 }
 
 /// Maximum absolute value for either head-offset axis, in degrees.

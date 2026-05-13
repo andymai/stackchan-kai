@@ -267,13 +267,29 @@ mod tests {
             assert!(!s.keyframes.is_empty());
             assert_eq!(s.keyframes[0].at_ms, 0, "{m:?} must start at t=0");
             let last = s.keyframes.last().unwrap();
-            let pan = last.pan_deg.unwrap_or(0.0);
-            let tilt = last.tilt_deg.unwrap_or(0.0);
-            assert!(
-                pan.abs() <= 0.01,
-                "{m:?} ends at pan={pan} (must be ~0 so the next command starts from baseline)"
-            );
-            assert!(tilt.abs() <= 0.01, "{m:?} ends at tilt={tilt} (must be ~0)");
+            // For any channel a preset *uses* at least once, the
+            // final keyframe must explicitly reset it to `Some(0.0)`.
+            // `DancePlayer` carries the most-recent `Some` value
+            // forward — a final keyframe with `None` would leave a
+            // non-zero pose latched. Inspecting `Some(0.0)` directly
+            // (rather than `unwrap_or(0.0)`) catches future variants
+            // that add a channel and forget to reset it.
+            let pan_used = s.keyframes.iter().any(|kf| kf.pan_deg.is_some());
+            let tilt_used = s.keyframes.iter().any(|kf| kf.tilt_deg.is_some());
+            if pan_used {
+                assert_eq!(
+                    last.pan_deg,
+                    Some(0.0),
+                    "{m:?} writes pan_deg but does not reset it on the final keyframe"
+                );
+            }
+            if tilt_used {
+                assert_eq!(
+                    last.tilt_deg,
+                    Some(0.0),
+                    "{m:?} writes tilt_deg but does not reset it on the final keyframe"
+                );
+            }
         }
     }
 }
