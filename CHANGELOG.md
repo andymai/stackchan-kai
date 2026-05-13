@@ -13,11 +13,18 @@ section summarises the milestone work in human terms.
 
 ### Avatar surface
 
+- On-screen battery indicator drawn in the top-left corner; opt-in
+  via `behavior.battery_icon_enabled`. The percent reading is
+  quantised into five buckets (Critical / Low / Medium / High /
+  Full) at the source so a one-percent gauge twitch doesn't
+  re-trigger the renderer's dirty-check; the charging flag adds a
+  small bolt overlay when USB power is present.
 - Speech-bubble text overlay drawn above the face, with a TTL the
   `BubbleExpiry` modifier sweeps each frame.
-- Decorator badges (heart, sweat, sleep, anger, shy) sit on top of
-  the base face. Emotion edges trigger `Angry` / `Shy` automatically;
-  the existing reactive triggers still fire `Heart` / `Sweat` / `Sleep`.
+- Decorator badges (heart, sweat, dizzy, ear, pairing, angry, shy)
+  sit on top of the base face. Emotion edges trigger `Angry` / `Shy`
+  automatically; reactive triggers still fire `Heart` / `Sweat` /
+  `Dizzy` / `Ear` / `Pairing`.
 - Runtime color palette swap through named presets (`default` / `dark`
   / `cute` / `dog`) — affects the four "skin" colours of the avatar
   while symbolic overlays keep their dedicated colours.

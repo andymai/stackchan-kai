@@ -82,6 +82,7 @@
 //! [`crate::director::Phase::Output`].
 
 mod attention_from_tracking;
+mod battery_overlay;
 mod blink;
 mod breath;
 mod bubble_expiry;
@@ -122,6 +123,7 @@ pub use attention_from_tracking::{
     AttentionFromTracking, FACE_LOCK_HITS, FACE_RELEASE_MISSES, TRACKING_LOCK_TICKS,
     TRACKING_RELEASE_MS,
 };
+pub use battery_overlay::BatteryOverlayFromPerception;
 pub use blink::Blink;
 pub use breath::Breath;
 pub use bubble_expiry::BubbleExpiry;

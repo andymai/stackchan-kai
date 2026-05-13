@@ -333,6 +333,59 @@ impl FaceGeometry {
     }
 }
 
+/// Coarse battery-level bucket for the on-screen indicator.
+///
+/// Quantising the percent reading at the source keeps the dirty-check
+/// rare: a per-percent flicker doesn't re-render. Each bucket maps
+/// to a distinct glyph (segment count).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[non_exhaustive]
+pub enum BatteryBucket {
+    /// `0..=9` — empty cell, urgent.
+    Critical,
+    /// `10..=24` — one segment.
+    Low,
+    /// `25..=49` — two segments.
+    Medium,
+    /// `50..=74` — three segments.
+    High,
+    /// `75..=100` — four segments (full).
+    #[default]
+    Full,
+}
+
+impl BatteryBucket {
+    /// Map a raw `0..=100` percent reading to its rendered bucket.
+    /// Out-of-range inputs saturate to [`Self::Full`] — the AXP2101
+    /// gauge can briefly report >100 during a fresh charge, and the
+    /// renderer should keep showing a full cell rather than blank.
+    #[must_use]
+    pub const fn from_percent(p: u8) -> Self {
+        match p {
+            0..=9 => Self::Critical,
+            10..=24 => Self::Low,
+            25..=49 => Self::Medium,
+            50..=74 => Self::High,
+            _ => Self::Full,
+        }
+    }
+}
+
+/// On-screen battery indicator state.
+///
+/// `None` on [`Face::battery_overlay`] means the renderer skips the
+/// indicator. Set by [`crate::modifiers::BatteryOverlayFromPerception`]
+/// when the operator has opted in and a battery reading has landed
+/// at least once. The bucket field is quantised so frame-to-frame
+/// percent jitter doesn't trip the renderer's dirty-check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BatteryOverlay {
+    /// Quantised battery level for rendering.
+    pub bucket: BatteryBucket,
+    /// `true` while USB power is reported present by the AXP2101.
+    pub charging: bool,
+}
+
 /// The visual surface of the entity. Owns everything the renderer reads
 /// to produce a frame — both the geometric primitives ([`Eye`], [`Mouth`])
 /// and the emotion-driven modulators ([`Style`]).
@@ -361,6 +414,10 @@ pub struct Face {
     /// firmware-side MCP `speak` short-circuit) populate this field;
     /// [`crate::modifiers::BubbleExpiry`] clears it on deadline.
     pub bubble: Option<crate::bubble::BubbleState>,
+    /// On-screen battery indicator, drawn in the top-left corner. `None`
+    /// is the steady state (operator has not enabled the overlay, or no
+    /// battery reading has landed yet).
+    pub battery_overlay: Option<BatteryOverlay>,
     /// Active colour palette. Picks the background / eye / mouth /
     /// cheek colours used by the renderer. Decorator and bubble
     /// overlays keep their own dedicated colours so a palette swap
@@ -435,6 +492,7 @@ impl Default for Face {
             style: Style::default(),
             decorator: None,
             bubble: None,
+            battery_overlay: None,
             palette: crate::palette::Palette::Default,
             geometry: FaceGeometry::Default,
         }
@@ -556,6 +614,31 @@ mod tests {
         assert_eq!(face.left_eye.weight, 100);
         assert_eq!(face.mouth.weight, 0);
         assert!(face.mouth.mouth_open.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn battery_bucket_boundaries_are_inclusive_low_and_exclusive_high() {
+        assert_eq!(BatteryBucket::from_percent(0), BatteryBucket::Critical);
+        assert_eq!(BatteryBucket::from_percent(9), BatteryBucket::Critical);
+        assert_eq!(BatteryBucket::from_percent(10), BatteryBucket::Low);
+        assert_eq!(BatteryBucket::from_percent(24), BatteryBucket::Low);
+        assert_eq!(BatteryBucket::from_percent(25), BatteryBucket::Medium);
+        assert_eq!(BatteryBucket::from_percent(49), BatteryBucket::Medium);
+        assert_eq!(BatteryBucket::from_percent(50), BatteryBucket::High);
+        assert_eq!(BatteryBucket::from_percent(74), BatteryBucket::High);
+        assert_eq!(BatteryBucket::from_percent(75), BatteryBucket::Full);
+        assert_eq!(BatteryBucket::from_percent(100), BatteryBucket::Full);
+    }
+
+    #[test]
+    fn battery_bucket_out_of_range_saturates_to_full() {
+        assert_eq!(BatteryBucket::from_percent(101), BatteryBucket::Full);
+        assert_eq!(BatteryBucket::from_percent(u8::MAX), BatteryBucket::Full);
+    }
+
+    #[test]
+    fn default_face_has_no_battery_overlay() {
+        assert!(Face::default().battery_overlay.is_none());
     }
 
     #[test]

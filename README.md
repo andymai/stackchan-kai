@@ -71,7 +71,8 @@ for the details.
 ## Features
 
 - **Animated face** — eased transitions across the m5stack-avatar emotion palette, blink / breath / idle-drift at double-buffered 30 FPS
-- **Symbolic overlays** — speech-bubble text and decorator badges (heart, sweat, sleep, anger, shy) layered on top of the base face
+- **Symbolic overlays** — speech-bubble text and decorator badges (heart, sweat, dizzy, ear, pairing, angry, shy) layered on top of the base face
+- **Battery indicator** — opt-in corner overlay; the percent reading is quantised into segment buckets so per-percent jitter doesn't churn the renderer's dirty-check
 - **Color palette swap** — runtime theme switch through a small set of named presets (default / dark / cute / dog) without disturbing the symbolic-overlay layer's distinctness
 - **Head motion** — Feetech SCServo pan/tilt with a calibration bench (`just bench`) and a runtime zero-point correction surface for day-of mounting drift
 - **9-axis sensing** — BMI270 accel + gyro, BMM150 magnetometer (compensated µT, live bench via `just mag-bench`)

@@ -40,7 +40,7 @@ use embedded_graphics::{
 
 use crate::bubble::BubbleState;
 use crate::decorator::{Decorator, DecoratorState};
-use crate::face::{Eye, EyePhase, Face, Mouth, SCALE_DEFAULT};
+use crate::face::{BatteryBucket, BatteryOverlay, Eye, EyePhase, Face, Mouth, SCALE_DEFAULT};
 use crate::palette::PaletteColors;
 
 /// Heart decorator pink — slightly more saturated than the `Default`
@@ -141,6 +141,9 @@ impl Face {
         }
         if let Some(state) = self.bubble {
             draw_bubble(state, target)?;
+        }
+        if let Some(overlay) = self.battery_overlay {
+            draw_battery(overlay, target)?;
         }
         Ok(())
     }
@@ -902,6 +905,131 @@ const fn stroke(color: Rgb565, width: u32) -> PrimitiveStyle<Rgb565> {
         .build()
 }
 
+/// Battery indicator top-left anchor.
+const BATTERY_X: i32 = 8;
+/// Battery indicator top anchor.
+const BATTERY_Y: i32 = 8;
+/// Battery indicator outer width (excludes the terminal nub).
+const BATTERY_BODY_W: u32 = 28;
+/// Battery indicator outer height.
+const BATTERY_BODY_H: u32 = 12;
+/// Stroke width of the battery outline.
+const BATTERY_STROKE: u32 = 2;
+/// Padding from the outline to each segment fill, in pixels per side.
+const BATTERY_INNER_PAD: i32 = 2;
+/// Width of the terminal nub on the right of the body.
+const BATTERY_NUB_W: u32 = 3;
+/// Height of the terminal nub.
+const BATTERY_NUB_H: u32 = 6;
+/// Battery outline / segment colour — black so it reads against the
+/// (typically white) palette background. The corner anchor sits above
+/// the eye area so the outline never overlaps the rendered face at
+/// any geometry preset.
+const BATTERY_COLOR: Rgb565 = Rgb565::BLACK;
+/// Critical-bucket fill — red so 0..=9 % reads as urgent regardless of
+/// charging state.
+const BATTERY_CRITICAL_COLOR: Rgb565 = Rgb565::new(31, 8, 4);
+/// Charging-bolt overlay colour — same saturated green used elsewhere
+/// for "all good" signals.
+const BATTERY_CHARGING_COLOR: Rgb565 = Rgb565::new(4, 50, 8);
+
+/// Draw the battery indicator in the upper-left corner.
+///
+/// Outline + terminal nub render in [`BATTERY_COLOR`]. Inside the body
+/// the bucket selects 0..=4 filled segments (Critical = no segments
+/// plus a red body fill; Full = four segments). The charging flag
+/// renders a thin green vertical bolt centred over the segments — a
+/// minimal, integer-coordinate stand-in for the lightning glyph that
+/// stays legible at this scale.
+fn draw_battery<D>(overlay: BatteryOverlay, target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let body_top_left = EgPoint::new(BATTERY_X, BATTERY_Y);
+    let body_size = Size::new(BATTERY_BODY_W, BATTERY_BODY_H);
+
+    if matches!(overlay.bucket, BatteryBucket::Critical) {
+        Rectangle::new(body_top_left, body_size)
+            .into_styled(fill(BATTERY_CRITICAL_COLOR))
+            .draw(target)?;
+    }
+    Rectangle::new(body_top_left, body_size)
+        .into_styled(stroke(BATTERY_COLOR, BATTERY_STROKE))
+        .draw(target)?;
+
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "constants are well under i32::MAX"
+    )]
+    let nub_x = BATTERY_X + BATTERY_BODY_W as i32;
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "constants are well under i32::MAX"
+    )]
+    let nub_y = BATTERY_Y + (BATTERY_BODY_H as i32 - BATTERY_NUB_H as i32) / 2;
+    Rectangle::new(
+        EgPoint::new(nub_x, nub_y),
+        Size::new(BATTERY_NUB_W, BATTERY_NUB_H),
+    )
+    .into_styled(fill(BATTERY_COLOR))
+    .draw(target)?;
+
+    let segments = segment_count(overlay.bucket);
+    if segments > 0 {
+        let inner_top = BATTERY_Y + BATTERY_INNER_PAD;
+        let inner_left = BATTERY_X + BATTERY_INNER_PAD;
+        #[allow(clippy::cast_possible_wrap, reason = "constants well under i32::MAX")]
+        let inner_w = BATTERY_BODY_W as i32 - 2 * BATTERY_INNER_PAD;
+        #[allow(clippy::cast_possible_wrap, reason = "constants well under i32::MAX")]
+        let inner_h_i32 = BATTERY_BODY_H as i32 - 2 * BATTERY_INNER_PAD;
+        let segment_gap: i32 = 1;
+        let total_gap = segment_gap * 3;
+        let segment_w = ((inner_w - total_gap) / 4).max(1);
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "segment_w guarded with max(1); inner_h_i32 is positive by construction"
+        )]
+        let seg_size = Size::new(segment_w as u32, inner_h_i32.max(1) as u32);
+        for i in 0..segments {
+            let x = inner_left + i32::from(i) * (segment_w + segment_gap);
+            Rectangle::new(EgPoint::new(x, inner_top), seg_size)
+                .into_styled(fill(BATTERY_COLOR))
+                .draw(target)?;
+        }
+    }
+
+    if overlay.charging {
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "constants are well under i32::MAX"
+        )]
+        let mid_x = BATTERY_X + BATTERY_BODY_W as i32 / 2;
+        let top_y = BATTERY_Y + BATTERY_INNER_PAD;
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "constants are well under i32::MAX"
+        )]
+        let bottom_y = BATTERY_Y + BATTERY_BODY_H as i32 - BATTERY_INNER_PAD;
+        Line::new(EgPoint::new(mid_x, top_y), EgPoint::new(mid_x, bottom_y))
+            .into_styled(stroke(BATTERY_CHARGING_COLOR, 2))
+            .draw(target)?;
+    }
+    Ok(())
+}
+
+/// How many filled segments to draw for each bucket. Critical renders
+/// zero segments (the body fill conveys the urgency); Full renders all
+/// four.
+const fn segment_count(bucket: BatteryBucket) -> u8 {
+    match bucket {
+        BatteryBucket::Critical => 0,
+        BatteryBucket::Low => 1,
+        BatteryBucket::Medium => 2,
+        BatteryBucket::High => 3,
+        BatteryBucket::Full => 4,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -924,6 +1052,15 @@ mod tests {
     fn scale_radius_scales_up_and_down() {
         assert_eq!(scale_radius(25, 64), 12);
         assert_eq!(scale_radius(25, 255), 49);
+    }
+
+    #[test]
+    fn battery_segment_count_matches_bucket() {
+        assert_eq!(segment_count(BatteryBucket::Critical), 0);
+        assert_eq!(segment_count(BatteryBucket::Low), 1);
+        assert_eq!(segment_count(BatteryBucket::Medium), 2);
+        assert_eq!(segment_count(BatteryBucket::High), 3);
+        assert_eq!(segment_count(BatteryBucket::Full), 4);
     }
 
     #[test]
