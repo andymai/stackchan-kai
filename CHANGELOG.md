@@ -64,6 +64,15 @@ section summarises the milestone work in human terms.
   and is restored to `OFFSETS_CACHE` + signalled to the head task
   before the first tick.
 
+### Audio
+
+- ES7210 PCM capture beyond RMS. The audio task now publishes
+  20 ms (320-sample) frames onto `AUDIO_FRAME_CHANNEL` alongside the
+  existing `AUDIO_RMS_SIGNAL`, with cumulative `AUDIO_FRAME_CAPTURED`
+  and `AUDIO_FRAME_DROPPED` counters for diagnostics. Foundation for
+  the wake-word + push-to-talk + UDP audio debug paths; consumer-side
+  code lands in follow-up PRs.
+
 ### Networking + control plane
 
 - mDNS extends from hostname-only `A` records to full DNS-SD service
