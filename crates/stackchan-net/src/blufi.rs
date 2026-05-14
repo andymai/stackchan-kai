@@ -289,6 +289,12 @@ pub enum ParseError {
     /// trailing bytes don't match the computed CRC16-CCITT over
     /// `sequence + data_length + data`.
     BadCrc,
+    /// Type byte's low 2 bits aren't one of the spec-assigned
+    /// values (`0b00` Control / `0b01` Data). The other two
+    /// values are unspecified by the BluFi protocol; treating
+    /// them as `Data` would hide a malformed or future-format
+    /// frame from the GATT handler.
+    UnknownType,
 }
 
 /// Parse one BluFi frame from `buf`.
@@ -310,6 +316,7 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, ParseError> {
     let data_length = buf[3] as usize;
 
     let has_crc = frame_control & FC_CHECKSUM != 0;
+    let encrypted = frame_control & FC_ENCRYPTED != 0;
     let body_len = data_length + if has_crc { 2 } else { 0 };
     if 4 + body_len > buf.len() {
         return Err(ParseError::BadDataLength);
@@ -318,15 +325,23 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, ParseError> {
     let data_end = 4 + data_length;
     let data = buf[4..data_end].to_vec();
 
-    if has_crc {
+    // Spec § 4: the CRC is computed over the *cleartext*
+    // `sequence + data_length + data` before AES-CCM
+    // encryption is applied to the data field. On encrypted
+    // frames the `data` slice we see here is still ciphertext —
+    // we can't verify the CRC until a future decryption layer
+    // runs. Skip verification for encrypted frames and let the
+    // consumer re-check after it decrypts; verify normally for
+    // cleartext frames (which is everything in the foundation
+    // slice).
+    //
+    // The CRC input — `sequence + data_length + data` — is
+    // already contiguous in `buf` at `&buf[2..data_end]`, so
+    // no temporary allocation is needed. Greptile flagged the
+    // old `Vec`-based path as wasted heap on Xtensa.
+    if has_crc && !encrypted {
         let expected = u16::from_le_bytes([buf[data_end], buf[data_end + 1]]);
-        // CRC is computed over sequence + data_length + data
-        // (cleartext, per spec).
-        let mut crc_input: Vec<u8> = Vec::with_capacity(2 + data_length);
-        crc_input.push(sequence);
-        crc_input.push(buf[3]);
-        crc_input.extend_from_slice(&buf[4..data_end]);
-        let computed = crc16_ccitt(&crc_input);
+        let computed = crc16_ccitt(&buf[2..data_end]);
         if computed != expected {
             return Err(ParseError::BadCrc);
         }
@@ -334,7 +349,8 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, ParseError> {
 
     let frame_type = match type_byte & 0b11 {
         0b00 => Type::Control,
-        _ => Type::Data,
+        0b01 => Type::Data,
+        _ => return Err(ParseError::UnknownType),
     };
     let subtype = type_byte >> 2;
 
@@ -345,7 +361,7 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, ParseError> {
         frame_control,
         data,
         fragmented: frame_control & FC_FRAGMENT != 0,
-        encrypted: frame_control & FC_ENCRYPTED != 0,
+        encrypted,
     })
 }
 
@@ -392,12 +408,11 @@ pub fn build_frame(
     out.push(data_length);
     out.extend_from_slice(data);
 
-    // CRC over sequence + data_length + data.
-    let mut crc_input: Vec<u8> = Vec::with_capacity(2 + data.len());
-    crc_input.push(sequence);
-    crc_input.push(data_length);
-    crc_input.extend_from_slice(data);
-    let crc = crc16_ccitt(&crc_input);
+    // CRC over `sequence + data_length + data` — already
+    // contiguous at `&out[2..]` now that the header + data is
+    // written. No temporary allocation; Greptile flagged the
+    // old `Vec`-based path as wasted heap on Xtensa.
+    let crc = crc16_ccitt(&out[2..]);
     out.extend_from_slice(&crc.to_le_bytes());
     Ok(out)
 }
@@ -583,6 +598,60 @@ mod tests {
         // 255 still fits.
         let edge = [0u8; 255];
         assert!(build_frame(Type::Data, DataSubtype::SendStaPassword as u8, 0, &edge).is_ok());
+    }
+
+    #[test]
+    fn parse_frame_skips_crc_verification_on_encrypted_frames() {
+        // Greptile-caught: spec says CRC is over cleartext
+        // sequence + data_length + data, computed before
+        // AES-CCM encryption. Once encryption lands, the `data`
+        // bytes on the wire are ciphertext — the parser can't
+        // verify CRC against them, only against the post-decrypt
+        // cleartext. So when FC_ENCRYPTED is set, CRC
+        // verification is deferred to the consumer (which has the
+        // key + can decrypt). The frame must still parse cleanly,
+        // not get dropped as `BadCrc`, so the post-handshake
+        // traffic from the official provisioning app survives.
+        let buf = [
+            // Type: Data + Send STA SSID.
+            ((DataSubtype::SendStaSsid as u8) << 2) | 0x01,
+            // FC: encrypted + checksum + direction-central-to-device.
+            FC_ENCRYPTED | FC_CHECKSUM,
+            0x42, // Sequence
+            0x04, // Data length
+            0xDE,
+            0xAD,
+            0xBE,
+            0xEF, // "Ciphertext"
+            0x00,
+            0x00, // Bogus CRC — would otherwise reject.
+        ];
+        let parsed = parse_frame(&buf).expect("encrypted frame must parse despite a bogus CRC");
+        assert!(parsed.encrypted);
+        assert_eq!(parsed.data, [0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn parse_frame_rejects_undefined_type_bits() {
+        // Greptile-caught: the low 2 bits of the Type byte have
+        // four possible values but only `0b00` (Control) and
+        // `0b01` (Data) are spec-assigned. The catch-all that
+        // mapped everything else to Data was hiding malformed or
+        // future-format frames from the GATT handler.
+        let mut buf = build_frame(Type::Data, DataSubtype::SendStaSsid as u8, 0, b"x").unwrap();
+        // Stamp the low bits to `0b10` (unassigned).
+        buf[0] = (buf[0] & 0b1111_1100) | 0b10;
+        // The fixed CRC bytes still match the original Type byte's
+        // CRC; clear the checksum bit on FrameCtrl so we don't
+        // fail CRC verification before reaching the type check.
+        buf[1] &= !FC_CHECKSUM;
+        // Trim the trailing CRC bytes since we just disabled it.
+        buf.truncate(buf.len() - 2);
+        assert_eq!(parse_frame(&buf), Err(ParseError::UnknownType));
+
+        // `0b11` should also reject.
+        buf[0] = (buf[0] & 0b1111_1100) | 0b11;
+        assert_eq!(parse_frame(&buf), Err(ParseError::UnknownType));
     }
 
     #[test]
