@@ -8,7 +8,6 @@
 [![Release](https://img.shields.io/github/v/release/andymai/stackchan-kai)](https://github.com/andymai/stackchan-kai/releases)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
-[![unsafe denied](https://img.shields.io/badge/unsafe-workspace--denied-success.svg)]()
 
 [Stability](./STABILITY.md) · [Changelog](./CHANGELOG.md) · [Justfile](./justfile) · [Handbook](https://andymai.github.io/stackchan-kai/)
 
@@ -29,9 +28,8 @@ sensor bench examples).
 
 ## Why
 
-M5Stack ships Stack-chan with an xiaozhi firmware stack: a Chinese
-LLM-agent pipeline with cloud dependencies, questionable security posture, and
-a C++ codebase that's hard to audit. stackchan-kai rebuilds just the local
+M5Stack ships Stack-chan with the `xiaozhi` firmware stack: a cloud-dependent
+LLM-agent pipeline written in C++. `stackchan-kai` rebuilds just the local
 desk-toy surface — animated face, head motion, local sensors — in `no_std`
 Rust on top of [`esp-hal`](https://github.com/esp-rs/esp-hal) and
 [embassy](https://embassy.dev/). The engine is modeled as data and the render
@@ -116,6 +114,13 @@ Discovery and inter-device:
 Without an SD card the firmware boots offline and the desk-toy surface works
 the same. See [HTTP control plane](https://andymai.github.io/stackchan-kai/http)
 for the full reference.
+
+## Known limitations
+
+- Tested on a single CoreS3 unit. The BMM150 magnetometer on this kit is bench-only — chassis-side interference makes the in-enclosure reading unusable; other sensors are exercised regularly.
+- LAN-only HTTP plane, no TLS. The bearer-token gate is a soft check against accidental drive-by writes — not a hardened auth surface for an untrusted network.
+- All public APIs are Experimental until at least v2.x per [STABILITY.md](./STABILITY.md). Minor releases will break things.
+- Single-maintainer project. Issue and PR response is best-effort; nothing is on a cadence.
 
 ## Non-goals
 
