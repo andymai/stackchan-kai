@@ -147,6 +147,21 @@ section summarises the milestone work in human terms.
   in `net/websocket.rs` cover handshake-key SHA-1 / base64,
   case-insensitive header lookup, and short / extended-length
   frame headers.
+- New `stackchan-net::blufi` module — `no_std` + `alloc` frame
+  parser, builder, and CRC16-CCITT for the Espressif BluFi
+  protocol. Decodes Control / Data frames, the four canonical
+  `(Type<<2 | Subtype)` byte layout, and the optional trailing
+  CRC over `sequence + data_length + data`. Builder defaults to
+  device→central direction with checksum on; the encryption /
+  fragmentation flags are surfaced for a follow-up that wires
+  the firmware-side GATT service against the parser. 13 host
+  tests cover the canonical CRC16-CCITT vector, round-trip
+  parse/build for ACK / SSID / password, control vs. data
+  disambiguation, fragment + encrypted bit surfacing, short
+  buffer / data-length / corrupted-CRC rejection, and the 255-
+  byte payload ceiling. Foundation slice — the GATT consumer +
+  the optional DH / AES-CCM encryption land in a follow-up on
+  an on-device session.
 - Mimic-follower — opt-in via `behavior.follower_leader_hostname`.
   The firmware already advertises live `yaw` / `pitch` on its own
   mDNS TXT record (the leader half of the meganetaaan `mimic_main`

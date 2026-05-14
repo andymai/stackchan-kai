@@ -51,6 +51,7 @@ extern crate alloc;
 pub mod bare;
 pub mod bare_json;
 pub mod ble_command;
+pub mod blufi;
 pub mod config;
 pub mod crash_latch;
 pub mod dance;
