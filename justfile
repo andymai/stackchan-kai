@@ -43,13 +43,13 @@ dev:
 # while iterating on a single file; run `just check` before committing.
 check-fast:
     cargo fmt --check
-    cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
+    cargo check --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --all-targets --quiet
 
 # Fast host checks — the same gates the pre-commit hook runs.
 check:
     cargo fmt --check
-    cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
-    cargo test --workspace --exclude stackchan-firmware --all-features
+    cargo clippy --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --all-targets -- -D warnings
+    cargo test --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features
 
 # Doc-drift guard — flag crates whose src/ has diverged > N commits from
 # their README.md. Warn-only by default. Pass `STRICT=1` for non-zero
@@ -69,12 +69,12 @@ verify-boot *args:
 # Everything the CI host job runs (adds doc-lint + cargo-deny).
 ci: check
     cargo deny check
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --exclude stackchan-firmware --all-features
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features
 
 # MSRV check — matches the `msrv` CI job. Requires `rustup toolchain install 1.88`.
 # Default features only — optional dev-tool features (e.g. `viz`) aren't MSRV-gated.
 msrv:
-    cargo +1.88 build --workspace --exclude stackchan-firmware
+    cargo +1.88 build --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys
 
 # ----- Web dashboard ------------------------------------------------------
 

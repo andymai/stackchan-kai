@@ -38,16 +38,16 @@ if [ "$has_rust" = true ]; then
         echo "pre-commit: (CI will run the full gate set on push)"
     else
         echo "pre-commit: running clippy on host crates (incl. tests)..."
-        cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
+        cargo clippy --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --all-targets -- -D warnings
 
         echo "pre-commit: running host tests..."
-        cargo test --workspace --exclude stackchan-firmware --all-features --quiet
+        cargo test --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --quiet
 
         echo "pre-commit: running doc tests..."
-        cargo test --workspace --exclude stackchan-firmware --all-features --doc --quiet
+        cargo test --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --doc --quiet
 
         echo "pre-commit: checking workspace (host)..."
-        cargo check --workspace --exclude stackchan-firmware --all-features --all-targets --quiet
+        cargo check --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --all-targets --quiet
     fi
 fi
 

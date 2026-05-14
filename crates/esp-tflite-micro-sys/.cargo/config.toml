@@ -1,0 +1,8 @@
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+# `build-std` matches the firmware crate's config so a standalone
+# `cargo +esp build -p esp-tflite-micro-sys` succeeds without
+# leaning on the firmware crate's working dir.
+[unstable]
+build-std = ["alloc", "core"]
