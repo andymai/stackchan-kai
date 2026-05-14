@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/stackchan-core",
     "crates/stackchan-sim",
+    "crates/stackchan-audio-features",
     "crates/aw88298",
     "crates/axp2101",
     "crates/aw9523",
@@ -26,6 +27,7 @@ members = [
 default-members = [
     "crates/stackchan-core",
     "crates/stackchan-sim",
+    "crates/stackchan-audio-features",
     "crates/aw88298",
     "crates/axp2101",
     "crates/aw9523",
