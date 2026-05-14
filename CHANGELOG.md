@@ -99,6 +99,20 @@ section summarises the milestone work in human terms.
   [docs/sidecar.md](./docs/sidecar.md). HTTP request/response
   buffers in the control plane bumped from 1 KiB to 2 KiB to fit
   realistic sidecar URLs alongside the existing config fields.
+- New `stackchan-audio-features` crate — `no_std` + `alloc`
+  streaming mel-spectrogram frontend (Hann window → 512-point
+  real FFT → 40-channel mel filterbank 125–7 500 Hz → log →
+  int8 quantize). Matches the published `microWakeWord` /
+  `TFLite-micro` keyword-spotting feature shape so any future
+  on-device wake-word inference path (TFLite-micro via FFI,
+  pure-Rust port, custom MixConv interpreter) can plug in
+  without re-deriving the DSP layer. 23 host tests cover Hann
+  symmetry, mel partition-of-unity, quantization rounding /
+  saturation / log floor, streaming window/hop cadence, and a
+  1 kHz pure-tone fixture. Foundation only — no firmware
+  consumer yet; the classifier + bundled model land in a
+  follow-up. Spectral subtraction and PCAN gain control from
+  the reference frontend are out of scope for this slice.
 
 ### Networking + control plane
 

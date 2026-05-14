@@ -1,0 +1,26 @@
+[package]
+name = "stackchan-audio-features"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "no_std audio feature extraction (Hann-windowed STFT → mel filterbank → log → int8 quantize) for on-device keyword spotting."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Pure-Rust no_std FFT keyed to compile-time fixed sizes. We use the
+# 512-point real-input variant because microWakeWord's published
+# frontend is 30 ms Hann @ 16 kHz mono → 480 samples zero-padded to
+# 512 → magnitude spectrum → mel filterbank.
+microfft = { version = "0.6", default-features = false, features = ["size-512"] }
+# `libm` provides the host-style float math (ln, sqrt, powf) that
+# `core::f32` doesn't expose on `xtensa-esp32s3-none-elf` because no
+# hardware-FPU intrinsic exists for them. The same pattern as
+# `stackchan-firmware`'s `micromath` dep, but `libm` is the
+# microWakeWord reference implementation's choice for log-mel and
+# matches its bit-exact output more closely.
+libm = "0.2"
