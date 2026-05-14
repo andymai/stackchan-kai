@@ -114,6 +114,24 @@ section summarises the milestone work in human terms.
   dispatcher no longer starves under inbound traffic and no longer
   latches a NaN pose into the delta-comparison cache.
 
+### Documentation
+
+- README gains a `Known limitations` section spelling out
+  single-unit hardware test scope (BMM150 bench-only), LAN-only
+  HTTP control plane with no TLS, Experimental-until-v2.x API
+  contract, and the best-effort single-maintainer cadence. Pairs
+  with the existing `Non-goals` section so a 30-second-rubric
+  reader sees both what the firmware won't do by design and where
+  the present implementation has gaps.
+- README `Why` section trimmed of unverified competitive
+  framings; the factual contrast against the upstream `xiaozhi`
+  firmware (cloud-dependent LLM agent in C++) stays.
+- Self-applied `unsafe denied` shield removed from the README
+  header; the same claim already appears under `Features`, and
+  the remaining badges (`CI`, `Release`, `License`, `Rust 1.88+`)
+  are independently validated by GitHub Actions, GitHub Releases,
+  the `LICENSE` files, and `rust-toolchain.toml`.
+
 ## [0.1.0] — 2026-04-23
 
 First release. CoreS3 boots to a double-buffered 320×240 face that blinks,
