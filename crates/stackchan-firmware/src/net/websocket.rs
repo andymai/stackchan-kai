@@ -67,7 +67,15 @@ pub fn parse_header_value<'a>(headers: &'a [u8], name_lower: &[u8]) -> Option<&'
     for line in headers.split(|&b| b == b'\n') {
         // Strip optional trailing `\r` from `\r\n` splits.
         let line = line.strip_suffix(b"\r").unwrap_or(line);
-        let colon = line.iter().position(|&b| b == b':')?;
+        // `?` here would abort the whole scan on any colon-less
+        // line — including the empty trailing element that
+        // splitting a `\n`-terminated header block always produces.
+        // Skip to the next line instead so a malformed line before
+        // the target header doesn't make the caller spuriously
+        // 400 the request.
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
         let (raw_name, raw_value) = line.split_at(colon);
         if raw_name.len() != name_lower.len() {
             continue;
@@ -242,6 +250,17 @@ mod tests {
     #[test]
     fn parse_websocket_key_tolerates_extra_whitespace() {
         let headers = b"Sec-WebSocket-Key:    dGhlIHNhbXBsZSBub25jZQ==   \r\n";
+        let key = parse_websocket_key(headers).unwrap();
+        assert_eq!(key, b"dGhlIHNhbXBsZSBub25jZQ==");
+    }
+
+    #[test]
+    fn parse_websocket_key_skips_colon_less_lines() {
+        // A colon-less line before the target header used to abort
+        // the scan via the trailing `?` and surface as a spurious
+        // 400 at the handler. The `continue` path must keep
+        // scanning so the target header still gets found.
+        let headers = b"garbage-line-no-colon\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
         let key = parse_websocket_key(headers).unwrap();
         assert_eq!(key, b"dGhlIHNhbXBsZSBub25jZQ==");
     }

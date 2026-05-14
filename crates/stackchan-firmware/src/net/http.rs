@@ -592,6 +592,22 @@ async fn handle_state_websocket(
 
     use super::websocket;
 
+    // RFC 6455 § 4.2.1: the server must validate `Upgrade:
+    // websocket`, `Sec-WebSocket-Version: 13`, and presence of
+    // `Sec-WebSocket-Key` before issuing `101`. Without the
+    // version gate a client on an older draft would receive a
+    // `101` with framing it doesn't understand and silently
+    // break — a clean `400` lets the client fall back.
+    let upgrade_ok = websocket::parse_header_value(headers, b"upgrade")
+        .is_some_and(|v| v.eq_ignore_ascii_case(b"websocket"));
+    if !upgrade_ok {
+        return write_text(socket, 400, "Upgrade: websocket required\n").await;
+    }
+    let version_ok =
+        websocket::parse_header_value(headers, b"sec-websocket-version") == Some(b"13" as &[u8]);
+    if !version_ok {
+        return write_text(socket, 400, "Sec-WebSocket-Version: 13 required\n").await;
+    }
     let Some(key) = websocket::parse_websocket_key(headers) else {
         return write_text(socket, 400, "missing Sec-WebSocket-Key\n").await;
     };
