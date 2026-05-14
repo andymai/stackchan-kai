@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.77.0...stackchan-firmware-v0.78.0) (2026-05-14)
+
+
+### Features
+
+* **firmware:** mimic-follower — apply a leader's mDNS pose locally ([#328](https://github.com/andymai/stackchan-kai/issues/328)) ([53fdfaf](https://github.com/andymai/stackchan-kai/commit/53fdfaf3e66de48f3cfc0d5f12d7fc6cb9e48c56))
+
 ## [0.77.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.76.0...stackchan-firmware-v0.77.0) (2026-05-14)
 
 
