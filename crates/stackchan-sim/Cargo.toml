@@ -1,6 +1,6 @@
 [package]
 name = "stackchan-sim"
-version = "0.20.3"
+version = "0.20.4"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

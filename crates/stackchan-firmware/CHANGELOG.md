@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.75.0...stackchan-firmware-v0.76.0) (2026-05-14)
+
+
+### Features
+
+* **firmware:** sidecar agent — push-to-talk capture + HTTP client ([#323](https://github.com/andymai/stackchan-kai/issues/323)) ([f657fb8](https://github.com/andymai/stackchan-kai/commit/f657fb8a14a73016db9ef323246145c781a5981a))
+
 ## [0.75.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.74.0...stackchan-firmware-v0.75.0) (2026-05-13)
 
 
