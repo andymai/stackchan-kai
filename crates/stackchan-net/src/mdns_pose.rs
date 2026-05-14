@@ -218,10 +218,19 @@ fn extract_pose_from_txt_rdata(rdata: &[u8]) -> Option<Pose> {
             return None;
         }
         if let Ok(s) = core::str::from_utf8(&rdata[i..i + len]) {
-            if let Some(v) = s.strip_prefix("yaw=") {
-                yaw = v.parse().ok();
-            } else if let Some(v) = s.strip_prefix("pitch=") {
-                pitch = v.parse().ok();
+            // First-valid-wins on duplicate keys. A naive
+            // `yaw = v.parse().ok()` would let a malformed
+            // second `yaw=` entry clobber a valid first reading
+            // and surface as a follower stall on otherwise-good
+            // leader traffic.
+            if let Some(v) = s.strip_prefix("yaw=")
+                && let Ok(val) = v.parse()
+            {
+                yaw.get_or_insert(val);
+            } else if let Some(v) = s.strip_prefix("pitch=")
+                && let Ok(val) = v.parse()
+            {
+                pitch.get_or_insert(val);
             }
         }
         i += len;
@@ -576,5 +585,85 @@ mod tests {
         // not hang.
         let msg = [0xC0_u8, 0x00];
         assert!(read_name(&msg, 0).is_none());
+    }
+
+    /// Build a response with a filler `A` record before the TXT
+    /// to exercise the answer-walking loop's `off = rdata_end`
+    /// advance. Mirrors the shape of a real kai announcement
+    /// (PTR + SRV + TXT + A in order; TXT is the third answer)
+    /// without reimplementing every record type — one preceding
+    /// record is enough to catch a fixed-header miscount.
+    fn build_txt_response_with_filler(hostname: &str, txt_strings: &[&str]) -> alloc::vec::Vec<u8> {
+        let mut msg = alloc::vec::Vec::new();
+        // Header: QR=1 AA=1, ancount=2.
+        msg.extend_from_slice(&[
+            0x00, 0x00, 0x84, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        // Filler answer #1: A `filler.local.` → 1.2.3.4.
+        for label in ["filler", "local"] {
+            #[allow(clippy::cast_possible_truncation, reason = "test labels are short")]
+            msg.push(label.len() as u8);
+            msg.extend_from_slice(label.as_bytes());
+        }
+        msg.push(0x00);
+        msg.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]); // type A, class IN
+        msg.extend_from_slice(&[0x00, 0x00, 0x00, 0x78]); // TTL
+        msg.extend_from_slice(&[0x00, 0x04]); // rdlength = 4
+        msg.extend_from_slice(&[1, 2, 3, 4]); // a.b.c.d
+        // Target answer: TXT `<hostname>._stackchan._tcp.local.`.
+        for label in [hostname, "_stackchan", "_tcp", "local"] {
+            #[allow(clippy::cast_possible_truncation, reason = "test labels are short")]
+            msg.push(label.len() as u8);
+            msg.extend_from_slice(label.as_bytes());
+        }
+        msg.push(0x00);
+        msg.extend_from_slice(&[0x00, 0x10, 0x00, 0x01]); // type TXT
+        msg.extend_from_slice(&[0x00, 0x00, 0x00, 0x78]); // TTL
+        let mut rdata = alloc::vec::Vec::new();
+        for s in txt_strings {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "test TXT strings are short"
+            )]
+            rdata.push(s.len() as u8);
+            rdata.extend_from_slice(s.as_bytes());
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "test rdata length is bounded by short inputs"
+        )]
+        let rdlen = rdata.len() as u16;
+        msg.extend_from_slice(&rdlen.to_be_bytes());
+        msg.extend_from_slice(&rdata);
+        msg
+    }
+
+    #[test]
+    fn parse_response_pose_finds_txt_after_filler_answer() {
+        // Real kai announcements emit four answers (PTR + SRV +
+        // TXT + A) so the parser must skip past preceding records
+        // before reaching the TXT. A miscount in the
+        // `off = rdata_end` advance would pass every single-
+        // answer test but fail on every live announcement.
+        let msg = build_txt_response_with_filler(
+            "kitchen-cat",
+            &["txtvers=1", "kai=1", "yaw=7.5", "pitch=-2.5"],
+        );
+        let pose = parse_response_pose(&msg, "kitchen-cat").unwrap();
+        assert!((pose.pan_deg - 7.5).abs() < 0.01);
+        assert!((pose.tilt_deg + 2.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_response_pose_keeps_first_valid_value_on_duplicate_key() {
+        // A malformed second entry must not clobber a valid
+        // first reading — `yaw = v.parse().ok()` would let
+        // `yaw=bad` overwrite `Some(12.3)` with `None` and
+        // surface as a follower stall on otherwise-good leader
+        // traffic.
+        let msg = build_txt_response("kitchen-cat", &["yaw=12.3", "yaw=bad", "pitch=4.5"]);
+        let pose = parse_response_pose(&msg, "kitchen-cat").unwrap();
+        assert!((pose.pan_deg - 12.3).abs() < 0.01);
+        assert!((pose.tilt_deg - 4.5).abs() < 0.01);
     }
 }
