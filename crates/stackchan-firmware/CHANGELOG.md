@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.77.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.76.0...stackchan-firmware-v0.77.0) (2026-05-14)
+
+
+### Features
+
+* **firmware:** GET /state/ws — WebSocket avatar push (RFC 6455) ([#326](https://github.com/andymai/stackchan-kai/issues/326)) ([ba76144](https://github.com/andymai/stackchan-kai/commit/ba761447f38c828b920f8cf765c98c8eb53f7e5e))
+
 ## [0.76.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.75.0...stackchan-firmware-v0.76.0) (2026-05-14)
 
 
