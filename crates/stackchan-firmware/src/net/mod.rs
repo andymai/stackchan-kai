@@ -17,4 +17,5 @@ pub mod mdns;
 pub mod snapshot;
 pub mod sntp;
 pub mod stack;
+pub mod websocket;
 pub mod wifi;

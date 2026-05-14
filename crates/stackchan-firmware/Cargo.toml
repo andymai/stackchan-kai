@@ -149,6 +149,15 @@ static_cell = "2.1.1"
 # dB mapping; sharing the dep keeps the workspace libm-free.
 micromath = "2"
 
+# WebSocket handshake (`GET /state/ws`) hashes the client-supplied
+# `Sec-WebSocket-Key` + RFC 6455 GUID with SHA-1 to produce the
+# `Sec-WebSocket-Accept` echo. `sha1_smol` is a pure-Rust `no_std`
+# SHA-1; we disable its default features to keep `std` out of the
+# firmware build. Base64 of the 20-byte digest is hand-rolled in
+# `net/websocket.rs` to avoid pulling another version of `base64`
+# into the dep graph alongside the one trouble-host already brings.
+sha1_smol = { version = "1.0", default-features = false }
+
 [features]
 # Default: zero-overhead production build. The `tracking_trace`
 # module's no-op `TraceState` ZST + empty methods compile to nothing.
