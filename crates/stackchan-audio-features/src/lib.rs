@@ -19,7 +19,7 @@
 //! i16 PCM (16 kHz mono)
 //!   │  push_samples(): rolling 480-sample window, 160-sample hop
 //!   ▼
-//! Hann window (480 taps, symmetric)
+//! Hann window (480 taps, periodic)
 //!   │
 //!   ▼
 //! Zero-pad to 512, real FFT
@@ -40,16 +40,17 @@
 //! # Streaming contract
 //!
 //! [`MelFrontend::push_samples`] takes a slice of `i16` samples
-//! and returns at most one [`MelFrame`] per call. Callers feed
-//! audio in any chunk size; the frontend buffers until a window's
-//! worth of samples (480) is available, emits a frame, then slides
-//! the window by the hop length (160 samples = 10 ms). Drop the
-//! return value to discard the frame.
+//! and drives `on_frame` zero or more times — once per completed
+//! hop boundary inside the chunk. Callers feed audio in any chunk
+//! size; the frontend buffers until a window's worth of samples
+//! (480) is available, emits a frame via the callback, then slides
+//! the window by the hop length (160 samples = 10 ms). Pass
+//! `|_| {}` as the callback to discard frames.
 //!
 //! For a 20 ms `AudioFrame` (320 samples) input, the frontend
-//! emits two frames per call after the first window fills (the
-//! first input fills 320/480, the second pushes to 640 = 1 hop
-//! past window-full, and so on).
+//! emits zero frames on the first call (320/480), then two frames
+//! on the second call (640 total = 1 full window + 1 hop), and
+//! two frames per call thereafter.
 //!
 //! # Bit-exactness disclaimer
 //!

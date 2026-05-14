@@ -64,14 +64,33 @@ pub struct MelFrame {
 /// precomputed mel filterbank. One frontend instance handles
 /// continuous audio for the lifetime of an inference session.
 pub struct MelFrontend {
-    /// Rolling sample buffer. Holds at least [`WINDOW_SAMPLES`]
-    /// samples once primed; new pushes shift the contents left by
-    /// [`HOP_SAMPLES`] after each emitted frame.
+    /// Ring-buffered sample window. In steady state, [`head`]
+    /// points to the oldest sample (also the next overwrite
+    /// position); the buffer always holds the last
+    /// [`WINDOW_SAMPLES`] samples in modular order.
+    ///
+    /// The ring layout avoids an O([`WINDOW_SAMPLES`]) memmove on
+    /// every sample. At 16 kHz that's the difference between
+    /// ~7.7 M float copies/sec (linear-shift) and one indexed
+    /// write/sec (ring). Two contiguous `copy_from_slice` calls
+    /// reorder the ring into time-major layout once per emitted
+    /// frame (every 10 ms), which costs ~1.9 KiB of memcpy
+    /// vs. ~30 MB/s of buffer churn under the old layout.
+    ///
+    /// [`head`]: Self::head
     buf: [f32; WINDOW_SAMPLES],
-    /// Index of the next slot to fill on the *initial* fill, or
-    /// `WINDOW_SAMPLES` once we've emitted our first frame and
-    /// are in steady-state hop-by-hop operation.
+    /// Count of samples written during the *initial* fill
+    /// (0..[`WINDOW_SAMPLES`]). Once equal to [`WINDOW_SAMPLES`]
+    /// the buffer is primed and subsequent writes use [`head`]
+    /// in ring mode; this counter stays pinned at
+    /// [`WINDOW_SAMPLES`] until [`reset`](Self::reset) is called.
     filled: usize,
+    /// Ring index of the oldest sample, which is also the slot
+    /// the next steady-state write overwrites. Meaningless
+    /// before priming completes; left at zero during initial
+    /// fill so the first emitted frame's two-copy reorder
+    /// degenerates to a single contiguous copy.
+    head: usize,
     /// Hopped-sample countdown — number of new samples that need
     /// to land before the next frame is ready, after the initial
     /// window has filled. Starts at 0 (first frame fires the moment
@@ -101,6 +120,7 @@ impl MelFrontend {
         Self {
             buf: [0.0; WINDOW_SAMPLES],
             filled: 0,
+            head: 0,
             hop_remaining: 0,
             hann: HannWindow::new(),
             mel: MelFilterbank::new(),
@@ -128,16 +148,19 @@ impl MelFrontend {
             self.buf[self.filled] = sample;
             self.filled += 1;
             if self.filled == WINDOW_SAMPLES {
+                // First emit; head stays at 0 because the next
+                // steady-state write overwrites the oldest sample
+                // (index 0, the very first sample we wrote).
                 on_frame(self.emit_frame());
-                // Next frame fires after one full hop arrives.
                 self.hop_remaining = HOP_SAMPLES;
             }
             return;
         }
-        // Steady-state: slide one sample into the buffer's tail,
-        // shifting older data left by one slot.
-        self.buf.copy_within(1.., 0);
-        self.buf[WINDOW_SAMPLES - 1] = sample;
+        // Steady-state: O(1) ring write. The slot we overwrite is
+        // the oldest sample by construction, and advancing `head`
+        // makes the *next*-oldest the new oldest.
+        self.buf[self.head] = sample;
+        self.head = (self.head + 1) % WINDOW_SAMPLES;
         self.hop_remaining -= 1;
         if self.hop_remaining == 0 {
             on_frame(self.emit_frame());
@@ -151,6 +174,7 @@ impl MelFrontend {
     /// rather than smearing pre- and post-gap audio together.
     pub fn reset(&mut self) {
         self.filled = 0;
+        self.head = 0;
         self.hop_remaining = 0;
         self.buf.fill(0.0);
     }
@@ -162,7 +186,17 @@ impl MelFrontend {
         // in place, so we keep its input padded with zeros from
         // index WINDOW_SAMPLES..FFT_SAMPLES.
         let mut fft_buf = [0.0_f32; FFT_SAMPLES];
-        fft_buf[..WINDOW_SAMPLES].copy_from_slice(&self.buf);
+        // Reorder the ring from oldest-first to time-major
+        // layout via two contiguous `copy_from_slice`s. When
+        // `head == 0` the second slice is empty and the first
+        // copies the whole window — same as the old linear-shift
+        // layout's single copy. Otherwise we pay one extra
+        // memcpy per emitted frame (every 10 ms) instead of one
+        // shift per sample (every 62 µs).
+        let head = self.head;
+        let tail_len = WINDOW_SAMPLES - head;
+        fft_buf[..tail_len].copy_from_slice(&self.buf[head..]);
+        fft_buf[tail_len..WINDOW_SAMPLES].copy_from_slice(&self.buf[..head]);
         self.hann.apply_to(&mut fft_buf[..WINDOW_SAMPLES]);
 
         // In-place real FFT. Returns N/2 complex bins; the

@@ -47,13 +47,18 @@ impl QuantParams {
         zero_point: -25,
     };
 
-    /// Construct with explicit `scale` and `zero_point`. No
-    /// validation on `scale` — passing `0` will produce infinity
-    /// at the divide; passing negative inverts the mapping.
-    /// Callers read these from the model's
-    /// `quantization_parameters` and pass them straight through.
+    /// Construct with explicit `scale` and `zero_point`. Callers
+    /// read these from the model's `quantization_parameters` and
+    /// pass them straight through. `scale = 0` produces division
+    /// by zero (and silently corrupts every quantized output);
+    /// `debug_assert!` surfaces the mistake during host tests and
+    /// firmware debug builds without adding cost to release.
     #[must_use]
-    pub const fn new(scale: f32, zero_point: i8) -> Self {
+    pub fn new(scale: f32, zero_point: i8) -> Self {
+        debug_assert!(
+            scale > 0.0,
+            "QuantParams::new: scale must be strictly positive"
+        );
         Self { scale, zero_point }
     }
 }
