@@ -38,12 +38,31 @@ use alloc::string::String;
 use embassy_futures::select::{Either, select};
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant as EmbassyInstant, Timer};
 use stackchan_core::Pose;
-use stackchan_net::mdns_pose::{POSE_PUBLISH_MIN_INTERVAL_MS, PoseAnnouncer, format_pose_kv};
+use stackchan_net::mdns_pose::{
+    POSE_PUBLISH_MIN_INTERVAL_MS, PoseAnnouncer, format_pose_kv, parse_response_pose,
+};
 
 use super::snapshot;
 use super::wifi::{WIFI_LINK_WATCH, WifiLinkState};
+
+/// Latest-wins pose lifted from a leader's mDNS TXT record.
+///
+/// Set by [`serve_loop`] whenever an inbound multicast packet
+/// carries a TXT record matching the configured
+/// `behavior.follower_leader_hostname`. Drained by the follower
+/// task ([`crate::net::mdns_follower::follower_task`]) which
+/// fires a `RemoteCommand::LookAt` hold so the local head tracks
+/// the leader without an HTTP round-trip.
+///
+/// Latest-wins semantics match the use case: a follower that
+/// missed an intermediate update should still snap to the
+/// freshest pose on the next tick rather than catching up
+/// through a backlog.
+pub static LEADER_POSE_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Signal::new();
 
 /// IPv4 mDNS multicast group + port.
 const MDNS_MULTICAST: embassy_net::IpAddress =
@@ -79,7 +98,7 @@ const SERVICE_LABELS: [&[u8]; 3] = [b"_stackchan", b"_tcp", b"local"];
 /// Rebinds on each `Connected` transition so a Wi-Fi reconnect
 /// doesn't strand the listener on a stale lease.
 #[embassy_executor::task]
-pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
+pub async fn mdns_task(stack: Stack<'static>, hostname: String, leader_hostname: String) -> ! {
     if hostname.is_empty() {
         defmt::info!("mdns: empty hostname, idle");
         park_forever().await;
@@ -154,7 +173,7 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String) -> ! {
 
         // Serve queries + periodic pose updates until the link drops
         // or anything errors out.
-        serve_loop(&socket, &hostname, our_ip, &mut announcer).await;
+        serve_loop(&socket, &hostname, &leader_hostname, our_ip, &mut announcer).await;
 
         let _ = stack.leave_multicast_group(MDNS_MULTICAST);
         socket.close();
@@ -186,6 +205,7 @@ async fn park_forever() -> ! {
 async fn serve_loop(
     socket: &UdpSocket<'_>,
     hostname: &str,
+    leader_hostname: &str,
     our_ip: embassy_net::Ipv4Address,
     announcer: &mut PoseAnnouncer,
 ) {
@@ -204,6 +224,13 @@ async fn serve_loop(
                 }
                 let kind = classify_query(&buf[..n], hostname);
                 if matches!(kind, QueryKind::None) {
+                    // Not a query directed at us. Could still be
+                    // a leader's TXT announcement worth following.
+                    if !leader_hostname.is_empty()
+                        && let Some(pose) = parse_response_pose(&buf[..n], leader_hostname)
+                    {
+                        LEADER_POSE_SIGNAL.signal(pose);
+                    }
                     continue;
                 }
                 // Both A and service-type queries are answered with

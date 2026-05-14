@@ -347,6 +347,18 @@ pub struct BehaviorConfig {
     /// `docs/sidecar.md`. Hostname-only URLs are not resolved —
     /// use a raw IPv4 literal (mirrors `audio_debug_udp_target`).
     pub agent_sidecar_url: String,
+    /// mDNS hostname of another Stack-chan to mimic, as the bare
+    /// first label (`"kitchen-cat"`, not the fully-qualified
+    /// `"kitchen-cat.local"`). Empty disables follower mode.
+    /// When set, the firmware inspects every inbound mDNS
+    /// multicast packet for the leader's TXT record and applies
+    /// its `yaw` / `pitch` to the local head as a 1.5 s
+    /// `RemoteCommand::LookAt` hold — long enough to bridge a
+    /// single dropped multicast packet, short enough that
+    /// operator-driven `POST /look-at` commands still feel
+    /// snappy. Both devices must be on the same LAN multicast
+    /// segment.
+    pub follower_leader_hostname: String,
 }
 
 /// Time / SNTP configuration.

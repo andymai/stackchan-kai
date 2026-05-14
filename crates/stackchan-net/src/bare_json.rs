@@ -262,6 +262,12 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         "agent_sidecar_url",
         &config.behavior.agent_sidecar_url,
     );
+    out.push(',');
+    push_string_field(
+        &mut out,
+        "follower_leader_hostname",
+        &config.behavior.follower_leader_hostname,
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -766,6 +772,7 @@ impl<'a> Parser<'a> {
         let mut auto_torque_release_ms: Option<u32> = None;
         let mut audio_debug_udp_target: Option<String> = None;
         let mut agent_sidecar_url: Option<String> = None;
+        let mut follower_leader_hostname: Option<String> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -827,6 +834,15 @@ impl<'a> Parser<'a> {
                     }
                     agent_sidecar_url = Some(self.parse_string()?);
                 }
+                "follower_leader_hostname" => {
+                    if follower_leader_hostname.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "follower_leader_hostname",
+                        ));
+                    }
+                    follower_leader_hostname = Some(self.parse_string()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -842,6 +858,7 @@ impl<'a> Parser<'a> {
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
+            follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
         })
     }
 
@@ -1089,6 +1106,7 @@ mod tests {
                 auto_torque_release_ms: 30_000,
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
+                follower_leader_hostname: "kitchen-cat".to_string(),
             },
         }
     }
@@ -1411,6 +1429,7 @@ mod tests {
                 auto_torque_release_ms: 30_000,
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
+                follower_leader_hostname: "kitchen-cat".to_string(),
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();
