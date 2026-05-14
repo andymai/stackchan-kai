@@ -27,6 +27,7 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/sensors`       | Live IMU / ambient / audio-RMS / body-touch sample   |
 | GET    | `/camera/snapshot` | Most recent `/sd/CAPTURE.565` frame as raw QVGA RGB565 BE |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
+| GET    | `/state/ws`      | WebSocket stream of state changes (RFC 6455)        |
 | GET    | `/head/offsets`  | Current yaw + tilt zero-point offsets               |
 | POST   | `/head/offsets`  | Update yaw + tilt zero-point offsets; persisted to SD |
 | GET    | `/crash`         | Most recent panic log (404 if none recorded)        |
@@ -83,6 +84,25 @@ underlying render loop ticks at 30 Hz.
 
 The HTTP layer accepts on a pool of worker tasks, so a long-lived
 SSE stream doesn't block other requests on the same port.
+
+`GET /state/ws` opens an RFC 6455 WebSocket carrying the same
+snapshot payload as `/state/stream`, framed as text frames
+instead of `data:` lines. Operators choose whichever transport
+their dashboard library speaks; both subscribe to the same
+publisher so payloads are bit-identical. A 15 s ping frame keeps
+proxies and NAT idle timers from closing the connection.
+
+```
+$ wscat -c ws://stackchan.local/state/ws
+< {"emotion":"Neutral", ...}
+< {"emotion":"Happy", ...}
+```
+
+Only server→client traffic is implemented today — the firmware
+accepts the handshake, sends the initial snapshot, then pushes
+text frames whenever the snapshot changes. Client-sent frames
+are ignored; binary frames, fragmentation, and per-frame
+masking are out of scope for this v1.
 
 ## Manual control
 

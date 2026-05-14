@@ -137,6 +137,16 @@ section summarises the milestone work in human terms.
 - Time configuration honours the `time.tz` field at boot — a small
   catalog of named IANA zones plus `Etc/GMT±N` is enough for the
   desk-toy use case without pulling in a real timezone library.
+- `GET /state/ws` — WebSocket transport (RFC 6455) parallel to the
+  existing `/state/stream` Server-Sent Events path. Same snapshot
+  payload; same publisher; operators pick whichever transport
+  their dashboard library speaks. Server-push only (handshake +
+  text frames + a 15 s ping); client-sent frames are ignored.
+  Bidirectional support, binary opcodes, and per-frame masking
+  are out of scope for v1. RFC 6455 handshake + frame primitives
+  in `net/websocket.rs` cover handshake-key SHA-1 / base64,
+  case-insensitive header lookup, and short / extended-length
+  frame headers.
 
 ### Stability + plumbing
 

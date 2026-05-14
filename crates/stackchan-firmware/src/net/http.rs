@@ -431,6 +431,9 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("GET", "/health") => write_json(socket, 200, &health_body()).await,
         ("GET", "/state") => write_json(socket, 200, &state_body(snapshot::read())).await,
         ("GET", "/state/stream") => handle_state_stream(socket).await,
+        ("GET", "/state/ws") => {
+            handle_state_websocket(socket, &buf[line_end + 2..header_end]).await
+        }
         ("GET", "/sensors") => {
             write_json(socket, 200, &sensors_body(snapshot::read_sensors())).await
         }
@@ -563,6 +566,97 @@ async fn write_heartbeat(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         .await
         .map_err(|_| HttpError::Write)?;
     socket.flush().await.map_err(|_| HttpError::Write)
+}
+
+/// WebSocket ping interval. Same 15 s cadence as the SSE heartbeat
+/// for the same reason — keeps proxy / NAT idle timers from
+/// tearing the connection down.
+const WS_PING_INTERVAL_SECS: u64 = 15;
+
+/// `GET /state/ws` — upgrade the connection to a WebSocket and
+/// push [`AvatarSnapshot`] events as text frames.
+///
+/// Mirrors [`handle_state_stream`] (SSE) over RFC 6455 framing.
+/// Operators choose the transport their dashboard speaks; both
+/// subscribe to the same [`super::snapshot::SNAPSHOT_PUBSUB`] so
+/// payloads are bit-identical.
+///
+/// Pre-handshake the request body is empty (`Content-Length: 0`),
+/// so the bearer-token gate higher up doesn't apply — `GET` reads
+/// stay LAN-open regardless of `auth.token`.
+async fn handle_state_websocket(
+    socket: &mut TcpSocket<'_>,
+    headers: &[u8],
+) -> Result<(), HttpError> {
+    use core::fmt::Write as _;
+
+    use super::websocket;
+
+    let Some(key) = websocket::parse_websocket_key(headers) else {
+        return write_text(socket, 400, "missing Sec-WebSocket-Key\n").await;
+    };
+    let Ok(mut subscriber) = snapshot::SNAPSHOT_PUBSUB.subscriber() else {
+        return write_text(socket, 503, "stream slots exhausted\n").await;
+    };
+
+    // The handshake response is small; build it in a heapless
+    // buffer so the 101 + Upgrade + Accept header lines never
+    // touch the allocator.
+    let accept = websocket::compute_accept_key(key);
+    let mut response: heapless::String<160> = heapless::String::new();
+    if write!(
+        &mut response,
+        "HTTP/1.1 101 Switching Protocols\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Accept: {}\r\n\r\n",
+        accept.as_str(),
+    )
+    .is_err()
+    {
+        return Err(HttpError::Write);
+    }
+    socket
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|_| HttpError::Write)?;
+    socket.flush().await.map_err(|_| HttpError::Write)?;
+
+    // After the upgrade the connection is server-push only; the
+    // per-request inactivity timeout would tear a healthy
+    // long-lived stream down.
+    socket.set_timeout(None);
+
+    // Initial snapshot so freshly-connected clients don't wait
+    // for the next render tick to render their first frame.
+    let body = state_body(snapshot::read());
+    websocket::write_text_frame(socket, body.trim_end_matches('\n').as_bytes())
+        .await
+        .map_err(|()| HttpError::Write)?;
+
+    loop {
+        match select(
+            subscriber.next_message(),
+            embassy_time::Timer::after(Duration::from_secs(WS_PING_INTERVAL_SECS)),
+        )
+        .await
+        {
+            Either::First(WaitResult::Message(snap)) => {
+                let body = state_body(snap);
+                websocket::write_text_frame(socket, body.trim_end_matches('\n').as_bytes())
+                    .await
+                    .map_err(|()| HttpError::Write)?;
+            }
+            // `Lagged` means we missed N publishes. Same as SSE
+            // — the next snapshot is more useful than backfilling.
+            Either::First(WaitResult::Lagged(_)) => {}
+            Either::Second(()) => {
+                websocket::write_ping_frame(socket)
+                    .await
+                    .map_err(|()| HttpError::Write)?;
+            }
+        }
+    }
 }
 
 /// `GET /settings` — render the current snapshot with `wifi.psk`
