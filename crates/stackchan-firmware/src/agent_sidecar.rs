@@ -43,7 +43,7 @@ use stackchan_core::input::RemoteCommand;
 use crate::audio::{AUDIO_FRAME_PUBSUB, AUDIO_FRAME_SAMPLES};
 use crate::net::http::REMOTE_COMMAND_SIGNAL;
 use crate::net::wifi::{WIFI_LINK_WATCH, WifiLinkState};
-use crate::toast::{MAX_TOAST_LEN, ToastLevel, push as toast_push};
+use crate::toast::{ToastLevel, push as toast_push};
 
 /// Push-to-talk capture trigger.
 ///
@@ -142,7 +142,7 @@ fn parse_sidecar_url(s: &str) -> Option<SidecarEndpoint> {
 enum PostError {
     /// `TcpSocket::connect` returned an error or timed out.
     Connect,
-    /// Request header didn't fit in the 256-byte heapless string.
+    /// Request header didn't fit in the 512-byte heapless string.
     /// Realistic sidecar URLs won't trigger this; pathological
     /// `agent_sidecar_url` values might.
     HeaderTooLong,
@@ -532,18 +532,18 @@ fn parse_emotion(name: &str) -> Option<Emotion> {
     }
 }
 
-/// Push an info-class toast for a sidecar reply. The toast band
-/// truncates at [`MAX_TOAST_LEN`] bytes; we don't try to be clever
-/// about elision because the operator can always read the full
-/// reply over defmt.
+/// Push an info-class toast for a sidecar reply.
+///
+/// Delegates the truncation to [`crate::toast::push`] — that
+/// function iterates `message.chars()` and stops when the
+/// 32-char `heapless::String` is full, so multi-byte UTF-8
+/// (Japanese, accented Latin, emoji) is cut at a `char` boundary
+/// rather than a byte index. Pre-truncating here with
+/// `&message[..MAX_TOAST_LEN]` would byte-slice and panic the
+/// moment byte 32 landed mid-codepoint — fatal on `no_std` embedded.
 fn toast_info(message: &str) {
     let now = stackchan_core::Instant::from_millis(embassy_time::Instant::now().as_millis());
-    let truncated = if message.len() > MAX_TOAST_LEN {
-        &message[..MAX_TOAST_LEN]
-    } else {
-        message
-    };
-    toast_push(ToastLevel::Warn, truncated, now);
+    toast_push(ToastLevel::Warn, message, now);
 }
 
 /// Push a warn-class toast for a sidecar error. Mirrors
