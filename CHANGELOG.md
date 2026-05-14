@@ -81,6 +81,24 @@ section summarises the milestone work in human terms.
   `nc -lu <ip> <port> | aplay -r 16000 -f S16_LE -c 1 -t raw`. Empty
   target parks the task with no resource cost. Bench-only; see
   [docs/audio-debug.md](./docs/audio-debug.md).
+- Sidecar agent client — opt-in via `behavior.agent_sidecar_url`.
+  Closes the loop on the operator-visible "speak to the avatar,
+  get a reply" path. A new firmware task intercepts every
+  `POST /listen` (or MCP `start_listen`), drains pre-trigger
+  pubsub backlog so capture starts at the trigger edge,
+  accumulates the requested capture window into a PSRAM `Vec<i16>`,
+  and POSTs the raw little-endian s16 PCM to the operator's
+  sidecar URL with `Content-Type: audio/L16;rate=16000;channels=1`.
+  The sidecar's JSON reply (`{"text":"...","emotion":"..."}`, a
+  minimal projection of OpenAI Chat Completions) surfaces on the
+  firmware toast band, and any `emotion` tag fires a `SetEmotion`
+  hold. STT, LLM, and emotion-tagging live in the operator's
+  sidecar — kai stays no_std + local-first; the operator chooses
+  cloud-or-not by where they point the URL. Schema, curl recipe,
+  and minimal `nc`-based echo sidecar in
+  [docs/sidecar.md](./docs/sidecar.md). HTTP request/response
+  buffers in the control plane bumped from 1 KiB to 2 KiB to fit
+  realistic sidecar URLs alongside the existing config fields.
 
 ### Networking + control plane
 

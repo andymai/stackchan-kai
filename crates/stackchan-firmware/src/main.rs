@@ -523,6 +523,17 @@ async fn render_task(
                         defmt::warn!("speak: dispatch failed ({})", e);
                     }
                 }
+                RemoteCommand::StartListen { duration_ms } => {
+                    // Notify the sidecar capture task so the
+                    // operator-configured agent gets the same
+                    // window the modifier holds Attention::Listening
+                    // for. Forward the variant to the modifier so
+                    // the cosmetic state (Ear decorator, ack chirp,
+                    // attention hold) still runs even when no
+                    // sidecar URL is configured.
+                    stackchan_firmware::agent_sidecar::PTT_TRIGGER.signal(duration_ms);
+                    entity.input.remote_command = Some(RemoteCommand::StartListen { duration_ms });
+                }
                 other => entity.input.remote_command = Some(other),
             }
         }
@@ -1398,6 +1409,22 @@ async fn main(spawner: Spawner) -> ! {
     )) {
         defmt::panic!(
             "spawn(audio_debug_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
+    }
+
+    // Sidecar agent client — opt-in via
+    // `behavior.agent_sidecar_url`. Empty URL parks the task; a
+    // configured URL turns `POST /listen` into a PCM capture +
+    // HTTP round-trip to the operator's sidecar. Replies surface
+    // on the toast band and (if `emotion` is set) drive a
+    // `SetEmotion` through `REMOTE_COMMAND_SIGNAL`.
+    if let Err(e) = spawner.spawn(stackchan_firmware::agent_sidecar::agent_sidecar_task(
+        net_stack,
+        net_config.behavior.agent_sidecar_url.clone(),
+    )) {
+        defmt::panic!(
+            "spawn(agent_sidecar_task) failed: {}",
             defmt::Debug2Format(&e)
         );
     }

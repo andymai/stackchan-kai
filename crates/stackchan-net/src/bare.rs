@@ -144,6 +144,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        audio_debug_udp_target",
         &config.behavior.audio_debug_udp_target,
     );
+    push_field(
+        &mut out,
+        "        agent_sidecar_url",
+        &config.behavior.agent_sidecar_url,
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -506,6 +511,7 @@ impl<'a> Parser<'a> {
         let mut toast_overlay_enabled: Option<bool> = None;
         let mut auto_torque_release_ms: Option<u32> = None;
         let mut audio_debug_udp_target: Option<String> = None;
+        let mut agent_sidecar_url: Option<String> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -522,6 +528,7 @@ impl<'a> Parser<'a> {
                 "toast_overlay_enabled" => toast_overlay_enabled = Some(self.parse_bool()?),
                 "auto_torque_release_ms" => auto_torque_release_ms = Some(self.parse_u32()?),
                 "audio_debug_udp_target" => audio_debug_udp_target = Some(self.parse_string()?),
+                "agent_sidecar_url" => agent_sidecar_url = Some(self.parse_string()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -536,6 +543,7 @@ impl<'a> Parser<'a> {
             toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
+            agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
         })
     }
 

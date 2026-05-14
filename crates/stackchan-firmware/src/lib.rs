@@ -17,6 +17,7 @@
 
 extern crate alloc;
 
+pub mod agent_sidecar;
 pub mod ambient;
 pub mod audio;
 pub mod audio_debug;

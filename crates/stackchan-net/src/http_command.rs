@@ -468,7 +468,7 @@ pub fn parse_face_geometry(body: &str) -> Result<FaceGeometry, JsonError> {
 ///
 /// Used by `POST /motion` and the MCP `play_motion` tool to look up
 /// one of the canonical gesture presets (greet / nod / shake /
-/// laugh). The firmware feeds the resulting [`stackchan_core::DanceScript`]
+/// laugh). The firmware feeds the resulting [`stackchan_core::dance::DanceScript`]
 /// to the dance-player path.
 ///
 /// # Errors
