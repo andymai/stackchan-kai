@@ -131,7 +131,7 @@ embassy-sync = { version = "0.7", features = ["defmt"] }
 # crate can't consume.
 embassy-embedded-hal = { version = "0.5", features = ["defmt"] }
 
-defmt = "1.0.1"
+defmt = "1.1.0"
 # Log transport: defmt-encoded bytes over the ESP32-S3 USB-Serial-JTAG
 # peripheral. `espflash flash --monitor --log-format defmt` decodes on
 # the host side. No RTT probe, no host-level udev rules — just the
