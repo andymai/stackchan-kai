@@ -2,7 +2,7 @@
 //!
 //! [`NamedMotion`] catalogs a small set of canonical avatar
 //! gestures (greet, nod, shake, laugh) and exposes a compile-time
-//! [`crate::DanceScript`] for each. The firmware HTTP / MCP layer
+//! [`crate::dance::DanceScript`] for each. The firmware HTTP / MCP layer
 //! looks the variant up by wire name and routes the resulting
 //! script through the existing dance-player path, so no separate
 //! "named-motion player" modifier is needed — the `DancePlayer`

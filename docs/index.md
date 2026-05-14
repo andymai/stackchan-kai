@@ -16,6 +16,7 @@ driver crates.
 - [Modifier authoring guide](modifiers) — adding a new behavior to the engine.
 - [Naming conventions](naming) — rules for `Intent` / `Modifier` / `Skill` / `ChirpKind` / `OverrideSource` names, with citations.
 - [Signal channels](signals) — the typed `Signal<…, T>` pattern that wires sensors to the render task.
+- [Sidecar agent](sidecar) — wire protocol for the operator-supplied HTTP agent that handles STT + LLM + emotion-tagging.
 - [Typed-error catalog](errors) — every driver crate's `Error<E>` enum.
 
 ## Source layout

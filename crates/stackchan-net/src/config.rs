@@ -335,6 +335,18 @@ pub struct BehaviorConfig {
     /// canned `aplay` / `nc` receive command in `docs/audio-debug.md`
     /// to listen on the host. Bench-only — leave empty in production.
     pub audio_debug_udp_target: String,
+    /// HTTP URL of the operator-supplied agent sidecar, as
+    /// `"http://ip:port/path"`. Empty disables the agent task.
+    /// When set, every `POST /listen` (or MCP `start_listen`) opens
+    /// a PCM capture window of the configured `duration_ms`; the
+    /// captured 16 kHz mono `i16` LE PCM is posted to this URL with
+    /// `Content-Type: audio/L16;rate=16000;channels=1`. The
+    /// sidecar's JSON reply (OpenAI-Chat-Completions-shaped, with
+    /// an optional `kai_emotion` extension) surfaces on the
+    /// firmware toast overlay. Schema + curl recipe in
+    /// `docs/sidecar.md`. Hostname-only URLs are not resolved —
+    /// use a raw IPv4 literal (mirrors `audio_debug_udp_target`).
+    pub agent_sidecar_url: String,
 }
 
 /// Time / SNTP configuration.

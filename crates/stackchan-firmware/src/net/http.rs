@@ -145,7 +145,7 @@ const HTTP_PORT: u16 = 80;
 /// responding `400`. Headers and body share this buffer, so the
 /// late-stage `filled >= REQUEST_BUF_BYTES` guard doubles as a
 /// header-overflow check.
-const REQUEST_BUF_BYTES: usize = 1024;
+const REQUEST_BUF_BYTES: usize = 2048;
 
 /// Cap on the `Content-Length` header. Bodies of this size or
 /// larger are rejected before any body bytes are read.
@@ -154,11 +154,11 @@ const REQUEST_BUF_BYTES: usize = 1024;
 /// headers + body together, so any `content_length` that hits the
 /// cap can't physically fit alongside the request line. Sized for
 /// `PUT /settings`: the full schema-v1 body with a 32-char SSID,
-/// 63-char WPA2 PSK, an `America/…` IANA tz label, and a few SNTP
-/// servers lands around 320 bytes; the 1024 ceiling leaves room
-/// for future fields without forcing every operator update through
-/// a re-cap.
-const MAX_BODY_BYTES: usize = 1024;
+/// 63-char WPA2 PSK, an `America/…` IANA tz label, a few SNTP
+/// servers, and the variable-length `agent_sidecar_url` lands
+/// around 600 bytes; the 2048 ceiling leaves room for future
+/// fields without forcing every operator update through a re-cap.
+const MAX_BODY_BYTES: usize = 2048;
 
 /// Self-contained operator dashboard, embedded at compile time as
 /// gzip-compressed bytes. The bundle is built by `just web-build`

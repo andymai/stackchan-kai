@@ -256,6 +256,12 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         "audio_debug_udp_target",
         &config.behavior.audio_debug_udp_target,
     );
+    out.push(',');
+    push_string_field(
+        &mut out,
+        "agent_sidecar_url",
+        &config.behavior.agent_sidecar_url,
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -759,6 +765,7 @@ impl<'a> Parser<'a> {
         let mut toast_overlay_enabled: Option<bool> = None;
         let mut auto_torque_release_ms: Option<u32> = None;
         let mut audio_debug_udp_target: Option<String> = None;
+        let mut agent_sidecar_url: Option<String> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -814,6 +821,12 @@ impl<'a> Parser<'a> {
                     }
                     audio_debug_udp_target = Some(self.parse_string()?);
                 }
+                "agent_sidecar_url" => {
+                    if agent_sidecar_url.is_some() {
+                        return Err(bare_err("duplicate behavior field", "agent_sidecar_url"));
+                    }
+                    agent_sidecar_url = Some(self.parse_string()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -828,6 +841,7 @@ impl<'a> Parser<'a> {
             toast_overlay_enabled: toast_overlay_enabled.unwrap_or(false),
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
+            agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
         })
     }
 
@@ -1074,6 +1088,7 @@ mod tests {
                 toast_overlay_enabled: true,
                 auto_torque_release_ms: 30_000,
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
+                agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
             },
         }
     }
@@ -1395,11 +1410,12 @@ mod tests {
                 toast_overlay_enabled: true,
                 auto_torque_release_ms: 30_000,
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
+                agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();
         assert!(
-            rendered.len() < 1024,
+            rendered.len() < 2048,
             "maximal payload exceeded firmware MAX_BODY_BYTES: {} bytes",
             rendered.len()
         );
