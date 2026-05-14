@@ -147,6 +147,17 @@ section summarises the milestone work in human terms.
   in `net/websocket.rs` cover handshake-key SHA-1 / base64,
   case-insensitive header lookup, and short / extended-length
   frame headers.
+- Mimic-follower — opt-in via `behavior.follower_leader_hostname`.
+  The firmware already advertises live `yaw` / `pitch` on its own
+  mDNS TXT record (the leader half of the meganetaaan `mimic_main`
+  protocol); this PR closes the loop by inspecting every inbound
+  mDNS multicast packet and applying any TXT record from the
+  configured leader as a 1.5 s `RemoteCommand::LookAt` hold. No
+  HTTP round-trip; both devices must share a multicast LAN
+  segment. `parse_response_pose` in `stackchan-net::mdns_pose` is
+  the host-testable parser — 11 host tests cover synthetic
+  fixtures, case-insensitive matching, compression pointers, and
+  a one-cycle pointer-loop bail-out.
 
 ### Stability + plumbing
 

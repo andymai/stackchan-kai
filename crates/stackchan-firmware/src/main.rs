@@ -1395,8 +1395,23 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(e) = spawner.spawn(net::mdns::mdns_task(
         net_stack,
         net_config.mdns.hostname.clone(),
+        net_config.behavior.follower_leader_hostname.clone(),
     )) {
         defmt::panic!("spawn(mdns_task) failed: {}", defmt::Debug2Format(&e));
+    }
+
+    // Mimic-follower — opt-in via
+    // `behavior.follower_leader_hostname`. Empty hostname parks
+    // the task; non-empty drains LEADER_POSE_SIGNAL (set by
+    // mdns_task's serve_loop when an inbound TXT matches) into
+    // RemoteCommand::LookAt holds.
+    if let Err(e) = spawner.spawn(net::mdns_follower::follower_task(
+        net_config.behavior.follower_leader_hostname.clone(),
+    )) {
+        defmt::panic!(
+            "spawn(mdns_follower::follower_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
     }
 
     // UDP audio debug stream — opt-in via
