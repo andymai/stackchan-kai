@@ -304,6 +304,86 @@ impl<'a> Interpreter<'a> {
             Err(TfLiteStatus(status))
         }
     }
+
+    /// Number of input tensors the loaded model declares.
+    ///
+    /// Stable across the interpreter's lifetime; valid even before
+    /// [`Interpreter::allocate_tensors`] (TFLM reads the count from
+    /// the flatbuffer header at construction time).
+    #[must_use]
+    pub fn inputs_len(&self) -> usize {
+        // SAFETY: `self.handle` is a valid interpreter pointer for
+        // the duration of `&self`. The accessor reads from the
+        // model's graph metadata and doesn't mutate.
+        unsafe { ffi::etms_interpreter_inputs_size(self.handle.as_ptr()) }
+    }
+
+    /// Number of output tensors the loaded model declares.
+    #[must_use]
+    pub fn outputs_len(&self) -> usize {
+        // SAFETY: as in `inputs_len`.
+        unsafe { ffi::etms_interpreter_outputs_size(self.handle.as_ptr()) }
+    }
+
+    /// Writable byte view of the `idx`-th input tensor.
+    ///
+    /// Returns `None` if `idx >= self.inputs_len()` or if the
+    /// underlying tensor doesn't have a backing buffer yet (call
+    /// [`Interpreter::allocate_tensors`] first). The returned
+    /// slice's contents persist across [`Interpreter::invoke`]
+    /// calls — TFLM reads inputs from the buffer the caller writes
+    /// here and writes outputs to a separate buffer obtained via
+    /// [`Interpreter::output_bytes`].
+    ///
+    /// The borrow shape (`&mut self`) is what's required to prevent
+    /// `invoke` from running while a caller holds a writable
+    /// reference to the input arena; this is sound but conservative —
+    /// reading other tensors through an immutable accessor while
+    /// holding an input borrow is also rejected, even though that
+    /// would be safe.
+    pub fn input_bytes_mut(&mut self, idx: usize) -> Option<&mut [u8]> {
+        // SAFETY: the FFI returns either null (out-of-range or no
+        // arena) or a pointer into the tensor arena. The arena
+        // lives for `'a` (longer than `self`), and `&mut self`
+        // guarantees no other reference exists into the interpreter
+        // for the slice's lifetime.
+        unsafe {
+            let data = ffi::etms_interpreter_input_data(self.handle.as_ptr(), idx);
+            let bytes = ffi::etms_interpreter_input_bytes(self.handle.as_ptr(), idx);
+            if data.is_null() || bytes == 0 {
+                None
+            } else {
+                Some(core::slice::from_raw_parts_mut(data, bytes))
+            }
+        }
+    }
+
+    /// Readable byte view of the `idx`-th output tensor.
+    ///
+    /// Returns `None` if `idx >= self.outputs_len()` or if the
+    /// underlying tensor doesn't have a backing buffer yet (call
+    /// [`Interpreter::allocate_tensors`] first). The returned
+    /// slice's contents reflect the result of the last
+    /// [`Interpreter::invoke`] call — calling this *before* the
+    /// first invocation returns a buffer of zero (or
+    /// implementation-defined) bytes.
+    #[must_use]
+    pub fn output_bytes(&self, idx: usize) -> Option<&[u8]> {
+        // SAFETY: the FFI returns either null (out-of-range or no
+        // arena) or a pointer into the tensor arena. The arena
+        // lives for `'a` (longer than `self`); `&self` is enough
+        // for read-only access because TFLM doesn't mutate output
+        // tensors except during `invoke`, which takes `&mut self`.
+        unsafe {
+            let data = ffi::etms_interpreter_output_data(self.handle.as_ptr(), idx);
+            let bytes = ffi::etms_interpreter_output_bytes(self.handle.as_ptr(), idx);
+            if data.is_null() || bytes == 0 {
+                None
+            } else {
+                Some(core::slice::from_raw_parts(data, bytes))
+            }
+        }
+    }
 }
 
 impl Drop for Interpreter<'_> {

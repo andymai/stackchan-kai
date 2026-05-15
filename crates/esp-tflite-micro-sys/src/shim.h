@@ -104,6 +104,35 @@ int etms_interpreter_allocate_tensors(EtmsInterpreter* interpreter);
 // last call. Returns 0 (`kTfLiteOk`) on success.
 int etms_interpreter_invoke(EtmsInterpreter* interpreter);
 
+// --- Tensor I/O ------------------------------------------------------------
+//
+// Direct byte access to TFLM's input and output tensor buffers. The
+// pointers are aliases into the tensor arena passed to
+// `etms_interpreter_create`; their lifetimes match the interpreter's,
+// and the contents survive across `etms_interpreter_invoke` calls.
+//
+// The shim treats tensor data as raw bytes — the typed-view layer
+// (int8 mel features, float32 logits, …) is the caller's
+// responsibility. For microWakeWord the inputs and outputs are both
+// int8 and a byte-level reinterpretation is sufficient.
+
+// Number of input or output tensors the model declares. Returns 0
+// for a null handle.
+size_t etms_interpreter_inputs_size(const EtmsInterpreter* interpreter);
+size_t etms_interpreter_outputs_size(const EtmsInterpreter* interpreter);
+
+// Pointer to the writable byte buffer backing the `idx`-th input
+// tensor. Returns NULL if `interpreter` is null or `idx` is out of
+// range. The buffer length is `etms_interpreter_input_bytes(idx)`.
+uint8_t* etms_interpreter_input_data(EtmsInterpreter* interpreter, size_t idx);
+size_t etms_interpreter_input_bytes(const EtmsInterpreter* interpreter, size_t idx);
+
+// Pointer to the readable byte buffer backing the `idx`-th output
+// tensor. Returns NULL if `interpreter` is null or `idx` is out of
+// range. The buffer length is `etms_interpreter_output_bytes(idx)`.
+const uint8_t* etms_interpreter_output_data(const EtmsInterpreter* interpreter, size_t idx);
+size_t etms_interpreter_output_bytes(const EtmsInterpreter* interpreter, size_t idx);
+
 #ifdef __cplusplus
 }
 #endif
