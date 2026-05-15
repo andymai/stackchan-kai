@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.82.0...stackchan-firmware-v0.82.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **firmware:** BluFi reject fragmented frames + clarify commit-side comment ([#346](https://github.com/andymai/stackchan-kai/issues/346)) ([0b4b25b](https://github.com/andymai/stackchan-kai/commit/0b4b25b7845f05c309001f4e7d8d463737bdea64))
+
 ## [0.82.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.81.0...stackchan-firmware-v0.82.0) (2026-05-15)
 
 
