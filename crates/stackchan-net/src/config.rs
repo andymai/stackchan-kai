@@ -279,11 +279,11 @@ impl Default for EspNowConfig {
 /// Behavioural toggles. Opt-in autonomous beats that aren't part of
 /// the always-on reactive surface.
 ///
-/// Default: every flag `false`, `wake_word_threshold: 100`. The
-/// boot config doesn't need a `behavior:` block at all —
-/// `serde(default)` on the parent populates it. Operators opt in
-/// by adding the block via `PUT /settings` or editing
-/// `STACKCHAN.RON` directly.
+/// Default: every flag `false`, `wake_word_threshold: 100`,
+/// `wake_word_arena_kib: 64`. The boot config doesn't need a
+/// `behavior:` block at all — `serde(default)` on the parent
+/// populates it. Operators opt in by adding the block via
+/// `PUT /settings` or editing `STACKCHAN.RON` directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 #[allow(
@@ -382,6 +382,14 @@ pub struct BehaviorConfig {
     /// device per model: a different `.tflite` may want a
     /// different cut-point.
     pub wake_word_threshold: i8,
+    /// Size of the tensor arena handed to `TFLite` Micro at boot,
+    /// in KiB. The `microWakeWord` v2 streaming family declares
+    /// 17–26 KiB nominal; the default `64` leaves headroom for the
+    /// TFLM planner's scratch space and small architecture changes.
+    /// Bump when a custom `.tflite` model fails `allocate_tensors`
+    /// with the default. Allocated once at boot from PSRAM — config
+    /// changes via `PUT /settings` take effect on next reboot.
+    pub wake_word_arena_kib: u32,
 }
 
 impl Default for BehaviorConfig {
@@ -397,6 +405,7 @@ impl Default for BehaviorConfig {
             follower_leader_hostname: String::new(),
             wake_word_enabled: false,
             wake_word_threshold: 100,
+            wake_word_arena_kib: 64,
         }
     }
 }

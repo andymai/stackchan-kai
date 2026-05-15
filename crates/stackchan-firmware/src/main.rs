@@ -1480,9 +1480,18 @@ async fn main(spawner: Spawner) -> ! {
     // takes — sidecar PCM capture plus the cosmetic modifier graph
     // (`Attention::Listening`, ear decorator, ack chirp). Empty
     // model or `wake_word_enabled = false` parks the task.
+    // Saturating KiB→bytes: a pathological config (e.g.
+    // `wake_word_arena_kib: u32::MAX`) shouldn't wrap to a tiny
+    // allocation. `usize` is 32-bit on xtensa-esp32s3, so the upper
+    // bound `usize::MAX` clamps any value > ~4 GiB to 4 GiB — still
+    // way beyond what `esp-alloc` can satisfy, but the failure mode
+    // is a clean PSRAM-exhausted panic rather than a silent wrap.
+    let arena_bytes: usize =
+        (net_config.behavior.wake_word_arena_kib as usize).saturating_mul(1024);
     if let Err(e) = spawner.spawn(stackchan_firmware::wake_word::wake_word_task(
         net_config.behavior.wake_word_enabled,
         net_config.behavior.wake_word_threshold,
+        arena_bytes,
         wake_word_model,
     )) {
         defmt::panic!("spawn(wake_word_task) failed: {}", defmt::Debug2Format(&e));

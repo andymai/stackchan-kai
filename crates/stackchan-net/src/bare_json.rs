@@ -278,6 +278,11 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         ",\"wake_word_threshold\":{}",
         config.behavior.wake_word_threshold
     );
+    let _ = write!(
+        out,
+        ",\"wake_word_arena_kib\":{}",
+        config.behavior.wake_word_arena_kib
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -786,6 +791,7 @@ impl<'a> Parser<'a> {
         let mut follower_leader_hostname: Option<String> = None;
         let mut wake_word_enabled: Option<bool> = None;
         let mut wake_word_threshold: Option<i8> = None;
+        let mut wake_word_arena_kib: Option<u32> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -868,6 +874,12 @@ impl<'a> Parser<'a> {
                     }
                     wake_word_threshold = Some(self.parse_i8()?);
                 }
+                "wake_word_arena_kib" => {
+                    if wake_word_arena_kib.is_some() {
+                        return Err(bare_err("duplicate behavior field", "wake_word_arena_kib"));
+                    }
+                    wake_word_arena_kib = Some(self.parse_u32()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -886,6 +898,7 @@ impl<'a> Parser<'a> {
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
+            wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
         })
     }
 
@@ -1162,6 +1175,7 @@ mod tests {
                 follower_leader_hostname: "kitchen-cat".to_string(),
                 wake_word_enabled: true,
                 wake_word_threshold: 95,
+                wake_word_arena_kib: 96,
             },
         }
     }
@@ -1487,6 +1501,7 @@ mod tests {
                 follower_leader_hostname: "kitchen-cat".to_string(),
                 wake_word_enabled: true,
                 wake_word_threshold: -32,
+                wake_word_arena_kib: 128,
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();
@@ -1522,6 +1537,29 @@ mod tests {
         }"#;
         let parsed = parse_settings_json(input).unwrap();
         assert_eq!(parsed.behavior.wake_word_threshold, -32);
+    }
+
+    #[test]
+    fn wake_word_arena_kib_round_trips_custom_value() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "behavior":{"wake_word_arena_kib":96}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.behavior.wake_word_arena_kib, 96);
+    }
+
+    #[test]
+    fn wake_word_arena_kib_defaults_to_64_when_absent() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.behavior.wake_word_arena_kib, 64);
     }
 
     #[test]
