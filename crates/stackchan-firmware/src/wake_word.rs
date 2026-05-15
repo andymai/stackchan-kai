@@ -158,7 +158,7 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
     let mut frontend = MelFrontend::new();
     let mut mel_buf: heapless::Vec<[i8; MEL_BIN_COUNT], MAX_MEL_FRAMES_PER_AUDIO_FRAME> =
         heapless::Vec::new();
-    // Earliest wall-clock instant at which the next PTT fire is
+    // Earliest wall-clock instant at which the next wake fire is
     // allowed. `None` (the initial state) means "any score is
     // eligible to fire"; updated to `now + cooldown` on each fire.
     let mut next_fire_after: Option<Instant> = None;
