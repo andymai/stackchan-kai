@@ -6,36 +6,34 @@ deliberate exception to the firmware crate's "no C/C++ in the
 binary" non-goal, scoped to one synchronous `Invoke()` call from
 an embassy task.
 
-## Status — foundation slice
+## Surface
 
-This skeleton crate ships the build plumbing and verifies the
-toolchain path end-to-end:
+Two owned Rust types front the templated TFLM classes:
 
-- vendored `esp-nn` sources compile via `cc-rs` with the
-  ESP32-S3-specific gcc binary (`xtensa-esp32s3-elf-gcc`), the
-  ESP-DSP / PIE extension assembly assembles cleanly, and 59
-  `ee.*` SIMD opcodes show up in the resulting object file;
-- vendored TFLM port surface (`system_setup` + `micro_log` +
-  `debug_log` + `micro_time`) compiles bare-metal with zero
-  FreeRTOS or ESP-IDF dependencies, gated by
-  `-DTF_LITE_STRIP_ERROR_STRINGS` to drop the `<cstdio>` dep;
-- one C-ABI shim function (`esp_tflite_micro_init`) links
-  against `tflite::InitializeTarget()` so dead-code-elimination
-  can't strip the port-surface symbols out of the staticlib;
-- the firmware crate can depend on this with no impact on the
-  host CI gates (the workspace's `just check` / `just ci` /
-  `just msrv` recipes exclude this crate alongside
-  `stackchan-firmware`).
+- `Resolver` wraps `tflite::MicroMutableOpResolver<20>`. The
+  template parameter is fixed in the C-ABI shim at the operator
+  count microWakeWord uses, so the same resolver size carries
+  through to the production wake-word task. Op-kernel registration
+  (`Resolver::add_conv2d`, …) wires up alongside its underlying
+  vendored kernels.
+- `Interpreter<'a>` wraps `tflite::MicroInterpreter`. It borrows
+  the model bytes, the resolver, and the tensor arena for its
+  lifetime — the underlying C++ object holds raw pointers into
+  all three.
 
-The interpreter surface — `MicroInterpreter`,
-`MicroMutableOpResolver`, the operator kernels needed for
-`hey_jarvis` microWakeWord (`Conv2D`, `DepthwiseConv2D`,
-`FullyConnected`, `MaxPool2D`, `StridedSlice`, `Concatenation`,
-`Pack`, `SplitV`, plus the resource-variable streaming
-machinery: `VarHandle`, `ReadVariable`, `AssignVariable`) — and
-the safe Rust wrapper around it land in a follow-up PR. The
-research grounding the design decision lives in
-`.notes/arc-4b-inference-research.md` (gitignored).
+`Interpreter::allocate_tensors` runs TFLM's memory planner over
+the caller-supplied arena; `Interpreter::invoke` runs one
+inference pass. Both return `Result<(), TfLiteStatus>` where the
+non-zero `TfLiteStatus` codes are surfaced verbatim.
+
+Tensor I/O accessors (`Interpreter::input(idx)`, `output(idx)`,
+typed `[u8]` / `[i8]` slice views) wire up alongside the first
+firmware-side consumer.
+
+The C-ABI shim header (`src/shim.h`) is pure C — `bindgen` runs
+against it without touching the C++ template surface; the
+generated declarations end up in `OUT_DIR/bindings.rs` and
+re-export under the crate's private `ffi` module.
 
 ## Build host
 
@@ -51,6 +49,9 @@ otherwise would push the failure to wake-word task spawn time.
 | esp-tflite-micro | [espressif/esp-tflite-micro] | see `vendor/COMMITS.txt` |
 
 Both Apache-2.0; LICENSE files preserved in each vendored tree.
+The TFLM tree includes its header-only third-party deps
+(`flatbuffers`, `gemmlowp`, `ruy`) under their respective licenses,
+also Apache-2.0.
 
 ## Build-system gotchas worth remembering
 
@@ -65,6 +66,18 @@ path assembles cleanly. The 59-opcode count in the output
 `esp_nn_conv_s8_1x1_esp32s3.o` is the sanity check that
 distinguishes a working build from a "compiles but fell back to
 slow path" build.
+
+Static-library link order matters. `cc-rs` emits
+`cargo:rustc-link-lib=static=…` in call order; GNU ld is
+single-pass and only pulls an archive member if a reference has
+already been seen. The shim/TFLM archive precedes esp-nn on the
+link line — the shim is the consumer of esp-nn's kernels
+(transitively, once op kernels are wired), esp-nn provides.
+
+`-fno-rtti` and `-fno-exceptions` match upstream
+`esp-tflite-micro`'s compile flags. The shim uses
+`new (std::nothrow)` so allocation failures don't need exceptions
+to propagate.
 
 [`esp-tflite-micro`]: https://github.com/espressif/esp-tflite-micro
 [`esp-nn`]: https://github.com/espressif/esp-nn

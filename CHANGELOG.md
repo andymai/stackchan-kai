@@ -112,11 +112,23 @@ section summarises the milestone work in human terms.
   port symbols. Wake-word inference is the single deliberate
   exception to the firmware crate's "no C/C++" non-goal — scoped
   to one synchronous `Invoke()` call from an embassy task, no
-  FreeRTOS / ESP-IDF dependencies. The `MicroInterpreter`
-  wrapper + the MixConv operator kernels land in a follow-up
-  PR. Workspace `just check` / `just ci` / `just msrv` recipes
-  exclude this crate alongside `stackchan-firmware`; only
-  builds on `xtensa-esp32s3-none-elf`.
+  FreeRTOS / ESP-IDF dependencies. Workspace `just check` /
+  `just ci` / `just msrv` recipes exclude this crate alongside
+  `stackchan-firmware`; only builds on `xtensa-esp32s3-none-elf`.
+- `esp-tflite-micro-sys` — interpreter surface. Vendored the
+  TFLM library subset needed to construct + run a
+  `MicroInterpreter` (~35 `.cc` files: core C ABI types,
+  flatbuffer plumbing, arena + memory planner, port-bridge,
+  reference int8 quantization). A C-ABI shim (`shim.h` +
+  `shim.cpp`) hides the `MicroMutableOpResolver<N>` template
+  behind opaque handles (`EtmsResolver`, `EtmsInterpreter`) so
+  `bindgen` can route Rust through a flat `extern "C"` surface;
+  the template size is fixed at 20 to match microWakeWord's
+  operator count. Safe Rust wrapper exposes `Resolver` +
+  `Interpreter<'a>` with `allocate_tensors` + `invoke` returning
+  `Result<(), TfLiteStatus>`. Op-kernel registration
+  (`Resolver::add_*`) and tensor I/O accessors are wired in a
+  subsequent slice.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →
