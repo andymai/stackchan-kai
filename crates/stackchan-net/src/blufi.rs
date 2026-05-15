@@ -39,9 +39,15 @@
 //!   higher-level GATT handler is responsible for buffering
 //!   continuations.
 //! - GATT integration. The [`SERVICE_UUID`] / [`WRITE_CHAR_UUID`]
-//!   / [`NOTIFY_CHAR_UUID`] constants are exported so a follow-up
-//!   PR can wire the firmware-side GATT service against this
-//!   parser without re-deriving them.
+//!   / [`NOTIFY_CHAR_UUID`] `u16` constants are exported for code
+//!   paths that consume UUIDs at runtime — service-discovery filters,
+//!   defmt logs, central-side scanners. The firmware-side
+//!   `#[gatt_service]` proc-macro only accepts string literals,
+//!   so the BLE peripheral re-derives the 128-bit canonical forms
+//!   (`0000ffff-0000-1000-8000-00805f9b34fb` etc.) directly in the
+//!   service declaration. Treat the two as parallel views of the
+//!   same UUIDs rather than a single source of truth — when a
+//!   future revision changes one, update both.
 //!
 //! [BluFi]: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/ble/blufi.html
 

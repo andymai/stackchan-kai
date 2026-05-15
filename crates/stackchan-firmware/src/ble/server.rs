@@ -60,6 +60,17 @@
 //! commit time and silently no-ops on auth failure (legacy from the
 //! initial provisioning PR).
 //!
+//! **`BluFi` exception**: writes to the `BluFiService` write
+//! characteristic are *not* auth-gated at the ATT layer. The standard
+//! ESP BLE Provisioning Android / iOS app sends `BluFi` frames before
+//! the pairing handshake, and `BluFi`'s own `SetSecMode` + AES-CCM
+//! (not yet implemented) is what protects payloads on the wire.
+//! The follow-up slice that wires the `ControlSubtype::ConnectToAp`
+//! commit path will re-use `commit_provisioning`'s
+//! authenticated-link gate at the point staged credentials are
+//! persisted, so the security posture at the *commit* boundary
+//! matches the existing provisioning service.
+//!
 //! DIS characteristic types are `heapless::String<N>` rather than
 //! `&'static str` because trouble-host's `AsGatt for &'static str`
 //! sets `MAX_SIZE = usize::MAX`, which the gatt-service macro tries
