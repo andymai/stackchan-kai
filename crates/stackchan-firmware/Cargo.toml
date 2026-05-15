@@ -37,6 +37,16 @@ stackchan-tts = { path = "../stackchan-tts" }
 # broken on the no_std firmware target). The firmware uses
 # `parse_ron_bare` / `render_ron_bare` from `stackchan_net::bare`.
 stackchan-net = { path = "../stackchan-net", default-features = false }
+# Streaming mel-spectrogram frontend used by the wake-word task —
+# 480-sample window, 160-sample hop, 40 int8 mel bins. Pure-Rust
+# `no_std + alloc`; pulled in unconditionally because the firmware
+# always builds the wake-word module (which parks at runtime when
+# disabled or model-less).
+stackchan-audio-features = { path = "../stackchan-audio-features" }
+# FFI bindings to `esp-tflite-micro` + `esp-nn` for on-device
+# wake-word inference. Builds only on `xtensa-esp32s3-none-elf`;
+# the host CI gates exclude this crate alongside the firmware crate.
+esp-tflite-micro-sys = { path = "../esp-tflite-micro-sys" }
 # FAT16/32 over the `embedded-hal` `SpiDevice` shape — `SdSpiDevice`
 # in `sd_spi.rs` provides the SD-side adapter (with GPIO35 OE flip).
 # Sync (blocking); SD I/O happens at boot + during `PUT /settings`,

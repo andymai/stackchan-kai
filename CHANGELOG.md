@@ -150,6 +150,21 @@ section summarises the milestone work in human terms.
   for output) matches TFLM's usage pattern — write inputs, invoke,
   read outputs — and lets the borrow checker prevent `invoke` from
   running while a caller holds a writable input reference.
+- On-device wake-word detector — new firmware task wired between
+  `AUDIO_FRAME_PUBSUB`, the mel-spectrogram frontend, and the
+  agent-sidecar `PTT_TRIGGER`. Opt-in via
+  `behavior.wake_word_enabled` AND a model at
+  `/sd/WAKE_WORD.tflite`; missing either parks the task with no
+  audio subscriber slot, no tensor arena allocation, and no
+  interpreter construction. The detector registers the 20-op
+  microWakeWord operator set on an `esp-tflite-micro-sys`
+  `Resolver`, allocates a 64 KiB PSRAM-backed tensor arena, and
+  for every mel frame (one or two per 20 ms audio frame) feeds the
+  40 int8 features into `Interpreter::invoke`. A score above the
+  detection threshold fires `PTT_TRIGGER.signal(4 000 ms)`, routing
+  the post-wake utterance through the same sidecar HTTP pipeline as
+  operator-initiated `POST /listen`. Tunable on-device detection
+  thresholds + larger-than-default arenas ride a follow-on PR.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →

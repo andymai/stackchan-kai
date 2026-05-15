@@ -154,6 +154,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        follower_leader_hostname",
         &config.behavior.follower_leader_hostname,
     );
+    let _ = writeln!(
+        out,
+        "        wake_word_enabled: {},",
+        config.behavior.wake_word_enabled
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -518,6 +523,7 @@ impl<'a> Parser<'a> {
         let mut audio_debug_udp_target: Option<String> = None;
         let mut agent_sidecar_url: Option<String> = None;
         let mut follower_leader_hostname: Option<String> = None;
+        let mut wake_word_enabled: Option<bool> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -538,6 +544,7 @@ impl<'a> Parser<'a> {
                 "follower_leader_hostname" => {
                     follower_leader_hostname = Some(self.parse_string()?);
                 }
+                "wake_word_enabled" => wake_word_enabled = Some(self.parse_bool()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -554,6 +561,7 @@ impl<'a> Parser<'a> {
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
+            wake_word_enabled: wake_word_enabled.unwrap_or(false),
         })
     }
 
