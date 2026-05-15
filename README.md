@@ -29,9 +29,10 @@ sensor bench examples).
 ## Why
 
 M5Stack ships Stack-chan with the `xiaozhi` firmware stack: a cloud-dependent
-LLM-agent pipeline written in C++. `stackchan-kai` rebuilds just the local
-desk-toy surface — animated face, head motion, local sensors — in `no_std`
-Rust on top of [`esp-hal`](https://github.com/esp-rs/esp-hal) and
+LLM-agent pipeline written in C++. `stackchan-kai` rebuilds the desk-toy
+surface — animated face, head motion, local sensors, optional sidecar-routed
+voice agent — in `no_std` Rust on top of
+[`esp-hal`](https://github.com/esp-rs/esp-hal) and
 [embassy](https://embassy.dev/). The engine is modeled as data and the render
 path is shared with a host-side simulator, so most of the firmware is testable
 without touching the hardware.
@@ -77,6 +78,7 @@ for the details.
 - **Local inputs** — FT6336U touch, Si12T body-touch strip, LTR-553 ambient + proximity, NEC IR decoder
 - **Timekeeping + peripherals** — BM8563 RTC, PY32 co-processor, WS2812 neck LED ring (`just leds-bench`)
 - **Camera tracking** — GC0308 capture into a block-grid motion tracker, engagement-driven gaze with microsaccades and lost-target search
+- **Voice agent path** — opt-in. Wake word fires from on-device microWakeWord inference (TFLite Micro + ESP-NN, model on SD card) or operator-initiated `POST /listen`; the firmware uploads captured PCM to a sidecar URL of your choice and renders the JSON reply (`text`, `emotion`) on the toast band. STT and LLM live in the sidecar — kai never embeds them.
 - **Optional autonomy** — opt-in soliloquy bubbles at random intervals; opt-in top-of-hour chime
 - **Host-side sim** — runs the full modifier stack on the host with pixel-golden tests + an `egui` visualiser (`cargo run -p stackchan-sim --bin viz --features viz`); cuts behaviour iteration from ~30 s build cycles to under a second
 - **Safe by default** — no `unwrap` in library code, typed errors throughout, `unsafe` denied workspace-wide
@@ -124,9 +126,9 @@ for the full reference.
 
 ## Non-goals
 
-- No voice agent or LLM. This is not a xiaozhi replacement.
-- No cloud APIs or telemetry.
-- No C/C++ in the firmware binary. Drivers are written directly against datasheets.
+- No LLM, STT, or TTS in the firmware. Point `behavior.agent_sidecar_url` at an operator-supplied agent if you want a reply path; kai uploads captured PCM and renders the JSON response. The firmware stays no_std and local-first regardless of whether a sidecar is configured. kai is not a xiaozhi replacement.
+- No cloud APIs or telemetry of its own. Wi-Fi and the sidecar URL go where the operator points them.
+- C/C++ is scoped to one vendored crate (`esp-tflite-micro-sys`, on-device wake-word inference via TFLite Micro + ESP-NN). Hardware drivers are written directly against datasheets in pure Rust.
 - Not an M5Unified port. Only the desk-toy surface area is covered.
 
 ## License
