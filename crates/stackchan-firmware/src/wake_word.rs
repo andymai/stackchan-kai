@@ -8,10 +8,9 @@
 //! ## Pipeline
 //!
 //! ```text
-//! AUDIO_FRAME_PUBSUB  ─►  MelFrontend  ─►  Interpreter  ─►  PTT_TRIGGER
-//!   (320 i16 samples       (480 / 160      (1 × 40 i8        (signal post-
-//!    every 20 ms)           window/hop)     per timestep)     wake capture
-//!                                                             window)
+//! AUDIO_FRAME_PUBSUB  ─►  MelFrontend  ─►  Interpreter  ─►  REMOTE_COMMAND_SIGNAL
+//!   (320 i16 samples       (480 / 160      (1 × 40 i8        (StartListen, drained
+//!    every 20 ms)           window/hop)     per timestep)     by the render loop)
 //! ```
 //!
 //! Each 20 ms `AudioFrame` (320 samples @ 16 kHz) yields one or two
@@ -23,10 +22,14 @@
 //! ops, so the host side feeds one timestep at a time.
 //!
 //! When the output score crosses [`DETECTION_THRESHOLD`], the task
-//! fires [`crate::agent_sidecar::PTT_TRIGGER`] with
-//! [`POST_WAKE_CAPTURE_MS`], which routes the post-wake utterance
-//! through the same sidecar HTTP pipeline that `POST /listen` uses
-//! for operator-initiated capture.
+//! signals [`crate::net::http::REMOTE_COMMAND_SIGNAL`] with
+//! [`RemoteCommand::StartListen`] for [`POST_WAKE_CAPTURE_MS`]. The
+//! render loop drains the signal and applies the same effects as
+//! an operator-initiated `POST /listen`: trigger the sidecar PCM
+//! capture *and* hand the variant to the modifier graph so the
+//! avatar visibly reacts — [`stackchan_core::Attention::Listening`] hold,
+//! ear decorator overlay, acknowledgement chirp. Both the local
+//! and operator paths converge on this one signal.
 
 // microWakeWord, ESPHome, TFLite Micro, MixConv, MicroInterpreter
 // appear throughout the prose; per-occurrence backticking buries
@@ -40,9 +43,10 @@ use embassy_sync::pubsub::WaitResult;
 use embassy_time::Instant;
 use esp_tflite_micro_sys::{Interpreter, Resolver, TfLiteStatus};
 use stackchan_audio_features::{MEL_BIN_COUNT, MelFrontend};
+use stackchan_core::RemoteCommand;
 
-use crate::agent_sidecar::PTT_TRIGGER;
 use crate::audio::AUDIO_FRAME_PUBSUB;
+use crate::net::http::REMOTE_COMMAND_SIGNAL;
 
 /// Bytes of tensor arena handed to TFLM. microWakeWord v2 streaming
 /// models declare 17–26 KiB; 64 KiB leaves headroom for larger
@@ -57,21 +61,24 @@ const ARENA_BYTES: usize = 64 * 1024;
 /// point that's tunable once on-device tuning lands.
 const DETECTION_THRESHOLD: i8 = 100;
 
-/// PCM capture window the agent-sidecar task uses after a wake
-/// fires. Matches the operator-initiated `POST /listen` default so
-/// the two paths converge on the same sidecar request shape.
+/// Listen-window duration emitted on each wake fire. Matches the
+/// operator-initiated `POST /listen` default so the two paths
+/// converge on the same sidecar request shape and the same
+/// `Attention::Listening` hold.
 const POST_WAKE_CAPTURE_MS: u32 = 4_000;
 
-/// Minimum gap between consecutive `PTT_TRIGGER.signal()` calls.
-/// Without this, a real wake utterance — which spans dozens of mel
-/// frames above threshold — would call `signal()` on every frame.
-/// Since `Signal` is one-shot consume-and-clear with last-write-wins
-/// payload, the sidecar would re-fire as soon as its first capture
-/// finished, cascading into a second / third capture from queued
-/// signals. The cooldown is set to `POST_WAKE_CAPTURE_MS + 1 000 ms`
-/// so a new fire is only possible after the sidecar has finished
-/// the previous capture *and* drained the trigger, ruling out the
-/// cascade pattern.
+/// Minimum gap between consecutive `REMOTE_COMMAND_SIGNAL.signal()`
+/// calls. Without this, a real wake utterance — which spans dozens
+/// of mel frames above threshold — would call `signal()` on every
+/// frame. Since `Signal` is one-shot consume-and-clear with
+/// last-write-wins payload, the downstream consumers (sidecar
+/// capture, `Attention::Listening` modifier) would re-fire as soon
+/// as the first listen window finished, cascading into a second /
+/// third capture from queued signals. The cooldown is set to
+/// `POST_WAKE_CAPTURE_MS + 1 000 ms` so a new fire is only possible
+/// after the previous window has fully elapsed, ruling out the
+/// cascade pattern regardless of which downstream is slower to
+/// drain.
 const POST_WAKE_COOLDOWN_MS: u64 = POST_WAKE_CAPTURE_MS as u64 + 1_000;
 
 /// Index of the wake-word score in the model output tensor. For
@@ -151,7 +158,7 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
     let mut frontend = MelFrontend::new();
     let mut mel_buf: heapless::Vec<[i8; MEL_BIN_COUNT], MAX_MEL_FRAMES_PER_AUDIO_FRAME> =
         heapless::Vec::new();
-    // Earliest wall-clock instant at which the next PTT fire is
+    // Earliest wall-clock instant at which the next wake fire is
     // allowed. `None` (the initial state) means "any score is
     // eligible to fire"; updated to `now + cooldown` on each fire.
     let mut next_fire_after: Option<Instant> = None;
@@ -182,15 +189,16 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
     }
 }
 
-/// Feed one mel frame through the interpreter and fire
-/// [`PTT_TRIGGER`] on detection. Logs and continues on transient
-/// errors so a single bad invoke doesn't kill the task.
+/// Feed one mel frame through the interpreter and signal
+/// [`REMOTE_COMMAND_SIGNAL`] with [`RemoteCommand::StartListen`] on
+/// detection. Logs and continues on transient errors so a single
+/// bad invoke doesn't kill the task.
 ///
 /// `next_fire_after` carries the cooldown deadline across calls:
 /// a fresh fire is suppressed (no `signal()`) until the deadline
 /// has passed, which prevents a single utterance — spanning dozens
 /// of consecutive high-score mel frames — from queueing repeated
-/// captures behind the sidecar's first capture window.
+/// listen windows behind the first one.
 fn run_inference(
     interp: &mut Interpreter<'_>,
     features: &[i8; MEL_BIN_COUNT],
@@ -241,7 +249,9 @@ fn run_inference(
         return;
     }
     defmt::info!("wake-word: fired (score={=i8})", score);
-    PTT_TRIGGER.signal(POST_WAKE_CAPTURE_MS);
+    REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::StartListen {
+        duration_ms: POST_WAKE_CAPTURE_MS,
+    });
     *next_fire_after = Some(now + embassy_time::Duration::from_millis(POST_WAKE_COOLDOWN_MS));
 }
 
