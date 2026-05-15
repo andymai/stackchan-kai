@@ -231,6 +231,19 @@ section summarises the milestone work in human terms.
   byte payload ceiling. Foundation slice — the GATT consumer +
   the optional DH / AES-CCM encryption land in a follow-up on
   an on-device session.
+- BLE peripheral grows an 8th GATT service: BluFi at the spec
+  16-bit UUID `0xFFFF` (128-bit canonical form). Write
+  characteristic (`0xFF01`) accepts inbound frames; parsed via
+  `stackchan_net::blufi::parse_frame` with malformed frames
+  rejected at the ATT layer (`INVALID_ATTRIBUTE_VALUE_LENGTH`
+  for truncation / bad length, `VALUE_NOT_ALLOWED` for CRC
+  mismatch or unknown type bits). Read+notify characteristic
+  (`0xFF02`) is reserved for outbound status frames in a
+  follow-up slice. The current slice surfaces parsed frames in
+  defmt only — the SSID/password accumulator across `Data`
+  subtypes and the `ControlSubtype::ConnectToAp` commit path
+  land next, gated on an on-device session with the official
+  ESP BLE Provisioning Android / iOS app for validation.
 - Mimic-follower — opt-in via `behavior.follower_leader_hostname`.
   The firmware already advertises live `yaw` / `pitch` on its own
   mDNS TXT record (the leader half of the meganetaaan `mimic_main`

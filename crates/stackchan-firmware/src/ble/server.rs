@@ -41,6 +41,14 @@
 //!    (`8a1c0042-…`, `write`-only, any 1-byte trigger) mirrors HTTP
 //!    `POST /camera/capture` and signals the camera task to persist
 //!    the latest frame to `/sd/CAPTURE.565`.
+//! 8. **`BluFi` service** (16-bit UUID `0xFFFF`) — Espressif's BLE
+//!    Wi-Fi provisioning protocol. Write characteristic (`0xFF01`)
+//!    receives `BluFi` frames parsed via
+//!    [`stackchan_net::blufi::parse_frame`]; notify characteristic
+//!    (`0xFF02`) is reserved for outbound status frames. The current
+//!    slice surfaces parsed frames in defmt logs only — the
+//!    SSID/password accumulator and the `ControlSubtype::ConnectToAp`
+//!    commit path land in a follow-up.
 //!
 //! ## Security
 //!
@@ -51,6 +59,17 @@
 //! provisioning path additionally validates payload contents at
 //! commit time and silently no-ops on auth failure (legacy from the
 //! initial provisioning PR).
+//!
+//! **`BluFi` exception**: writes to the `BluFiService` write
+//! characteristic are *not* auth-gated at the ATT layer. The standard
+//! ESP BLE Provisioning Android / iOS app sends `BluFi` frames before
+//! the pairing handshake, and `BluFi`'s own `SetSecMode` + AES-CCM
+//! (not yet implemented) is what protects payloads on the wire.
+//! The follow-up slice that wires the `ControlSubtype::ConnectToAp`
+//! commit path will re-use `commit_provisioning`'s
+//! authenticated-link gate at the point staged credentials are
+//! persisted, so the security posture at the *commit* boundary
+//! matches the existing provisioning service.
 //!
 //! DIS characteristic types are `heapless::String<N>` rather than
 //! `&'static str` because trouble-host's `AsGatt for &'static str`
@@ -65,12 +84,15 @@ use alloc::string::String as AString;
 use embassy_futures::join::join;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
-// trouble-host 0.5 implements `AsGatt` on `heapless::String<N>` from
-// the 0.9 line; the firmware's other uses of `heapless` still ride
-// 0.8. Reach explicitly for the alias so the right impl is picked.
+// trouble-host 0.5 implements `AsGatt` on `heapless::String<N>` /
+// `heapless::Vec<u8, _>` from the 0.9 line; the firmware's other uses
+// of `heapless` still ride 0.8. Reach explicitly for the aliases so
+// the right impls are picked.
 use heapless_09::String as HString;
+use heapless_09::Vec as HVec;
 use stackchan_core::Emotion;
 use stackchan_net::ble_command::{self, BleError, EMOTION_WRITE_LEN, LOOK_AT_LEN, SPEAK_LEN};
+use stackchan_net::blufi;
 use trouble_host::Address;
 use trouble_host::prelude::*;
 
@@ -107,6 +129,14 @@ const PROV_PSK_CAP: usize = 64;
 /// passphrases shorter than this — committing one would just stick
 /// the wifi task in a retry-backoff loop.
 const PROV_PSK_MIN: usize = 8;
+
+/// Buffer cap for the `BluFi` inbound-frame characteristic. The BLE LE
+/// LL PDU caps at 251 bytes; subtract the ATT-write header (3 bytes)
+/// and a byte of slack, leaving 247 — the practical largest payload
+/// a central can deliver in a single ATT operation. `BluFi` frame
+/// fragmentation rides the protocol-level `FC_FRAGMENT` bit, not GATT-
+/// layer chunking, so one ATT write maps to exactly one frame.
+const BLUFI_FRAME_BUF: usize = 247;
 
 /// Maximum simultaneous BLE centrals. One phone at a time is plenty.
 const CONNECTIONS_MAX: usize = 1;
@@ -155,6 +185,11 @@ pub struct StackchanServer {
     /// camera-mode (read + write + notify); future entries may add
     /// LCD brightness / render mode. Mirrors HTTP `POST /camera/mode`.
     pub view: ViewService,
+    /// `BluFi` service — Espressif's BLE Wi-Fi provisioning protocol.
+    /// Inbound frames land on the write characteristic; the notify
+    /// characteristic is reserved for outbound status frames in a
+    /// follow-up slice.
+    pub blufi: BluFiService,
 }
 
 #[allow(missing_docs)]
@@ -273,6 +308,30 @@ pub struct ProvisioningService {
     /// wifi task soft-reconnects without a reboot.
     #[characteristic(uuid = "8a1c0012-7b3f-4d52-9c6e-5f5ba1e5cf01", write)]
     pub psk: HString<PROV_PSK_CAP>,
+}
+
+/// `BluFi` GATT service.
+///
+/// The service / characteristic UUIDs are the 128-bit canonical
+/// expansions of `BluFi`'s 16-bit UUIDs (`0xFFFF` / `0xFF01` /
+/// `0xFF02`) via the Bluetooth Base UUID (`xxxxxxxx-0000-1000-8000-
+/// 00805F9B34FB`). Centrals scanning by 16-bit UUID still match.
+#[allow(missing_docs)]
+#[gatt_service(uuid = "0000ffff-0000-1000-8000-00805f9b34fb")]
+pub struct BluFiService {
+    /// Inbound frame characteristic. Each ATT write carries exactly
+    /// one `BluFi` frame; multi-frame fragmentation rides the protocol-
+    /// level `FC_FRAGMENT` bit. Stored as `heapless_09::Vec<u8, …>`
+    /// so the GATT layer accepts variable-length writes up to the
+    /// buffer cap.
+    #[characteristic(uuid = "0000ff01-0000-1000-8000-00805f9b34fb", write)]
+    pub frame_write: HVec<u8, BLUFI_FRAME_BUF>,
+    /// Outbound notify characteristic. Reserved for status frames
+    /// (`ReportWifiStatus`, etc.) in a follow-up slice; currently
+    /// declared so the service descriptor table is stable from the
+    /// central's view even before notifications are wired up.
+    #[characteristic(uuid = "0000ff02-0000-1000-8000-00805f9b34fb", read, notify)]
+    pub frame_notify: HVec<u8, BLUFI_FRAME_BUF>,
 }
 
 /// Run the BLE peripheral for the firmware lifetime.
@@ -486,6 +545,9 @@ struct WriteHandles {
     camera_mode: u16,
     /// View camera-capture trigger.
     camera_capture: u16,
+    /// `BluFi` inbound-frame characteristic. Writes are parsed via
+    /// [`stackchan_net::blufi::parse_frame`] and surfaced in defmt.
+    blufi_frame: u16,
 }
 
 impl WriteHandles {
@@ -503,6 +565,7 @@ impl WriteHandles {
             speak: server.avatar.speak.handle,
             camera_mode: server.view.camera_mode.handle,
             camera_capture: server.view.camera_capture.handle,
+            blufi_frame: server.blufi.frame_write.handle,
         }
     }
 }
@@ -531,6 +594,11 @@ enum WriteAction {
     /// Signal the camera task to persist the latest frame to
     /// `/sd/CAPTURE.565`.
     CameraCapture,
+    /// Surface a parsed `BluFi` frame in defmt. The provisioning state
+    /// machine (SSID/password accumulation, commit on
+    /// `ControlSubtype::ConnectToAp`) lands in a follow-up; this
+    /// slice proves the GATT plumbing.
+    BluFiFrame(blufi::Frame),
 }
 
 /// Decision the dispatcher takes for one Gatt event.
@@ -671,6 +739,26 @@ fn decide_write<P: PacketPool>(
     if handle == handles.psk {
         return WriteDecision::Accept(WriteAction::ProvisioningPsk);
     }
+    if handle == handles.blufi_frame {
+        // `BluFi` writes are not auth-gated at the GATT layer — the
+        // standard ESP BLE Provisioning app sends frames before the
+        // pairing handshake, and `BluFi`'s own SetSecMode + AES-CCM
+        // (out of scope this slice) is what protects the payload on
+        // the wire. The commit path that lands in a follow-up slice
+        // re-uses `commit_provisioning`'s authenticated-link gate at
+        // the point staged credentials are persisted.
+        return match blufi::parse_frame(data) {
+            Ok(frame) => WriteDecision::Accept(WriteAction::BluFiFrame(frame)),
+            Err(e) => {
+                defmt::warn!(
+                    "ble: blufi parse rejected ({}) data={=usize}B",
+                    defmt::Debug2Format(&e),
+                    data.len(),
+                );
+                WriteDecision::Reject(att_error_for_blufi(e))
+            }
+        };
+    }
     let is_control = handle == handles.volume
         || handle == handles.mute
         || handle == handles.emotion_write
@@ -745,6 +833,21 @@ const fn att_error_for(err: &BleError) -> AttErrorCode {
     }
 }
 
+/// Map a [`blufi::ParseError`] to the ATT error code returned to the
+/// central. Truncation / bad length → `INVALID_ATTRIBUTE_VALUE_LENGTH`;
+/// CRC mismatch and unknown type-bits → `VALUE_NOT_ALLOWED`, since
+/// the wire length itself was acceptable but the bytes are malformed.
+const fn att_error_for_blufi(err: blufi::ParseError) -> AttErrorCode {
+    match err {
+        blufi::ParseError::Truncated | blufi::ParseError::BadDataLength => {
+            AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH
+        }
+        blufi::ParseError::BadCrc | blufi::ParseError::UnknownType => {
+            AttErrorCode::VALUE_NOT_ALLOWED
+        }
+    }
+}
+
 /// Run the post-accept side of a control write — signal the relevant
 /// firmware sink and (for audio writes) persist to SD.
 async fn apply_write_action<P: PacketPool>(
@@ -777,7 +880,30 @@ async fn apply_write_action<P: PacketPool>(
             defmt::info!("ble: camera_capture → signal queued");
             crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
         }
+        WriteAction::BluFiFrame(frame) => log_blufi_frame(&frame),
     }
+}
+
+/// Surface a parsed `BluFi` frame in defmt — type, subtype, sequence,
+/// frame-control flags, and data length. No state mutation: the
+/// SSID/password accumulator and the `ControlSubtype::ConnectToAp`
+/// commit path land in a follow-up.
+fn log_blufi_frame(frame: &blufi::Frame) {
+    let kind = match frame.frame_type {
+        blufi::Type::Control => "control",
+        blufi::Type::Data => "data",
+    };
+    defmt::info!(
+        "ble: blufi {=str} subtype={=u8:02x} seq={=u8} fc={=u8:02x} \
+         encrypted={=bool} fragmented={=bool} data={=usize}B",
+        kind,
+        frame.subtype,
+        frame.sequence,
+        frame.frame_control,
+        frame.encrypted,
+        frame.fragmented,
+        frame.data.len(),
+    );
 }
 
 /// Whether the connection is currently encrypted *and* authenticated
