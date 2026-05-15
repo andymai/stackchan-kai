@@ -341,6 +341,7 @@ impl<'a> Interpreter<'a> {
     /// reading other tensors through an immutable accessor while
     /// holding an input borrow is also rejected, even though that
     /// would be safe.
+    #[must_use]
     pub fn input_bytes_mut(&mut self, idx: usize) -> Option<&mut [u8]> {
         // SAFETY: the FFI returns either null (out-of-range or no
         // arena) or a pointer into the tensor arena. The arena
