@@ -37,6 +37,7 @@
 use alloc::vec;
 
 use embassy_sync::pubsub::WaitResult;
+use embassy_time::Instant;
 use esp_tflite_micro_sys::{Interpreter, Resolver, TfLiteStatus};
 use stackchan_audio_features::{MEL_BIN_COUNT, MelFrontend};
 
@@ -60,6 +61,18 @@ const DETECTION_THRESHOLD: i8 = 100;
 /// fires. Matches the operator-initiated `POST /listen` default so
 /// the two paths converge on the same sidecar request shape.
 const POST_WAKE_CAPTURE_MS: u32 = 4_000;
+
+/// Minimum gap between consecutive `PTT_TRIGGER.signal()` calls.
+/// Without this, a real wake utterance — which spans dozens of mel
+/// frames above threshold — would call `signal()` on every frame.
+/// Since `Signal` is one-shot consume-and-clear with last-write-wins
+/// payload, the sidecar would re-fire as soon as its first capture
+/// finished, cascading into a second / third capture from queued
+/// signals. The cooldown is set to `POST_WAKE_CAPTURE_MS + 1 000 ms`
+/// so a new fire is only possible after the sidecar has finished
+/// the previous capture *and* drained the trigger, ruling out the
+/// cascade pattern.
+const POST_WAKE_COOLDOWN_MS: u64 = POST_WAKE_CAPTURE_MS as u64 + 1_000;
 
 /// Index of the wake-word score in the model output tensor. For
 /// single-scalar microWakeWord outputs the tensor is a 1-byte
@@ -138,6 +151,10 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
     let mut frontend = MelFrontend::new();
     let mut mel_buf: heapless::Vec<[i8; MEL_BIN_COUNT], MAX_MEL_FRAMES_PER_AUDIO_FRAME> =
         heapless::Vec::new();
+    // Earliest wall-clock instant at which the next PTT fire is
+    // allowed. `None` (the initial state) means "any score is
+    // eligible to fire"; updated to `now + cooldown` on each fire.
+    let mut next_fire_after: Option<Instant> = None;
 
     loop {
         match subscriber.next_message().await {
@@ -150,10 +167,12 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
                 // keeps inference cost out of the frontend hot path.
                 mel_buf.clear();
                 frontend.push_samples(&frame.samples, |mel_frame| {
-                    let _ = mel_buf.push(mel_frame.features);
+                    if mel_buf.push(mel_frame.features).is_err() {
+                        defmt::warn!("wake-word: mel_buf overflow; frame dropped");
+                    }
                 });
                 for features in &mel_buf {
-                    run_inference(&mut interp, features);
+                    run_inference(&mut interp, features, &mut next_fire_after);
                 }
             }
             WaitResult::Lagged(n) => {
@@ -166,7 +185,17 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
 /// Feed one mel frame through the interpreter and fire
 /// [`PTT_TRIGGER`] on detection. Logs and continues on transient
 /// errors so a single bad invoke doesn't kill the task.
-fn run_inference(interp: &mut Interpreter<'_>, features: &[i8; MEL_BIN_COUNT]) {
+///
+/// `next_fire_after` carries the cooldown deadline across calls:
+/// a fresh fire is suppressed (no `signal()`) until the deadline
+/// has passed, which prevents a single utterance — spanning dozens
+/// of consecutive high-score mel frames — from queueing repeated
+/// captures behind the sidecar's first capture window.
+fn run_inference(
+    interp: &mut Interpreter<'_>,
+    features: &[i8; MEL_BIN_COUNT],
+    next_fire_after: &mut Option<Instant>,
+) {
     let Some(input) = interp.input_bytes_mut(0) else {
         defmt::warn!("wake-word: input(0) missing after allocate_tensors");
         return;
@@ -199,10 +228,21 @@ fn run_inference(interp: &mut Interpreter<'_>, features: &[i8; MEL_BIN_COUNT]) {
         return;
     };
     let score = score_u8.cast_signed();
-    if score >= DETECTION_THRESHOLD {
-        defmt::info!("wake-word: fired (score={=i8})", score);
-        PTT_TRIGGER.signal(POST_WAKE_CAPTURE_MS);
+    if score < DETECTION_THRESHOLD {
+        return;
     }
+    let now = Instant::now();
+    if let Some(deadline) = *next_fire_after
+        && now < deadline
+    {
+        // High-score frame inside the cooldown window — almost
+        // certainly the same utterance that just fired. Suppress
+        // silently; logging here would spam at the mel-frame rate.
+        return;
+    }
+    defmt::info!("wake-word: fired (score={=i8})", score);
+    PTT_TRIGGER.signal(POST_WAKE_CAPTURE_MS);
+    *next_fire_after = Some(now + embassy_time::Duration::from_millis(POST_WAKE_COOLDOWN_MS));
 }
 
 /// Register the 20-op microWakeWord operator set on `resolver`.
