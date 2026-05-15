@@ -631,7 +631,7 @@ impl<'a> Parser<'a> {
         let (digits, rest) = self.input.split_at(end);
         let magnitude: i16 = digits
             .parse()
-            .map_err(|_| bare_err("not an i8 literal", digits))?;
+            .map_err(|_| bare_err("i8 literal out of range", digits))?;
         let signed = if negative { -magnitude } else { magnitude };
         if !(i16::from(i8::MIN)..=i16::from(i8::MAX)).contains(&signed) {
             return Err(bare_err("i8 literal out of range", digits));

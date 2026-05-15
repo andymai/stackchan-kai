@@ -279,10 +279,11 @@ impl Default for EspNowConfig {
 /// Behavioural toggles. Opt-in autonomous beats that aren't part of
 /// the always-on reactive surface.
 ///
-/// Default: every flag `false`. The boot config doesn't need a
-/// `behavior:` block at all — `serde(default)` on the parent populates
-/// it. Operators opt in by adding the block via `PUT /settings` or
-/// editing `STACKCHAN.RON` directly.
+/// Default: every flag `false`, `wake_word_threshold: 100`. The
+/// boot config doesn't need a `behavior:` block at all —
+/// `serde(default)` on the parent populates it. Operators opt in
+/// by adding the block via `PUT /settings` or editing
+/// `STACKCHAN.RON` directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 #[allow(
