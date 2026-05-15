@@ -952,11 +952,31 @@ fn log_blufi_frame(frame: &blufi::Frame) {
 /// shared [`apply_wifi_credentials`] helper); other subtypes are
 /// already logged by [`log_blufi_frame`] and intentionally fall
 /// through here — the device responds to them in slice 3.
+///
+/// Fragmented frames are rejected with a warn. The `BluFi` protocol
+/// allows large payloads to be split across multiple application-
+/// layer frames via the `FC_FRAGMENT` bit, and the GATT handler
+/// owns reassembly per `stackchan_net::blufi`'s module contract.
+/// Until reassembly lands (slice 3), staging only the trailing
+/// fragment of a multi-frame `SendStaSsid` / `SendStaPassword`
+/// would silently commit a truncated network name or passphrase —
+/// the auth gate would happily accept it because the bytes are
+/// still valid UTF-8. Rejecting cleanly here keeps the session
+/// state coherent.
 async fn handle_blufi_frame<P: PacketPool>(
     conn: &GattConnection<'_, '_, P>,
     session: &mut BluFiSession,
     frame: blufi::Frame,
 ) {
+    if frame.fragmented {
+        defmt::warn!(
+            "ble: blufi fragmented frame (subtype={=u8:02x} seq={=u8}); \
+             reassembly not implemented — dropping",
+            frame.subtype,
+            frame.sequence,
+        );
+        return;
+    }
     match frame.frame_type {
         blufi::Type::Control => match frame.control_subtype() {
             Some(blufi::ControlSubtype::SetWifiOpMode) => {
@@ -1319,17 +1339,18 @@ async fn commit_provisioning<P: PacketPool>(
         }
     };
 
-    let committed =
-        apply_wifi_credentials(conn, "prov", staged_ssid.as_str(), new_psk.as_str()).await;
+    // Return value intentionally dropped: the GATT-table PSK clear
+    // below runs unconditionally, regardless of whether the commit
+    // succeeded. The bool is only meaningful for the BluFi callsite,
+    // which uses it to decide whether to scrub the in-memory session
+    // copy. `apply_wifi_credentials` itself logs each outcome.
+    let _ = apply_wifi_credentials(conn, "prov", staged_ssid.as_str(), new_psk.as_str()).await;
 
     // Clear the PSK from the GATT table unconditionally. Even on a
     // rejected commit the central just wrote the secret bytes into
     // the table; leaving them there for a subsequent retry or a
     // future maintenance change to the macro attributes (e.g.
-    // accidentally enabling `read`) would let them leak. The
-    // `committed` flag is consulted only to decide whether to log
-    // the clear as routine vs. defensive.
-    let _ = committed;
+    // accidentally enabling `read`) would let them leak.
     let empty: HString<PROV_PSK_CAP> = HString::new();
     if let Err(e) = server.set(&server.provisioning.psk, &empty) {
         defmt::warn!(
