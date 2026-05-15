@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.82.1...stackchan-firmware-v0.83.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** BluFi status notifications (Arc 3d slice 3) ([#348](https://github.com/andymai/stackchan-kai/issues/348)) ([4c03de1](https://github.com/andymai/stackchan-kai/commit/4c03de17a92c84a2ed9045112953cd3af5e4a735))
+
 ## [0.82.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.82.0...stackchan-firmware-v0.82.1) (2026-05-15)
 
 
