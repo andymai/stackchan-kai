@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.81.0...stackchan-firmware-v0.82.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** BluFi SSID/PSK accumulator + ConnectToAp commit ([#344](https://github.com/andymai/stackchan-kai/issues/344)) ([ade81c5](https://github.com/andymai/stackchan-kai/commit/ade81c509c60fa8e63bb4ff3316280562d158468))
+
 ## [0.81.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.80.0...stackchan-firmware-v0.81.0) (2026-05-15)
 
 
