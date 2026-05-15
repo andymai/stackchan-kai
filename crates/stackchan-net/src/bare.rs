@@ -54,6 +54,7 @@ pub fn parse_ron_bare(input: &str) -> Result<Config, ConfigError> {
 ///
 /// Currently infallible — kept as `Result` for symmetry with the
 /// host renderer, which can fail under serde edge cases.
+#[allow(clippy::too_many_lines)]
 pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     let mut out = String::new();
     out.push_str("(\n");
@@ -158,6 +159,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         out,
         "        wake_word_enabled: {},",
         config.behavior.wake_word_enabled
+    );
+    let _ = writeln!(
+        out,
+        "        wake_word_threshold: {},",
+        config.behavior.wake_word_threshold
     );
     out.push_str("    ),\n");
 
@@ -524,6 +530,7 @@ impl<'a> Parser<'a> {
         let mut agent_sidecar_url: Option<String> = None;
         let mut follower_leader_hostname: Option<String> = None;
         let mut wake_word_enabled: Option<bool> = None;
+        let mut wake_word_threshold: Option<i8> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -545,6 +552,7 @@ impl<'a> Parser<'a> {
                     follower_leader_hostname = Some(self.parse_string()?);
                 }
                 "wake_word_enabled" => wake_word_enabled = Some(self.parse_bool()?),
+                "wake_word_threshold" => wake_word_threshold = Some(self.parse_i8()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -562,6 +570,7 @@ impl<'a> Parser<'a> {
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
+            wake_word_threshold: wake_word_threshold.unwrap_or(100),
         })
     }
 
@@ -603,6 +612,33 @@ impl<'a> Parser<'a> {
             .map_err(|_| bare_err("not a u32 literal", digits))?;
         self.input = rest;
         Ok(parsed)
+    }
+
+    /// Parse a signed decimal literal as an `i8`. Used for
+    /// `behavior.wake_word_threshold`. Accepts an optional leading
+    /// `-`; out-of-range values land on `BareParse` rather than
+    /// wrapping silently.
+    fn parse_i8(&mut self) -> Result<i8, ConfigError> {
+        let negative = self.try_consume_char('-');
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected signed integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let magnitude: i16 = digits
+            .parse()
+            .map_err(|_| bare_err("not an i8 literal", digits))?;
+        let signed = if negative { -magnitude } else { magnitude };
+        if !(i16::from(i8::MIN)..=i16::from(i8::MAX)).contains(&signed) {
+            return Err(bare_err("i8 literal out of range", digits));
+        }
+        self.input = rest;
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(signed as i8)
     }
 
     /// Parse a contiguous run of decimal digits as a `u8`. Used for

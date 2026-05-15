@@ -166,8 +166,11 @@ section summarises the milestone work in human terms.
   takes — sidecar PCM capture *and* the cosmetic modifier graph
   (`Attention::Listening` hold, ear decorator overlay, ack chirp)
   fire in lockstep so the avatar visibly reacts to local wake
-  events. Tunable on-device detection thresholds + larger-than-
-  default arenas ride a follow-on PR.
+  events. Detection threshold is operator-tunable via
+  `behavior.wake_word_threshold` (signed int8, default `100`) so
+  a `.tflite` with a different score distribution can be
+  re-calibrated without a firmware rebuild. Larger-than-default
+  arenas ride a follow-on PR.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →

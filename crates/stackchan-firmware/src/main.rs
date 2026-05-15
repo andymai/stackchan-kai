@@ -1482,6 +1482,7 @@ async fn main(spawner: Spawner) -> ! {
     // model or `wake_word_enabled = false` parks the task.
     if let Err(e) = spawner.spawn(stackchan_firmware::wake_word::wake_word_task(
         net_config.behavior.wake_word_enabled,
+        net_config.behavior.wake_word_threshold,
         wake_word_model,
     )) {
         defmt::panic!("spawn(wake_word_task) failed: {}", defmt::Debug2Format(&e));
