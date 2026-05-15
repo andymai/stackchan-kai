@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.20.4...stackchan-sim-v0.21.0) (2026-05-15)
+
+
+### Features
+
+* **core:** rounded-square eyes, smile-arc closed eye, gradient cheeks ([#357](https://github.com/andymai/stackchan-kai/issues/357)) ([89d8f8a](https://github.com/andymai/stackchan-kai/commit/89d8f8a3cb5d5f93cc0d50d22ebce89c2f8837c2))
+
 ## [0.20.4](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.20.3...stackchan-sim-v0.20.4) (2026-05-14)
 
 ## [0.20.3](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.20.2...stackchan-sim-v0.20.3) (2026-05-13)

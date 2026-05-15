@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.35.0...stackchan-core-v0.36.0) (2026-05-15)
+
+
+### Features
+
+* **core:** rounded-square eyes, smile-arc closed eye, gradient cheeks ([#357](https://github.com/andymai/stackchan-kai/issues/357)) ([89d8f8a](https://github.com/andymai/stackchan-kai/commit/89d8f8a3cb5d5f93cc0d50d22ebce89c2f8837c2))
+
 ## [0.35.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.34.0...stackchan-core-v0.35.0) (2026-05-14)
 
 
