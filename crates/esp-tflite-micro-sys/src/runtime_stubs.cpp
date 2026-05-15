@@ -32,17 +32,22 @@ const nothrow_t nothrow{};
 
 extern "C" {
 
-// Rust-side allocator bridge — implemented in `lib.rs`. Lets the C++
-// `operator new` route through `esp-alloc` so PSRAM is the backing
-// store for both Rust `Vec` and C++ `new`. Without this, we'd need
-// to give TFLM its own arena, which would fragment heap usage.
+// Rust-side bridge — implemented in `lib.rs`. The alloc/free pair
+// routes C++ `operator new` through `esp-alloc` so PSRAM is the
+// backing store for both Rust `Vec` and C++ `new`; `abort` surfaces
+// a `panic!` so the firmware's defmt panic handler emits a trace.
 void* etms_runtime_alloc(std::size_t size);
 void etms_runtime_free(void* ptr);
+[[noreturn]] void etms_runtime_abort();
 
-// Replace newlib's abort. `noreturn` keeps GCC from flagging code that
-// follows a call as unreachable-warning material; `noinline` keeps the
-// stub out of TFLM's hot paths if the optimiser ever decides to inline.
+// Replace newlib's abort with a Rust-panic trampoline. Reaching this
+// path indicates a TFLM `TFLITE_DCHECK_*` failure (corrupt model,
+// schema mismatch, out-of-bounds tensor index, …); the Rust panic
+// makes it diagnosable over USB-Serial-JTAG instead of an undiagnosed
+// hang. The trailing infinite loop is unreachable but keeps the
+// `[[noreturn]]` analysis happy.
 [[noreturn]] __attribute__((noinline)) void abort() {
+  etms_runtime_abort();
   while (true) {
     __asm__ volatile("nop");
   }

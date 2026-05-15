@@ -74,12 +74,18 @@ mod runtime {
 
     use alloc::alloc::{alloc as rust_alloc, dealloc as rust_dealloc};
 
-    /// Width of the size-header prefix prepended to every allocation.
-    const HEADER_SIZE: usize = core::mem::size_of::<usize>();
     /// 16-byte alignment is `max_align_t` on xtensa-esp32s3 (covers
     /// `double` + pointer pair) — the strictest alignment any
     /// C++-side `operator new` call could need.
     const ALIGN: usize = 16;
+    /// Width of the size-header slot prepended to every allocation,
+    /// padded to `ALIGN` so the user-visible pointer returned by
+    /// `etms_runtime_alloc` (`raw + HEADER_SIZE`) inherits the
+    /// raw allocation's 16-byte alignment. A bare
+    /// `size_of::<usize>()` (4 bytes on this target) would land
+    /// 8- and 16-byte C++ allocations on a 4-byte boundary and
+    /// trip `LoadStoreAlignmentCause` on `double` / SIMD loads.
+    const HEADER_SIZE: usize = ALIGN;
 
     /// SAFETY: the only caller is C++ `operator new` in
     /// `runtime_stubs.cpp`. Returns null on alloc failure to match
@@ -105,6 +111,21 @@ mod runtime {
         unsafe { core::ptr::write_unaligned(raw.cast::<usize>(), size) };
         // SAFETY: `raw + HEADER_SIZE` is inside the allocation.
         unsafe { raw.add(HEADER_SIZE) }
+    }
+
+    /// C++ `abort()` landing pad — TFLM's `TFLITE_DCHECK_*` macros
+    /// route here on assertion failure. Surface a `panic!` so the
+    /// firmware's panic handler emits a defmt trace over the
+    /// USB-Serial-JTAG before halting; without this the C++ side
+    /// spin-loops with no diagnostic and any TFLM programmer error
+    /// looks indistinguishable from a hang.
+    #[unsafe(no_mangle)]
+    #[allow(
+        clippy::panic,
+        reason = "deliberate panic — routes TFLM's abort() through the firmware's defmt panic handler"
+    )]
+    pub extern "C" fn etms_runtime_abort() -> ! {
+        panic!("esp-tflite-micro-sys: C++ abort() reached (likely TFLITE_DCHECK)");
     }
 
     /// SAFETY: caller is C++ `operator delete` and only passes
