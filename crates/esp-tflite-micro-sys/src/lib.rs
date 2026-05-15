@@ -61,6 +61,95 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
+extern crate alloc;
+
+/// C++ runtime bridge — `runtime_stubs.cpp` calls these in lieu of
+/// linking libstdc++. Routing through the Rust global allocator
+/// keeps both sides on the same `esp-alloc` PSRAM heap so heap
+/// accounting is unified across the FFI boundary. A small
+/// `usize`-sized header prefix records the user-visible size so
+/// `free` can recover the original `Layout`.
+mod runtime {
+    use core::alloc::Layout;
+
+    use alloc::alloc::{alloc as rust_alloc, dealloc as rust_dealloc};
+
+    /// 16-byte alignment is `max_align_t` on xtensa-esp32s3 (covers
+    /// `double` + pointer pair) — the strictest alignment any
+    /// C++-side `operator new` call could need.
+    const ALIGN: usize = 16;
+    /// Width of the size-header slot prepended to every allocation,
+    /// padded to `ALIGN` so the user-visible pointer returned by
+    /// `etms_runtime_alloc` (`raw + HEADER_SIZE`) inherits the
+    /// raw allocation's 16-byte alignment. A bare
+    /// `size_of::<usize>()` (4 bytes on this target) would land
+    /// 8- and 16-byte C++ allocations on a 4-byte boundary and
+    /// trip `LoadStoreAlignmentCause` on `double` / SIMD loads.
+    const HEADER_SIZE: usize = ALIGN;
+
+    /// SAFETY: the only caller is C++ `operator new` in
+    /// `runtime_stubs.cpp`. Returns null on alloc failure to match
+    /// the `nothrow` contract the C++ side relies on.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn etms_runtime_alloc(size: usize) -> *mut u8 {
+        let Some(total) = size.checked_add(HEADER_SIZE) else {
+            return core::ptr::null_mut();
+        };
+        let Ok(layout) = Layout::from_size_align(total, ALIGN) else {
+            return core::ptr::null_mut();
+        };
+        // SAFETY: layout is well-formed.
+        let raw = unsafe { rust_alloc(layout) };
+        if raw.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: `raw` has at least `HEADER_SIZE` bytes per the
+        // layout. `write_unaligned` sidesteps clippy's alignment
+        // lint without changing semantics — `raw` is always
+        // 16-byte aligned per `ALIGN`, so any usize write is
+        // naturally aligned in practice.
+        unsafe { core::ptr::write_unaligned(raw.cast::<usize>(), size) };
+        // SAFETY: `raw + HEADER_SIZE` is inside the allocation.
+        unsafe { raw.add(HEADER_SIZE) }
+    }
+
+    /// C++ `abort()` landing pad — TFLM's `TFLITE_DCHECK_*` macros
+    /// route here on assertion failure. Surface a `panic!` so the
+    /// firmware's panic handler emits a defmt trace over the
+    /// USB-Serial-JTAG before halting; without this the C++ side
+    /// spin-loops with no diagnostic and any TFLM programmer error
+    /// looks indistinguishable from a hang.
+    #[unsafe(no_mangle)]
+    #[allow(
+        clippy::panic,
+        reason = "deliberate panic — routes TFLM's abort() through the firmware's defmt panic handler"
+    )]
+    pub extern "C" fn etms_runtime_abort() -> ! {
+        panic!("esp-tflite-micro-sys: C++ abort() reached (likely TFLITE_DCHECK)");
+    }
+
+    /// SAFETY: caller is C++ `operator delete` and only passes
+    /// pointers previously returned by `etms_runtime_alloc`. Null
+    /// is tolerated (matches `delete nullptr`).
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn etms_runtime_free(ptr: *mut u8) {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: `ptr` came from `etms_runtime_alloc`, so backing
+        // up by `HEADER_SIZE` lands on the size header.
+        let header = unsafe { ptr.sub(HEADER_SIZE) };
+        // SAFETY: header slot was written during alloc. Same
+        // alignment story as the matching `write_unaligned`.
+        let size = unsafe { core::ptr::read_unaligned(header.cast::<usize>()) };
+        let Ok(layout) = Layout::from_size_align(size + HEADER_SIZE, ALIGN) else {
+            return;
+        };
+        // SAFETY: `header` + `layout` matches the original allocation.
+        unsafe { rust_dealloc(header, layout) };
+    }
+}
+
 /// bindgen-generated `extern "C"` declarations for the C-ABI shim.
 mod ffi {
     // The shim header is pure C and uses only `<stdint.h>` and

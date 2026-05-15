@@ -67,6 +67,15 @@ fn main() {
 fn s3_build() -> cc::Build {
     let mut b = cc::Build::new();
     b.compiler("xtensa-esp32s3-elf-gcc");
+    // `-mlongcalls` tells GAS to translate direct `call4`/`call8`
+    // into indirect `callx` whenever the target is out of the
+    // 1 MiB displacement window. Without it, a release build that
+    // grows past ~1 MiB lands `dangerous relocation: call8: call
+    // target out of range` errors on libgcc soft-float helpers
+    // (`__divdf3`, `__extendsfdf2`, …) and libc (`memcpy`, `memset`,
+    // `strcmp`). ESP-IDF sets `-mlongcalls` globally; the cc-rs
+    // default doesn't, so mirroring upstream here is the fix.
+    b.flag("-mlongcalls");
     b
 }
 
@@ -167,6 +176,17 @@ fn is_s3_relevant(path: &Path) -> bool {
 /// `kernels/esp_nn/*.cc` variants `#include <esp_nn.h>`.
 fn compile_tflm_and_shim(tflm: &Path, esp_nn: &Path, manifest: &Path) {
     let mut b = s3_build();
+    // Disable cc-rs's automatic `-lstdc++` link. Without it, the
+    // toolchain's `libstdc++.a` gets pulled in and brings the full
+    // C++ exception personality runtime
+    // (`__gxx_personality_v0` → `_Unwind_GetIP` / `_Unwind_SetIP` /
+    // …), plus thread-safe-statics machinery
+    // (`pthread_mutex_lock` / `pthread_getspecific`), neither of
+    // which can run under our build flags or runtime. `runtime_stubs.cpp`
+    // provides the only C++ stdlib symbol TFLM actually needs
+    // (`operator new` / `operator delete`); the link line below also
+    // adds `-lm` for `frexp`, which `quantization_util.cc` uses.
+    b.cpp_link_stdlib(None);
     b.cpp(true)
         // C++17 — TFLM uses constexpr, structured bindings, and
         // template type-trait helpers that aren't in C++14. Use
@@ -227,8 +247,20 @@ fn compile_tflm_and_shim(tflm: &Path, esp_nn: &Path, manifest: &Path) {
 
     // Our shim TU — bridges Rust over the templated TFLM classes.
     b.file(manifest.join("src/shim.cpp"));
+    // Runtime stubs — `abort()` plus the minimal C++ runtime
+    // (`operator new` / `operator delete`) that TFLM references
+    // when we cut libstdc++ out of the link line. See
+    // `runtime_stubs.cpp` for the full rationale.
+    b.file(manifest.join("src/runtime_stubs.cpp"));
 
     b.compile("esp_tflite_micro");
+
+    // `frexp` is the one libm function TFLM's `quantization_util.cc`
+    // pulls in. Re-add libm on the link line — we cut the default
+    // libstdc++ above, and the firmware crate's `-nodefaultlibs`
+    // skips libm too. `=` (no `static=` / `dylib=`) lets the
+    // toolchain pick whichever flavour it ships.
+    println!("cargo:rustc-link-lib=m");
 }
 
 /// Lift upstream's `lib_srcs` from `esp-tflite-micro/CMakeLists.txt`
