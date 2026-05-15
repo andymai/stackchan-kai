@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.81.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.80.0...stackchan-firmware-v0.81.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** BluFi GATT service shell — parse-and-log inbound frames ([#342](https://github.com/andymai/stackchan-kai/issues/342)) ([1ec4d12](https://github.com/andymai/stackchan-kai/commit/1ec4d124dd424317515b6a26732d7b6072abd057))
+
 ## [0.80.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.79.0...stackchan-firmware-v0.80.0) (2026-05-15)
 
 
