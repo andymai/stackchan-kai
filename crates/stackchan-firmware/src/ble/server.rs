@@ -45,10 +45,12 @@
 //!    Wi-Fi provisioning protocol. Write characteristic (`0xFF01`)
 //!    receives `BluFi` frames parsed via
 //!    [`stackchan_net::blufi::parse_frame`]; notify characteristic
-//!    (`0xFF02`) is reserved for outbound status frames. The current
-//!    slice surfaces parsed frames in defmt logs only — the
-//!    SSID/password accumulator and the `ControlSubtype::ConnectToAp`
-//!    commit path land in a follow-up.
+//!    (`0xFF02`) carries device-side replies built via
+//!    [`stackchan_net::blufi::build_frame`]: `ReportWifiStatus` on
+//!    commit and on `GetWifiStatus` polls, `Error` on commit failure,
+//!    and a version reply on `GetVersion`. Inbound `Data` frames
+//!    stage SSID + PSK; `ControlSubtype::ConnectToAp` persists them
+//!    via the shared [`apply_wifi_credentials`] helper.
 //!
 //! ## Security
 //!
@@ -328,10 +330,10 @@ pub struct BluFiService {
     /// buffer cap.
     #[characteristic(uuid = "0000ff01-0000-1000-8000-00805f9b34fb", write)]
     pub frame_write: HVec<u8, BLUFI_FRAME_BUF>,
-    /// Outbound notify characteristic. Reserved for status frames
-    /// (`ReportWifiStatus`, etc.) in a follow-up slice; currently
-    /// declared so the service descriptor table is stable from the
-    /// central's view even before notifications are wired up.
+    /// Outbound notify characteristic. Carries status frames built
+    /// via [`stackchan_net::blufi::build_frame`] — `ReportWifiStatus`
+    /// on commit / poll, `Error` on commit failure, and a version
+    /// reply on `ControlSubtype::GetVersion`.
     #[characteristic(uuid = "0000ff02-0000-1000-8000-00805f9b34fb", read, notify)]
     pub frame_notify: HVec<u8, BLUFI_FRAME_BUF>,
 }
@@ -590,16 +592,30 @@ struct BluFiSession {
     /// Logged for diagnostics; we don't actually switch op-mode
     /// because the firmware only supports STA.
     op_mode: Option<u8>,
+    /// Per-direction monotonic sequence counter for device→central
+    /// notify frames. Wraps at `0xFF` per the `BluFi` spec; the
+    /// receiver is responsible for sequence-skew tolerance.
+    outbound_seq: u8,
 }
 
 impl BluFiSession {
-    /// Empty session — no staged credentials, no op-mode set.
+    /// Empty session — no staged credentials, no op-mode set, seq 0.
     const fn new() -> Self {
         Self {
             staged_ssid: HString::new(),
             staged_psk: HString::new(),
             op_mode: None,
+            outbound_seq: 0,
         }
+    }
+
+    /// Stamp the next outbound sequence onto a notify frame and
+    /// advance the counter. Wraps at `0xFF` (consistent with the
+    /// `u8` field).
+    const fn next_outbound_seq(&mut self) -> u8 {
+        let seq = self.outbound_seq;
+        self.outbound_seq = self.outbound_seq.wrapping_add(1);
+        seq
     }
 }
 
@@ -918,7 +934,7 @@ async fn apply_write_action<P: PacketPool>(
         }
         WriteAction::BluFiFrame(frame) => {
             log_blufi_frame(&frame);
-            handle_blufi_frame(conn, blufi_session, frame).await;
+            handle_blufi_frame(server, conn, blufi_session, frame).await;
         }
     }
 }
@@ -949,21 +965,21 @@ fn log_blufi_frame(frame: &blufi::Frame) {
 ///
 /// `Data` frames stage SSID / password into the session;
 /// `ControlSubtype::ConnectToAp` runs the commit (auth-gated by the
-/// shared [`apply_wifi_credentials`] helper); other subtypes are
-/// already logged by [`log_blufi_frame`] and intentionally fall
-/// through here — the device responds to them in slice 3.
+/// shared [`apply_wifi_credentials`] helper); `GetVersion` and
+/// `GetWifiStatus` notify a reply frame on the `BluFi` notify
+/// characteristic. Unhandled subtypes fall through with a log.
 ///
 /// Fragmented frames are rejected with a warn. The `BluFi` protocol
 /// allows large payloads to be split across multiple application-
 /// layer frames via the `FC_FRAGMENT` bit, and the GATT handler
 /// owns reassembly per `stackchan_net::blufi`'s module contract.
-/// Until reassembly lands (slice 3), staging only the trailing
-/// fragment of a multi-frame `SendStaSsid` / `SendStaPassword`
-/// would silently commit a truncated network name or passphrase —
-/// the auth gate would happily accept it because the bytes are
-/// still valid UTF-8. Rejecting cleanly here keeps the session
-/// state coherent.
+/// Until reassembly lands, staging only the trailing fragment of a
+/// multi-frame `SendStaSsid` / `SendStaPassword` would silently
+/// commit a truncated network name or passphrase — the auth gate
+/// would happily accept it because the bytes are still valid UTF-8.
+/// Rejecting cleanly here keeps the session state coherent.
 async fn handle_blufi_frame<P: PacketPool>(
+    server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
     session: &mut BluFiSession,
     frame: blufi::Frame,
@@ -988,7 +1004,13 @@ async fn handle_blufi_frame<P: PacketPool>(
                 }
             }
             Some(blufi::ControlSubtype::ConnectToAp) => {
-                commit_blufi_provisioning(conn, session).await;
+                commit_blufi_provisioning(server, conn, session).await;
+            }
+            Some(blufi::ControlSubtype::GetVersion) => {
+                reply_blufi_version(server, conn, session).await;
+            }
+            Some(blufi::ControlSubtype::GetWifiStatus) => {
+                reply_blufi_wifi_status(server, conn, session).await;
             }
             _ => {}
         },
@@ -998,6 +1020,107 @@ async fn handle_blufi_frame<P: PacketPool>(
             _ => {}
         },
     }
+}
+
+/// Build a `BluFi` frame with the next outbound sequence, copy it into
+/// a [`HVec`] sized to the notify characteristic, and notify the
+/// central. `set` updates the GATT table value so a central that
+/// reads instead of subscribing sees the latest status.
+///
+/// Notify failures are logged at `trace` because pre-subscribe writes
+/// race the central's CCCD subscription — the most common cause is
+/// "peer not subscribed yet", not a real disconnect. The
+/// `gatt_events_task` `Disconnected` arm is the load-bearing path for
+/// the latter.
+async fn notify_blufi_frame<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    session: &mut BluFiSession,
+    frame_type: blufi::Type,
+    subtype: u8,
+    data: &[u8],
+) {
+    let seq = session.next_outbound_seq();
+    let bytes = match blufi::build_frame(frame_type, subtype, seq, data) {
+        Ok(b) => b,
+        Err(e) => {
+            defmt::warn!(
+                "ble: blufi build_frame failed ({}) subtype={=u8:02x}",
+                defmt::Debug2Format(&e),
+                subtype
+            );
+            return;
+        }
+    };
+    let mut hv: HVec<u8, BLUFI_FRAME_BUF> = HVec::new();
+    if hv.extend_from_slice(&bytes).is_err() {
+        defmt::warn!(
+            "ble: blufi notify frame too long ({=usize}B > {=usize}); dropping",
+            bytes.len(),
+            BLUFI_FRAME_BUF
+        );
+        return;
+    }
+    if let Err(e) = server.set(&server.blufi.frame_notify, &hv) {
+        defmt::warn!(
+            "ble: blufi notify table set failed ({})",
+            defmt::Debug2Format(&e)
+        );
+    }
+    if let Err(e) = server.blufi.frame_notify.notify(conn, &hv).await {
+        defmt::trace!(
+            "ble: blufi notify skipped ({}) — peer not subscribed?",
+            defmt::Debug2Format(&e)
+        );
+    }
+}
+
+/// Reply to a `ControlSubtype::GetVersion` request with the configured
+/// [`blufi::PROTOCOL_VERSION_MAJOR`] / [`blufi::PROTOCOL_VERSION_MINOR`]
+/// pair. The standard ESP BLE Provisioning app does a version probe
+/// before sending credentials.
+async fn reply_blufi_version<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    session: &mut BluFiSession,
+) {
+    let payload = [blufi::PROTOCOL_VERSION_MAJOR, blufi::PROTOCOL_VERSION_MINOR];
+    notify_blufi_frame(
+        server,
+        conn,
+        session,
+        blufi::Type::Control,
+        blufi::ControlSubtype::GetVersion as u8,
+        &payload,
+    )
+    .await;
+}
+
+/// Reply to a `ControlSubtype::GetWifiStatus` request with the current
+/// STA-link state from the avatar snapshot. The phone polls this both
+/// before provisioning (to see the existing link) and after the
+/// post-`ConnectToAp` retry window to confirm the new credentials
+/// stuck.
+async fn reply_blufi_wifi_status<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    session: &mut BluFiSession,
+) {
+    let conn_state = if snapshot::read().wifi.connected {
+        blufi::WifiConnState::Connected
+    } else {
+        blufi::WifiConnState::NotConnected
+    };
+    let payload = blufi::build_report_wifi_status_payload(conn_state);
+    notify_blufi_frame(
+        server,
+        conn,
+        session,
+        blufi::Type::Data,
+        blufi::DataSubtype::ReportWifiStatus as u8,
+        &payload,
+    )
+    .await;
 }
 
 /// Stage an SSID from a `SendStaSsid` Data frame's payload.
@@ -1067,9 +1190,24 @@ fn stage_blufi_psk(session: &mut BluFiSession, data: &[u8]) {
 /// uses. The auth gate (the link must be `EncryptedAuthenticated`)
 /// applies identically.
 ///
-/// Clears `staged_psk` on success so a long-lived connection
-/// doesn't keep the secret in RAM longer than necessary.
+/// On success notifies a `ReportWifiStatus` Data frame with the
+/// current STA-link state. On failure notifies a `DataSubtype::Error`
+/// frame with [`blufi::ErrorCode::WifiConfFailed`] so the standard
+/// ESP BLE Provisioning app surfaces the documented failure dialog
+/// rather than spinning on the inbound write indefinitely.
+///
+/// Note: the `ReportWifiStatus` payload reflects the snapshot at the
+/// instant the commit returns, which usually races the wifi task's
+/// reconnect cycle — the link is typically still `NotConnected` at
+/// this point. The phone polls `GetWifiStatus` again after a short
+/// delay to observe the post-reconnect state. A future slice can add
+/// a `WIFI_LINK_WATCH` subscriber that re-notifies on every state
+/// change so the phone gets push updates.
+///
+/// Clears `staged_psk` on success so a long-lived connection doesn't
+/// keep the secret in RAM longer than necessary.
 async fn commit_blufi_provisioning<P: PacketPool>(
+    server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
     session: &mut BluFiSession,
 ) {
@@ -1082,6 +1220,17 @@ async fn commit_blufi_provisioning<P: PacketPool>(
     .await;
     if committed {
         session.staged_psk = HString::new();
+        reply_blufi_wifi_status(server, conn, session).await;
+    } else {
+        notify_blufi_frame(
+            server,
+            conn,
+            session,
+            blufi::Type::Data,
+            blufi::DataSubtype::Error as u8,
+            &[blufi::ErrorCode::WifiConfFailed as u8],
+        )
+        .await;
     }
 }
 
