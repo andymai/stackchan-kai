@@ -36,18 +36,18 @@ fn main() {
     let esp_nn = vendor.join("esp-nn");
     let tflm = vendor.join("esp-tflite-micro");
 
-    // Compile esp-nn first — its kernel symbols are referenced
-    // by the TFLM op implementations the next PR will add, and
-    // even in this skeleton we want the build to exercise the
-    // S3-specific compiler pin + SIMD assembly path so a
-    // regression can't slip in unnoticed.
-    compile_esp_nn(&esp_nn);
-
-    // Then the TFLM port surface + our C-ABI shim. Two separate
-    // `cc::Build`s because they need different include paths;
-    // mixing them into one would force every esp-nn file to also
-    // see TFLM headers, which adds compile-time noise.
+    // Shim + TFLM port archive comes first on the link line,
+    // esp-nn second. cc-rs emits `cargo:rustc-link-lib=static=…`
+    // in call order; GNU ld is single-pass and only pulls an
+    // archive member if a reference has already been seen, so
+    // the consumer archive must precede the provider. The shim
+    // is the consumer of esp-nn's kernels; esp-nn provides.
+    //
+    // Two separate `cc::Build`s because the include paths are
+    // disjoint — sharing one Build would force every TU to see
+    // both header trees for no compilation benefit.
     compile_tflm_port_and_shim(&tflm, &manifest);
+    compile_esp_nn(&esp_nn);
 }
 
 /// Pin `cc-rs` to the ESP32-S3-specific gcc binary the `esp`
@@ -81,8 +81,12 @@ fn compile_esp_nn(esp_nn: &Path) {
         // alternate code paths we don't pull in.
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-function")
-        // Convolution kernels — depthwise for MixConv branches,
-        // 1x1 pointwise for channel mixing.
+        // Convolution kernels — ANSI depthwise + ANSI conv
+        // references, plus the S3-SIMD 1x1 pointwise. The 1x1
+        // file is the one that exercises the PIE assembly route
+        // (cf. the 59 `ee.*` opcode sanity check in the README);
+        // the ANSI files are reference fallbacks that work on
+        // every Xtensa core.
         .file(esp_nn.join("src/convolution/esp_nn_depthwise_conv_ansi.c"))
         .file(esp_nn.join("src/convolution/esp_nn_conv_ansi.c"))
         .file(esp_nn.join("src/convolution/esp_nn_conv_s8_1x1_esp32s3.c"))
@@ -103,8 +107,14 @@ fn compile_tflm_port_and_shim(tflm: &Path, manifest: &Path) {
     let mut b = s3_build();
     b.cpp(true)
         // C++17 — TFLM uses constexpr, structured bindings, and
-        // template type-trait helpers that aren't in C++14.
-        .flag_if_supported("-std=c++17")
+        // template type-trait helpers that aren't in C++14. Use
+        // unconditional `.flag()` rather than `.flag_if_supported`:
+        // the latter silently skips the flag on any probe failure
+        // (wrong sysroot, misdetected cross-compiler), which would
+        // mask the real toolchain bug behind confusing syntax
+        // errors in TFLM headers. `xtensa-esp32s3-elf-gcc` is GCC
+        // 12+ and always accepts `-std=c++17`.
+        .flag("-std=c++17")
         .include(tflm)
         .include(manifest.join("src"))
         // `TF_LITE_STRIP_ERROR_STRINGS` eliminates the
