@@ -33,9 +33,12 @@ the caller-supplied arena; `Interpreter::invoke` runs one
 inference pass. Both return `Result<(), TfLiteStatus>` where the
 non-zero `TfLiteStatus` codes are surfaced verbatim.
 
-Tensor I/O accessors (`Interpreter::input(idx)`, `output(idx)`,
-typed `[u8]` / `[i8]` slice views) wire up alongside the first
-firmware-side consumer.
+`Interpreter::input_bytes_mut(idx)` and `output_bytes(idx)`
+return `Option<&mut [u8]>` / `Option<&[u8]>` for direct access to
+the tensor arena. The borrow split (mutable for input, shared for
+output) matches TFLM's usage pattern — write inputs, invoke, read
+outputs. Typed slice views (`as_i8`, `as_f32`) layer on top once
+a model-side consumer needs them.
 
 The C-ABI shim header (`src/shim.h`) is pure C — `bindgen` runs
 against it without touching the C++ template surface; the

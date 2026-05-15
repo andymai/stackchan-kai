@@ -143,6 +143,13 @@ section summarises the milestone work in human terms.
   shim macro. A tiny `src/esp_timer.h` stub satisfies the ESP-NN
   kernel's unconditional `<esp_timer.h>` include (used for an
   unused per-op profiling counter) without dragging in ESP-IDF.
+- `esp-tflite-micro-sys` — tensor I/O. Added `Interpreter::inputs_len`,
+  `outputs_len`, `input_bytes_mut(idx) -> Option<&mut [u8]>`, and
+  `output_bytes(idx) -> Option<&[u8]>` for direct byte access to the
+  TFLM tensor arena. The borrow split (`&mut self` for input, `&self`
+  for output) matches TFLM's usage pattern — write inputs, invoke,
+  read outputs — and lets the borrow checker prevent `invoke` from
+  running while a caller holds a writable input reference.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →

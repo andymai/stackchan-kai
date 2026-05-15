@@ -34,6 +34,22 @@ struct InterpreterImpl {
       : model(m), interpreter(m, r, arena, arena_size) {}
 };
 
+// Resolves an interpreter handle to the underlying `MicroInterpreter`
+// pointer. Returns nullptr if `interpreter` is null; callers must
+// handle that case. The cast back to a mutable pointer is safe even
+// when called from `const EtmsInterpreter*` shim wrappers — TFLM's
+// `input()` / `output()` / `inputs_size()` accessors are non-const
+// for historical reasons but don't mutate the interpreter for the
+// queries this shim makes.
+inline tflite::MicroInterpreter* as_interp(const EtmsInterpreter* interpreter) {
+  if (interpreter == nullptr) {
+    return nullptr;
+  }
+  return &const_cast<InterpreterImpl*>(
+              reinterpret_cast<const InterpreterImpl*>(interpreter))
+              ->interpreter;
+}
+
 }  // namespace
 
 extern "C" {
@@ -134,6 +150,52 @@ int etms_interpreter_invoke(EtmsInterpreter* interpreter) {
     return kTfLiteError;
   }
   return reinterpret_cast<InterpreterImpl*>(interpreter)->interpreter.Invoke();
+}
+
+size_t etms_interpreter_inputs_size(const EtmsInterpreter* interpreter) {
+  auto* impl = as_interp(interpreter);
+  return impl == nullptr ? 0 : impl->inputs_size();
+}
+
+size_t etms_interpreter_outputs_size(const EtmsInterpreter* interpreter) {
+  auto* impl = as_interp(interpreter);
+  return impl == nullptr ? 0 : impl->outputs_size();
+}
+
+uint8_t* etms_interpreter_input_data(EtmsInterpreter* interpreter, size_t idx) {
+  auto* impl = as_interp(interpreter);
+  if (impl == nullptr || idx >= impl->inputs_size()) {
+    return nullptr;
+  }
+  TfLiteTensor* t = impl->input(idx);
+  return t == nullptr ? nullptr : reinterpret_cast<uint8_t*>(t->data.data);
+}
+
+size_t etms_interpreter_input_bytes(const EtmsInterpreter* interpreter, size_t idx) {
+  auto* impl = as_interp(interpreter);
+  if (impl == nullptr || idx >= impl->inputs_size()) {
+    return 0;
+  }
+  const TfLiteTensor* t = impl->input(idx);
+  return t == nullptr ? 0 : t->bytes;
+}
+
+const uint8_t* etms_interpreter_output_data(const EtmsInterpreter* interpreter, size_t idx) {
+  auto* impl = as_interp(interpreter);
+  if (impl == nullptr || idx >= impl->outputs_size()) {
+    return nullptr;
+  }
+  const TfLiteTensor* t = impl->output(idx);
+  return t == nullptr ? nullptr : reinterpret_cast<const uint8_t*>(t->data.data);
+}
+
+size_t etms_interpreter_output_bytes(const EtmsInterpreter* interpreter, size_t idx) {
+  auto* impl = as_interp(interpreter);
+  if (impl == nullptr || idx >= impl->outputs_size()) {
+    return 0;
+  }
+  const TfLiteTensor* t = impl->output(idx);
+  return t == nullptr ? 0 : t->bytes;
 }
 
 }  // extern "C"
