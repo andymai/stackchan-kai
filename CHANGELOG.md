@@ -169,8 +169,10 @@ section summarises the milestone work in human terms.
   events. Detection threshold is operator-tunable via
   `behavior.wake_word_threshold` (signed int8, default `100`) so
   a `.tflite` with a different score distribution can be
-  re-calibrated without a firmware rebuild. Larger-than-default
-  arenas ride a follow-on PR.
+  re-calibrated without a firmware rebuild; tensor arena size is
+  operator-tunable via `behavior.wake_word_arena_kib` (default
+  `64`) so a model that fails `allocate_tensors` against the
+  default can be re-tried with more PSRAM at next boot.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →

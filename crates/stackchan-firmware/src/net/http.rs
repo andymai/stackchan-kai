@@ -712,7 +712,9 @@ async fn handle_get_settings_backup(socket: &mut TcpSocket<'_>) -> Result<(), Ht
 /// and tracker tuning take effect on the next boot — those tasks read
 /// their config once at start-up. Auth-token changes apply
 /// immediately to the next request via the lock-free read in the
-/// auth gate.
+/// auth gate. The `behavior.wake_word_*` fields are also boot-only:
+/// the detector reads them once at task spawn (enabled / threshold /
+/// arena size).
 fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) -> bool {
     if prev.mdns.hostname != new.mdns.hostname {
         return true;
@@ -721,6 +723,12 @@ fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) ->
         return true;
     }
     if prev.tracker != new.tracker {
+        return true;
+    }
+    if prev.behavior.wake_word_enabled != new.behavior.wake_word_enabled
+        || prev.behavior.wake_word_threshold != new.behavior.wake_word_threshold
+        || prev.behavior.wake_word_arena_kib != new.behavior.wake_word_arena_kib
+    {
         return true;
     }
     false

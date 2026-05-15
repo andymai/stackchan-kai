@@ -49,12 +49,6 @@ use stackchan_core::RemoteCommand;
 use crate::audio::AUDIO_FRAME_PUBSUB;
 use crate::net::http::REMOTE_COMMAND_SIGNAL;
 
-/// Bytes of tensor arena handed to TFLM. microWakeWord v2 streaming
-/// models declare 17–26 KiB; 64 KiB leaves headroom for larger
-/// architectures and the runtime scratch space TFLM's planner adds
-/// on top of the model's nominal tensor footprint.
-const ARENA_BYTES: usize = 64 * 1024;
-
 /// Listen-window duration emitted on each wake fire. Matches the
 /// operator-initiated `POST /listen` default so the two paths
 /// converge on the same sidecar request shape and the same
@@ -99,9 +93,16 @@ const MAX_MEL_FRAMES_PER_AUDIO_FRAME: usize = 4;
 ///
 /// `threshold` mirrors `behavior.wake_word_threshold` — the int8
 /// score above which the model output is treated as a positive
-/// detection.
+/// detection. `arena_bytes` mirrors
+/// `behavior.wake_word_arena_kib * 1024` — the size of the TFLM
+/// tensor arena, allocated once from PSRAM at task start.
 #[embassy_executor::task]
-pub async fn wake_word_task(enabled: bool, threshold: i8, model_bytes: &'static [u8]) -> ! {
+pub async fn wake_word_task(
+    enabled: bool,
+    threshold: i8,
+    arena_bytes: usize,
+    model_bytes: &'static [u8],
+) -> ! {
     if !enabled || model_bytes.is_empty() {
         defmt::info!(
             "wake-word: disabled (enabled={=bool}, model={=usize} bytes); idle",
@@ -119,7 +120,7 @@ pub async fn wake_word_task(enabled: bool, threshold: i8, model_bytes: &'static 
     // PSRAM-backed tensor arena. Leaking the Vec yields a
     // `'static mut [u8]` that the interpreter can borrow for the
     // task's (i.e. program's) lifetime.
-    let arena: &'static mut [u8] = vec![0_u8; ARENA_BYTES].leak();
+    let arena: &'static mut [u8] = vec![0_u8; arena_bytes].leak();
 
     let Some(mut resolver) = Resolver::new() else {
         defmt::error!("wake-word: resolver alloc failed; idle");
@@ -150,7 +151,7 @@ pub async fn wake_word_task(enabled: bool, threshold: i8, model_bytes: &'static 
         "wake-word: interpreter ready ({=usize} inputs, {=usize} outputs, arena={=usize} B, threshold={=i8})",
         interp.inputs_len(),
         interp.outputs_len(),
-        ARENA_BYTES,
+        arena_bytes,
         threshold,
     );
 

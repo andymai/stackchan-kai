@@ -165,6 +165,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        wake_word_threshold: {},",
         config.behavior.wake_word_threshold
     );
+    let _ = writeln!(
+        out,
+        "        wake_word_arena_kib: {},",
+        config.behavior.wake_word_arena_kib
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -531,6 +536,7 @@ impl<'a> Parser<'a> {
         let mut follower_leader_hostname: Option<String> = None;
         let mut wake_word_enabled: Option<bool> = None;
         let mut wake_word_threshold: Option<i8> = None;
+        let mut wake_word_arena_kib: Option<u32> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -553,6 +559,7 @@ impl<'a> Parser<'a> {
                 }
                 "wake_word_enabled" => wake_word_enabled = Some(self.parse_bool()?),
                 "wake_word_threshold" => wake_word_threshold = Some(self.parse_i8()?),
+                "wake_word_arena_kib" => wake_word_arena_kib = Some(self.parse_u32()?),
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -571,6 +578,7 @@ impl<'a> Parser<'a> {
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
+            wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
         })
     }
 
