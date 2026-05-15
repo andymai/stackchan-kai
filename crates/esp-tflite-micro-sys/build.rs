@@ -115,6 +115,12 @@ fn add_esp_nn_sources(b: &mut cc::Build, src_root: &Path) {
     ];
     for category in categories {
         let dir = src_root.join(category);
+        // Tell cargo to rerun this build script when the directory
+        // listing changes. Without this, adding or removing an
+        // upstream kernel file would silently produce a stale archive
+        // (cargo only rebuilds when the explicitly-named files cc-rs
+        // adds via `b.file()` change, not when new ones appear).
+        println!("cargo:rerun-if-changed={}", dir.display());
         let entries =
             fs::read_dir(&dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
         for entry in entries {
@@ -139,7 +145,11 @@ fn is_s3_relevant(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    if !matches!(ext, "c" | "S" | "h") {
+    // Source-compilation units only. Header files in the same tree
+    // (e.g. a hypothetical `esp_nn_conv_esp32s3.h`) would match the
+    // `_esp32s3.` suffix below; passing one to `cc::Build::file` makes
+    // GCC invoke `-c` on a header, which is implementation-defined.
+    if !matches!(ext, "c" | "S") {
         return false;
     }
     // Suffix patterns rather than pure extensions: `_ansi.c` covers
@@ -337,6 +347,12 @@ fn add_tflm_library_sources(b: &mut cc::Build, tflm: &Path) {
 /// hand drifts immediately when upstream re-shuffles internals.
 fn add_tflm_op_kernels(b: &mut cc::Build, tflm: &Path) {
     let kernels = tflm.join("tensorflow/lite/micro/kernels");
+
+    // Tell cargo to rerun this build script when the directory
+    // listing changes. Without this, adding or removing a kernel
+    // file under `tensorflow/lite/micro/kernels/` would silently
+    // produce a stale archive.
+    println!("cargo:rerun-if-changed={}", kernels.display());
 
     // The seven ops whose reference `.cc` we skip — the ESP-NN
     // variant below provides `Register_*` symbols with the same
