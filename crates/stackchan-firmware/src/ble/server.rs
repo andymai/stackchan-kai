@@ -86,7 +86,7 @@
 
 use alloc::string::String as AString;
 use embassy_futures::join::join;
-use embassy_futures::select::select;
+use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Timer};
 // trouble-host 0.5 implements `AsGatt` on `heapless::String<N>` /
 // `heapless::Vec<u8, _>` from the 0.9 line; the firmware's other uses
@@ -104,7 +104,7 @@ use crate::audio::AudioPersistOutcome;
 use crate::camera::CAMERA_MODE_SIGNAL;
 use crate::net::http::REMOTE_COMMAND_SIGNAL;
 use crate::net::snapshot;
-use crate::net::wifi::{WIFI_RECONFIG, WifiCreds};
+use crate::net::wifi::{WIFI_LINK_WATCH, WIFI_RECONFIG, WifiCreds, WifiLinkState};
 use crate::storage::{CONFIG_SNAPSHOT, with_storage};
 
 /// Manufacturer string for DIS. Stack-chan rides the M5Stack CoreS3.
@@ -596,6 +596,17 @@ struct BluFiSession {
     /// notify frames. Wraps at `0xFF` per the `BluFi` spec; the
     /// receiver is responsible for sequence-skew tolerance.
     outbound_seq: u8,
+    /// Push `ReportWifiStatus` to the central on every wifi-link
+    /// transition. Set after the first successful `ConnectToAp`
+    /// commit so the standard provisioning app sees the post-
+    /// reconnect state without polling `GetWifiStatus`.
+    watch_link: bool,
+    /// Last [`blufi::WifiConnState`] reported to the central — via
+    /// the commit-time reply, a `GetWifiStatus` reply, or a watch-
+    /// driven push. Used to suppress duplicate consecutive notifies
+    /// when both `Connecting` and `Disconnected` upstream states map
+    /// to `NotConnected`.
+    last_reported: Option<blufi::WifiConnState>,
 }
 
 impl BluFiSession {
@@ -606,6 +617,8 @@ impl BluFiSession {
             staged_psk: HString::new(),
             op_mode: None,
             outbound_seq: 0,
+            watch_link: false,
+            last_reported: None,
         }
     }
 
@@ -688,8 +701,29 @@ async fn gatt_events_task<P: PacketPool>(
 ) {
     let handles = WriteHandles::new(server);
     let mut blufi_session = BluFiSession::new();
+    let mut link = WIFI_LINK_WATCH.receiver();
+    if link.is_none() {
+        defmt::warn!(
+            "ble: WIFI_LINK_WATCH receiver slot exhausted; BluFi push status disabled this connection"
+        );
+    }
     loop {
-        match conn.next().await {
+        // Only race the link watch against `conn.next()` once the
+        // central has committed a `ConnectToAp` — pre-commit, the
+        // phone hasn't expressed interest in link push updates, and
+        // the wake would just spin the loop for nothing.
+        let event = if let (Some(rx), true) = (link.as_mut(), blufi_session.watch_link) {
+            match select(conn.next(), rx.changed()).await {
+                Either::First(event) => event,
+                Either::Second(new_state) => {
+                    notify_blufi_link_transition(server, conn, &mut blufi_session, new_state).await;
+                    continue;
+                }
+            }
+        } else {
+            conn.next().await
+        };
+        match event {
             GattConnectionEvent::Disconnected { reason } => {
                 defmt::info!("ble: gatt disconnect ({})", defmt::Debug2Format(&reason));
                 super::clear_passkey();
@@ -1127,6 +1161,44 @@ async fn reply_blufi_wifi_status<P: PacketPool>(
         &payload,
     )
     .await;
+    session.last_reported = Some(conn_state);
+}
+
+/// Push a `ReportWifiStatus` Data frame whenever the upstream wifi
+/// link transitions, but only after the central has expressed
+/// interest by committing a `ConnectToAp` (the
+/// [`BluFiSession::watch_link`] flag). The 3-state
+/// [`WifiLinkState`] collapses onto the 2-state [`blufi::WifiConnState`]
+/// — `Connecting` and `Disconnected` both map to `NotConnected`, so
+/// consecutive duplicates after the collapse are suppressed via
+/// [`BluFiSession::last_reported`] to keep the central's status feed
+/// edge-triggered.
+async fn notify_blufi_link_transition<P: PacketPool>(
+    server: &StackchanServer<'_>,
+    conn: &GattConnection<'_, '_, P>,
+    session: &mut BluFiSession,
+    new_state: WifiLinkState,
+) {
+    let conn_state = match new_state {
+        WifiLinkState::Connected => blufi::WifiConnState::Connected,
+        WifiLinkState::Connecting | WifiLinkState::Disconnected => {
+            blufi::WifiConnState::NotConnected
+        }
+    };
+    if session.last_reported == Some(conn_state) {
+        return;
+    }
+    let payload = blufi::build_report_wifi_status_payload(conn_state);
+    notify_blufi_frame(
+        server,
+        conn,
+        session,
+        blufi::Type::Data,
+        blufi::DataSubtype::ReportWifiStatus as u8,
+        &payload,
+    )
+    .await;
+    session.last_reported = Some(conn_state);
 }
 
 /// Stage an SSID from a `SendStaSsid` Data frame's payload.
@@ -1202,13 +1274,15 @@ fn stage_blufi_psk(session: &mut BluFiSession, data: &[u8]) {
 /// ESP BLE Provisioning app surfaces the documented failure dialog
 /// rather than spinning on the inbound write indefinitely.
 ///
-/// Note: the `ReportWifiStatus` payload reflects the snapshot at the
-/// instant the commit returns, which usually races the wifi task's
-/// reconnect cycle — the link is typically still `NotConnected` at
-/// this point. The phone polls `GetWifiStatus` again after a short
-/// delay to observe the post-reconnect state. A future slice can add
-/// a `WIFI_LINK_WATCH` subscriber that re-notifies on every state
-/// change so the phone gets push updates.
+/// The immediate `ReportWifiStatus` reply reflects the snapshot at
+/// the instant the commit returns, which usually races the wifi
+/// task's reconnect cycle — the link is typically still
+/// `NotConnected` at this point. To close the loop, commit success
+/// also flips [`BluFiSession::watch_link`] so the
+/// [`WIFI_LINK_WATCH`] receiver held by [`gatt_events_task`] pushes
+/// a fresh `ReportWifiStatus` to the central on every subsequent
+/// link transition. The phone observes the post-reconnect state
+/// without polling [`blufi::ControlSubtype::GetWifiStatus`].
 ///
 /// Clears `staged_psk` on success so a long-lived connection doesn't
 /// keep the secret in RAM longer than necessary.
@@ -1226,6 +1300,7 @@ async fn commit_blufi_provisioning<P: PacketPool>(
     .await;
     if committed {
         session.staged_psk = HString::new();
+        session.watch_link = true;
         reply_blufi_wifi_status(server, conn, session).await;
     } else {
         notify_blufi_frame(

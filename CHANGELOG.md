@@ -249,8 +249,16 @@ section summarises the milestone work in human terms.
   pairing but must pair (passkey-confirmed bond) before
   `ConnectToAp` actually persists. PSK is cleared from the
   session struct after a successful commit so it doesn't
-  outlive the connection. Read+notify characteristic
-  (`0xFF02`) is still reserved for status frames in slice 3.
+  outlive the connection. The read+notify characteristic
+  (`0xFF02`) carries `ReportWifiStatus` / `GetVersion` /
+  `Error` replies to inbound control frames, plus push
+  updates: once a `ConnectToAp` commits, the GATT task
+  subscribes to `WIFI_LINK_WATCH` and re-notifies
+  `ReportWifiStatus` on every wifi-link transition so the
+  central observes the post-reconnect state without
+  polling. Duplicate consecutive notifies are suppressed
+  because the 3-state upstream link collapses onto the
+  2-state BluFi `WifiConnState`.
 - Mimic-follower — opt-in via `behavior.follower_leader_hostname`.
   The firmware already advertises live `yaw` / `pitch` on its own
   mDNS TXT record (the leader half of the meganetaaan `mimic_main`

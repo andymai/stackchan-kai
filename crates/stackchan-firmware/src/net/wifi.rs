@@ -27,11 +27,11 @@ use esp_radio::wifi::{ClientConfig, ModeConfig, WifiController, WifiEvent};
 
 /// Number of independent receivers the [`WIFI_LINK_WATCH`] supports.
 ///
-/// Sized for the current consumers (SNTP + mDNS) plus headroom for a
-/// future BLE link-state characteristic or HTTP worker subscription
-/// without re-touching this constant. Each slot is cheap (one
-/// generation counter), so over-provisioning here is fine.
-pub const WIFI_LINK_WATCH_RECEIVERS: usize = 4;
+/// Sized for the current consumers (SNTP, mDNS, `agent_sidecar`,
+/// `audio_debug`, `BluFi` GATT) plus a little headroom. Each slot
+/// is cheap (one generation counter), so over-provisioning here is
+/// fine.
+pub const WIFI_LINK_WATCH_RECEIVERS: usize = 5;
 
 /// Public link-state watch — downstream tasks (SNTP, mDNS, …) take a
 /// receiver each and loop on `.changed()` to gate their own work.
