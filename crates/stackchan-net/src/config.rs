@@ -279,11 +279,12 @@ impl Default for EspNowConfig {
 /// Behavioural toggles. Opt-in autonomous beats that aren't part of
 /// the always-on reactive surface.
 ///
-/// Default: every flag `false`. The boot config doesn't need a
-/// `behavior:` block at all — `serde(default)` on the parent populates
-/// it. Operators opt in by adding the block via `PUT /settings` or
-/// editing `STACKCHAN.RON` directly.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// Default: every flag `false`, `wake_word_threshold: 100`. The
+/// boot config doesn't need a `behavior:` block at all —
+/// `serde(default)` on the parent populates it. Operators opt in
+/// by adding the block via `PUT /settings` or editing
+/// `STACKCHAN.RON` directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
 #[allow(
     clippy::struct_excessive_bools,
@@ -370,6 +371,34 @@ pub struct BehaviorConfig {
     /// model fails to load, the task logs and parks — the rest
     /// of the firmware is unaffected.
     pub wake_word_enabled: bool,
+    /// Int8 score threshold above which the wake-word detector
+    /// treats a model output as a positive detection. The
+    /// microWakeWord int8 quantization maps the streaming
+    /// classifier's `[0.0, 1.0]` confidence onto `[-128, 127]`;
+    /// the bundled-model reference threshold ≈ 0.95 lands near
+    /// `100`, which is the firmware default. Lower values
+    /// (≈80) increase sensitivity (more wakes, more false
+    /// positives); higher values (≈115) tighten it. Tune on
+    /// device per model: a different `.tflite` may want a
+    /// different cut-point.
+    pub wake_word_threshold: i8,
+}
+
+impl Default for BehaviorConfig {
+    fn default() -> Self {
+        Self {
+            soliloquy_enabled: false,
+            hourly_chime_enabled: false,
+            battery_icon_enabled: false,
+            toast_overlay_enabled: false,
+            auto_torque_release_ms: 0,
+            audio_debug_udp_target: String::new(),
+            agent_sidecar_url: String::new(),
+            follower_leader_hostname: String::new(),
+            wake_word_enabled: false,
+            wake_word_threshold: 100,
+        }
+    }
 }
 
 /// Time / SNTP configuration.

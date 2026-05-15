@@ -273,6 +273,11 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         ",\"wake_word_enabled\":{}",
         config.behavior.wake_word_enabled
     );
+    let _ = write!(
+        out,
+        ",\"wake_word_threshold\":{}",
+        config.behavior.wake_word_threshold
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -780,6 +785,7 @@ impl<'a> Parser<'a> {
         let mut agent_sidecar_url: Option<String> = None;
         let mut follower_leader_hostname: Option<String> = None;
         let mut wake_word_enabled: Option<bool> = None;
+        let mut wake_word_threshold: Option<i8> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -856,6 +862,12 @@ impl<'a> Parser<'a> {
                     }
                     wake_word_enabled = Some(self.parse_bool()?);
                 }
+                "wake_word_threshold" => {
+                    if wake_word_threshold.is_some() {
+                        return Err(bare_err("duplicate behavior field", "wake_word_threshold"));
+                    }
+                    wake_word_threshold = Some(self.parse_i8()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -873,6 +885,7 @@ impl<'a> Parser<'a> {
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
+            wake_word_threshold: wake_word_threshold.unwrap_or(100),
         })
     }
 
@@ -919,6 +932,32 @@ impl<'a> Parser<'a> {
         self.input = rest;
         #[allow(clippy::cast_possible_truncation)]
         Ok(parsed as u8)
+    }
+
+    /// Parse a signed decimal literal as an `i8`. Used for
+    /// `behavior.wake_word_threshold`. Accepts an optional leading
+    /// `-`; out-of-range values land on `BareParse`.
+    fn parse_i8(&mut self) -> Result<i8, ConfigError> {
+        let negative = self.try_consume_char('-');
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected signed integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let magnitude: i16 = digits
+            .parse()
+            .map_err(|_| bare_err("i8 literal out of range", digits))?;
+        let signed = if negative { -magnitude } else { magnitude };
+        if !(i16::from(i8::MIN)..=i16::from(i8::MAX)).contains(&signed) {
+            return Err(bare_err("i8 literal out of range", digits));
+        }
+        self.input = rest;
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(signed as i8)
     }
 
     /// Parse a contiguous run of decimal digits as `u32`. Used for
@@ -1122,6 +1161,7 @@ mod tests {
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
                 follower_leader_hostname: "kitchen-cat".to_string(),
                 wake_word_enabled: true,
+                wake_word_threshold: 95,
             },
         }
     }
@@ -1446,6 +1486,7 @@ mod tests {
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
                 follower_leader_hostname: "kitchen-cat".to_string(),
                 wake_word_enabled: true,
+                wake_word_threshold: -32,
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();
@@ -1464,6 +1505,46 @@ mod tests {
         let parsed = parse_settings_json(input).unwrap();
         assert_eq!(parsed.audio.volume_pct, 50);
         assert!(!parsed.audio.muted);
+    }
+
+    #[test]
+    fn wake_word_threshold_round_trips_negative() {
+        // Confirms `parse_i8` handles the optional leading `-` and
+        // that the render side emits a signed-i8 literal the parser
+        // accepts. The 1.42 fixture sets `wake_word_threshold: -32`
+        // (a sensitive cut-point for a calibrated model); round-trip
+        // through render+parse must preserve the sign.
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "behavior":{"wake_word_threshold":-32}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.behavior.wake_word_threshold, -32);
+    }
+
+    #[test]
+    fn wake_word_threshold_defaults_to_100_when_absent() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.behavior.wake_word_threshold, 100);
+    }
+
+    #[test]
+    fn wake_word_threshold_rejects_out_of_range() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "behavior":{"wake_word_threshold":200}
+        }"#;
+        let err = parse_settings_json(input).unwrap_err();
+        assert!(matches!(err, ConfigError::BareParse(_)), "got {err:?}");
     }
 
     #[test]

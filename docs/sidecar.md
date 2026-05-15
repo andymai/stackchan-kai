@@ -130,6 +130,8 @@ emotion for ~2.5 s.
 - Capture windows open from one of three triggers: `POST /listen`,
   the MCP `start_listen` tool, or the on-device microWakeWord
   detector (opt-in via `behavior.wake_word_enabled` plus a
-  `.tflite` model at `/sd/WAKE_WORD.tflite`). All three converge
-  on the same `RemoteCommand::StartListen` signal, so the sidecar
-  request shape is identical regardless of trigger.
+  `.tflite` model at `/sd/WAKE_WORD.tflite`; detection cut-point
+  is `behavior.wake_word_threshold`, signed int8, default `100`).
+  All three converge on the same `RemoteCommand::StartListen`
+  signal, so the sidecar request shape is identical regardless
+  of trigger.

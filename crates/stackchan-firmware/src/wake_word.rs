@@ -21,7 +21,8 @@
 //! `VarHandle` / `ReadVariable` / `AssignVariable` resource-variable
 //! ops, so the host side feeds one timestep at a time.
 //!
-//! When the output score crosses [`DETECTION_THRESHOLD`], the task
+//! When the output score crosses the operator-supplied threshold
+//! (`behavior.wake_word_threshold`, default `100`), the task
 //! signals [`crate::net::http::REMOTE_COMMAND_SIGNAL`] with
 //! [`RemoteCommand::StartListen`] for [`POST_WAKE_CAPTURE_MS`]. The
 //! render loop drains the signal and applies the same effects as
@@ -53,13 +54,6 @@ use crate::net::http::REMOTE_COMMAND_SIGNAL;
 /// architectures and the runtime scratch space TFLM's planner adds
 /// on top of the model's nominal tensor footprint.
 const ARENA_BYTES: usize = 64 * 1024;
-
-/// Int8 score (mapped from `u8` via `as i8`) above which we treat
-/// the model output as a positive detection. The microWakeWord
-/// reference threshold is ~0.95 of the float output, which lands
-/// near the high end of the int8 range — 100 is a safe starting
-/// point that's tunable once on-device tuning lands.
-const DETECTION_THRESHOLD: i8 = 100;
 
 /// Listen-window duration emitted on each wake fire. Matches the
 /// operator-initiated `POST /listen` default so the two paths
@@ -102,8 +96,12 @@ const MAX_MEL_FRAMES_PER_AUDIO_FRAME: usize = 4;
 /// missing-file path through `Storage::read_wake_word_model`
 /// returns `Vec::new()` rather than an error, so this is the
 /// expected default state for units without a model installed.
+///
+/// `threshold` mirrors `behavior.wake_word_threshold` — the int8
+/// score above which the model output is treated as a positive
+/// detection.
 #[embassy_executor::task]
-pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
+pub async fn wake_word_task(enabled: bool, threshold: i8, model_bytes: &'static [u8]) -> ! {
     if !enabled || model_bytes.is_empty() {
         defmt::info!(
             "wake-word: disabled (enabled={=bool}, model={=usize} bytes); idle",
@@ -149,10 +147,11 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
     }
 
     defmt::info!(
-        "wake-word: interpreter ready ({=usize} inputs, {=usize} outputs, arena={=usize} B)",
+        "wake-word: interpreter ready ({=usize} inputs, {=usize} outputs, arena={=usize} B, threshold={=i8})",
         interp.inputs_len(),
         interp.outputs_len(),
         ARENA_BYTES,
+        threshold,
     );
 
     let mut frontend = MelFrontend::new();
@@ -179,7 +178,7 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
                     }
                 });
                 for features in &mel_buf {
-                    run_inference(&mut interp, features, &mut next_fire_after);
+                    run_inference(&mut interp, features, threshold, &mut next_fire_after);
                 }
             }
             WaitResult::Lagged(n) => {
@@ -202,6 +201,7 @@ pub async fn wake_word_task(enabled: bool, model_bytes: &'static [u8]) -> ! {
 fn run_inference(
     interp: &mut Interpreter<'_>,
     features: &[i8; MEL_BIN_COUNT],
+    threshold: i8,
     next_fire_after: &mut Option<Instant>,
 ) {
     let Some(input) = interp.input_bytes_mut(0) else {
@@ -236,7 +236,7 @@ fn run_inference(
         return;
     };
     let score = score_u8.cast_signed();
-    if score < DETECTION_THRESHOLD {
+    if score < threshold {
         return;
     }
     let now = Instant::now();
