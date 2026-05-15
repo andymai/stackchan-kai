@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.83.0...stackchan-firmware-v0.84.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** BluFi push ReportWifiStatus on link transition ([#350](https://github.com/andymai/stackchan-kai/issues/350)) ([8256e1c](https://github.com/andymai/stackchan-kai/commit/8256e1ce79885fbba0277d963ba79afcff13bc97))
+
 ## [0.83.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.82.1...stackchan-firmware-v0.83.0) (2026-05-15)
 
 
