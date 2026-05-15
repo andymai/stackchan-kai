@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.86.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.85.0...stackchan-firmware-v0.86.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** operator-tunable wake_word_arena_kib ([#354](https://github.com/andymai/stackchan-kai/issues/354)) ([90fb26d](https://github.com/andymai/stackchan-kai/commit/90fb26db1f8077d81c47f9b628150d9662d6eb99))
+
 ## [0.85.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.84.0...stackchan-firmware-v0.85.0) (2026-05-15)
 
 
