@@ -1474,10 +1474,12 @@ async fn main(spawner: Spawner) -> ! {
     // `/sd/WAKE_WORD.tflite`. The detector subscribes to
     // `AUDIO_FRAME_PUBSUB`, feeds each 20 ms frame through the
     // mel-spectrogram frontend, and runs each mel frame through
-    // a TFLite Micro interpreter. A positive detection fires
-    // `PTT_TRIGGER`, routing the post-wake utterance through the
-    // same sidecar HTTP pipeline as operator-initiated capture.
-    // Empty model or `wake_word_enabled = false` parks the task.
+    // a TFLite Micro interpreter. A positive detection signals
+    // `REMOTE_COMMAND_SIGNAL` with `RemoteCommand::StartListen`,
+    // converging on the same path operator-initiated `POST /listen`
+    // takes — sidecar PCM capture plus the cosmetic modifier graph
+    // (`Attention::Listening`, ear decorator, ack chirp). Empty
+    // model or `wake_word_enabled = false` parks the task.
     if let Err(e) = spawner.spawn(stackchan_firmware::wake_word::wake_word_task(
         net_config.behavior.wake_word_enabled,
         wake_word_model,

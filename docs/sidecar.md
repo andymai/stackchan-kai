@@ -127,7 +127,9 @@ emotion for ~2.5 s.
   `stackchan-core`.
 - No conversation memory between requests. Each `POST /listen`
   uploads a fresh capture; the sidecar owns any cross-turn state.
-- No on-device wake-word yet (`microWakeWord` integration is a
-  separate arc). Today every capture window is operator-driven via
-  `POST /listen`, the MCP `start_listen` tool, or a future
-  body-touch trigger.
+- Capture windows open from one of three triggers: `POST /listen`,
+  the MCP `start_listen` tool, or the on-device microWakeWord
+  detector (opt-in via `behavior.wake_word_enabled` plus a
+  `.tflite` model at `/sd/WAKE_WORD.tflite`). All three converge
+  on the same `RemoteCommand::StartListen` signal, so the sidecar
+  request shape is identical regardless of trigger.
