@@ -264,13 +264,13 @@ impl FaceGeometry {
             Self::Default => (
                 EyeBaseline {
                     center: Point::new(100, 110),
-                    radius_x: 25,
-                    radius_y: 25,
+                    radius_x: 20,
+                    radius_y: 20,
                 },
                 EyeBaseline {
                     center: Point::new(220, 110),
-                    radius_x: 25,
-                    radius_y: 25,
+                    radius_x: 20,
+                    radius_y: 20,
                 },
                 MouthBaseline {
                     center: Point::new(160, 180),
@@ -468,16 +468,16 @@ impl Default for Face {
         Self {
             left_eye: Eye {
                 center: Point::new(100, 110),
-                radius_x: 25,
-                radius_y: 25,
+                radius_x: 20,
+                radius_y: 20,
                 phase: EyePhase::Open,
                 weight: 100,
                 open_weight: 100,
             },
             right_eye: Eye {
                 center: Point::new(220, 110),
-                radius_x: 25,
-                radius_y: 25,
+                radius_x: 20,
+                radius_y: 20,
                 phase: EyePhase::Open,
                 weight: 100,
                 open_weight: 100,

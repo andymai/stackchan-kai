@@ -15,7 +15,9 @@
 
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use stackchan_core::modifiers::StyleFromEmotion;
-use stackchan_core::{BubbleState, Decorator, DecoratorState, Director, Emotion, Entity, Instant};
+use stackchan_core::{
+    BubbleState, Decorator, DecoratorState, Director, Emotion, Entity, EyePhase, Instant,
+};
 use stackchan_sim::Framebuffer;
 
 /// LCD canvas width the firmware targets.
@@ -32,7 +34,7 @@ fn default_avatar_renders_expected_pixels() {
         .expect("Framebuffer DrawTarget is Infallible");
 
     // Eye centers: default Entity places left eye at (100, 110), right at
-    // (220, 110), both filled black ellipses of radius 25.
+    // (220, 110), both filled black rounded squares of half-side 20.
     assert_eq!(fb.pixel(100, 110), Some(Rgb565::BLACK), "left eye center");
     assert_eq!(fb.pixel(220, 110), Some(Rgb565::BLACK), "right eye center");
 
@@ -290,6 +292,121 @@ fn bubble_overlay_handles_oversized_text() {
         .draw(&mut baseline)
         .expect("Framebuffer DrawTarget is Infallible");
     assert_ne!(fb.as_slice(), baseline.as_slice());
+}
+
+#[test]
+fn cheek_renders_two_tone_gradient_when_blush_set() {
+    // High blush so both rings paint clearly distinguishable colors:
+    // inner core at full intensity (≈ MOUTH_COLOR), outer halo at half
+    // intensity (a much lighter pink). Both must be non-white, and the
+    // two colors must differ.
+    let mut avatar = Entity::default();
+    avatar.face.style.cheek_blush = 200;
+
+    let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+    avatar
+        .face
+        .draw(&mut fb)
+        .expect("Framebuffer DrawTarget is Infallible");
+
+    // Cheek geometry under the LEFT eye at (100, 110) radius_y=20 with
+    // CHEEK_VERTICAL_GAP=6 → cheek_top = 136. Outer 22 px halo and inner
+    // 12 px core both centre on (100, 147).
+    let centre = fb.pixel(100, 147);
+    // (92, 147) is 8 px from the centre — well inside the 11 px halo and
+    // well outside the 6 px core.
+    let halo = fb.pixel(92, 147);
+
+    // (85, 147) is 15 px from the centre — outside the 11 px halo entirely,
+    // so it must be the white background.
+    assert_eq!(
+        fb.pixel(85, 147),
+        Some(Rgb565::WHITE),
+        "halo must not bleed past its 11 px radius"
+    );
+    assert_ne!(centre, Some(Rgb565::WHITE), "cheek core should be pink");
+    assert_ne!(halo, Some(Rgb565::WHITE), "cheek halo should be visible");
+    assert_ne!(
+        centre, halo,
+        "core and halo must paint distinguishable colors so the gradient reads as two-tone"
+    );
+}
+
+#[test]
+fn closed_eye_renders_as_upward_smile_arc() {
+    // Closed phase = an upward parabolic arc spanning the open eye's
+    // full width (40 px), apex lifted ~10 px above baseline. For the
+    // LEFT eye at (100, 110) radius 20 the curve runs from (80, 110)
+    // up through (100, 100) back to (120, 110), drawn with the same
+    // 5 px polyline stroke as the Happy/Sad eye_curve arcs. Polyline
+    // thick-stroke joins notch at the exact apex vertex, so the densest
+    // pixel sits one row below the geometric apex.
+    let mut avatar = Entity::default();
+    avatar.face.left_eye.phase = EyePhase::Closed;
+    avatar.face.right_eye.phase = EyePhase::Closed;
+
+    let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+    avatar
+        .face
+        .draw(&mut fb)
+        .expect("Framebuffer DrawTarget is Infallible");
+
+    assert_eq!(
+        fb.pixel(100, 101),
+        Some(Rgb565::BLACK),
+        "smile-arc apex stroke must be drawn one row below geometric apex"
+    );
+    assert_eq!(
+        fb.pixel(82, 110),
+        Some(Rgb565::BLACK),
+        "near-endpoint must sit on the baseline stroke"
+    );
+    assert_eq!(
+        fb.pixel(100, 110),
+        Some(Rgb565::WHITE),
+        "below the lifted arc must be background, not the old horizontal line"
+    );
+}
+
+#[test]
+fn open_eye_renders_as_rounded_square() {
+    // The open neutral eye is a 40×40 filled rounded rectangle with a
+    // 10 px corner radius. The bounding-box corner pixel (80, 90) sits
+    // outside the rounded corner's quarter-circle (distance from corner
+    // arc centre (90, 100) ≈ 14 px > 10 px radius), so it must be
+    // background. The corner-arc centre itself is firmly inside the
+    // shape and must be eye-black. This is what distinguishes a rounded
+    // square from a plain rectangle (where the corner pixel would be
+    // black) or an ellipse (where the bounding-box corner is also
+    // background but the centre arc shape differs).
+    let mut fb = Framebuffer::new(WIDTH, HEIGHT);
+    Entity::default()
+        .face
+        .draw(&mut fb)
+        .expect("Framebuffer DrawTarget is Infallible");
+
+    assert_eq!(
+        fb.pixel(80, 90),
+        Some(Rgb565::WHITE),
+        "bounding-box corner must be carved out by the 10 px rounded corner"
+    );
+    assert_eq!(
+        fb.pixel(90, 100),
+        Some(Rgb565::BLACK),
+        "rounded-corner arc centre must lie inside the shape"
+    );
+    // Side midpoints of the bounding box are flat edges of the rounded
+    // square — must be solidly inside.
+    assert_eq!(
+        fb.pixel(100, 90),
+        Some(Rgb565::BLACK),
+        "top edge midpoint must be inside the shape"
+    );
+    assert_eq!(
+        fb.pixel(80, 110),
+        Some(Rgb565::BLACK),
+        "left edge midpoint must be inside the shape"
+    );
 }
 
 #[test]
