@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.85.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.84.0...stackchan-firmware-v0.85.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** operator-tunable wake_word_threshold via BehaviorConfig ([#352](https://github.com/andymai/stackchan-kai/issues/352)) ([e0d5ab0](https://github.com/andymai/stackchan-kai/commit/e0d5ab0ccb782ef579739f1aca046183748a3d4f))
+
 ## [0.84.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.83.0...stackchan-firmware-v0.84.0) (2026-05-15)
 
 
