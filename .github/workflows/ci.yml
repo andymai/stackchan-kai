@@ -159,9 +159,16 @@ jobs:
         working-directory: crates/stackchan-firmware
         run: cargo clippy --all-features -- -D warnings
 
-      # `cargo check` is redundant with `cargo clippy` above — clippy
-      # runs a full type-check as part of its lint pass. Dropping it
-      # cuts ~45 s off the 2 m 22 s firmware job (the longest in CI).
+      # `cargo build --release` exercises the link step that clippy
+      # alone never reaches. Without this gate, a link regression in
+      # any vendored C/C++ archive (e.g. esp-tflite-micro-sys) would
+      # pass clippy but break "just fmr" on every developer's machine.
+      # Previously caught the hard way after the TFLM merges in
+      # PRs 331/334/335/336/337 left the firmware unflashable on
+      # main for a day.
+      - name: Build (firmware, release)
+        working-directory: crates/stackchan-firmware
+        run: cargo build --release
 
   msrv:
     name: MSRV (host crates)
