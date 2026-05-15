@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.78.0...stackchan-firmware-v0.79.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** on-device wake-word task ([#337](https://github.com/andymai/stackchan-kai/issues/337)) ([7e1adf4](https://github.com/andymai/stackchan-kai/commit/7e1adf4b51bc19164da940b2303dc0743dffa589))
+
 ## [0.78.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.77.0...stackchan-firmware-v0.78.0) (2026-05-14)
 
 
