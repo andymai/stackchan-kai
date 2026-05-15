@@ -47,6 +47,36 @@ EtmsResolver* etms_resolver_create(void);
 // `NULL` is a no-op.
 void etms_resolver_destroy(EtmsResolver* resolver);
 
+// --- Resolver op registration ----------------------------------------------
+//
+// One C-ABI shim per op the resolver knows how to register. Each
+// function returns the underlying `TfLiteStatus` as an int (0 = ok,
+// non-zero = error) — the resolver fails registration when its
+// capacity is exceeded or the same op is registered twice. The set
+// here is microWakeWord's 20-op signature; the resolver template is
+// instantiated at `<20>` to match.
+
+int etms_resolver_add_add(EtmsResolver* resolver);
+int etms_resolver_add_assign_variable(EtmsResolver* resolver);
+int etms_resolver_add_average_pool_2d(EtmsResolver* resolver);
+int etms_resolver_add_call_once(EtmsResolver* resolver);
+int etms_resolver_add_concatenation(EtmsResolver* resolver);
+int etms_resolver_add_conv_2d(EtmsResolver* resolver);
+int etms_resolver_add_depthwise_conv_2d(EtmsResolver* resolver);
+int etms_resolver_add_fully_connected(EtmsResolver* resolver);
+int etms_resolver_add_logistic(EtmsResolver* resolver);
+int etms_resolver_add_max_pool_2d(EtmsResolver* resolver);
+int etms_resolver_add_mean(EtmsResolver* resolver);
+int etms_resolver_add_mul(EtmsResolver* resolver);
+int etms_resolver_add_pack(EtmsResolver* resolver);
+int etms_resolver_add_pad(EtmsResolver* resolver);
+int etms_resolver_add_quantize(EtmsResolver* resolver);
+int etms_resolver_add_read_variable(EtmsResolver* resolver);
+int etms_resolver_add_reshape(EtmsResolver* resolver);
+int etms_resolver_add_split_v(EtmsResolver* resolver);
+int etms_resolver_add_strided_slice(EtmsResolver* resolver);
+int etms_resolver_add_var_handle(EtmsResolver* resolver);
+
 // --- Interpreter lifecycle -------------------------------------------------
 
 // Constructs a `MicroInterpreter` over the given model. The caller

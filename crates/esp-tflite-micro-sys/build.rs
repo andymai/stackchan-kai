@@ -18,10 +18,13 @@
 //!    The `xtensa-esp32s3-elf-gcc` pin is required because the generic
 //!    `xtensa-esp-elf-gcc` doesn't recognise the S3's DSP / PIE
 //!    extension instructions.
-//! 2. TFLM library — the subset of `esp-tflite-micro` that's needed
-//!    to construct a `MicroInterpreter`. Op kernels are not included
-//!    in this slice; the resolver template is instantiated at size 20
-//!    but `MicroMutableOpResolver::Add*` calls are wired separately.
+//! 2. TFLM library + 20 op kernels — the subset of `esp-tflite-micro`
+//!    that constructs and runs a `MicroInterpreter` for microWakeWord
+//!    inference. For the seven ops that have ESP-NN-accelerated
+//!    variants (`add`, `conv`, `depthwise_conv`, `fully_connected`,
+//!    `mul`, `pooling`, `softmax`), the upstream reference kernel is
+//!    replaced by the `tensorflow/lite/micro/kernels/esp_nn/*.cc`
+//!    variant; the remaining 13 ops use the upstream references.
 //! 3. Shim — our C-ABI `extern "C"` wrapper. Hides the
 //!    `MicroMutableOpResolver<N>` template behind opaque handles so
 //!    bindgen can route Rust through a flat C-style interface.
@@ -30,6 +33,7 @@
 //!    surface) and writes Rust FFI declarations to `OUT_DIR/bindings.rs`.
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -43,12 +47,12 @@ fn main() {
     // in call order; GNU ld is single-pass and only pulls an
     // archive member if a reference has already been seen, so
     // the consumer archive must precede the provider. The shim
-    // is the consumer of esp-nn's kernels (transitively, once op
-    // kernels are wired); esp-nn provides.
+    // and the TFLM op-kernel `esp_nn/*.cc` variants are the
+    // consumers of esp-nn's kernels; esp-nn provides.
     //
     // Two separate `cc::Build`s because the include paths and
     // language standards differ — esp-nn is C/asm, TFLM is C++.
-    compile_tflm_and_shim(&tflm, &manifest);
+    compile_tflm_and_shim(&tflm, &esp_nn, &manifest);
     compile_esp_nn(&esp_nn);
 
     generate_bindings(&manifest);
@@ -66,10 +70,14 @@ fn s3_build() -> cc::Build {
     b
 }
 
-/// Compile the esp-nn kernels we care about for the streaming
-/// MixConv operator set. The `*_ansi.c` files are the reference
-/// fallbacks; the `*_esp32s3.c` and `*.S` files are the
-/// PIE-accelerated specializations that give the ~7× speedup.
+/// Compile every esp-nn source relevant to ESP32-S3 — the `*_ansi.c`
+/// reference kernels, every `*_esp32s3.{c,S}` PIE-accelerated
+/// specialization, and the `*_opt.c` portable optimizations. Skip the
+/// `*_esp32p4.*` variants (different SoC; instructions don't assemble
+/// under the S3 toolchain). `-ffunction-sections` + `--gc-sections`
+/// (already enabled in the workspace release profile) drop unreferenced
+/// objects from the final binary, so over-including here costs build
+/// time and archive size, not flash.
 fn compile_esp_nn(esp_nn: &Path) {
     let mut b = s3_build();
     b.include(esp_nn.join("include"))
@@ -84,29 +92,80 @@ fn compile_esp_nn(esp_nn: &Path) {
         // standalone surfaces parameters that are only used by
         // alternate code paths we don't pull in.
         .flag("-Wno-unused-parameter")
-        .flag("-Wno-unused-function")
-        // Convolution kernels — ANSI depthwise + ANSI conv
-        // references, plus the S3-SIMD 1x1 pointwise. The 1x1
-        // file is the one that exercises the PIE assembly route
-        // (cf. the 59 `ee.*` opcode sanity check in the README);
-        // the ANSI files are reference fallbacks that work on
-        // every Xtensa core.
-        .file(esp_nn.join("src/convolution/esp_nn_depthwise_conv_ansi.c"))
-        .file(esp_nn.join("src/convolution/esp_nn_conv_ansi.c"))
-        .file(esp_nn.join("src/convolution/esp_nn_conv_s8_1x1_esp32s3.c"))
-        // Dense layer (final classifier head).
-        .file(esp_nn.join("src/fully_connected/esp_nn_fully_connected_ansi.c"))
-        // S3 assembly common helpers — referenced by the S3 C
-        // kernels above.
-        .file(esp_nn.join("src/common/esp_nn_dot_s8_esp32s3.S"))
-        .file(esp_nn.join("src/common/esp_nn_multiply_by_quantized_mult_esp32s3.S"));
+        .flag("-Wno-unused-function");
+
+    add_esp_nn_sources(&mut b, &esp_nn.join("src"));
     b.compile("esp_nn");
+}
+
+/// Walk every category under `esp-nn/src/` and add the S3-relevant
+/// kernel files to the build. The category list is the directory
+/// layout esp-nn ships with (activation_functions, basic_math, common,
+/// convolution, fully_connected, logistic, pooling, softmax).
+fn add_esp_nn_sources(b: &mut cc::Build, src_root: &Path) {
+    let categories = [
+        "activation_functions",
+        "basic_math",
+        "common",
+        "convolution",
+        "fully_connected",
+        "logistic",
+        "pooling",
+        "softmax",
+    ];
+    for category in categories {
+        let dir = src_root.join(category);
+        // Tell cargo to rerun this build script when the directory
+        // listing changes. Without this, adding or removing an
+        // upstream kernel file would silently produce a stale archive
+        // (cargo only rebuilds when the explicitly-named files cc-rs
+        // adds via `b.file()` change, not when new ones appear).
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let entries =
+            fs::read_dir(&dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if is_s3_relevant(&path) {
+                b.file(&path);
+            }
+        }
+    }
+}
+
+/// Returns true for esp-nn source files that target ESP32-S3 or are
+/// portable across Xtensa cores. The `*_esp32p4.*` files target a
+/// different SoC and would fail at assembly time.
+fn is_s3_relevant(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if name.contains("esp32p4") {
+        return false;
+    }
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    // Source-compilation units only. Header files in the same tree
+    // (e.g. a hypothetical `esp_nn_conv_esp32s3.h`) would match the
+    // `_esp32s3.` suffix below; passing one to `cc::Build::file` makes
+    // GCC invoke `-c` on a header, which is implementation-defined.
+    if !matches!(ext, "c" | "S") {
+        return false;
+    }
+    // Suffix patterns rather than pure extensions: `_ansi.c` covers
+    // the portable reference kernels, `_opt.c` covers the portable
+    // optimized variants, and `_esp32s3.` (no leading underscore —
+    // also catches `_s8_esp32s3.S`) covers the S3-specialized
+    // assembly / C kernels.
+    name.contains("_esp32s3.") || name.ends_with("_ansi.c") || name.ends_with("_opt.c")
 }
 
 /// Compile the TFLM library subset + the C-ABI shim. One `cc::Build`
 /// — the shim's interpreter constructor needs every TFLM TU it
 /// touches available in the same archive for the single-pass linker.
-fn compile_tflm_and_shim(tflm: &Path, manifest: &Path) {
+/// `esp_nn` is passed in for the include path; the seven
+/// `kernels/esp_nn/*.cc` variants `#include <esp_nn.h>`.
+fn compile_tflm_and_shim(tflm: &Path, esp_nn: &Path, manifest: &Path) {
     let mut b = s3_build();
     b.cpp(true)
         // C++17 — TFLM uses constexpr, structured bindings, and
@@ -142,8 +201,16 @@ fn compile_tflm_and_shim(tflm: &Path, manifest: &Path) {
         .include(tflm.join("third_party/flatbuffers/include"))
         .include(tflm.join("third_party/gemmlowp"))
         .include(tflm.join("third_party/ruy"))
-        // Local shim header sits next to its .cpp in `src/`.
+        // Local shim header sits next to its .cpp in `src/`. The
+        // same directory holds our `<esp_timer.h>` stub — the
+        // seven `kernels/esp_nn/*.cc` variants `#include`d that
+        // ESP-IDF header for benchmarking, which we satisfy with
+        // a header that returns 0.
         .include(manifest.join("src"))
+        // esp-nn's public header — pulled in by the seven
+        // `kernels/esp_nn/*.cc` variants for the
+        // `esp_nn_{add,conv,...}_*` declarations they dispatch to.
+        .include(esp_nn.join("include"))
         // `TF_LITE_STATIC_MEMORY` disables runtime allocator paths
         // we don't use; `TF_LITE_DISABLE_X86_NEON` is harmless on
         // xtensa but matches upstream; `TF_LITE_STRIP_ERROR_STRINGS`
@@ -156,6 +223,7 @@ fn compile_tflm_and_shim(tflm: &Path, manifest: &Path) {
         .define("ESP_NN", None);
 
     add_tflm_library_sources(&mut b, tflm);
+    add_tflm_op_kernels(&mut b, tflm);
 
     // Our shim TU — bridges Rust over the templated TFLM classes.
     b.file(manifest.join("src/shim.cpp"));
@@ -265,6 +333,67 @@ fn add_tflm_library_sources(b: &mut cc::Build, tflm: &Path) {
     let mlir = tflm.join("tensorflow/compiler/mlir/lite");
     b.file(mlir.join("core/api/error_reporter.cc"))
         .file(mlir.join("schema/schema_utils.cc"));
+}
+
+/// TFLM op-kernel `.cc` files. Mirrors upstream's
+/// `file(GLOB srcs_kernels)` minus the seven ops that have ESP-NN
+/// accelerated variants (`add`, `conv`, `depthwise_conv`,
+/// `fully_connected`, `mul`, `pooling`, `softmax`) — those are
+/// substituted with their `kernels/esp_nn/<op>.cc` counterparts.
+/// Over-inclusion is intentional: `-ffunction-sections` +
+/// `--gc-sections` drop unreferenced kernels from the final binary,
+/// and tracking the per-microWakeWord-op transitive shared-code
+/// surface (`*_common.cc`, dispatch tables, helper utilities) by
+/// hand drifts immediately when upstream re-shuffles internals.
+fn add_tflm_op_kernels(b: &mut cc::Build, tflm: &Path) {
+    let kernels = tflm.join("tensorflow/lite/micro/kernels");
+
+    // Tell cargo to rerun this build script when the directory
+    // listing changes. Without this, adding or removing a kernel
+    // file under `tensorflow/lite/micro/kernels/` would silently
+    // produce a stale archive.
+    println!("cargo:rerun-if-changed={}", kernels.display());
+
+    // The seven ops whose reference `.cc` we skip — the ESP-NN
+    // variant below provides `Register_*` symbols with the same
+    // names and linking both would be a multiple-definition error.
+    let esp_nn_replacements: &[&str] = &[
+        "add.cc",
+        "conv.cc",
+        "depthwise_conv.cc",
+        "fully_connected.cc",
+        "mul.cc",
+        "pooling.cc",
+        "softmax.cc",
+    ];
+
+    let kernel_entries =
+        fs::read_dir(&kernels).unwrap_or_else(|e| panic!("read_dir {}: {e}", kernels.display()));
+    for entry in kernel_entries {
+        let path = entry.unwrap().path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        if !matches!(ext, "cc" | "c") {
+            continue;
+        }
+        if esp_nn_replacements.contains(&name) {
+            continue;
+        }
+        b.file(&path);
+    }
+
+    // ESP-NN-accelerated variants — replace the seven skipped above.
+    let esp_nn = kernels.join("esp_nn");
+    for f in esp_nn_replacements {
+        b.file(esp_nn.join(f));
+    }
 }
 
 /// Run bindgen over the C-ABI shim header so Rust callers can use

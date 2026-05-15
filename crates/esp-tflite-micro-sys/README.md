@@ -13,9 +13,16 @@ Two owned Rust types front the templated TFLM classes:
 - `Resolver` wraps `tflite::MicroMutableOpResolver<20>`. The
   template parameter is fixed in the C-ABI shim at the operator
   count microWakeWord uses, so the same resolver size carries
-  through to the production wake-word task. Op-kernel registration
-  (`Resolver::add_conv2d`, …) wires up alongside its underlying
-  vendored kernels.
+  through to the production wake-word task. Twenty `add_*`
+  methods register the microWakeWord operator set
+  (`add_conv_2d`, `add_depthwise_conv_2d`, `add_fully_connected`,
+  `add_var_handle`, `add_read_variable`, `add_assign_variable`,
+  `add_strided_slice`, `add_concatenation`, `add_pack`,
+  `add_split_v`, `add_call_once`, `add_reshape`,
+  `add_average_pool_2d`, `add_max_pool_2d`, `add_logistic`,
+  `add_quantize`, `add_pad`, `add_mean`, `add_add`, `add_mul`);
+  the seven ops with ESP-NN-accelerated variants dispatch into
+  esp-nn's hand-tuned LX7 SIMD kernels at registration time.
 - `Interpreter<'a>` wraps `tflite::MicroInterpreter`. It borrows
   the model bytes, the resolver, and the tensor arena for its
   lifetime — the underlying C++ object holds raw pointers into
