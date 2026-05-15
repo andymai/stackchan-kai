@@ -13,6 +13,17 @@ section summarises the milestone work in human terms.
 
 ### Avatar surface
 
+- Face primitives refresh. Open neutral eyes draw as filled rounded
+  squares instead of ellipses (corner radius scales with `eye_scale`
+  and clamps to half-height so mid-blink frames stay valid). Closed
+  eyes draw as a shallow upward "smile" arc instead of a flat line.
+  Cheeks paint as two concentric circles — an outer halo at 50% of
+  the requested blush plus an inner core at full blush — to fake a
+  soft radial gradient without alpha. Arc resolution lifts from a
+  17-point to a 25-point polyline so curved eyes / mouth read as
+  continuous. Default eye half-radius drops 25 → 20 px so the
+  rounded-square silhouette doesn't overpower the face; the matching
+  `FaceGeometry::Default` baseline moves with it.
 - On-screen battery indicator drawn in the top-left corner; opt-in
   via `behavior.battery_icon_enabled`. The percent reading is
   quantised into five buckets (Critical / Low / Medium / High /

@@ -8,9 +8,9 @@
 //! ## Palette
 //!
 //! - Background: `Rgb565::WHITE`.
-//! - Eyes: `Rgb565::BLACK`, either filled ellipses (when
-//!   [`Style::eye_curve`](crate::face::Style::eye_curve) is 0) or a
-//!   stroked polyline arc (otherwise).
+//! - Eyes: `palette.eye`. Filled rounded squares when open and
+//!   neutral ([`Style::eye_curve`](crate::face::Style::eye_curve) is 0);
+//!   stroked polyline arcs when curved (Happy / Sad) or closed (blink).
 //! - Mouth: from `palette.mouth`, either the v0.1.0 line/ellipse (when
 //!   [`Style::mouth_curve`](crate::face::Style::mouth_curve) is 0) or
 //!   a stroked polyline curve.
@@ -20,10 +20,10 @@
 //!
 //! ## Curves
 //!
-//! Arcs are drawn as a 17-point polyline sampled from a parabola
+//! Arcs are drawn as a 25-point polyline sampled from a parabola
 //! `y = cy + sag * (1 - u²)`, `u ∈ [-1, 1]`. Integer-only math keeps the
-//! code `no_std` without pulling in `libm`; at 320×240 the 17-segment
-//! polyline is visually indistinguishable from a continuous curve.
+//! code `no_std` without pulling in `libm`; at 320×240 the 24-segment
+//! polyline reads as a smooth continuous curve.
 
 use embedded_graphics::{
     Drawable,
@@ -33,7 +33,7 @@ use embedded_graphics::{
     pixelcolor::{Rgb565, RgbColor},
     primitives::{
         Circle, Ellipse, Line, Polyline, Primitive, PrimitiveStyle, PrimitiveStyleBuilder,
-        Rectangle,
+        Rectangle, RoundedRectangle,
     },
     text::{Alignment, Baseline, Text, TextStyleBuilder},
 };
@@ -79,13 +79,40 @@ const LINE_WIDTH: u32 = 3;
 /// so a ~50 px wide arc reads as strong as the filled-ellipse variant.
 const EYE_ARC_WIDTH: u32 = 5;
 
-/// Number of polyline segments used to approximate one parabolic arc.
-/// 16 segments (17 points) keeps the polyline well under embedded-graphics'
-/// scanline-iterator limits while reading as a smooth curve at 320×240.
-const ARC_SEGMENTS: i32 = 16;
+/// Divisor for the rounded-square eye corner radius: `corner = scaled_rx /
+/// EYE_CORNER_DIVISOR`. With the default 20 px half-width this gives a
+/// 10 px corner — half the half-side, which reads as a soft rounded square
+/// (clearly not a circle, clearly not a sharp rectangle).
+const EYE_CORNER_DIVISOR: u16 = 2;
 
-/// Cheek circle diameter, in pixels.
-const CHEEK_DIAMETER: u32 = 18;
+/// Sag divisor for the closed-eye smile arc: the arc lifts its midpoint
+/// `scaled_ry / CLOSED_EYE_SAG_DIVISOR` pixels above the eye centre.
+/// Picked so the closed eye reads clearly as a "smile-eye" arc but stays
+/// visibly shallower than the Happy expression's full `eye_curve` arc
+/// (whose sag is `~scaled_ry × eye_curve / 100`, peaking near `scaled_ry`
+/// at curve = 100).
+const CLOSED_EYE_SAG_DIVISOR: i32 = 2;
+
+/// Number of polyline segments used to approximate one parabolic arc.
+/// 24 segments (25 points) reads as a smooth continuous curve at 320×240
+/// while the 25-point stack buffer in `draw_parabolic_arc` stays a 200-byte
+/// blip on the embassy render task.
+const ARC_SEGMENTS: i32 = 24;
+
+/// Outer halo diameter for the cheek "blush", in pixels. The cheek is
+/// drawn as two concentric circles (outer halo + inner core) to fake a
+/// soft radial gradient without alpha or anti-aliasing.
+const CHEEK_OUTER_DIAMETER: u32 = 22;
+
+/// Inner core diameter for the cheek, in pixels. Drawn on top of the
+/// outer halo at full blush intensity, giving a darker centre that fades
+/// outward into the lighter halo.
+const CHEEK_INNER_DIAMETER: u32 = 12;
+
+/// Outer-halo intensity as a percentage of the requested `cheek_blush`.
+/// The halo paints at this fraction so it reads as a soft fade into white
+/// rather than a hard ring around the inner core.
+const CHEEK_HALO_INTENSITY_PCT: u32 = 50;
 
 /// Vertical gap between the bottom of an eye and the top of its cheek.
 const CHEEK_VERTICAL_GAP: i32 = 6;
@@ -616,9 +643,12 @@ where
 
 /// Draw one eye. Decision tree:
 ///
-/// 1. Closed phase, or `weight == 0`: horizontal closed-eye line (unchanged
-///    v0.1.0 behavior; curves don't apply when the lid is shut).
-/// 2. `curve == 0`: filled ellipse, with radii scaled by `eye_scale`.
+/// 1. Closed phase, or `weight == 0`: a shallow upward "smile" arc
+///    spanning the open eye's full width. Reads as a soft squinted /
+///    sleeping eye in the same family as the rounded-square open eye.
+/// 2. `curve == 0`: filled rounded square, with side lengths scaled by
+///    `eye_scale` and corner radius scaled proportionally so the look
+///    stays consistent across emotions.
 /// 3. Otherwise: a stroked parabolic arc. `curve > 0` (Happy) arches
 ///    upward, `curve < 0` (Sad) dips downward.
 #[allow(clippy::similar_names)] // `scaled_rx` / `scaled_ry` is the intended x/y pair.
@@ -637,11 +667,16 @@ where
     let height = scaled_height(scaled_ry, eye.weight);
 
     if matches!(eye.phase, EyePhase::Closed) || height == 0 {
-        return draw_horizontal_line(
+        // Shallow upward smile-arc. Negative sag lifts the midpoint
+        // above the baseline; endpoints stay at `eye.center.y` so the
+        // arc tucks into where the open eye's bottom edge used to be.
+        let sag = -i32::from(scaled_ry) / CLOSED_EYE_SAG_DIVISOR;
+        return draw_parabolic_arc(
             eye.center.x,
             eye.center.y,
             scaled_rx,
-            stroke(eye_color, LINE_WIDTH),
+            sag,
+            stroke(eye_color, EYE_ARC_WIDTH),
             target,
         );
     }
@@ -652,7 +687,14 @@ where
         let half_h = i32::from(height / 2);
         let top_left = EgPoint::new(eye.center.x - half_w, eye.center.y - half_h);
         let size = Size::new(u32::from(width), u32::from(height));
-        return Ellipse::new(top_left, size)
+        // Corner radius scales with the eye so the rounding ratio stays
+        // constant across `eye_scale` (Surprised stays as round-square as
+        // Neutral). The min-clamp against half-height keeps mid-blink
+        // frames valid: at low `weight` the rectangle is shorter than wide
+        // and a fixed corner would produce a degenerate shape.
+        let corner = u32::from(scaled_rx / EYE_CORNER_DIVISOR).min(u32::from(height / 2));
+        let corner_size = Size::new(corner, corner);
+        return RoundedRectangle::with_equal_corners(Rectangle::new(top_left, size), corner_size)
             .into_styled(fill(eye_color))
             .draw(target);
     }
@@ -763,11 +805,13 @@ fn audio_open_height(mouth_open: f32) -> u16 {
     rounded
 }
 
-/// Draw a cheek circle below `eye` with color blended between the
-/// palette background and the palette cheek colour by `blush`
-/// (0..=255). The blend lives in the palette's colour space rather
-/// than always-against-white so a `Dark` palette's cheek reads
-/// correctly against the black background.
+/// Draw a cheek below `eye` as two concentric circles: an outer halo
+/// painted at `CHEEK_HALO_INTENSITY_PCT` of the requested blush, then an
+/// inner core painted at full blush. The two-tone step approximates a
+/// soft radial gradient without needing alpha blending. Both rings
+/// blend in the palette's colour space (background → cheek) so a
+/// `Dark` palette reads correctly against its black background.
+#[allow(clippy::cast_possible_wrap)]
 fn draw_cheek<D>(
     eye: &Eye,
     blush: u8,
@@ -781,10 +825,26 @@ where
     let scaled_ry = scale_radius(eye.radius_y, eye_scale);
     let radius_signed = i32::from(scaled_ry);
     let cheek_top = eye.center.y + radius_signed + CHEEK_VERTICAL_GAP;
-    #[allow(clippy::cast_possible_wrap)]
-    let half = (CHEEK_DIAMETER / 2) as i32;
-    let top_left = EgPoint::new(eye.center.x - half, cheek_top);
-    Circle::new(top_left, CHEEK_DIAMETER)
+
+    let outer_half = (CHEEK_OUTER_DIAMETER / 2) as i32;
+    let outer_top_left = EgPoint::new(eye.center.x - outer_half, cheek_top);
+    let halo_blush =
+        u8::try_from(u32::from(blush) * CHEEK_HALO_INTENSITY_PCT / 100).unwrap_or(u8::MAX);
+    Circle::new(outer_top_left, CHEEK_OUTER_DIAMETER)
+        .into_styled(fill(blend_blush(
+            halo_blush,
+            palette.background,
+            palette.cheek,
+        )))
+        .draw(target)?;
+
+    // Inset the inner top-left so both circles share a centre. The inset
+    // is half the diameter difference; with 22 outer + 12 inner that's 5 px
+    // on each side.
+    let inner_half = (CHEEK_INNER_DIAMETER / 2) as i32;
+    let inset = ((CHEEK_OUTER_DIAMETER - CHEEK_INNER_DIAMETER) / 2) as i32;
+    let inner_top_left = EgPoint::new(eye.center.x - inner_half, cheek_top + inset);
+    Circle::new(inner_top_left, CHEEK_INNER_DIAMETER)
         .into_styled(fill(blend_blush(blush, palette.background, palette.cheek)))
         .draw(target)
 }
@@ -814,7 +874,7 @@ fn blend_blush(blush: u8, from: Rgb565, to: Rgb565) -> Rgb565 {
     )
 }
 
-/// Sample a parabolic arc into a stack-allocated 17-point polyline and
+/// Sample a parabolic arc into a stack-allocated 25-point polyline and
 /// draw it with `style`.
 ///
 /// `sag` is the vertical offset of the arc's midpoint relative to the
