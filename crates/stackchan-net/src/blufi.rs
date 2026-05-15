@@ -89,6 +89,62 @@ pub const FC_ACK_REQUIRED: u8 = 0x08;
 /// parser surfaces the bit unchanged.
 pub const FC_FRAGMENT: u8 = 0x10;
 
+/// Major version byte we advertise in a `ControlSubtype::GetVersion` reply.
+///
+/// Matches the value the ESP-IDF v5.x reference implementation
+/// reports so the official ESP BLE Provisioning Android / iOS app
+/// keeps its compatibility path.
+pub const PROTOCOL_VERSION_MAJOR: u8 = 0x01;
+/// Minor version byte; see [`PROTOCOL_VERSION_MAJOR`].
+pub const PROTOCOL_VERSION_MINOR: u8 = 0x02;
+
+/// Wi-Fi operating-mode byte used in the first slot of a
+/// `ReportWifiStatus` payload. Spec enumerates Null/STA/AP/APSTA; the
+/// firmware only ever runs STA, so the helper hard-codes that mode.
+pub const WIFI_OP_MODE_STA: u8 = 0x01;
+
+/// STA-side connection state for `ReportWifiStatus` (Data byte 1).
+///
+/// Only the codes the firmware actually emits are spelled out.
+/// `repr(u8)` matches the spec byte verbatim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WifiConnState {
+    /// STA is associated with an AP.
+    Connected = 0x00,
+    /// STA is not currently associated.
+    NotConnected = 0x01,
+}
+
+/// BluFi error-code byte for an outbound `DataSubtype::Error` frame.
+///
+/// Values match `esp_blufi_error_state_t` in ESP-IDF
+/// (`components/bt/common/api/include/api/esp_blufi_api.h`) so the
+/// standard ESP BLE Provisioning app surfaces the documented dialog.
+/// Only the subset the firmware actively emits is enumerated;
+/// adding a variant is the right move when a new failure path needs
+/// to be distinguished on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ErrorCode {
+    /// `0x09` — `ESP_BLUFI_DATA_FORMAT_ERROR`. Used as the catch-all
+    /// for the provisioning path's commit-side rejections (empty
+    /// SSID, below-spec PSK length, missing config snapshot, SD
+    /// write IO error). The official Android / iOS provisioning
+    /// app surfaces "Data format error" on this code.
+    DataFormatError = 0x09,
+}
+
+/// Build the 3-byte `ReportWifiStatus` payload the firmware emits.
+///
+/// Spec wire layout: `[opmode, sta_conn_state, softap_conn_state]`,
+/// optionally followed by TLVs (SSID, BSSID, channel) we don't ship.
+/// SoftAP byte is always `0x00` since the firmware only runs STA.
+#[must_use]
+pub const fn build_report_wifi_status_payload(sta: WifiConnState) -> [u8; 3] {
+    [WIFI_OP_MODE_STA, sta as u8, 0x00]
+}
+
 /// Top-level frame type: low 2 bits of the Type byte. Distinguishes
 /// the structurally-identical Control vs. Data shapes; the upper 6
 /// bits carry the [`ControlSubtype`] / [`DataSubtype`] enum.
@@ -658,6 +714,32 @@ mod tests {
         // `0b11` should also reject.
         buf[0] = (buf[0] & 0b1111_1100) | 0b11;
         assert_eq!(parse_frame(&buf), Err(ParseError::UnknownType));
+    }
+
+    #[test]
+    fn report_wifi_status_payload_pins_byte_layout() {
+        // STA mode + connected: ESP-IDF spec expects opmode in byte 0,
+        // STA conn state in byte 1, SoftAP conn state in byte 2.
+        assert_eq!(
+            build_report_wifi_status_payload(WifiConnState::Connected),
+            [0x01, 0x00, 0x00]
+        );
+        assert_eq!(
+            build_report_wifi_status_payload(WifiConnState::NotConnected),
+            [0x01, 0x01, 0x00]
+        );
+    }
+
+    #[test]
+    fn report_wifi_status_round_trips_through_build_frame() {
+        // The full outbound frame the firmware sends on commit:
+        // Data subtype `ReportWifiStatus` with the 3-byte payload.
+        let payload = build_report_wifi_status_payload(WifiConnState::Connected);
+        let built =
+            build_frame(Type::Data, DataSubtype::ReportWifiStatus as u8, 0, &payload).unwrap();
+        let parsed = parse_frame(&built).unwrap();
+        assert_eq!(parsed.data_subtype(), Some(DataSubtype::ReportWifiStatus));
+        assert_eq!(parsed.data, payload);
     }
 
     #[test]
