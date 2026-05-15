@@ -50,16 +50,16 @@ jobs:
       # `--all-targets` also lints examples + integration tests, matching
       # the pre-commit hook so local and CI lint passes can't diverge.
       - name: Clippy (host crates)
-        run: cargo clippy --workspace --exclude stackchan-firmware --all-features --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features --all-targets -- -D warnings
 
       - name: Test (host crates)
-        run: cargo test --workspace --exclude stackchan-firmware --all-features
+        run: cargo test --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features
 
       # `cargo build` is redundant with `cargo test` above — the test
       # pass builds every target. Dropping it saves ~6 s of Host runtime.
 
       - name: Doc check (host crates)
-        run: cargo doc --no-deps --workspace --exclude stackchan-firmware --all-features
+        run: cargo doc --no-deps --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -179,7 +179,7 @@ jobs:
       # `stackchan-sim`'s `viz` feature pulling in eframe/egui/winit)
       # are not gated on MSRV — they're opt-in tools, not runtime deps.
       - name: Build on MSRV
-        run: cargo build --workspace --exclude stackchan-firmware
+        run: cargo build --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys
 
   doc-drift:
     name: Doc drift (READMEs vs src/)
@@ -227,7 +227,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage report
-        run: cargo llvm-cov --workspace --exclude stackchan-firmware --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys --lcov --output-path lcov.info
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov

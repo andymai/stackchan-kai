@@ -1,0 +1,22 @@
+[package]
+name = "esp-tflite-micro-sys"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "FFI bindings to esp-tflite-micro + esp-nn for ESP32-S3 keyword-spotting. Foundation slice — build path only; interpreter wrapper lands next."
+readme = "README.md"
+# Vendored TFLM + ESP-NN sources push this above crates.io's
+# upload size limit and the firmware-only nature of the crate
+# (ESP32-S3 target binaries only, no host build path) makes
+# publishing meaningless.
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[build-dependencies]
+cc = "1"

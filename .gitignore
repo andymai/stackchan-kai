@@ -21,6 +21,7 @@ Cargo.lock.bak
 # commit"; pattern-matched so future research files follow the rule).
 .*-research.md
 .scratch.md
+.notes/
 
 # Parallel-work git worktrees.
 .worktrees/

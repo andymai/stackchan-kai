@@ -22,6 +22,7 @@ members = [
     "crates/stackchan-tts",
     "crates/stackchan-net",
     "crates/stackchan-firmware",
+    "crates/esp-tflite-micro-sys",
     "xtask",
 ]
 default-members = [

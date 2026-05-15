@@ -1,0 +1,2 @@
+esp-nn:        d45b843ca5f873ca9d0706ab0e7f14eafd132e98
+esp-tflite-micro: 6aa6cdcb44cd249a6c07d119babd6d3f4c0dafd2

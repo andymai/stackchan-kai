@@ -99,6 +99,24 @@ section summarises the milestone work in human terms.
   [docs/sidecar.md](./docs/sidecar.md). HTTP request/response
   buffers in the control plane bumped from 1 KiB to 2 KiB to fit
   realistic sidecar URLs alongside the existing config fields.
+- New `esp-tflite-micro-sys` crate — foundation slice for
+  on-device wake-word inference. Vendored `esp-nn` (Espressif's
+  int8 NN kernel library, ESP32-S3 PIE-accelerated) +
+  `esp-tflite-micro` (TFLM port surface: `system_setup`,
+  `micro_log`, `debug_log`, `micro_time`). `build.rs` pins the
+  S3-specific `xtensa-esp32s3-elf-gcc`, defines
+  `CONFIG_IDF_TARGET_ESP32S3` + `CONFIG_NN_OPTIMIZED` +
+  `TF_LITE_STRIP_ERROR_STRINGS`, compiles the kernel + port
+  files, and exports one `esp_tflite_micro_init` C-ABI shim
+  linking `tflite::InitializeTarget()` so DCE can't strip the
+  port symbols. Wake-word inference is the single deliberate
+  exception to the firmware crate's "no C/C++" non-goal — scoped
+  to one synchronous `Invoke()` call from an embassy task, no
+  FreeRTOS / ESP-IDF dependencies. The `MicroInterpreter`
+  wrapper + the MixConv operator kernels land in a follow-up
+  PR. Workspace `just check` / `just ci` / `just msrv` recipes
+  exclude this crate alongside `stackchan-firmware`; only
+  builds on `xtensa-esp32s3-none-elf`.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →

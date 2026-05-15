@@ -2100,6 +2100,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-tflite-micro-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "esp-wifi-sys"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
