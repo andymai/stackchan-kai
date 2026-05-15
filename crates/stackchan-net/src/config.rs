@@ -389,6 +389,9 @@ pub struct BehaviorConfig {
     /// Bump when a custom `.tflite` model fails `allocate_tensors`
     /// with the default. Allocated once at boot from PSRAM — config
     /// changes via `PUT /settings` take effect on next reboot.
+    /// Must be `>= 1`; `0` is rejected by [`validate`] so the
+    /// operator gets feedback from the HTTP write rather than
+    /// discovering a parked task on next reboot.
     pub wake_word_arena_kib: u32,
 }
 
@@ -595,6 +598,9 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
         ));
     }
     validate_esp_now(&config.esp_now)?;
+    if config.behavior.wake_word_arena_kib == 0 {
+        return Err(ConfigError::InvalidWakeWordArenaKib);
+    }
     Ok(())
 }
 
@@ -779,6 +785,17 @@ mod tests {
         assert!(matches!(
             validate(&c),
             Err(ConfigError::InvalidVolumePct(101))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_zero_wake_word_arena_kib() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.behavior.wake_word_arena_kib = 0;
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidWakeWordArenaKib)
         ));
     }
 

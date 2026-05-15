@@ -120,4 +120,14 @@ pub enum ConfigError {
     /// Carries the offending value.
     #[error("esp_now.tx_rate_hz must be <= 20; got {0}")]
     InvalidEspNowTxRate(u8),
+
+    /// `behavior.wake_word_arena_kib` was `0`. The wake-word task
+    /// allocates the tensor arena once at boot; an empty arena
+    /// makes `Interpreter::new` return `None` and leaves the task
+    /// permanently parked with only a `defmt::error!` to show for
+    /// it. Reject at validation time so the operator gets feedback
+    /// from `PUT /settings` instead of needing to reboot to see
+    /// the failure.
+    #[error("behavior.wake_word_arena_kib must be >= 1; got 0")]
+    InvalidWakeWordArenaKib,
 }
