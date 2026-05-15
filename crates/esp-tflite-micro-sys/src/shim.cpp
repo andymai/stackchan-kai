@@ -51,6 +51,44 @@ void etms_resolver_destroy(EtmsResolver* resolver) {
   delete reinterpret_cast<ResolverImpl*>(resolver);
 }
 
+// One-liner wrapper per op-registration call. The expansion is
+// uniform: cast the opaque handle back to `ResolverImpl*` and call
+// the matching `Add*` method, surfacing the `TfLiteStatus` as int.
+//
+// Naming convention: snake_case in the C ABI to match the rest of
+// the shim; CamelCase on the C++ side to match TFLM's `Add*`
+// methods.
+#define ETMS_RESOLVER_ADD_OP(snake_name, MethodName)                       \
+  int etms_resolver_add_##snake_name(EtmsResolver* resolver) {             \
+    if (resolver == nullptr) {                                             \
+      return kTfLiteError;                                                 \
+    }                                                                      \
+    return reinterpret_cast<ResolverImpl*>(resolver)->MethodName();        \
+  }
+
+ETMS_RESOLVER_ADD_OP(add, AddAdd)
+ETMS_RESOLVER_ADD_OP(assign_variable, AddAssignVariable)
+ETMS_RESOLVER_ADD_OP(average_pool_2d, AddAveragePool2D)
+ETMS_RESOLVER_ADD_OP(call_once, AddCallOnce)
+ETMS_RESOLVER_ADD_OP(concatenation, AddConcatenation)
+ETMS_RESOLVER_ADD_OP(conv_2d, AddConv2D)
+ETMS_RESOLVER_ADD_OP(depthwise_conv_2d, AddDepthwiseConv2D)
+ETMS_RESOLVER_ADD_OP(fully_connected, AddFullyConnected)
+ETMS_RESOLVER_ADD_OP(logistic, AddLogistic)
+ETMS_RESOLVER_ADD_OP(max_pool_2d, AddMaxPool2D)
+ETMS_RESOLVER_ADD_OP(mean, AddMean)
+ETMS_RESOLVER_ADD_OP(mul, AddMul)
+ETMS_RESOLVER_ADD_OP(pack, AddPack)
+ETMS_RESOLVER_ADD_OP(pad, AddPad)
+ETMS_RESOLVER_ADD_OP(quantize, AddQuantize)
+ETMS_RESOLVER_ADD_OP(read_variable, AddReadVariable)
+ETMS_RESOLVER_ADD_OP(reshape, AddReshape)
+ETMS_RESOLVER_ADD_OP(split_v, AddSplitV)
+ETMS_RESOLVER_ADD_OP(strided_slice, AddStridedSlice)
+ETMS_RESOLVER_ADD_OP(var_handle, AddVarHandle)
+
+#undef ETMS_RESOLVER_ADD_OP
+
 EtmsInterpreter* etms_interpreter_create(const uint8_t* model_bytes,
                                          size_t model_len,
                                          const EtmsResolver* resolver,

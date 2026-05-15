@@ -126,6 +126,82 @@ impl Resolver {
     }
 }
 
+/// Shared body for every `Resolver::add_*` method. Each invocation
+/// expands to a thin `Result`-returning wrapper around the
+/// corresponding `etms_resolver_add_*` FFI call. The macro keeps the
+/// 20-op surface declarative — the resolver's capacity is 20, the
+/// op set is fixed by microWakeWord, and there's no per-op logic
+/// beyond status passthrough.
+macro_rules! resolver_add_methods {
+    ($($(#[$attr:meta])* $rust_name:ident => $ffi_name:ident),* $(,)?) => {
+        impl Resolver {
+            $(
+                $(#[$attr])*
+                ///
+                /// # Errors
+                ///
+                /// Returns the resolver's `TfLiteStatus` — non-zero
+                /// when the resolver's capacity (20 ops) is exceeded
+                /// or when the same op is registered twice.
+                pub fn $rust_name(&mut self) -> Result<(), TfLiteStatus> {
+                    // SAFETY: `self.handle` is a valid resolver
+                    // pointer (held in `NonNull`); the FFI call only
+                    // dereferences it for the duration of the call.
+                    let status = unsafe { ffi::$ffi_name(self.handle.as_ptr()) };
+                    if status == 0 {
+                        Ok(())
+                    } else {
+                        Err(TfLiteStatus(status))
+                    }
+                }
+            )*
+        }
+    };
+}
+
+resolver_add_methods! {
+    /// Registers `BuiltinOperator_ADD` (elementwise add, ESP-NN-accelerated).
+    add_add => etms_resolver_add_add,
+    /// Registers `BuiltinOperator_ASSIGN_VARIABLE` (resource-variable write).
+    add_assign_variable => etms_resolver_add_assign_variable,
+    /// Registers `BuiltinOperator_AVERAGE_POOL_2D` (ESP-NN-accelerated).
+    add_average_pool_2d => etms_resolver_add_average_pool_2d,
+    /// Registers `BuiltinOperator_CALL_ONCE` (fires at first invocation).
+    add_call_once => etms_resolver_add_call_once,
+    /// Registers `BuiltinOperator_CONCATENATION`.
+    add_concatenation => etms_resolver_add_concatenation,
+    /// Registers `BuiltinOperator_CONV_2D` (ESP-NN-accelerated).
+    add_conv_2d => etms_resolver_add_conv_2d,
+    /// Registers `BuiltinOperator_DEPTHWISE_CONV_2D` (ESP-NN-accelerated).
+    add_depthwise_conv_2d => etms_resolver_add_depthwise_conv_2d,
+    /// Registers `BuiltinOperator_FULLY_CONNECTED` (ESP-NN-accelerated).
+    add_fully_connected => etms_resolver_add_fully_connected,
+    /// Registers `BuiltinOperator_LOGISTIC` (sigmoid; reference kernel).
+    add_logistic => etms_resolver_add_logistic,
+    /// Registers `BuiltinOperator_MAX_POOL_2D` (ESP-NN-accelerated).
+    add_max_pool_2d => etms_resolver_add_max_pool_2d,
+    /// Registers `BuiltinOperator_MEAN` (reference reduction kernel).
+    add_mean => etms_resolver_add_mean,
+    /// Registers `BuiltinOperator_MUL` (elementwise multiply, ESP-NN-accelerated).
+    add_mul => etms_resolver_add_mul,
+    /// Registers `BuiltinOperator_PACK`.
+    add_pack => etms_resolver_add_pack,
+    /// Registers `BuiltinOperator_PAD` (zero-pad along tensor dims).
+    add_pad => etms_resolver_add_pad,
+    /// Registers `BuiltinOperator_QUANTIZE`.
+    add_quantize => etms_resolver_add_quantize,
+    /// Registers `BuiltinOperator_READ_VARIABLE` (resource-variable read).
+    add_read_variable => etms_resolver_add_read_variable,
+    /// Registers `BuiltinOperator_RESHAPE`.
+    add_reshape => etms_resolver_add_reshape,
+    /// Registers `BuiltinOperator_SPLIT_V` (variable-size split).
+    add_split_v => etms_resolver_add_split_v,
+    /// Registers `BuiltinOperator_STRIDED_SLICE`.
+    add_strided_slice => etms_resolver_add_strided_slice,
+    /// Registers `BuiltinOperator_VAR_HANDLE` (resource-variable allocation).
+    add_var_handle => etms_resolver_add_var_handle,
+}
+
 impl Drop for Resolver {
     fn drop(&mut self) {
         // SAFETY: `self.handle` was obtained from a successful

@@ -126,9 +126,23 @@ section summarises the milestone work in human terms.
   the template size is fixed at 20 to match microWakeWord's
   operator count. Safe Rust wrapper exposes `Resolver` +
   `Interpreter<'a>` with `allocate_tensors` + `invoke` returning
-  `Result<(), TfLiteStatus>`. Op-kernel registration
-  (`Resolver::add_*`) and tensor I/O accessors are wired in a
-  subsequent slice.
+  `Result<(), TfLiteStatus>`.
+- `esp-tflite-micro-sys` — op-kernel registration. Activated the
+  117-kernel TFLM op tree in `cc::Build`, with the seven ops
+  that have ESP-NN-accelerated variants (`add`, `conv`,
+  `depthwise_conv`, `fully_connected`, `mul`, `pooling`,
+  `softmax`) replaced by their `kernels/esp_nn/*.cc`
+  counterparts. Expanded the esp-nn compile pass to walk every
+  S3-relevant kernel source (`*_esp32s3.{c,S}`, `*_ansi.c`,
+  `*_opt.c`) under `esp-nn/src/`, dropping ESP32-P4 variants.
+  Added 20 `Resolver::add_*` methods (Add, AssignVariable,
+  AveragePool2D, CallOnce, Concatenation, Conv2D,
+  DepthwiseConv2D, FullyConnected, Logistic, MaxPool2D, Mean,
+  Mul, Pack, Pad, Quantize, ReadVariable, Reshape, SplitV,
+  StridedSlice, VarHandle) backed by an `ETMS_RESOLVER_ADD_OP`
+  shim macro. A tiny `src/esp_timer.h` stub satisfies the ESP-NN
+  kernel's unconditional `<esp_timer.h>` include (used for an
+  unused per-op profiling counter) without dragging in ESP-IDF.
 - New `stackchan-audio-features` crate — `no_std` + `alloc`
   streaming mel-spectrogram frontend (Hann window → 512-point
   real FFT → 40-channel mel filterbank 125–7 500 Hz → log →
