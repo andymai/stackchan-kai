@@ -668,8 +668,8 @@ where
 
     if matches!(eye.phase, EyePhase::Closed) || height == 0 {
         // Shallow upward smile-arc. Negative sag lifts the midpoint
-        // above the baseline; endpoints stay at `eye.center.y` so the
-        // arc tucks into where the open eye's bottom edge used to be.
+        // above the baseline; endpoints stay at `eye.center.y` (the
+        // eye's vertical centre, same position as the old flat-line).
         let sag = -i32::from(scaled_ry) / CLOSED_EYE_SAG_DIVISOR;
         return draw_parabolic_arc(
             eye.center.x,
