@@ -237,13 +237,20 @@ section summarises the milestone work in human terms.
   `stackchan_net::blufi::parse_frame` with malformed frames
   rejected at the ATT layer (`INVALID_ATTRIBUTE_VALUE_LENGTH`
   for truncation / bad length, `VALUE_NOT_ALLOWED` for CRC
-  mismatch or unknown type bits). Read+notify characteristic
-  (`0xFF02`) is reserved for outbound status frames in a
-  follow-up slice. The current slice surfaces parsed frames in
-  defmt only — the SSID/password accumulator across `Data`
-  subtypes and the `ControlSubtype::ConnectToAp` commit path
-  land next, gated on an on-device session with the official
-  ESP BLE Provisioning Android / iOS app for validation.
+  mismatch or unknown type bits). `Data` subtypes
+  `SendStaSsid` / `SendStaPassword` stage credentials into a
+  per-connection `BluFiSession`; the
+  `ControlSubtype::ConnectToAp` control frame commits them
+  through the same auth-gated persist + signal path that the
+  custom provisioning service uses (`apply_wifi_credentials`
+  helper, refactored out of `commit_provisioning`). The auth
+  gate is at *commit* time, not at the ATT layer, so the
+  standard ESP BLE Provisioning app can stage frames pre-
+  pairing but must pair (passkey-confirmed bond) before
+  `ConnectToAp` actually persists. PSK is cleared from the
+  session struct after a successful commit so it doesn't
+  outlive the connection. Read+notify characteristic
+  (`0xFF02`) is still reserved for status frames in slice 3.
 - Mimic-follower — opt-in via `behavior.follower_leader_hostname`.
   The firmware already advertises live `yaw` / `pitch` on its own
   mDNS TXT record (the leader half of the meganetaaan `mimic_main`
