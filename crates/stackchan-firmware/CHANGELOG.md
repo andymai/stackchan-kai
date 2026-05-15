@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.80.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.79.0...stackchan-firmware-v0.80.0) (2026-05-15)
+
+
+### Features
+
+* **firmware:** wake fires through REMOTE_COMMAND_SIGNAL so avatar reacts ([#339](https://github.com/andymai/stackchan-kai/issues/339)) ([f35bb23](https://github.com/andymai/stackchan-kai/commit/f35bb23f97c368da49ea77afc024c62fb93f7524))
+
 ## [0.79.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.78.0...stackchan-firmware-v0.79.0) (2026-05-15)
 
 
