@@ -65,11 +65,13 @@
 //! ESP BLE Provisioning Android / iOS app sends `BluFi` frames before
 //! the pairing handshake, and `BluFi`'s own `SetSecMode` + AES-CCM
 //! (not yet implemented) is what protects payloads on the wire.
-//! The follow-up slice that wires the `ControlSubtype::ConnectToAp`
-//! commit path will re-use `commit_provisioning`'s
-//! authenticated-link gate at the point staged credentials are
-//! persisted, so the security posture at the *commit* boundary
-//! matches the existing provisioning service.
+//! The `ControlSubtype::ConnectToAp` commit path re-uses the same
+//! `EncryptedAuthenticated` gate as the custom provisioning service
+//! (via the shared [`apply_wifi_credentials`] helper), so the
+//! security posture at the *commit* boundary matches: a central
+//! that hasn't authenticated can stage credentials in-memory in
+//! its per-connection [`BluFiSession`] but cannot persist them to
+//! SD or trigger a Wi-Fi reconfiguration.
 //!
 //! DIS characteristic types are `heapless::String<N>` rather than
 //! `&'static str` because trouble-host's `AsGatt for &'static str`
@@ -570,6 +572,37 @@ impl WriteHandles {
     }
 }
 
+/// Per-connection `BluFi` provisioning state.
+///
+/// Inbound `BluFi` `Data` frames stage SSID + password incrementally;
+/// the device only persists once a `ControlSubtype::ConnectToAp`
+/// control frame lands. Dropped at the end of `gatt_events_task` so
+/// the staged PSK never outlives the connection.
+struct BluFiSession {
+    /// `SendStaSsid` payload, decoded as UTF-8. Empty until the
+    /// central sends one. Overwritten on each new `SendStaSsid`.
+    staged_ssid: HString<PROV_SSID_CAP>,
+    /// `SendStaPassword` payload, decoded as UTF-8 (WPA2 ASCII).
+    /// Cleared after successful commit so a long-lived connection
+    /// doesn't hold the secret indefinitely.
+    staged_psk: HString<PROV_PSK_CAP>,
+    /// `SetWifiOpMode` payload byte if the central has sent one.
+    /// Logged for diagnostics; we don't actually switch op-mode
+    /// because the firmware only supports STA.
+    op_mode: Option<u8>,
+}
+
+impl BluFiSession {
+    /// Empty session — no staged credentials, no op-mode set.
+    const fn new() -> Self {
+        Self {
+            staged_ssid: HString::new(),
+            staged_psk: HString::new(),
+            op_mode: None,
+        }
+    }
+}
+
 /// Action performed after a write has been accepted at the ATT layer.
 /// Decoded from the wire payload up front so the post-accept handler
 /// is a straight signal/persist call without re-parsing.
@@ -638,6 +671,7 @@ async fn gatt_events_task<P: PacketPool>(
     conn: &GattConnection<'_, '_, P>,
 ) {
     let handles = WriteHandles::new(server);
+    let mut blufi_session = BluFiSession::new();
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
@@ -646,7 +680,7 @@ async fn gatt_events_task<P: PacketPool>(
                 return;
             }
             GattConnectionEvent::Gatt { event } => {
-                dispatch_gatt_event(server, conn, &handles, event).await;
+                dispatch_gatt_event(server, conn, &handles, &mut blufi_session, event).await;
             }
             GattConnectionEvent::PassKeyDisplay(passkey) => {
                 let value = passkey.value();
@@ -684,6 +718,7 @@ async fn dispatch_gatt_event<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
     handles: &WriteHandles,
+    blufi_session: &mut BluFiSession,
     event: GattEvent<'_, '_, P>,
 ) {
     let decision = match &event {
@@ -719,7 +754,7 @@ async fn dispatch_gatt_event<P: PacketPool>(
             if !accepted {
                 return;
             }
-            apply_write_action(server, conn, action).await;
+            apply_write_action(server, conn, blufi_session, action).await;
         }
     }
 }
@@ -853,6 +888,7 @@ const fn att_error_for_blufi(err: blufi::ParseError) -> AttErrorCode {
 async fn apply_write_action<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
+    blufi_session: &mut BluFiSession,
     action: WriteAction,
 ) {
     match action {
@@ -880,7 +916,10 @@ async fn apply_write_action<P: PacketPool>(
             defmt::info!("ble: camera_capture → signal queued");
             crate::camera::CAMERA_CAPTURE_REQUEST.signal(());
         }
-        WriteAction::BluFiFrame(frame) => log_blufi_frame(&frame),
+        WriteAction::BluFiFrame(frame) => {
+            log_blufi_frame(&frame);
+            handle_blufi_frame(conn, blufi_session, frame).await;
+        }
     }
 }
 
@@ -904,6 +943,126 @@ fn log_blufi_frame(frame: &blufi::Frame) {
         frame.fragmented,
         frame.data.len(),
     );
+}
+
+/// Dispatch a parsed `BluFi` frame to the session's state machine.
+///
+/// `Data` frames stage SSID / password into the session;
+/// `ControlSubtype::ConnectToAp` runs the commit (auth-gated by the
+/// shared [`apply_wifi_credentials`] helper); other subtypes are
+/// already logged by [`log_blufi_frame`] and intentionally fall
+/// through here — the device responds to them in slice 3.
+async fn handle_blufi_frame<P: PacketPool>(
+    conn: &GattConnection<'_, '_, P>,
+    session: &mut BluFiSession,
+    frame: blufi::Frame,
+) {
+    match frame.frame_type {
+        blufi::Type::Control => match frame.control_subtype() {
+            Some(blufi::ControlSubtype::SetWifiOpMode) => {
+                if let Some(&byte) = frame.data.first() {
+                    session.op_mode = Some(byte);
+                    defmt::info!("ble: blufi op_mode set ({=u8})", byte);
+                } else {
+                    defmt::warn!("ble: blufi op_mode payload empty; ignoring");
+                }
+            }
+            Some(blufi::ControlSubtype::ConnectToAp) => {
+                commit_blufi_provisioning(conn, session).await;
+            }
+            _ => {}
+        },
+        blufi::Type::Data => match frame.data_subtype() {
+            Some(blufi::DataSubtype::SendStaSsid) => stage_blufi_ssid(session, &frame.data),
+            Some(blufi::DataSubtype::SendStaPassword) => stage_blufi_psk(session, &frame.data),
+            _ => {}
+        },
+    }
+}
+
+/// Stage an SSID from a `SendStaSsid` Data frame's payload.
+///
+/// SSIDs are 802.11 octet strings; the spec doesn't require UTF-8,
+/// but the persistence layer ([`stackchan_net::config`]) is UTF-8-
+/// only, so non-UTF-8 SSIDs are rejected here rather than coerced.
+/// Over-cap SSIDs are rejected rather than truncated — silently
+/// shortening a network name would commit the wrong AP.
+fn stage_blufi_ssid(session: &mut BluFiSession, data: &[u8]) {
+    let Ok(s) = core::str::from_utf8(data) else {
+        defmt::warn!(
+            "ble: blufi ssid not utf-8 ({=usize}B); ignoring",
+            data.len()
+        );
+        return;
+    };
+    let mut staged: HString<PROV_SSID_CAP> = HString::new();
+    if staged.push_str(s).is_err() {
+        defmt::warn!(
+            "ble: blufi ssid too long ({=usize}B > {=usize}); ignoring",
+            s.len(),
+            PROV_SSID_CAP
+        );
+        return;
+    }
+    session.staged_ssid = staged;
+    defmt::info!(
+        "ble: blufi staged ssid ({=usize} chars)",
+        session.staged_ssid.len()
+    );
+}
+
+/// Stage a PSK from a `SendStaPassword` Data frame's payload.
+///
+/// WPA2 passphrases are 8-63 ASCII chars per spec; that's a
+/// strict subset of UTF-8 so the same validity rules apply.
+/// Length-window enforcement happens at commit time
+/// ([`apply_wifi_credentials`]), so an out-of-window PSK stages
+/// fine here but fails commit cleanly.
+///
+/// Never logs PSK contents — only length.
+fn stage_blufi_psk(session: &mut BluFiSession, data: &[u8]) {
+    let Ok(s) = core::str::from_utf8(data) else {
+        defmt::warn!("ble: blufi psk not utf-8 ({=usize}B); ignoring", data.len());
+        return;
+    };
+    let mut staged: HString<PROV_PSK_CAP> = HString::new();
+    if staged.push_str(s).is_err() {
+        defmt::warn!(
+            "ble: blufi psk too long ({=usize}B > {=usize}); ignoring",
+            s.len(),
+            PROV_PSK_CAP
+        );
+        return;
+    }
+    session.staged_psk = staged;
+    defmt::info!(
+        "ble: blufi staged psk ({=usize} chars)",
+        session.staged_psk.len()
+    );
+}
+
+/// Commit a `BluFi` `ConnectToAp` control frame: take the staged
+/// SSID + password from the session and run them through the same
+/// [`apply_wifi_credentials`] path the custom provisioning service
+/// uses. The auth gate (the link must be `EncryptedAuthenticated`)
+/// applies identically.
+///
+/// Clears `staged_psk` on success so a long-lived connection
+/// doesn't keep the secret in RAM longer than necessary.
+async fn commit_blufi_provisioning<P: PacketPool>(
+    conn: &GattConnection<'_, '_, P>,
+    session: &mut BluFiSession,
+) {
+    let committed = apply_wifi_credentials(
+        conn,
+        "blufi",
+        session.staged_ssid.as_str(),
+        session.staged_psk.as_str(),
+    )
+    .await;
+    if committed {
+        session.staged_psk = HString::new();
+    }
 }
 
 /// Whether the connection is currently encrypted *and* authenticated
@@ -1130,49 +1289,18 @@ fn populate_read_state(server: &StackchanServer<'_>) {
     }
 }
 
-/// Commit a provisioning write: take the staged SSID + just-written
-/// PSK from the GATT table, validate, persist atomically, signal the
-/// wifi task to soft-reconnect, then clear the PSK from the table so
-/// a memory dump of the BLE stack doesn't leak the secret.
+/// Commit a provisioning write: read staged SSID + just-written PSK
+/// from the GATT table, hand them to [`apply_wifi_credentials`] for
+/// the auth-gated persist + signal, then clear the PSK from the
+/// table so a memory dump of the BLE stack doesn't leak the secret.
 ///
-/// Gated on the connection's security level: unencrypted writes are
-/// rejected with a warn. The trouble-host attribute server doesn't
-/// enforce per-characteristic security in 0.5.1, so this app-layer
-/// check is the load-bearing gate — moving it would let any nearby
-/// BLE central reconfigure Wi-Fi without pairing.
-///
-/// Failures are logged but never panic — a malformed write should
-/// just be a no-op so the next correct write can succeed.
+/// Failures inside `apply_wifi_credentials` are logged but never
+/// panic — a malformed write should just be a no-op so the next
+/// correct write can succeed.
 async fn commit_provisioning<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
 ) {
-    let level = match conn.raw().security_level() {
-        Ok(l) => l,
-        Err(e) => {
-            defmt::warn!(
-                "ble: prov: security_level query failed ({}); rejecting write",
-                defmt::Debug2Format(&e)
-            );
-            return;
-        }
-    };
-    // Require *authenticated* encryption (passkey-confirmed bond),
-    // not bare `level.encrypted()`. Plain `Encrypted` is the
-    // outcome of JustWorks pairing, which a central can force by
-    // advertising `NoInputNoOutput` capabilities — the user never
-    // sees a passkey, and there's no MITM protection. Allowing it
-    // through here would let a phone next to the desk reconfigure
-    // Wi-Fi without ever asking the user to confirm a code.
-    if level != SecurityLevel::EncryptedAuthenticated {
-        defmt::warn!(
-            "ble: prov: write rejected — link not authenticated (level={}). \
-             Pair the central with passkey confirmation before provisioning.",
-            defmt::Debug2Format(&level)
-        );
-        return;
-    }
-
     // Read staged SSID + new PSK from the GATT table. trouble-host
     // wrote both into the table when their respective Write events
     // were accepted.
@@ -1191,9 +1319,83 @@ async fn commit_provisioning<P: PacketPool>(
         }
     };
 
+    let committed =
+        apply_wifi_credentials(conn, "prov", staged_ssid.as_str(), new_psk.as_str()).await;
+
+    // Clear the PSK from the GATT table unconditionally. Even on a
+    // rejected commit the central just wrote the secret bytes into
+    // the table; leaving them there for a subsequent retry or a
+    // future maintenance change to the macro attributes (e.g.
+    // accidentally enabling `read`) would let them leak. The
+    // `committed` flag is consulted only to decide whether to log
+    // the clear as routine vs. defensive.
+    let _ = committed;
+    let empty: HString<PROV_PSK_CAP> = HString::new();
+    if let Err(e) = server.set(&server.provisioning.psk, &empty) {
+        defmt::warn!(
+            "ble: prov: psk-clear table set ({})",
+            defmt::Debug2Format(&e)
+        );
+    }
+}
+
+/// Auth-gated Wi-Fi-credential persist + signal. Shared between the
+/// custom provisioning service ([`commit_provisioning`]) and the
+/// `BluFi` `ConnectToAp` path ([`commit_blufi_provisioning`]). Each
+/// call site stages credentials in its own way; this function owns
+/// the auth check, validation, atomic SD writeback, snapshot update,
+/// and `WIFI_RECONFIG` signal.
+///
+/// Gated on the connection's security level: unencrypted writes are
+/// rejected with a warn. The trouble-host attribute server doesn't
+/// enforce per-characteristic security in 0.5.1, so this app-layer
+/// check is the load-bearing gate — moving it would let any nearby
+/// BLE central reconfigure Wi-Fi without pairing.
+///
+/// `tag` is the defmt prefix the caller passes (`"prov"` or
+/// `"blufi"`), so a log scrape can attribute the commit to its
+/// source. Returns `true` iff the persist succeeded and
+/// `WIFI_RECONFIG` was signalled.
+async fn apply_wifi_credentials<P: PacketPool>(
+    conn: &GattConnection<'_, '_, P>,
+    tag: &'static str,
+    staged_ssid: &str,
+    new_psk: &str,
+) -> bool {
+    let level = match conn.raw().security_level() {
+        Ok(l) => l,
+        Err(e) => {
+            defmt::warn!(
+                "ble: {=str}: security_level query failed ({}); rejecting write",
+                tag,
+                defmt::Debug2Format(&e)
+            );
+            return false;
+        }
+    };
+    // Require *authenticated* encryption (passkey-confirmed bond),
+    // not bare `level.encrypted()`. Plain `Encrypted` is the
+    // outcome of JustWorks pairing, which a central can force by
+    // advertising `NoInputNoOutput` capabilities — the user never
+    // sees a passkey, and there's no MITM protection. Allowing it
+    // through here would let a phone next to the desk reconfigure
+    // Wi-Fi without ever asking the user to confirm a code.
+    if level != SecurityLevel::EncryptedAuthenticated {
+        defmt::warn!(
+            "ble: {=str}: write rejected — link not authenticated (level={}). \
+             Pair the central with passkey confirmation before provisioning.",
+            tag,
+            defmt::Debug2Format(&level)
+        );
+        return false;
+    }
+
     if staged_ssid.trim().is_empty() {
-        defmt::warn!("ble: prov: empty SSID — write SSID before PSK to commit");
-        return;
+        defmt::warn!(
+            "ble: {=str}: empty SSID — stage SSID before committing",
+            tag
+        );
+        return false;
     }
     // Reject below-spec PSKs at the BLE boundary so they never reach
     // the SD card or the wifi task. Committing a 1–7 char PSK would
@@ -1202,11 +1404,12 @@ async fn commit_provisioning<P: PacketPool>(
     // accept).
     if !new_psk.is_empty() && new_psk.len() < PROV_PSK_MIN {
         defmt::warn!(
-            "ble: prov: PSK too short ({=usize} bytes; need {=usize}+)",
+            "ble: {=str}: PSK too short ({=usize} bytes; need {=usize}+)",
+            tag,
             new_psk.len(),
             PROV_PSK_MIN
         );
-        return;
+        return false;
     }
 
     // Build a new Config from the persisted snapshot, mutating only
@@ -1221,17 +1424,21 @@ async fn commit_provisioning<P: PacketPool>(
     // a CONFIG_SNAPSHOT touch.
     let snapshot_value = CONFIG_SNAPSHOT.lock().await.clone();
     let Some(mut new_config) = snapshot_value else {
-        defmt::warn!("ble: prov: no config snapshot — boot config not yet read");
-        return;
+        defmt::warn!(
+            "ble: {=str}: no config snapshot — boot config not yet read",
+            tag
+        );
+        return false;
     };
-    new_config.wifi.ssid = AString::from(staged_ssid.as_str());
-    new_config.wifi.psk = AString::from(new_psk.as_str());
+    new_config.wifi.ssid = AString::from(staged_ssid);
+    new_config.wifi.psk = AString::from(new_psk);
 
     let write_result = with_storage(|storage| storage.write_config(&new_config)).await;
     match write_result {
         Some(Ok(())) => {
             defmt::info!(
-                "ble: prov: persisted (ssid={=str})",
+                "ble: {=str}: persisted (ssid={=str})",
+                tag,
                 new_config.wifi.ssid.as_str()
             );
             *CONFIG_SNAPSHOT.lock().await = Some(new_config.clone());
@@ -1239,24 +1446,15 @@ async fn commit_provisioning<P: PacketPool>(
                 ssid: new_config.wifi.ssid,
                 psk: new_config.wifi.psk,
             });
+            true
         }
         Some(Err(e)) => {
-            defmt::warn!("ble: prov: write_config failed ({})", e);
+            defmt::warn!("ble: {=str}: write_config failed ({})", tag, e);
+            false
         }
         None => {
-            defmt::warn!("ble: prov: no SD mounted — cannot persist");
+            defmt::warn!("ble: {=str}: no SD mounted — cannot persist", tag);
+            false
         }
-    }
-
-    // Clear the PSK from the GATT table. The central just wrote it
-    // and could theoretically read it back if `read` were enabled
-    // (it isn't), but a future maintenance change to the macro
-    // attributes shouldn't accidentally start leaking secrets.
-    let empty: HString<PROV_PSK_CAP> = HString::new();
-    if let Err(e) = server.set(&server.provisioning.psk, &empty) {
-        defmt::warn!(
-            "ble: prov: psk-clear table set ({})",
-            defmt::Debug2Format(&e)
-        );
     }
 }
