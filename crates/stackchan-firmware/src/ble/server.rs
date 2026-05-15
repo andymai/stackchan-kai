@@ -1040,8 +1040,14 @@ async fn notify_blufi_frame<P: PacketPool>(
     subtype: u8,
     data: &[u8],
 ) {
-    let seq = session.next_outbound_seq();
-    let bytes = match blufi::build_frame(frame_type, subtype, seq, data) {
+    // Consume the outbound sequence inline with the build call so a
+    // `build_frame` failure (only `DataTooLong`) doesn't burn a seq
+    // without putting a frame on the wire. Receivers tolerate seq
+    // skew per spec, but a clean monotonic counter is cheaper to
+    // reason about. A subsequent `extend_from_slice` overflow could
+    // still in theory consume a seq without emit, but outbound frames
+    // here cap at ~9B vs the 247B buffer, so that path is unreachable.
+    let bytes = match blufi::build_frame(frame_type, subtype, session.next_outbound_seq(), data) {
         Ok(b) => b,
         Err(e) => {
             defmt::warn!(
@@ -1192,7 +1198,7 @@ fn stage_blufi_psk(session: &mut BluFiSession, data: &[u8]) {
 ///
 /// On success notifies a `ReportWifiStatus` Data frame with the
 /// current STA-link state. On failure notifies a `DataSubtype::Error`
-/// frame with [`blufi::ErrorCode::WifiConfFailed`] so the standard
+/// frame with [`blufi::ErrorCode::DataFormatError`] so the standard
 /// ESP BLE Provisioning app surfaces the documented failure dialog
 /// rather than spinning on the inbound write indefinitely.
 ///
@@ -1228,7 +1234,7 @@ async fn commit_blufi_provisioning<P: PacketPool>(
             session,
             blufi::Type::Data,
             blufi::DataSubtype::Error as u8,
-            &[blufi::ErrorCode::WifiConfFailed as u8],
+            &[blufi::ErrorCode::DataFormatError as u8],
         )
         .await;
     }

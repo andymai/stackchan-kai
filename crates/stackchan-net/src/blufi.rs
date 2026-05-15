@@ -118,21 +118,21 @@ pub enum WifiConnState {
 
 /// BluFi error-code byte for an outbound `DataSubtype::Error` frame.
 ///
-/// Spec enumerates ~12 reasons; the firmware reports the subset that
-/// can actually arise from the provisioning path. Codes match
-/// `esp_blufi_error_state_t` in ESP-IDF so the standard ESP BLE
-/// Provisioning app surfaces the documented strings.
+/// Values match `esp_blufi_error_state_t` in ESP-IDF
+/// (`components/bt/common/api/include/api/esp_blufi_api.h`) so the
+/// standard ESP BLE Provisioning app surfaces the documented dialog.
+/// Only the subset the firmware actively emits is enumerated;
+/// adding a variant is the right move when a new failure path needs
+/// to be distinguished on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ErrorCode {
-    /// `0x05` — staged credential bytes were invalid (e.g. empty SSID
-    /// or below-spec PSK length). Reused for the
-    /// `apply_wifi_credentials` validation rejections.
-    ReadParamError = 0x05,
-    /// `0x09` — credentials looked structurally fine but the persist
-    /// path failed (e.g. SD unmounted, no config snapshot, write IO
-    /// error). The phone sees "Wi-Fi configuration failed".
-    WifiConfFailed = 0x09,
+    /// `0x09` — `ESP_BLUFI_DATA_FORMAT_ERROR`. Used as the catch-all
+    /// for the provisioning path's commit-side rejections (empty
+    /// SSID, below-spec PSK length, missing config snapshot, SD
+    /// write IO error). The official Android / iOS provisioning
+    /// app surfaces "Data format error" on this code.
+    DataFormatError = 0x09,
 }
 
 /// Build the 3-byte `ReportWifiStatus` payload the firmware emits.
