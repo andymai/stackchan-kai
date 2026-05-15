@@ -141,6 +141,19 @@ const BONDS_STAGING_FILE: &str = "BONDS.NEW";
 /// headroom for future record-layout additions.
 const MAX_BONDS_BYTES: u32 = 1024;
 
+/// Filename for the optional on-device wake-word `TFLite` model.
+/// Loaded once at boot and handed to `esp-tflite-micro-sys` as a
+/// borrowed `&'static [u8]`. Missing file is the off-by-default
+/// state, not an error.
+const WAKE_WORD_FILE: &str = "WAKE_WORD.tflite";
+
+/// Cap on the wake-word model blob. microWakeWord v2 streaming
+/// models are ~30–50 KiB of weights plus ~10 KiB of flatbuffer
+/// metadata; 256 KiB leaves comfortable headroom for larger or
+/// newer architectures without inviting a 1 MiB binary on the SD
+/// card.
+const MAX_WAKE_WORD_BYTES: u32 = 256 * 1024;
+
 /// Filename for the operator-triggered camera capture. Single fixed
 /// name (no rotation) so each capture overwrites the previous —
 /// the workflow is "trigger, eject SD, view, repeat", not a
@@ -378,6 +391,36 @@ where
         };
         let len = file.length();
         if len > MAX_BONDS_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = len as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
+    /// Read the optional wake-word `TFLite` model from
+    /// `/sd/WAKE_WORD.tflite`. Returns `Ok(empty)` if the file is
+    /// missing — that's the "wake-word disabled by absence" state,
+    /// not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial read,
+    /// [`StorageError::TooLarge`] if the file exceeds
+    /// [`MAX_WAKE_WORD_BYTES`].
+    pub fn read_wake_word_model(&mut self) -> Result<Vec<u8>, StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(WAKE_WORD_FILE, Mode::ReadOnly) else {
+            return Ok(Vec::new());
+        };
+        let len = file.length();
+        if len > MAX_WAKE_WORD_BYTES {
             return Err(StorageError::TooLarge);
         }
         let len = len as usize;

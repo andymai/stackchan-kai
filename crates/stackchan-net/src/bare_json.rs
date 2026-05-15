@@ -268,6 +268,11 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         "follower_leader_hostname",
         &config.behavior.follower_leader_hostname,
     );
+    let _ = write!(
+        out,
+        ",\"wake_word_enabled\":{}",
+        config.behavior.wake_word_enabled
+    );
     out.push_str("}}");
     Ok(out)
 }
@@ -763,6 +768,7 @@ impl<'a> Parser<'a> {
     /// Parse the optional `"behavior"` object. All fields default
     /// to `false` if absent so a JSON body that pre-dates a flag's
     /// introduction round-trips cleanly.
+    #[allow(clippy::too_many_lines)] // one match arm per flag; splitting helpers wouldn't read clearer
     fn parse_behavior(&mut self) -> Result<BehaviorConfig, ConfigError> {
         self.expect_char('{')?;
         let mut soliloquy_enabled: Option<bool> = None;
@@ -773,6 +779,7 @@ impl<'a> Parser<'a> {
         let mut audio_debug_udp_target: Option<String> = None;
         let mut agent_sidecar_url: Option<String> = None;
         let mut follower_leader_hostname: Option<String> = None;
+        let mut wake_word_enabled: Option<bool> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -843,6 +850,12 @@ impl<'a> Parser<'a> {
                     }
                     follower_leader_hostname = Some(self.parse_string()?);
                 }
+                "wake_word_enabled" => {
+                    if wake_word_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "wake_word_enabled"));
+                    }
+                    wake_word_enabled = Some(self.parse_bool()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -859,6 +872,7 @@ impl<'a> Parser<'a> {
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
+            wake_word_enabled: wake_word_enabled.unwrap_or(false),
         })
     }
 
@@ -1107,6 +1121,7 @@ mod tests {
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
                 follower_leader_hostname: "kitchen-cat".to_string(),
+                wake_word_enabled: true,
             },
         }
     }
@@ -1430,6 +1445,7 @@ mod tests {
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
                 follower_leader_hostname: "kitchen-cat".to_string(),
+                wake_word_enabled: true,
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

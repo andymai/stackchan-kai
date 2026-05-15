@@ -1231,6 +1231,7 @@ async fn main(spawner: Spawner) -> ! {
     // edge (see `sd_spi.rs`). A missing card or unparseable file is
     // not fatal: the firmware logs a warn and uses `Config::default`.
     let sd_cs = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
+    let mut wake_word_model: &'static [u8] = &[];
     let net_config = match storage::Storage::mount(spi_bus, sd_cs) {
         Ok(mut sd) => {
             let cfg = match sd.read_config() {
@@ -1241,6 +1242,30 @@ async fn main(spawner: Spawner) -> ! {
                 Err(e) => {
                     defmt::warn!("SD: read /sd/STACKCHAN.RON failed ({}); using defaults", e);
                     stackchan_net::Config::default()
+                }
+            };
+            // Read the optional wake-word model from /sd/WAKE_WORD.tflite.
+            // Missing file is the off-by-default state for units that
+            // never configured wake-word; an oversize file or read error
+            // logs and leaves the model empty so the task parks.
+            wake_word_model = match sd.read_wake_word_model() {
+                Ok(bytes) if !bytes.is_empty() => {
+                    defmt::info!(
+                        "SD: loaded /sd/WAKE_WORD.tflite ({=usize} bytes)",
+                        bytes.len(),
+                    );
+                    bytes.leak()
+                }
+                Ok(_) => {
+                    defmt::info!("SD: /sd/WAKE_WORD.tflite missing; wake-word task will idle",);
+                    &[]
+                }
+                Err(e) => {
+                    defmt::warn!(
+                        "SD: read /sd/WAKE_WORD.tflite failed ({}); wake-word task will idle",
+                        e,
+                    );
+                    &[]
                 }
             };
             // Park the mounted storage handle in the shared mutex so
@@ -1442,6 +1467,22 @@ async fn main(spawner: Spawner) -> ! {
             "spawn(agent_sidecar_task) failed: {}",
             defmt::Debug2Format(&e)
         );
+    }
+
+    // On-device wake-word detector — opt-in via
+    // `behavior.wake_word_enabled` *and* the presence of
+    // `/sd/WAKE_WORD.tflite`. The detector subscribes to
+    // `AUDIO_FRAME_PUBSUB`, feeds each 20 ms frame through the
+    // mel-spectrogram frontend, and runs each mel frame through
+    // a TFLite Micro interpreter. A positive detection fires
+    // `PTT_TRIGGER`, routing the post-wake utterance through the
+    // same sidecar HTTP pipeline as operator-initiated capture.
+    // Empty model or `wake_word_enabled = false` parks the task.
+    if let Err(e) = spawner.spawn(stackchan_firmware::wake_word::wake_word_task(
+        net_config.behavior.wake_word_enabled,
+        wake_word_model,
+    )) {
+        defmt::panic!("spawn(wake_word_task) failed: {}", defmt::Debug2Format(&e));
     }
 
     // Hourly chime — opt-in via `behavior.hourly_chime_enabled`. The

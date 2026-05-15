@@ -359,6 +359,17 @@ pub struct BehaviorConfig {
     /// snappy. Both devices must be on the same LAN multicast
     /// segment.
     pub follower_leader_hostname: String,
+    /// When `true`, the firmware runs on-device wake-word
+    /// detection over the ES7210 microphone stream. The detector
+    /// loads `/sd/WAKE_WORD.tflite` at boot, feeds incoming
+    /// 16 kHz PCM through the mel-spectrogram frontend, and
+    /// fires [`crate`]-side `PTT_TRIGGER` on detection so the
+    /// agent-sidecar task captures the post-wake utterance. Off
+    /// by default so units without a model or microphone don't
+    /// pay the inference cost. If the file is missing or the
+    /// model fails to load, the task logs and parks — the rest
+    /// of the firmware is unaffected.
+    pub wake_word_enabled: bool,
 }
 
 /// Time / SNTP configuration.
