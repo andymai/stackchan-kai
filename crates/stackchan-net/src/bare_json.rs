@@ -40,6 +40,13 @@ pub const PSK_REDACTED: &str = "***";
 /// [`PSK_REDACTED`] — see [`merge_settings_with_current`].
 pub const TOKEN_REDACTED: &str = "***";
 
+/// Sentinel emitted in place of a non-empty `behavior.agent_sidecar_token` on render.
+///
+/// Same redaction + preserve-on-echo discipline as [`PSK_REDACTED`]
+/// and [`TOKEN_REDACTED`] — the sidecar bearer secret is just as
+/// sensitive as the AP PSK or the device auth token.
+pub const SIDECAR_TOKEN_REDACTED: &str = "***";
+
 /// Sentinel emitted in place of a non-empty `esp_now.pmk_hex` /
 /// `esp_now.lmk_hex` on render.
 ///
@@ -132,7 +139,14 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
             channel: new.esp_now.channel,
             tx_rate_hz: new.esp_now.tx_rate_hz,
         },
-        behavior: new.behavior,
+        behavior: BehaviorConfig {
+            agent_sidecar_token: if new.behavior.agent_sidecar_token == SIDECAR_TOKEN_REDACTED {
+                current.behavior.agent_sidecar_token.clone()
+            } else {
+                new.behavior.agent_sidecar_token
+            },
+            ..new.behavior
+        },
     }
 }
 
@@ -261,6 +275,16 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         &mut out,
         "agent_sidecar_url",
         &config.behavior.agent_sidecar_url,
+    );
+    out.push(',');
+    push_string_field(
+        &mut out,
+        "agent_sidecar_token",
+        if redact_secrets && !config.behavior.agent_sidecar_token.is_empty() {
+            SIDECAR_TOKEN_REDACTED
+        } else {
+            &config.behavior.agent_sidecar_token
+        },
     );
     out.push(',');
     push_string_field(
@@ -788,6 +812,7 @@ impl<'a> Parser<'a> {
         let mut auto_torque_release_ms: Option<u32> = None;
         let mut audio_debug_udp_target: Option<String> = None;
         let mut agent_sidecar_url: Option<String> = None;
+        let mut agent_sidecar_token: Option<String> = None;
         let mut follower_leader_hostname: Option<String> = None;
         let mut wake_word_enabled: Option<bool> = None;
         let mut wake_word_threshold: Option<i8> = None;
@@ -853,6 +878,12 @@ impl<'a> Parser<'a> {
                     }
                     agent_sidecar_url = Some(self.parse_string()?);
                 }
+                "agent_sidecar_token" => {
+                    if agent_sidecar_token.is_some() {
+                        return Err(bare_err("duplicate behavior field", "agent_sidecar_token"));
+                    }
+                    agent_sidecar_token = Some(self.parse_string()?);
+                }
                 "follower_leader_hostname" => {
                     if follower_leader_hostname.is_some() {
                         return Err(bare_err(
@@ -895,6 +926,7 @@ impl<'a> Parser<'a> {
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
+            agent_sidecar_token: agent_sidecar_token.unwrap_or_default(),
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
@@ -1172,6 +1204,7 @@ mod tests {
                 auto_torque_release_ms: 30_000,
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
+                agent_sidecar_token: "sk-sidecar-secret-1234".to_string(),
                 follower_leader_hostname: "kitchen-cat".to_string(),
                 wake_word_enabled: true,
                 wake_word_threshold: 95,
@@ -1363,6 +1396,48 @@ mod tests {
     }
 
     #[test]
+    fn render_redacts_agent_sidecar_token_when_requested() {
+        let original = full_config();
+        let rendered = render_settings_json(&original, true).unwrap();
+        assert!(
+            rendered.contains("\"agent_sidecar_token\":\"***\""),
+            "expected redacted agent_sidecar_token in: {rendered}"
+        );
+        assert!(
+            !rendered.contains("sk-sidecar-secret-1234"),
+            "agent_sidecar_token leaked through redaction: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_does_not_redact_empty_agent_sidecar_token() {
+        let mut cfg = full_config();
+        cfg.behavior.agent_sidecar_token = String::new();
+        let redacted = render_settings_json(&cfg, true).unwrap();
+        assert!(
+            redacted.contains("\"agent_sidecar_token\":\"\""),
+            "empty agent_sidecar_token should render as empty string: {redacted}"
+        );
+    }
+
+    #[test]
+    fn merge_substitutes_redacted_agent_sidecar_token_with_current() {
+        let current = full_config();
+        let new = Config {
+            behavior: BehaviorConfig {
+                agent_sidecar_token: SIDECAR_TOKEN_REDACTED.to_string(),
+                ..current.behavior.clone()
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(
+            merged.behavior.agent_sidecar_token,
+            "sk-sidecar-secret-1234"
+        );
+    }
+
+    #[test]
     fn merge_overwrites_explicit_value() {
         let current = full_config();
         let new = Config {
@@ -1498,6 +1573,7 @@ mod tests {
                 auto_torque_release_ms: 30_000,
                 audio_debug_udp_target: "192.168.1.42:5005".to_string(),
                 agent_sidecar_url: "http://192.168.1.42:8080/v1/listen".to_string(),
+                agent_sidecar_token: "y".repeat(96),
                 follower_leader_hostname: "kitchen-cat".to_string(),
                 wake_word_enabled: true,
                 wake_word_threshold: -32,

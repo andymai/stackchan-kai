@@ -15,6 +15,7 @@
 //! [`Config`]: stackchan_net::Config
 //! [`Config::default`]: stackchan_net::Config::default
 
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
@@ -153,6 +154,25 @@ const WAKE_WORD_FILE: &str = "WAKE_WORD.tflite";
 /// newer architectures without inviting a 1 MiB binary on the SD
 /// card.
 const MAX_WAKE_WORD_BYTES: u32 = 256 * 1024;
+
+/// Filename for the persisted device session identifier. `UUIDv4`
+/// in the canonical 36-character hyphenated form, generated once on
+/// first boot and reused thereafter. Sent as the `X-Session-Id`
+/// header on every sidecar POST so the agent can scope conversation
+/// memory to this physical unit. Deleting the file rotates the
+/// session on next boot; copying it across SD cards preserves it.
+const SESSION_UUID_FILE: &str = "SESSION.UUID";
+
+/// Atomic-write staging name for the session UUID. Same staged-copy
+/// dance as the boot config — mid-write power loss leaves any prior
+/// `SESSION.UUID` intact.
+const SESSION_UUID_STAGING_FILE: &str = "SESSION.NEW";
+
+/// Cap on the `SESSION.UUID` file. Canonical `UUIDv4` is 36 bytes;
+/// the 64-byte ceiling absorbs an optional trailing newline plus a
+/// small margin for future identifier-format changes without
+/// unbounded SRAM allocation at boot.
+const MAX_SESSION_UUID_BYTES: u32 = 64;
 
 /// Filename for the operator-triggered camera capture. Single fixed
 /// name (no rotation) so each capture overwrites the previous —
@@ -367,6 +387,56 @@ where
     pub fn write_runtime(&mut self, rendered: &str) -> Result<(), StorageError> {
         self.write_file(RUNTIME_STAGING_FILE, rendered.as_bytes())?;
         self.copy_then_delete(RUNTIME_STAGING_FILE, RUNTIME_FILE)?;
+        Ok(())
+    }
+
+    /// Read `/sd/SESSION.UUID` as a trimmed UTF-8 string. Returns
+    /// `Ok(None)` if the file is absent — first-boot state, not an
+    /// error. Caller decides whether to generate + persist a fresh
+    /// identifier.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial / failed read,
+    /// [`StorageError::TooLarge`] if the file exceeds
+    /// [`MAX_SESSION_UUID_BYTES`], [`StorageError::NotUtf8`] if the
+    /// bytes don't decode as UTF-8.
+    pub fn read_session_uuid(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(SESSION_UUID_FILE, Mode::ReadOnly) else {
+            return Ok(None);
+        };
+        let len = file.length();
+        if len > MAX_SESSION_UUID_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = len as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        let text = alloc::string::String::from_utf8(buf).map_err(|_| StorageError::NotUtf8)?;
+        Ok(Some(text.trim().to_string()))
+    }
+
+    /// Atomically replace `/sd/SESSION.UUID` with `uuid`. Same staging
+    /// dance as [`Self::write_config`] so a mid-write power loss
+    /// preserves any prior identifier.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying write failure,
+    /// [`StorageError::TooLarge`] if `uuid` exceeds
+    /// [`MAX_SESSION_UUID_BYTES`].
+    pub fn write_session_uuid(&mut self, uuid: &str) -> Result<(), StorageError> {
+        if uuid.len() > MAX_SESSION_UUID_BYTES as usize {
+            return Err(StorageError::TooLarge);
+        }
+        self.write_file(SESSION_UUID_STAGING_FILE, uuid.as_bytes())?;
+        self.copy_then_delete(SESSION_UUID_STAGING_FILE, SESSION_UUID_FILE)?;
         Ok(())
     }
 

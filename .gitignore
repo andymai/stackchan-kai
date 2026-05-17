@@ -30,3 +30,11 @@ Cargo.lock.bak
 /target/xtensa-esp32s3-none-elf/
 *.elf
 *.bin
+
+# Python tooling caches (Python lives under sidecar/)
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/

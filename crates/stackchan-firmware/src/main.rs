@@ -1453,6 +1453,55 @@ async fn main(spawner: Spawner) -> ! {
         );
     }
 
+    // Per-device session identifier sent on every sidecar POST as
+    // `X-Session-Id`. Persisted as a canonical UUIDv4 in
+    // `/sd/SESSION.UUID` so the sidecar can scope conversation
+    // memory to this physical unit across reboots. First boot mints
+    // a fresh ID; SD-less boots get an ephemeral ID that rotates
+    // each cold start (degraded mode — the sidecar simply sees a
+    // new conversation each time).
+    let session_uuid: alloc::string::String = match storage::with_storage(
+        stackchan_firmware::storage::Storage::read_session_uuid,
+    )
+    .await
+    {
+        Some(Ok(Some(s))) if !s.is_empty() => {
+            defmt::info!("sidecar session: hydrated {=str}", s.as_str());
+            s
+        }
+        other => {
+            if let Some(Err(ref e)) = other {
+                defmt::warn!(
+                    "sidecar session: read /sd/SESSION.UUID failed ({}); minting fresh",
+                    e
+                );
+            }
+            let rng = Rng::new();
+            let mut bytes = [0_u8; 16];
+            for chunk in bytes.chunks_mut(4) {
+                chunk.copy_from_slice(&rng.random().to_le_bytes());
+            }
+            let minted = stackchan_firmware::agent_sidecar::format_uuid_v4(bytes);
+            match storage::with_storage(|s| s.write_session_uuid(&minted)).await {
+                Some(Ok(())) => {
+                    defmt::info!(
+                        "sidecar session: minted + persisted {=str}",
+                        minted.as_str()
+                    );
+                }
+                Some(Err(e)) => defmt::warn!(
+                    "sidecar session: persist failed ({}); ID will rotate next boot",
+                    e
+                ),
+                None => defmt::info!(
+                    "sidecar session: SD not mounted; ephemeral {=str}",
+                    minted.as_str()
+                ),
+            }
+            minted
+        }
+    };
+
     // Sidecar agent client — opt-in via
     // `behavior.agent_sidecar_url`. Empty URL parks the task; a
     // configured URL turns `POST /listen` into a PCM capture +
@@ -1462,6 +1511,8 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(e) = spawner.spawn(stackchan_firmware::agent_sidecar::agent_sidecar_task(
         net_stack,
         net_config.behavior.agent_sidecar_url.clone(),
+        net_config.behavior.agent_sidecar_token.clone(),
+        session_uuid.clone(),
     )) {
         defmt::panic!(
             "spawn(agent_sidecar_task) failed: {}",
