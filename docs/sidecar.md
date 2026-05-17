@@ -32,6 +32,22 @@ without a sidecar configured.
 Hostnames are not resolved. Use a raw IPv4 literal — same shape as
 `audio_debug_udp_target`. DNS support is a future extension.
 
+The dashboard's Settings panel exposes both fields directly — they
+round-trip through `PUT /settings` with the same `***` redaction
+semantics as the Wi-Fi PSK and the HTTP auth token.
+
+## Reference implementation
+
+A working sidecar lives in [`sidecar/`](../sidecar/README.md) in
+this repo: Python 3.12 + FastAPI, faster-whisper STT (or OpenAI
+Whisper / Deepgram), Anthropic Claude (or OpenAI / Ollama),
+per-`X-Session-Id` conversation memory, structured JSON logs, a
+`/healthz` probe, Dockerfile, and an example systemd unit. Operators
+who want a turnkey loop can `uv sync && uv run stackchan-sidecar`
+inside `sidecar/` and point `behavior.agent_sidecar_url` at it.
+Persona prompt lives at `sidecar/personas/stack-chan.md` — copy
+and edit for a different voice.
+
 `agent_sidecar_token` is the shared-secret bearer token presented
 to the sidecar as `Authorization: Bearer <token>` on every POST.
 Empty disables the header — only safe on a fully trusted LAN where
@@ -112,14 +128,15 @@ failure without an attached monitor:
 Full failure detail is logged via `defmt::warn!` over the
 USB-Serial-JTAG monitor.
 
-## Smoke-testing with curl + a minimal sidecar
+## Smoke-testing without a real LLM
 
-A trivial sidecar that echoes a canned reply, useful to verify the
-firmware's capture + POST + parse path end-to-end before plugging
-in a real LLM:
+The fastest way to verify the firmware's capture + POST + parse
+path end-to-end is the in-tree reference sidecar (see [Reference
+implementation](#reference-implementation)) pointed at a stub
+persona, but if you want to skip the Python toolchain entirely a
+6-line `nc` loop is enough:
 
 ```bash
-# python3 -m http.server doesn't accept POST; use a 6-line nc loop.
 while true; do
   printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"text":"hello from the sidecar","emotion":"happy"}' \
     | nc -lq 1 -p 8080
@@ -137,7 +154,9 @@ curl -X POST http://<device-ip>/listen \
 
 Within ~3.5 seconds the toast band should show
 `hello from the sidecar` and the avatar should hold a `Happy`
-emotion for ~2.5 s.
+emotion for ~2.5 s. The `nc` loop ignores `Authorization` and
+`X-Session-Id` — set both on the firmware side to whatever you
+want; nothing on the receiving end checks.
 
 ## What the firmware does *not* do
 
@@ -147,8 +166,10 @@ emotion for ~2.5 s.
 - No emotion vocabulary beyond the six canonical names. New
   emotion tags require a new `Emotion` enum variant in
   `stackchan-core`.
-- No conversation memory between requests. Each `POST /listen`
-  uploads a fresh capture; the sidecar owns any cross-turn state.
+- No conversation memory of its own. Each `POST /listen` uploads
+  a fresh one-shot capture; the sidecar is responsible for any
+  cross-turn state. `X-Session-Id` exists precisely so the sidecar
+  can scope that state to one physical device.
 - Capture windows open from one of three triggers: `POST /listen`,
   the MCP `start_listen` tool, or the on-device microWakeWord
   detector (opt-in via `behavior.wake_word_enabled` plus a
