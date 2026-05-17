@@ -11,6 +11,8 @@ export function Settings() {
   const [sntp, setSntp] = createSignal("");
   const [token, setToken] = createSignal("");
   const [tz, setTz] = createSignal("UTC");
+  const [sidecarUrl, setSidecarUrl] = createSignal("");
+  const [sidecarToken, setSidecarToken] = createSignal("");
 
   const load = async () => {
     try {
@@ -31,6 +33,8 @@ export function Settings() {
       setSntp(c.time.sntp_servers.join(", "));
       setToken(c.auth.token);
       setTz(c.time.tz);
+      setSidecarUrl(c.behavior.agent_sidecar_url);
+      setSidecarToken(c.behavior.agent_sidecar_token);
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), true);
     }
@@ -55,6 +59,11 @@ export function Settings() {
       }
       const fresh = (await freshRes.json()) as SettingsType;
       const audio = snapshot()?.audio ?? fresh.audio;
+      // Spread `fresh.behavior` / `fresh.esp_now` / `fresh.tracker` so
+      // fields edited elsewhere (Calibration, hand-edited STACKCHAN.RON,
+      // operator-set wake_word/chime flags, ESP-NOW peer config) survive
+      // a save through this form. Only the keys this form binds get
+      // overwritten; everything else round-trips untouched.
       const body: SettingsType = {
         wifi: { ssid: ssid(), psk: psk(), country: country().toUpperCase() },
         mdns: { hostname: hostname() },
@@ -68,6 +77,12 @@ export function Settings() {
         auth: { token: token() },
         audio,
         tracker: fresh.tracker,
+        esp_now: fresh.esp_now,
+        behavior: {
+          ...fresh.behavior,
+          agent_sidecar_url: sidecarUrl(),
+          agent_sidecar_token: sidecarToken(),
+        },
       };
       const newToken = body.auth.token;
       const res = await authedFetch("/settings", {
@@ -186,6 +201,26 @@ export function Settings() {
             onInput={(e) => setToken(e.currentTarget.value)}
           />
         </label>
+        <label>
+          Sidecar URL
+          <input
+            type="text"
+            autocomplete="off"
+            placeholder="http://192.168.1.42:8080/v1/listen"
+            value={sidecarUrl()}
+            onInput={(e) => setSidecarUrl(e.currentTarget.value)}
+          />
+        </label>
+        <label>
+          Sidecar bearer token
+          <input
+            type="password"
+            autocomplete="off"
+            placeholder="(cleared = no Authorization header)"
+            value={sidecarToken()}
+            onInput={(e) => setSidecarToken(e.currentTarget.value)}
+          />
+        </label>
         <div class="btn-row">
           <button type="submit">Save</button>
           <button type="button" onClick={load}>
@@ -196,11 +231,12 @@ export function Settings() {
           </button>
         </div>
         <small>
-          PSK and token show as <code>***</code> in GET and pre-fill into the form.
-          Submit unchanged to keep the current value, clear the field to disable
-          (open AP / auth off), or type a new value to overwrite. Download backup
-          calls GET /settings/backup, which is the one auth-gated read — restore
-          by pasting the file contents back into the form fields.
+          PSK, auth token, and sidecar bearer token show as <code>***</code> in
+          GET and pre-fill into the form. Submit unchanged to keep the current
+          value, clear the field to disable (open AP / auth off / no Authorization
+          header), or type a new value to overwrite. Download backup calls
+          GET /settings/backup, which is the one auth-gated read — restore by
+          pasting the file contents back into the form fields.
         </small>
       </form>
     </section>

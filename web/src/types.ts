@@ -63,6 +63,32 @@ export type Settings = {
   auth: { token: string };
   audio: AudioState;
   tracker: Tracker;
+  esp_now: EspNow;
+  behavior: Behavior;
+};
+
+export type EspNow = {
+  enabled: boolean;
+  pmk_hex: string;
+  peer_mac: string;
+  lmk_hex: string;
+  channel: number | null;
+  tx_rate_hz: number;
+};
+
+export type Behavior = {
+  soliloquy_enabled: boolean;
+  hourly_chime_enabled: boolean;
+  battery_icon_enabled: boolean;
+  toast_overlay_enabled: boolean;
+  auto_torque_release_ms: number;
+  audio_debug_udp_target: string;
+  agent_sidecar_url: string;
+  agent_sidecar_token: string;
+  follower_leader_hostname: string;
+  wake_word_enabled: boolean;
+  wake_word_threshold: number;
+  wake_word_arena_kib: number;
 };
 
 export type Imu = {
