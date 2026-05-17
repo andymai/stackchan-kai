@@ -130,4 +130,23 @@ pub enum ConfigError {
     /// the failure.
     #[error("behavior.wake_word_arena_kib must be >= 1; got 0")]
     InvalidWakeWordArenaKib,
+
+    /// `behavior.agent_sidecar_token` exceeded the per-request HTTP
+    /// header budget. The firmware's request-header buffer is sized
+    /// to absorb a long bearer secret plus the fixed `X-Session-Id`
+    /// line; tokens above this cap would silently fail every POST
+    /// with `HeaderTooLong`. Reject at validation time so the
+    /// operator sees the failure on `PUT /settings` instead of
+    /// after the next push-to-talk.
+    #[error("behavior.agent_sidecar_token must be <= 256 bytes; got {0}")]
+    AgentSidecarTokenTooLong(usize),
+
+    /// `behavior.agent_sidecar_token` contained an ASCII control
+    /// character (CR, LF, tab, NUL, …). Embedding `\r\n` in the
+    /// token would split the HTTP request header section and inject
+    /// an arbitrary header line into the upstream sidecar POST —
+    /// reject at validation time so the corrupt value never reaches
+    /// the wire.
+    #[error("behavior.agent_sidecar_token contains an ASCII control character")]
+    AgentSidecarTokenInvalidChars,
 }

@@ -610,6 +610,38 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
     if config.behavior.wake_word_arena_kib == 0 {
         return Err(ConfigError::InvalidWakeWordArenaKib);
     }
+    validate_agent_sidecar_token(&config.behavior.agent_sidecar_token)?;
+    Ok(())
+}
+
+/// Cap on the bearer-token byte length the firmware will accept.
+///
+/// The firmware sizes its per-request header buffer to absorb the
+/// baseline POST line + `Host` + `Content-Type` + `Content-Length` +
+/// `Connection: close` + the fixed-size `X-Session-Id` line, leaving
+/// ~256 bytes for the bearer token. Reject anything above that at
+/// config time so the operator gets immediate feedback instead of
+/// silent per-POST `HeaderTooLong` failures after a `PUT /settings`.
+const AGENT_SIDECAR_TOKEN_MAX_BYTES: usize = 256;
+
+/// Reject sidecar tokens that would corrupt or oversize the HTTP
+/// request.
+///
+/// Empty + the redaction sentinel (`"***"`) short-circuit — those
+/// are the documented "no auth" and "preserve current" wire
+/// markers. Otherwise the token must be ASCII-control-free (so it
+/// can't inject extra headers via embedded `\r\n`) and fit within
+/// [`AGENT_SIDECAR_TOKEN_MAX_BYTES`].
+fn validate_agent_sidecar_token(token: &str) -> Result<(), ConfigError> {
+    if token.is_empty() || token == "***" {
+        return Ok(());
+    }
+    if token.len() > AGENT_SIDECAR_TOKEN_MAX_BYTES {
+        return Err(ConfigError::AgentSidecarTokenTooLong(token.len()));
+    }
+    if token.chars().any(|c| c.is_ascii_control()) {
+        return Err(ConfigError::AgentSidecarTokenInvalidChars);
+    }
     Ok(())
 }
 
@@ -806,6 +838,38 @@ mod tests {
             validate(&c),
             Err(ConfigError::InvalidWakeWordArenaKib)
         ));
+    }
+
+    #[test]
+    fn validate_rejects_agent_sidecar_token_too_long() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.behavior.agent_sidecar_token = "x".repeat(AGENT_SIDECAR_TOKEN_MAX_BYTES + 1);
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::AgentSidecarTokenTooLong(_))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_agent_sidecar_token_with_crlf() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.behavior.agent_sidecar_token = "good-token\r\nX-Pwned: 1".to_string();
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::AgentSidecarTokenInvalidChars)
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_empty_or_redaction_sentinel_agent_sidecar_token() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.behavior.agent_sidecar_token = String::new();
+        assert!(validate(&c).is_ok());
+        c.behavior.agent_sidecar_token = "***".to_string();
+        assert!(validate(&c).is_ok());
     }
 
     #[test]

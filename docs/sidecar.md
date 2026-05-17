@@ -63,12 +63,14 @@ The firmware clamps capture at 30 s to keep PSRAM allocation
 bounded.
 
 `Authorization` is only sent when `agent_sidecar_token` is set.
-`X-Session-Id` is always sent — it carries a canonical UUIDv4 the
-firmware mints on first boot and persists to `/sd/SESSION.UUID`.
-Sidecars that care about multi-turn context key memory off this
-value; sidecars that don't can ignore it. Deleting the file
-rotates the identifier; copying it across SD cards preserves it.
-SD-less boots get a fresh ephemeral ID per cold start.
+`X-Session-Id` is sent on every healthy boot — it carries a
+canonical UUIDv4 the firmware mints on first boot and persists to
+`/sd/SESSION.UUID`. The send-side guard skips the header if the
+hydrated value is empty (it never is in practice). Sidecars that
+care about multi-turn context key memory off this value; sidecars
+that don't can ignore it. Deleting the file rotates the identifier;
+copying it across SD cards preserves it. SD-less boots get a fresh
+ephemeral ID per cold start.
 
 ### Response (sidecar → firmware)
 
