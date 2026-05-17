@@ -1,0 +1,48 @@
+name: Sidecar
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sidecar/**'
+      - '.github/workflows/sidecar.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sidecar/**'
+      - '.github/workflows/sidecar.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (ruff + mypy + pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sidecar
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'sidecar/uv.lock'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Mypy
+        run: uv run mypy .
+
+      - name: Pytest
+        run: uv run pytest
