@@ -56,6 +56,27 @@ pub static PTT_TRIGGER: Signal<CriticalSectionRawMutex, u32> = Signal::new();
 /// One frame is 20 ms at 16 kHz — see [`AUDIO_FRAME_SAMPLES`].
 const FRAME_MS: u64 = 20;
 
+/// Format 16 random bytes as a canonical RFC 4122 v4 UUID string
+/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`, lowercase hex).
+///
+/// Sets the version (4) nibble in byte 6 and the variant (10xx)
+/// nibble in byte 8 before serialising. The caller supplies the
+/// entropy — typically `esp_hal::rng::Rng` at boot — so this stays
+/// pure and host-testable.
+#[must_use]
+pub fn format_uuid_v4(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let mut out = String::with_capacity(36);
+    for (i, b) in bytes.iter().enumerate() {
+        let _ = write!(&mut out, "{b:02x}");
+        if matches!(i, 3 | 5 | 7 | 9) {
+            out.push('-');
+        }
+    }
+    out
+}
+
 /// TCP RX buffer for the sidecar socket. Headers + JSON response
 /// ride here; 2 KiB covers a typical OpenAI-Chat-Completions reply
 /// shape plus our `kai_emotion` extension with margin.
@@ -72,6 +93,13 @@ const TCP_TX_BYTES: usize = 4096;
 /// is malformed or hostile and we'd rather log + drop than blow
 /// stack or wait forever.
 const RESPONSE_MAX_BYTES: usize = 2048;
+
+/// Cap on the rendered request-header string. The baseline POST
+/// line plus `Host` / `Content-Type` / `Content-Length` /
+/// `Connection` fits well under 300 B; the headroom covers a long
+/// `Authorization: Bearer …` token (operator-supplied secret, up
+/// to ~256 chars) plus the fixed 36-char `X-Session-Id` value.
+const HEADER_CAPACITY: usize = 768;
 
 /// Cap on the captured PCM duration. Operator-driven windows beyond
 /// this are clamped — a 30 s upload at 16 kHz mono is ~960 KiB,
@@ -197,8 +225,21 @@ impl defmt::Format for PostError {
 ///
 /// `sidecar_url` is the operator-configured
 /// `behavior.agent_sidecar_url`. Empty / unparseable → park.
+///
+/// `bearer_token` is the operator-configured
+/// `behavior.agent_sidecar_token`. Empty disables the
+/// `Authorization: Bearer …` header (LAN-only mode).
+///
+/// `session_id` is the per-device identifier sent as `X-Session-Id`
+/// so the sidecar can scope conversation memory to this physical
+/// unit across requests. Hydrated at boot from `/sd/SESSION.UUID`.
 #[embassy_executor::task]
-pub async fn agent_sidecar_task(stack: Stack<'static>, sidecar_url: String) -> ! {
+pub async fn agent_sidecar_task(
+    stack: Stack<'static>,
+    sidecar_url: String,
+    bearer_token: String,
+    session_id: String,
+) -> ! {
     if sidecar_url.is_empty() {
         defmt::info!("agent-sidecar: url empty, idle");
         park_forever().await;
@@ -248,7 +289,15 @@ pub async fn agent_sidecar_task(stack: Stack<'static>, sidecar_url: String) -> !
 
         let outcome = embassy_time::with_timeout(
             Duration::from_millis(REQUEST_TIMEOUT_MS),
-            post_pcm(stack, &endpoint, &pcm, &mut rx_buf, &mut tx_buf),
+            post_pcm(
+                stack,
+                &endpoint,
+                &pcm,
+                &bearer_token,
+                &session_id,
+                &mut rx_buf,
+                &mut tx_buf,
+            ),
         )
         .await;
         apply_outcome(outcome);
@@ -369,6 +418,8 @@ async fn post_pcm(
     stack: Stack<'static>,
     endpoint: &SidecarEndpoint,
     pcm: &[i16],
+    bearer_token: &str,
+    session_id: &str,
     rx_buf: &mut [u8; TCP_RX_BYTES],
     tx_buf: &mut [u8; TCP_TX_BYTES],
 ) -> Result<(heapless::String<256>, Option<Emotion>), PostError> {
@@ -393,20 +444,30 @@ async fn post_pcm(
     })?;
 
     let body_len = pcm.len() * 2;
-    let mut header: heapless::String<512> = heapless::String::new();
+    let mut header: heapless::String<HEADER_CAPACITY> = heapless::String::new();
     write!(
         &mut header,
         "POST {} HTTP/1.1\r\n\
          Host: {}\r\n\
          Content-Type: audio/L16;rate=16000;channels=1\r\n\
          Content-Length: {}\r\n\
-         Connection: close\r\n\
-         \r\n",
+         Connection: close\r\n",
         endpoint.path.as_str(),
         endpoint.host_header.as_str(),
         body_len,
     )
     .map_err(|_| PostError::HeaderTooLong)?;
+    if !bearer_token.is_empty() {
+        write!(&mut header, "Authorization: Bearer {bearer_token}\r\n")
+            .map_err(|_| PostError::HeaderTooLong)?;
+    }
+    if !session_id.is_empty() {
+        write!(&mut header, "X-Session-Id: {session_id}\r\n")
+            .map_err(|_| PostError::HeaderTooLong)?;
+    }
+    header
+        .push_str("\r\n")
+        .map_err(|()| PostError::HeaderTooLong)?;
 
     socket
         .write_all(header.as_bytes())
@@ -650,5 +711,35 @@ mod tests {
             parse_http_response(raw),
             Err(PostError::BadStatus)
         ));
+    }
+
+    #[test]
+    fn format_uuid_v4_matches_canonical_layout() {
+        // Hyphen positions and the version/variant nibbles are
+        // load-bearing for downstream UUID parsers.
+        let bytes = [
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+            0xde, 0xf0,
+        ];
+        let uuid = format_uuid_v4(bytes);
+        assert_eq!(uuid.len(), 36);
+        assert_eq!(&uuid[14..15], "4", "version nibble must be 4");
+        let variant = uuid.as_bytes()[19];
+        assert!(
+            matches!(variant, b'8' | b'9' | b'a' | b'b'),
+            "variant nibble must be one of 8/9/a/b, got '{}'",
+            variant as char
+        );
+        for pos in [8, 13, 18, 23] {
+            assert_eq!(&uuid[pos..=pos], "-", "expected hyphen at position {pos}");
+        }
+    }
+
+    #[test]
+    fn format_uuid_v4_handles_zero_bytes() {
+        // All-zero entropy is the worst case: the formatter still
+        // has to inject the version + variant nibbles correctly.
+        let uuid = format_uuid_v4([0_u8; 16]);
+        assert_eq!(uuid, "00000000-0000-4000-8000-000000000000");
     }
 }

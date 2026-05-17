@@ -348,6 +348,14 @@ pub struct BehaviorConfig {
     /// `docs/sidecar.md`. Hostname-only URLs are not resolved —
     /// use a raw IPv4 literal (mirrors `audio_debug_udp_target`).
     pub agent_sidecar_url: String,
+    /// Shared-secret bearer token presented to the agent sidecar
+    /// as `Authorization: Bearer <token>` on every POST. Empty
+    /// disables the header — pick that only when the sidecar is on
+    /// a trusted LAN with no other reachable callers. Wire-redacted
+    /// in `GET /settings` exactly like `wifi.psk` and `auth.token`:
+    /// the `"***"` sentinel echoed back on `PUT /settings` preserves
+    /// the persisted value.
+    pub agent_sidecar_token: String,
     /// mDNS hostname of another Stack-chan to mimic, as the bare
     /// first label (`"kitchen-cat"`, not the fully-qualified
     /// `"kitchen-cat.local"`). Empty disables follower mode.
@@ -405,6 +413,7 @@ impl Default for BehaviorConfig {
             auto_torque_release_ms: 0,
             audio_debug_udp_target: String::new(),
             agent_sidecar_url: String::new(),
+            agent_sidecar_token: String::new(),
             follower_leader_hostname: String::new(),
             wake_word_enabled: false,
             wake_word_threshold: 100,

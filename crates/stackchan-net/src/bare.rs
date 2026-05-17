@@ -152,6 +152,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     );
     push_field(
         &mut out,
+        "        agent_sidecar_token",
+        &config.behavior.agent_sidecar_token,
+    );
+    push_field(
+        &mut out,
         "        follower_leader_hostname",
         &config.behavior.follower_leader_hostname,
     );
@@ -533,6 +538,7 @@ impl<'a> Parser<'a> {
         let mut auto_torque_release_ms: Option<u32> = None;
         let mut audio_debug_udp_target: Option<String> = None;
         let mut agent_sidecar_url: Option<String> = None;
+        let mut agent_sidecar_token: Option<String> = None;
         let mut follower_leader_hostname: Option<String> = None;
         let mut wake_word_enabled: Option<bool> = None;
         let mut wake_word_threshold: Option<i8> = None;
@@ -554,6 +560,7 @@ impl<'a> Parser<'a> {
                 "auto_torque_release_ms" => auto_torque_release_ms = Some(self.parse_u32()?),
                 "audio_debug_udp_target" => audio_debug_udp_target = Some(self.parse_string()?),
                 "agent_sidecar_url" => agent_sidecar_url = Some(self.parse_string()?),
+                "agent_sidecar_token" => agent_sidecar_token = Some(self.parse_string()?),
                 "follower_leader_hostname" => {
                     follower_leader_hostname = Some(self.parse_string()?);
                 }
@@ -575,6 +582,7 @@ impl<'a> Parser<'a> {
             auto_torque_release_ms: auto_torque_release_ms.unwrap_or(0),
             audio_debug_udp_target: audio_debug_udp_target.unwrap_or_default(),
             agent_sidecar_url: agent_sidecar_url.unwrap_or_default(),
+            agent_sidecar_token: agent_sidecar_token.unwrap_or_default(),
             follower_leader_hostname: follower_leader_hostname.unwrap_or_default(),
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
@@ -1025,6 +1033,23 @@ mod tests {
         let reparsed = parse_ron_bare(&rendered).unwrap();
         assert_eq!(cfg, reparsed);
         assert_eq!(reparsed.auth.token, "abc-123");
+    }
+
+    #[test]
+    fn round_trips_with_agent_sidecar_token() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                behavior: ( agent_sidecar_token: "sk-sidecar-1234" ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        let rendered = render_ron_bare(&cfg).unwrap();
+        let reparsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(cfg, reparsed);
+        assert_eq!(reparsed.behavior.agent_sidecar_token, "sk-sidecar-1234");
     }
 
     #[test]

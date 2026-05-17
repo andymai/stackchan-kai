@@ -13,11 +13,13 @@ URL.
 
 ## Enabling the agent
 
-Set `behavior.agent_sidecar_url` in `STACKCHAN.RON`:
+Set `behavior.agent_sidecar_url` (and optionally `behavior.agent_sidecar_token`)
+in `STACKCHAN.RON`:
 
 ```ron
 behavior: (
     agent_sidecar_url: "http://192.168.1.42:8080/v1/listen",
+    agent_sidecar_token: "sk-sidecar-shared-secret",
     // ...other behavior flags...
 )
 ```
@@ -30,6 +32,14 @@ without a sidecar configured.
 Hostnames are not resolved. Use a raw IPv4 literal — same shape as
 `audio_debug_udp_target`. DNS support is a future extension.
 
+`agent_sidecar_token` is the shared-secret bearer token presented
+to the sidecar as `Authorization: Bearer <token>` on every POST.
+Empty disables the header — only safe on a fully trusted LAN where
+no other host can reach the sidecar. The token is wire-redacted on
+`GET /settings` (echoed as `"***"`) and round-trips losslessly
+through `PUT /settings` when the operator submits the same
+sentinel.
+
 ## Wire protocol
 
 ### Request (firmware → sidecar)
@@ -40,6 +50,8 @@ Host: 192.168.1.42:8080
 Content-Type: audio/L16;rate=16000;channels=1
 Content-Length: <n>
 Connection: close
+Authorization: Bearer sk-sidecar-shared-secret
+X-Session-Id: 7f3c2a1d-9b40-4e8a-93f1-2bc6d4e1a7f0
 
 <n bytes of raw little-endian s16 PCM @ 16 kHz mono>
 ```
@@ -49,6 +61,14 @@ The capture window length is set by the `duration_ms` field of the
 Default is the same 3 000 ms the cosmetic listen modifier uses.
 The firmware clamps capture at 30 s to keep PSRAM allocation
 bounded.
+
+`Authorization` is only sent when `agent_sidecar_token` is set.
+`X-Session-Id` is always sent — it carries a canonical UUIDv4 the
+firmware mints on first boot and persists to `/sd/SESSION.UUID`.
+Sidecars that care about multi-turn context key memory off this
+value; sidecars that don't can ignore it. Deleting the file
+rotates the identifier; copying it across SD cards preserves it.
+SD-less boots get a fresh ephemeral ID per cold start.
 
 ### Response (sidecar → firmware)
 
