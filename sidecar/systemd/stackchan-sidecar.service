@@ -1,0 +1,16 @@
+[Unit]
+Description=stackchan-kai voice agent sidecar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Git/stackchan-kai/sidecar
+EnvironmentFile=%h/Git/stackchan-kai/sidecar/.env
+Environment=PATH=%h/Git/stackchan-kai/sidecar/.venv/bin
+ExecStart=%h/Git/stackchan-kai/sidecar/.venv/bin/python -m stackchan_sidecar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

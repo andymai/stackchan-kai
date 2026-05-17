@@ -44,8 +44,9 @@ def test_listen_happy_path(
     assert len(fake_stt.calls) == 1
     assert fake_stt.calls[0][1] == 16000
     assert len(fake_llm.calls) == 1
-    _, _, session_id = fake_llm.calls[0]
+    _, _, session_id, history = fake_llm.calls[0]
     assert session_id == "11111111-1111-4111-8111-111111111111"
+    assert history == []
 
 
 def test_listen_wrong_content_type(
@@ -133,6 +134,43 @@ def test_listen_persona_missing_returns_500(
         )
     assert r.status_code == 500
     assert "persona unavailable" in r.json()["detail"]
+
+
+def test_listen_records_session_history(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+    fake_llm: FakeLLM,
+) -> None:
+    sid = "33333333-3333-4333-8333-333333333333"
+    headers = {**auth_headers, "Content-Type": _AUDIO_CT, "X-Session-Id": sid}
+    r1 = client.post("/v1/listen", content=pcm_payload, headers=headers)
+    assert r1.status_code == 200
+    r2 = client.post("/v1/listen", content=pcm_payload, headers=headers)
+    assert r2.status_code == 200
+
+    assert len(fake_llm.calls) == 2
+    _, _, _, history_first = fake_llm.calls[0]
+    _, _, _, history_second = fake_llm.calls[1]
+    assert history_first == []
+    assert len(history_second) == 1
+    assert history_second[0].user == "hello stack chan"
+    assert history_second[0].assistant == "Hi friend! Lovely to meet you."
+    assert history_second[0].emotion is Emotion.HAPPY
+
+
+def test_listen_no_session_history_for_empty_session_id(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+    fake_llm: FakeLLM,
+) -> None:
+    headers = {**auth_headers, "Content-Type": _AUDIO_CT}
+    client.post("/v1/listen", content=pcm_payload, headers=headers)
+    client.post("/v1/listen", content=pcm_payload, headers=headers)
+    assert len(fake_llm.calls) == 2
+    assert fake_llm.calls[0][3] == []
+    assert fake_llm.calls[1][3] == []
 
 
 def test_listen_logs_session_id(

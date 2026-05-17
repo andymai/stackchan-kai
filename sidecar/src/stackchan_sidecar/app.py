@@ -1,5 +1,7 @@
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -9,6 +11,7 @@ from .auth import make_verifier
 from .config import Settings
 from .llm import SHORT_MAX, Emotion, LLMProvider
 from .personas import load_persona
+from .session_store import SessionStore, Turn, session_store_lifespan
 from .stt import STTProvider
 
 _LOG = logging.getLogger("stackchan_sidecar")
@@ -19,8 +22,16 @@ def create_app(
     settings: Settings,
     stt: STTProvider,
     llm: LLMProvider,
+    session_store: SessionStore | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="stackchan-sidecar", version="0.1.0")
+    store = session_store if session_store is not None else SessionStore()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        async with session_store_lifespan(app, store):
+            yield
+
+    app = FastAPI(title="stackchan-sidecar", version="0.1.0", lifespan=lifespan)
     verify_bearer = make_verifier(settings.bearer_token)
 
     @app.get("/healthz")
@@ -108,8 +119,9 @@ def create_app(
             transcript = await stt.transcribe(body, sample_rate=16000)
             stt_ms = int((time.perf_counter() - t_stt0) * 1000)
 
+            history = store.get_history(session_id)
             t_llm0 = time.perf_counter()
-            reply = await llm.reply(transcript, persona, session_id)
+            reply = await llm.reply(transcript, persona, session_id, history)
             llm_ms = int((time.perf_counter() - t_llm0) * 1000)
         except HTTPException:
             raise
@@ -130,6 +142,11 @@ def create_app(
         short = reply.short[:SHORT_MAX].replace('"', "'")
         emotion = reply.emotion if isinstance(reply.emotion, Emotion) else Emotion.NEUTRAL
         total_ms = int((time.perf_counter() - t0) * 1000)
+
+        store.record(
+            session_id,
+            Turn(user=transcript, assistant=reply.full, emotion=emotion),
+        )
 
         _LOG.info(
             "listen.ok",

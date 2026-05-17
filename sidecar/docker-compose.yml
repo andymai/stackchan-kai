@@ -1,0 +1,13 @@
+services:
+  sidecar:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    volumes:
+      - ./personas:/app/personas:ro
+      - hf-cache:/root/.cache/huggingface
+    restart: unless-stopped
+
+volumes:
+  hf-cache: {}

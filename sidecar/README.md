@@ -88,6 +88,58 @@ lines at the start of the file) — the sidecar strips it before sending the
 prompt to the model, so you can keep metadata next to the prompt without
 polluting it.
 
+## Provider selection
+
+Pick STT and LLM backends via `config.toml` (or env vars). Each provider has
+its own credential requirement.
+
+`stt_provider` — one of:
+
+- `faster_whisper` (default) — local CPU inference, no key required.
+- `openai` — OpenAI Whisper API. Requires `OPENAI_API_KEY`.
+- `deepgram` — Deepgram hosted STT. Requires `DEEPGRAM_API_KEY`.
+
+`llm_provider` — one of:
+
+- `anthropic` (default) — Claude via the Anthropic SDK. Requires `ANTHROPIC_API_KEY`.
+- `openai` — OpenAI chat completions with tool-use. Requires `OPENAI_API_KEY`.
+- `ollama` — local Ollama server. No key; uses `ollama_host` (default
+  `http://localhost:11434`). The model is instructed via system prompt to emit
+  a JSON object `{"short", "full", "emotion"}` rather than relying on tool-use,
+  which is still uneven across local models.
+
+`stt_model` and `llm_model` apply to whichever provider is selected.
+
+## Docker
+
+A multi-stage Dockerfile and a compose service for local dev:
+
+```bash
+docker compose up --build
+```
+
+`personas/` is bind-mounted read-only so you can edit prompts on the host
+without rebuilding. The HuggingFace model cache lives in a named volume
+(`hf-cache`) so faster-whisper weights survive container rebuilds.
+
+The runtime image installs `libsndfile1` for `faster-whisper`'s audio path,
+runs as a non-root `sidecar` user, and exposes `8080`.
+
+## systemd
+
+A user-service example lives at `systemd/stackchan-sidecar.service`. To
+install:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/stackchan-sidecar.service ~/.config/systemd/user/
+# edit paths inside the unit if your checkout is somewhere other than
+# ~/Git/stackchan-kai/sidecar
+systemctl --user daemon-reload
+systemctl --user enable --now stackchan-sidecar
+journalctl --user -u stackchan-sidecar -f
+```
+
 ## Quality gates
 
 ```bash
