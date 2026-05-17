@@ -2,6 +2,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+SHORT_MAX = 32
+"""Width of the firmware's toast band. The `Reply.short` field MUST fit."""
+
 
 class Emotion(StrEnum):
     NEUTRAL = "neutral"

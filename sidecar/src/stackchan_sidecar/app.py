@@ -7,13 +7,12 @@ from fastapi.responses import JSONResponse
 
 from .auth import make_verifier
 from .config import Settings
-from .llm import Emotion, LLMProvider
+from .llm import SHORT_MAX, Emotion, LLMProvider
 from .personas import load_persona
 from .stt import STTProvider
 
 _LOG = logging.getLogger("stackchan_sidecar")
 _MAX_BODY_BYTES = 30 * 16000 * 2 + 1024
-_SHORT_MAX = 32
 
 
 def create_app(
@@ -52,6 +51,20 @@ def create_app(
                 detail="expected Content-Type: audio/L16;rate=16000;channels=1",
             )
 
+        declared_length = request.headers.get("content-length")
+        if declared_length is not None:
+            try:
+                if int(declared_length) > _MAX_BODY_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=f"audio payload exceeds {_MAX_BODY_BYTES} bytes",
+                    )
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="invalid Content-Length header",
+                ) from e
+
         body = await request.body()
         if not body:
             _LOG.warning(
@@ -68,7 +81,7 @@ def create_app(
             )
         if len(body) > _MAX_BODY_BYTES:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f"audio payload exceeds {_MAX_BODY_BYTES} bytes",
             )
 
@@ -114,7 +127,7 @@ def create_app(
                 detail="internal error",
             ) from None
 
-        short = reply.short[:_SHORT_MAX].replace('"', "'")
+        short = reply.short[:SHORT_MAX].replace('"', "'")
         emotion = reply.emotion if isinstance(reply.emotion, Emotion) else Emotion.NEUTRAL
         total_ms = int((time.perf_counter() - t0) * 1000)
 

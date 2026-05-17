@@ -2,9 +2,7 @@ from typing import Any, cast
 
 import anthropic
 
-from . import Emotion, Reply
-
-_SHORT_MAX = 32
+from . import SHORT_MAX, Emotion, Reply
 
 _RESPOND_TOOL: dict[str, Any] = {
     "name": "respond",
@@ -18,7 +16,7 @@ _RESPOND_TOOL: dict[str, Any] = {
         "properties": {
             "short": {
                 "type": "string",
-                "maxLength": _SHORT_MAX,
+                "maxLength": SHORT_MAX,
                 "description": (
                     "Reply for the avatar's 32-char toast band — must fit. "
                     "No embedded double-quote characters."
@@ -80,6 +78,6 @@ def _parse_response(response: Any) -> Reply:
 
 def _sanitize_short(text: str) -> str:
     cleaned = text.replace('"', "'")
-    if len(cleaned) <= _SHORT_MAX:
+    if len(cleaned) <= SHORT_MAX:
         return cleaned
-    return cleaned[:_SHORT_MAX].rstrip()
+    return cleaned[:SHORT_MAX].rstrip()

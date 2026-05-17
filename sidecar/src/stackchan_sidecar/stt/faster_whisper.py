@@ -19,6 +19,6 @@ class FasterWhisperSTT:
             samples,
             language="en",
             beam_size=1,
-            vad_filter=False,
+            vad_filter=True,
         )
         return " ".join(seg.text.strip() for seg in segments).strip()

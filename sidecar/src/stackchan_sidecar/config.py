@@ -30,4 +30,9 @@ def load_settings() -> Settings:
             "SIDECAR_BEARER_TOKEN is not set. Refusing to start without a bearer "
             "token — set it in .env or the process environment."
         )
+    if not settings.anthropic_api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. Refusing to start without an Anthropic "
+            "API key — set it in .env or the process environment."
+        )
     return settings
