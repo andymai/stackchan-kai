@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from stackchan_sidecar.app import create_app
 from stackchan_sidecar.config import Settings
 from stackchan_sidecar.llm import Emotion, Reply
+from stackchan_sidecar.session_store import Turn
 
 TEST_TOKEN = "test-token-do-not-use-in-prod"
 
@@ -28,10 +29,16 @@ class FakeLLM:
             full="Hi friend! Lovely to meet you.",
             emotion=Emotion.HAPPY,
         )
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, list[Turn]]] = []
 
-    async def reply(self, transcript: str, persona: str, session_id: str) -> Reply:
-        self.calls.append((transcript, persona, session_id))
+    async def reply(
+        self,
+        transcript: str,
+        persona: str,
+        session_id: str,
+        history: list[Turn] | None = None,
+    ) -> Reply:
+        self.calls.append((transcript, persona, session_id, list(history or [])))
         return self.reply_value
 
 

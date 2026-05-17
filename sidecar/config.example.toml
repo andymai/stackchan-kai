@@ -5,3 +5,7 @@ llm_model = "claude-haiku-4-5"
 persona = "stack-chan"
 personas_dir = "./personas"
 log_level = "INFO"
+
+stt_provider = "faster_whisper"
+llm_provider = "anthropic"
+ollama_host = "http://localhost:11434"
