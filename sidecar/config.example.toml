@@ -1,0 +1,7 @@
+host = "0.0.0.0"
+port = 8080
+stt_model = "base.en"
+llm_model = "claude-haiku-4-5"
+persona = "stack-chan"
+personas_dir = "./personas"
+log_level = "INFO"
