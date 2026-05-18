@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.90.0...stackchan-firmware-v0.91.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** buddy command-surface — status / owner / unpair / turn ([#374](https://github.com/andymai/stackchan-kai/issues/374)) ([dc7140c](https://github.com/andymai/stackchan-kai/commit/dc7140c95249cf6203cf8aea76c3d63ef9fc5e71))
+
 ## [0.90.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.89.0...stackchan-firmware-v0.90.0) (2026-05-18)
 
 
