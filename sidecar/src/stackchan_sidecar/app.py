@@ -20,6 +20,7 @@ from .errors import (
 from .llm import Emotion, LLMProvider, sanitize_short
 from .personas import load_persona
 from .retry import StageDeadlineError, retry_with_timeout
+from .session_status import SessionStatus
 from .session_store import SessionStore, Turn, session_store_lifespan
 from .stt import STTProvider
 
@@ -36,6 +37,7 @@ def _failure(
     request_id: str,
     session_id: str,
     status: int,
+    session_status: SessionStatus | None = None,
     extra: dict[str, object] | None = None,
 ) -> JSONResponse:
     kind = failure_kind(code)
@@ -49,10 +51,19 @@ def _failure(
     if extra:
         log_extra.update(extra)
     _LOG.warning("listen.fail", extra=log_extra)
+    if session_status is not None:
+        session_status.mark_failed(
+            request_id=request_id,
+            session_id=session_id,
+            error=kind.code.value,
+        )
     return JSONResponse(build_envelope(kind), status_code=status)
 
 
 def _audio_failure(code: ErrorCode, *, request_id: str, session_id: str) -> JSONResponse:
+    # Pre-flight validation failures (bad content type, body size) happen
+    # before `mark_thinking` — the state machine never entered "thinking"
+    # for this request, so we don't poke session_status here.
     return _failure(
         code,
         request_id=request_id,
@@ -86,6 +97,8 @@ def create_app(
             yield
 
     app = FastAPI(title="stackchan-sidecar", version="0.1.0", lifespan=lifespan)
+    session_status = SessionStatus()
+    app.state.session_status = session_status
     verify_bearer = make_verifier(settings.bearer_token)
     register_companion(app, settings)
 
@@ -137,6 +150,8 @@ def create_app(
                 ErrorCode.AUDIO_TOO_SMALL, request_id=request_id, session_id=session_id
             )
 
+        session_status.mark_thinking(request_id=request_id, session_id=session_id)
+
         t0 = time.perf_counter()
         deadline = time.monotonic() + settings.total_timeout_seconds
 
@@ -157,6 +172,7 @@ def create_app(
                 request_id=request_id,
                 session_id=session_id,
                 status=500,
+                session_status=session_status,
                 extra={"persona": settings.persona},
             )
 
@@ -176,6 +192,7 @@ def create_app(
                 request_id=request_id,
                 session_id=session_id,
                 status=200,
+                session_status=session_status,
             )
         except Exception:
             _LOG.exception(
@@ -187,6 +204,7 @@ def create_app(
                 request_id=request_id,
                 session_id=session_id,
                 status=200,
+                session_status=session_status,
             )
         stt_ms = int((time.perf_counter() - t_stt0) * 1000)
 
@@ -207,6 +225,7 @@ def create_app(
                 request_id=request_id,
                 session_id=session_id,
                 status=200,
+                session_status=session_status,
             )
         except ValueError:
             _LOG.exception(
@@ -218,6 +237,7 @@ def create_app(
                 request_id=request_id,
                 session_id=session_id,
                 status=200,
+                session_status=session_status,
             )
         except Exception:
             _LOG.exception(
@@ -229,6 +249,7 @@ def create_app(
                 request_id=request_id,
                 session_id=session_id,
                 status=200,
+                session_status=session_status,
             )
         llm_ms = int((time.perf_counter() - t_llm0) * 1000)
 
@@ -239,6 +260,14 @@ def create_app(
         store.record(
             session_id,
             Turn(user=transcript, assistant=reply.full, emotion=emotion),
+        )
+
+        session_status.mark_done(
+            request_id=request_id,
+            session_id=session_id,
+            transcript=transcript,
+            reply_short=short,
+            emotion=emotion.value,
         )
 
         _LOG.info(
