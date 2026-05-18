@@ -163,6 +163,12 @@ impl RemoteCommandModifier {
                 // tick.
                 entity.voice.chirp_request = Some(ChirpKind::Wake);
                 self.listen_hold = Some((now, until));
+                // A stale thinking hold from a previous round-trip
+                // (e.g. one that timed out before the operator's hand
+                // landed on PTT again) would otherwise stomp this
+                // fresh Listening attention every tick. Symmetric
+                // with `EnterThinking` clearing `listen_hold` above.
+                self.thinking_hold = None;
             }
             RemoteCommand::EnterPairing { duration_ms } => {
                 let until = now + u64::from(duration_ms);
@@ -181,6 +187,19 @@ impl RemoteCommandModifier {
                 // listen hold — the listen capture has ended, the
                 // round-trip is now the thing we're showing.
                 self.listen_hold = None;
+            }
+            RemoteCommand::ExitThinking => {
+                // Off-path cleanup: a successful reply with no emotion
+                // tag, a POST failure, or a timeout. Drop the hold and,
+                // if attention is still our Thinking, release the slot
+                // so `DecoratorExpiry`'s tail can fade the bubble.
+                // Same release-guard as the hold-expiry branch in
+                // `update` — don't stomp a foreign Thinking attention.
+                if let Some((since, _)) = self.thinking_hold.take()
+                    && matches!(entity.mind.attention, Attention::Thinking { since: s } if s == since)
+                {
+                    entity.mind.attention = Attention::None;
+                }
             }
         }
     }
@@ -790,5 +809,70 @@ mod tests {
         // Subsequent ticks do not resurrect Thinking.
         step(&mut m, &mut entity, 500);
         assert_eq!(entity.mind.attention, Attention::None);
+    }
+
+    #[test]
+    fn exit_thinking_clears_attention_without_touching_emotion() {
+        // Off-path cleanup: a no-emotion success or a failure path
+        // fires ExitThinking. The operator's existing emotion hold
+        // (set via dashboard) must survive — only the thinking slot
+        // is released.
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::SetEmotion {
+            emotion: Emotion::Happy,
+            hold_ms: 60_000,
+        });
+        step(&mut m, &mut entity, 0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 15_000 });
+        step(&mut m, &mut entity, 100);
+
+        entity.input.remote_command = Some(RemoteCommand::ExitThinking);
+        step(&mut m, &mut entity, 200);
+        assert_eq!(entity.mind.attention, Attention::None);
+        // Operator's emotion hold from t=0 survives the off-path clear.
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        assert_eq!(
+            entity.mind.autonomy.source,
+            Some(OverrideSource::Remote),
+            "emotion override must remain after ExitThinking"
+        );
+
+        // No resurrection on subsequent ticks.
+        step(&mut m, &mut entity, 500);
+        assert_eq!(entity.mind.attention, Attention::None);
+    }
+
+    #[test]
+    fn exit_thinking_is_noop_when_no_thinking_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::ExitThinking);
+        step(&mut m, &mut entity, 0);
+        assert_eq!(entity.mind.attention, Attention::None);
+    }
+
+    #[test]
+    fn start_listen_clears_stale_thinking_hold() {
+        // Scenario: the prior round-trip timed out and left
+        // thinking_hold live. The operator hits PTT again before the
+        // 15s hold expires. The new Listening capture must read as
+        // Ear, not as a stomped-thought-bubble.
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 15_000 });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Thinking { .. }));
+
+        // Fresh PTT mid-thinking-hold.
+        entity.input.remote_command = Some(RemoteCommand::StartListen { duration_ms: 3_000 });
+        step(&mut m, &mut entity, 5_000);
+        assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
+
+        // The next tick must not resurrect Thinking from the stale
+        // hold — symmetric with the supersede check that EnterThinking
+        // does on listen_hold.
+        step(&mut m, &mut entity, 5_100);
+        assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
     }
 }

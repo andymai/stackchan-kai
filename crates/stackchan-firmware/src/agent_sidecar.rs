@@ -413,11 +413,19 @@ fn apply_outcome(
                     emotion: e,
                     hold_ms: 2_500,
                 });
+            } else {
+                // Reply landed but the sidecar declined to tag an
+                // emotion — `SetEmotion`'s thinking-clear side effect
+                // would have run otherwise. Fall back to an explicit
+                // clear so the thought-bubble fades with the toast
+                // instead of lingering for the full request timeout.
+                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
             }
         }
         Ok(Err(e)) => {
             defmt::warn!("agent-sidecar: POST failed ({:?})", e);
             toast_warn("sidecar: post failed");
+            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
         }
         Err(_) => {
             defmt::warn!(
@@ -425,6 +433,7 @@ fn apply_outcome(
                 REQUEST_TIMEOUT_MS
             );
             toast_warn("sidecar: timed out");
+            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
         }
     }
 }

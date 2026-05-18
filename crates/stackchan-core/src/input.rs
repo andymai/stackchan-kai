@@ -132,6 +132,21 @@ pub enum RemoteCommand {
         /// doesn't leave the thought-bubble showing forever.
         hold_ms: u32,
     },
+    /// Release any active thinking hold without touching emotion.
+    ///
+    /// Producer: the firmware sidecar-agent task on every code path
+    /// that closes a round-trip but does not fire
+    /// [`Self::SetEmotion`] — a successful reply that carries no
+    /// `emotion` tag, a POST failure, or a request timeout. The
+    /// common case (reply carries an emotion) already clears the
+    /// thinking hold via [`Self::SetEmotion`]'s side effect, so this
+    /// variant is only fired on the off-paths.
+    ///
+    /// Distinct from [`Self::Reset`] in that it leaves the operator's
+    /// active emotion / look-at holds intact — only the thinking
+    /// hold and the corresponding [`crate::Attention::Thinking`]
+    /// attention slot are released.
+    ExitThinking,
 }
 
 /// Pending inputs the modifier graph consumes.
