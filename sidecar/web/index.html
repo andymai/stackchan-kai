@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stack-chan · Companion</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+      <aside id="hud">
+        <div class="row">
+          <span class="hud-label">LINK</span>
+          <span id="hud-link" class="hud-value">linking…</span>
+        </div>
+        <div class="row">
+          <span class="hud-label">EMOTION</span>
+          <span id="hud-emotion" class="hud-value">—</span>
+        </div>
+        <div class="row">
+          <span class="hud-label">POSE</span>
+          <span id="hud-pose" class="hud-value">—</span>
+        </div>
+        <div class="row">
+          <span class="hud-label">BATTERY</span>
+          <span id="hud-battery" class="hud-value">—</span>
+        </div>
+        <div class="row">
+          <span class="hud-label">WIFI</span>
+          <span id="hud-wifi" class="hud-value">—</span>
+        </div>
+      </aside>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .auth import make_verifier
+from .companion import register_companion
 from .config import Settings
 from .errors import (
     ErrorCode,
@@ -86,6 +87,7 @@ def create_app(
 
     app = FastAPI(title="stackchan-sidecar", version="0.1.0", lifespan=lifespan)
     verify_bearer = make_verifier(settings.bearer_token)
+    register_companion(app, settings)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, object]:
