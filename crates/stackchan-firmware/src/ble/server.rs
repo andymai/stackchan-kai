@@ -1162,13 +1162,6 @@ async fn handle_blufi_frame<P: PacketPool>(
     }
 }
 
-/// Build a `BluFi` frame with the next outbound sequence, copy it into
-/// a [`HVec`] sized to the notify characteristic, and notify the
-/// central. `set` updates the GATT table value so a central that
-/// reads instead of subscribing sees the latest status.
-///
-/// Notify failures are logged at `trace` because pre-subscribe writes
-/// race the central's CCCD subscription — the most common cause is
 /// Render a desktop [`Outbound`] message + trailing newline and emit
 /// it on the NUS TX characteristic. Payloads larger than
 /// [`NUS_FRAME_BUF`] are split into consecutive notify operations;
@@ -1541,7 +1534,8 @@ async fn notify_task<P: PacketPool>(
         // `Disconnected` arm, which terminates the outer
         // `select(events, notify)`. Returning here on every error
         // would race that path and end the connection on the first
-        // pre-subscription tick — the Greptile P2.
+        // pre-subscription tick — see the comment above for the
+        // rationale.
         if let Err(e) = battery_handle.notify(conn, &battery_pct).await {
             defmt::trace!(
                 "ble: battery notify skipped ({}) — peer not subscribed?",
