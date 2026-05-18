@@ -71,8 +71,8 @@ shape as the Wi-Fi PSK and the dashboard auth token.
 
 ### Reference sidecar
 
-The repo's [`sidecar/`](https://github.com/andymai/stackchan-kai/tree/main/sidecar)
-directory carries a working implementation: Python 3.12 + FastAPI,
+The repo's [`sidecar/`](../sidecar/README.md) directory carries a
+working implementation: Python 3.12 + FastAPI,
 faster-whisper for STT, configurable LLM backend (Anthropic, OpenAI,
 or Ollama), per-`X-Session-Id` conversation memory, structured JSON
 logs, `/healthz` probe, Dockerfile, and an example systemd unit.
@@ -143,6 +143,11 @@ When the model fires, the log line is `wake-word: fired (score=…)`.
 
 Smoke-test the sidecar leg first — it removes a moving part.
 
+`$HTTP_TOKEN` below is the device-level bearer token configured as
+`auth.token` in `STACKCHAN.RON` (distinct from `agent_sidecar_token`,
+which the firmware presents to the sidecar). Drop the
+`Authorization` header entirely if `auth.token` is empty.
+
 ```sh
 curl -H "Authorization: Bearer $HTTP_TOKEN" \
      -H "Content-Type: application/json" \
@@ -175,7 +180,7 @@ back-to-back triggers within that window are suppressed silently.
 | Wake fires constantly on ambient noise | Raise `wake_word_threshold` (try 110 → 120 in steps). |
 | Wake never fires on real utterances | Lower `wake_word_threshold` (try 90 → 80 in steps). |
 | `sidecar: link down` toast | Wi-Fi disconnected between the wake fire and the POST. Check the dashboard's network status. |
-| `sidecar: post failed` toast | Sidecar unreachable, returned non-2xx, or replied with malformed JSON. Try `curl`ing the sidecar's `/healthz` directly. |
+| `sidecar: post failed` toast | Sidecar unreachable, returned non-2xx, replied with malformed JSON, or the JSON body has no `text` field. Try `curl`ing the sidecar's `/healthz` directly and confirm the response includes a top-level `"text": "..."` key. |
 | `sidecar: timed out` toast | Sidecar took longer than 15 s. Almost always means the LLM call upstream is slow; the firmware bound is fixed. |
 | Avatar visibly listens but the reply never renders | Sidecar returned a 2xx but the body has no `text` field. The firmware drops the exchange and surfaces `sidecar: post failed`. |
 | Audio capture sounds wrong / silent | Use the [UDP audio debug](audio-debug.md) stream to verify the microphone path independently of the sidecar. |

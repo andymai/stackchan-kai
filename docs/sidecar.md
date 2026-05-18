@@ -4,7 +4,7 @@ title: Sidecar agent — push-to-talk + HTTP client
 
 # Sidecar agent
 
-> **Looking for setup?** [`docs/voice.md`](voice.md) is the
+> **Looking for setup?** [`voice.md`](voice.md) is the
 > onboarding flow that covers wake word, sidecar config, and the
 > on-device loop end-to-end. This page focuses on the wire protocol
 > the firmware speaks to the sidecar.
