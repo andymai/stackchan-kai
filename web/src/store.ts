@@ -6,18 +6,27 @@ export type ConnState = "connecting" | "ok" | "bad";
 export const [snapshot, setSnapshot] = createSignal<AvatarSnapshot | null>(null);
 export const [conn, setConn] = createSignal<ConnState>("connecting");
 
-export type Toast = { msg: string; bad: boolean; id: number } | null;
-const [toastVal, setToastVal] = createSignal<Toast>(null);
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
+export type Toast = { msg: string; bad: boolean; id: number };
+const [toastList, setToastList] = createSignal<readonly Toast[]>([]);
 let toastSeq = 0;
 
-export const toast = toastVal;
+const MAX_TOASTS = 3;
+const TOAST_TTL_MS = 2800;
+
+export const toasts = toastList;
 
 export function showToast(msg: string, bad = false): void {
   toastSeq += 1;
-  setToastVal({ msg, bad, id: toastSeq });
-  if (toastTimer != null) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => setToastVal(null), 2500);
+  const id = toastSeq;
+  setToastList((curr) => {
+    const next = [...curr, { msg, bad, id }];
+    // Drop oldest if we've stacked beyond the cap so the screen doesn't
+    // fill up during a burst of failures.
+    return next.length > MAX_TOASTS ? next.slice(next.length - MAX_TOASTS) : next;
+  });
+  setTimeout(() => {
+    setToastList((curr) => curr.filter((t) => t.id !== id));
+  }, TOAST_TTL_MS);
 }
 
 // Rolling window of SSE samples. ~2 min at the firmware's ~1 Hz cadence;

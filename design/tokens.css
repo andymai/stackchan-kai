@@ -1,0 +1,170 @@
+/*
+ * Shared design tokens for the operator dashboard (web/) and the 3D
+ * companion (sidecar/web/). Both Vite bundles `@import` this file from
+ * their respective styles.css so a single bump propagates across
+ * surfaces.
+ *
+ * The palette is rooted in Stack-chan's physical avatar (defined in
+ * crates/stackchan-core/src/palette.rs): white face background, black
+ * eyes, coral cheek + mouth. The chassis derives from the CoreS3's
+ * dark ABS plastic.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ─── Surface palette (dark; CoreS3 chassis DNA) ─────────────── */
+  --bg: #0d1014;
+  --bg-grid: rgba(255, 255, 255, 0.018);
+  --surface: #151a21;
+  --surface-2: #1c222b;
+  --surface-3: #232a34;
+
+  --border: #262d36;
+  --border-strong: #3a424d;
+
+  /* ─── Foreground (warm face-white DNA) ───────────────────────── */
+  --fg: #f4f4eb;
+  --fg-soft: #c8ccc3;
+  --fg-muted: #8a9099;
+  --fg-faint: #5a6068;
+
+  /* ─── Accent — Stack-chan coral cheek ────────────────────────── */
+  --accent: #f08080;
+  --accent-hi: #ff9c9c;
+  --accent-soft: rgba(240, 128, 128, 0.14);
+  --accent-line: rgba(240, 128, 128, 0.35);
+
+  /* ─── Status semantics ───────────────────────────────────────── */
+  --ok: #5fc88f;
+  --warn: #e6a155;
+  --bad: #e2625a;
+
+  /* ─── Face DNA (used in glyphs + 3D scene) ──────────────────── */
+  --face-bg: #f6f3e8;
+  --face-fg: #0d1014;
+  --face-accent: #f08080;
+
+  /* ─── Typography ─────────────────────────────────────────────── */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Roboto Mono", monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Modular scale rooted at 14 px body (1.143 ratio). */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-base: 1.5;
+
+  --tracking-tight: 0.2px;
+  --tracking-base: 0.4px;
+  --tracking-wide: 1.2px;
+  --tracking-wider: 1.6px;
+
+  /* ─── Spacing (4 px base, 8-step) ────────────────────────────── */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+
+  /* ─── Radii ─────────────────────────────────────────────────── */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  /* ─── Motion ────────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --transition-instant: 60ms var(--ease);
+  --transition-fast: 100ms var(--ease);
+  --transition-base: 180ms var(--ease);
+  --transition-slow: 320ms var(--ease);
+
+  /* ─── Elevation ─────────────────────────────────────────────── */
+  --shadow-pop: 0 1px 0 rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 6px 16px rgba(0, 0, 0, 0.32);
+  --shadow-deep: 0 12px 28px rgba(0, 0, 0, 0.48);
+
+  /* ─── Focus ring ────────────────────────────────────────────── */
+  --focus-ring: 2px solid var(--accent);
+  --focus-offset: 2px;
+
+  /* ─── Z-index ───────────────────────────────────────────────── */
+  --z-sticky: 10;
+  --z-toast: 50;
+  --z-overlay: 200;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f3f1e9;
+    --bg-grid: rgba(0, 0, 0, 0.02);
+    --surface: #fdfcf6;
+    --surface-2: #f6f4ea;
+    --surface-3: #ebe8da;
+    --border: #d5d1c1;
+    --border-strong: #b7b29e;
+    --fg: #1a1d22;
+    --fg-soft: #2c3138;
+    --fg-muted: #5d6470;
+    --fg-faint: #8a8f97;
+    --accent: #d65a5a;
+    --accent-hi: #b94545;
+    --accent-soft: rgba(214, 90, 90, 0.12);
+    --accent-line: rgba(214, 90, 90, 0.4);
+    --ok: #2f9a64;
+    --warn: #9d6420;
+    --bad: #b04438;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-instant: 0s;
+    --transition-fast: 0s;
+    --transition-base: 0s;
+    --transition-slow: 0s;
+  }
+
+  /*
+   * Anything that uses animation-name (link-pulse, thinking-dot,
+   * sparkline draw-in) must respect this too. Reduced-motion users
+   * still get state changes but no oscillation.
+   */
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── Visually-hidden helper for screen-reader-only labels ────── */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

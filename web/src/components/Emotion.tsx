@@ -47,7 +47,12 @@ export function Emotion() {
             </button>
           )}
         </For>
-        <button onClick={resetEmotion} style="margin-left:auto" data-shortcut="reset">
+        <button
+          class="btn-primary"
+          style="margin-left:auto"
+          onClick={resetEmotion}
+          data-shortcut="reset"
+        >
           Reset
         </button>
       </div>

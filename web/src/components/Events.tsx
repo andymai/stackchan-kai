@@ -43,7 +43,15 @@ export function Events() {
   return (
     <section>
       <h2>Events</h2>
-      <Show when={data()} fallback={<small>waiting for first poll…</small>}>
+      <Show
+        when={data()}
+        fallback={
+          <div class="empty">
+            <div class="empty-title">No events yet</div>
+            <small>/events polls every 3 s.</small>
+          </div>
+        }
+      >
         {(s) => (
           <>
             <div class="tl-head">

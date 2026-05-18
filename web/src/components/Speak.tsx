@@ -19,13 +19,18 @@ const LOCALES = ["en", "ja"] as const;
 export function Speak() {
   const [phrase, setPhrase] = createSignal<(typeof PHRASES)[number]>("greeting");
   const [locale, setLocale] = createSignal<(typeof LOCALES)[number]>("en");
+  const [busy, setBusy] = createSignal(false);
 
   const send = async () => {
+    if (busy()) return;
+    setBusy(true);
     try {
       await postJson("/speak", { phrase: phrase(), locale: locale() });
       showToast(`speak ${phrase()} (${locale()})`);
     } catch (e) {
       showToast((e as Error).message, true);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -63,7 +68,14 @@ export function Speak() {
         </label>
       </div>
       <div class="btn-row" style="margin-top:8px">
-        <button type="button" onClick={send}>
+        <button
+          type="button"
+          class="btn-primary"
+          classList={{ "is-loading": busy() }}
+          aria-busy={busy()}
+          aria-disabled={busy()}
+          onClick={send}
+        >
           Speak
         </button>
       </div>

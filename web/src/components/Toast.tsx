@@ -1,14 +1,16 @@
-import { Show } from "solid-js";
-import { toast } from "../store";
+import { For } from "solid-js";
+import { toasts } from "../store";
 
 export function Toast() {
   return (
-    <Show when={toast()}>
-      {(t) => (
-        <div class={`toast show${t().bad ? " bad" : ""}`} role="status">
-          {t().msg}
-        </div>
-      )}
-    </Show>
+    <div class="toast-stack" role="status" aria-live="polite" aria-atomic="false">
+      <For each={toasts()}>
+        {(t) => (
+          <div class={`toast show${t.bad ? " bad" : ""}`} role={t.bad ? "alert" : undefined}>
+            {t.msg}
+          </div>
+        )}
+      </For>
+    </div>
   );
 }
