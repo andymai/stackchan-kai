@@ -34,20 +34,33 @@ locally at `http://localhost:5173/` against live firmware.
 ```
 src/
   main.tsx                  - entry, mounts <App />
-  App.tsx                   - top-level layout
-  styles.css                - CSS variables (light/dark), section + button styling
+  App.tsx                   - shell: Sidebar + StatusBar + section pages + hotkeys
+  nav.ts                    - section ids, hash-router signal, nav metadata
+  styles.css                - tactical theme (Stack-chan physical DNA), sidebar + status bar
   types.ts                  - AvatarSnapshot / Settings shapes
   auth.ts                   - localStorage Bearer token + authedFetch wrapper
   store.ts                  - Solid signals: snapshot, conn, toast
   components/
-    ConnStatus.tsx          - SSE connection dot
-    State.tsx               - emotion / pose / battery / wifi
-    Emotion.tsx             - 6-button presets + reset
+    Sidebar.tsx             - section nav, brand, link status
+    StatusBar.tsx           - sticky telemetry strip (face + emotion + pose + battery + wifi + audio)
+    FaceGlyph.tsx           - schematic SVG mirroring the LCD face from /state
+    ConnStatus.tsx          - SSE connection dot (legacy, now also in Sidebar foot)
+    State.tsx               - Status page detail rows
+    Emotion.tsx             - emotion presets + hold + reset
     LookAt.tsx              - pan/tilt sliders
     Audio.tsx               - volume + mute, debounced
     Settings.tsx            - GET/PUT /settings form
     Toast.tsx               - transient feedback strip
 ```
+
+## Navigation
+
+Sections are grouped by subsystem and routed via `location.hash` (e.g.
+`#motion`). The sidebar reflects + drives section state; on mobile the rail
+collapses to a horizontal scrolling strip.
+
+Hotkeys: `1-9 0 q w e` set emotion, `r` resets, `m` toggles mute, `g <s/b/m/v/y/d/c>`
+jumps between sections, `?` opens the shortcut overlay, `Esc` closes.
 
 ## Output
 
