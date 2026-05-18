@@ -108,9 +108,11 @@ round-trips between the SD-card RON file and the HTTP `/settings`
 JSON.
 
 In parallel, the device advertises a BLE peripheral named
-`stackchan-XXXXXX` (last three MAC bytes) so a phone or laptop on the
-same physical radio can read state and drive the firmware without
-joining the LAN. Services exposed: Device Information (`0x180A` —
+`Claude stk-XXXXXX` (last three MAC bytes) so a phone or laptop on
+the same physical radio can read state and drive the firmware
+without joining the LAN. The `Claude ` prefix is required for
+Claude Desktop's Hardware Buddy picker to filter the device in; the
+mDNS hostname is configured separately and unaffected. Services exposed: Device Information (`0x180A` —
 manufacturer / model / firmware revision), Battery (`0x180F`), a
 Stack-chan custom service for emotion read+notify, a Wi-Fi
 provisioning service for SSID + PSK writes, an audio service

@@ -1577,10 +1577,16 @@ async fn main(spawner: Spawner) -> ! {
     let ble_name: &'static str = {
         use core::fmt::Write as _;
         let mut s: heapless::String<32> = heapless::String::new();
-        // 16 bytes total — well under the 22-byte BLE GAP-name cap.
+        // Must start with `Claude` so Claude Desktop's Hardware
+        // Buddy picker filters us in. `Claude stk-XXXXXX` is 17
+        // bytes — comfortably under the 22-byte BLE GAP-name cap
+        // and leaves headroom for an operator-supplied display
+        // name in a later slice. The mDNS hostname stays
+        // `stackchan-…` separately so LAN-side discovery isn't
+        // affected.
         if let Err(e) = write!(
             &mut s,
-            "stackchan-{:02x}{:02x}{:02x}",
+            "Claude stk-{:02x}{:02x}{:02x}",
             ble_mac[3], ble_mac[4], ble_mac[5]
         ) {
             defmt::panic!("ble: name format failed: {}", defmt::Debug2Format(&e));
@@ -1606,6 +1612,13 @@ async fn main(spawner: Spawner) -> ! {
         local_name: ble_name,
     })) {
         defmt::panic!("spawn(ble_task) failed: {}", defmt::Debug2Format(&e));
+    }
+
+    if let Err(e) = spawner.spawn(stackchan_firmware::buddy_render::buddy_render_task()) {
+        defmt::panic!(
+            "spawn(buddy_render_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
     }
 
     // Sample the chip's hardware RNG twice — once for IdleDrift
