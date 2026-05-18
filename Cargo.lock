@@ -4835,6 +4835,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stackchan-buddy-proto"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "stackchan-core"
 version = "0.36.0"
 dependencies = [
