@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.92.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.91.2...stackchan-firmware-v0.92.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** desktop time-sync writes the BM8563 RTC ([#381](https://github.com/andymai/stackchan-kai/issues/381)) ([67f5c12](https://github.com/andymai/stackchan-kai/commit/67f5c1285208e499bab28708f8230b3313736cc4))
+
 ## [0.91.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.91.1...stackchan-firmware-v0.91.2) (2026-05-18)
 
 
