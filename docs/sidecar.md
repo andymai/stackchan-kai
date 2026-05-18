@@ -119,8 +119,9 @@ The avatar's face mirrors the round-trip in three beats:
 `Thinking` (thought-bubble) while the POST is in flight →
 the emotion + speech bubble carrying the reply. The thinking hold
 clears the instant a `SetEmotion` lands, so the bubble fades in
-sync with the visible reply. If the round-trip times out or fails,
-the hold expires naturally after 15 s.
+sync with the visible reply. On a POST failure or timeout, the
+firmware fires `SetEmotion` with `Emotion::Sad` for 2.5 s, so the
+face visibly registers the failure on top of the warn-class toast.
 
 Backslash-escaped quotes inside the value strings are not handled
 by the firmware-side parser. A well-behaved sidecar emits clean
