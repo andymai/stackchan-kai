@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.90.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.89.0...stackchan-firmware-v0.90.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** permission decision via back-of-head tap-twice ([#371](https://github.com/andymai/stackchan-kai/issues/371)) ([d7c6684](https://github.com/andymai/stackchan-kai/commit/d7c6684206717afc6bea9371b0e6bc0a54d94514))
+
 ## [0.89.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.88.0...stackchan-firmware-v0.89.0) (2026-05-18)
 
 
