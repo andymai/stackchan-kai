@@ -27,6 +27,23 @@ Response is JSON:
 defensively. `emotion` is one of `neutral`, `happy`, `sleepy`, `surprised`,
 `sad`, `angry`. Unknown values fall back to `neutral`.
 
+On a graceful failure (provider timeout, transient error exhausted retries,
+LLM tool-use parse failure) the sidecar still returns 200 with the same
+envelope plus an `error` member, so the firmware lands a meaningful toast:
+
+```json
+{
+  "text": "thinking too hard, try again",
+  "emotion": "sad",
+  "error": {"code": "llm_timeout", "stage": "llm"}
+}
+```
+
+Operator-side validation failures (bad `Content-Type`, wrong sample rate,
+too-small or oversize body) still return 4xx with the same envelope shape;
+the firmware drops non-2xx replies, so those are for logs and curl smoke
+tests. See `errors.py` for the full `code` / `stage` catalog.
+
 The firmware-side schema and request layout live in `docs/sidecar.md` in the
 stackchan-kai firmware repo.
 
@@ -109,6 +126,29 @@ its own credential requirement.
   which is still uneven across local models.
 
 `stt_model` and `llm_model` apply to whichever provider is selected.
+
+## Resilience
+
+Each upstream call (STT, LLM) runs under a per-stage `asyncio.wait_for`
+timeout, with up to N total attempts. Transient classes are retried
+(Anthropic 529, OpenAI 5xx, Deepgram 5xx, generic httpx network errors,
+in-flight timeouts); permanent classes are not (4xx, parse errors, plain
+`ValueError`). A shared `total_timeout_seconds` deadline caps the whole
+listen call so a slow STT can't starve the LLM.
+
+Tunables in `config.toml` (defaults shown):
+
+```toml
+stt_timeout_seconds = 10.0
+llm_timeout_seconds = 20.0
+total_timeout_seconds = 30.0
+stt_max_attempts = 2
+llm_max_attempts = 2
+retry_initial_backoff_seconds = 0.5
+```
+
+`*_max_attempts = 1` disables retries for that stage; the per-stage timeout
+still applies.
 
 ## Docker
 

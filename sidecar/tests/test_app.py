@@ -126,14 +126,17 @@ def test_listen_persona_missing_returns_500(
         persona="missing",
     )
     app = create_app(settings, fake_stt, fake_llm)
-    with TestClient(app, raise_server_exceptions=False) as c:
+    with TestClient(app) as c:
         r = c.post(
             "/v1/listen",
             content=pcm_payload,
             headers={**auth_headers, "Content-Type": _AUDIO_CT},
         )
     assert r.status_code == 500
-    assert "persona unavailable" in r.json()["detail"]
+    body = r.json()
+    assert body["error"]["code"] == "persona_missing"
+    assert body["error"]["stage"] == "system"
+    assert body["text"] == "persona missing"
 
 
 def test_listen_records_session_history(
