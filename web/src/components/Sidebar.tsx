@@ -13,7 +13,7 @@ export function Sidebar(props: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      <nav class="nav">
+      <nav class="nav" aria-label="Sections">
         <For each={SECTIONS}>
           {(s) => (
             <button
@@ -21,6 +21,7 @@ export function Sidebar(props: { onNavigate?: () => void }) {
               class="nav-item"
               classList={{ active: section() === s.id }}
               aria-current={section() === s.id ? "page" : undefined}
+              aria-label={`${s.label} (press g then ${s.hotkey})`}
               onClick={() => {
                 goto(s.id);
                 props.onNavigate?.();
@@ -39,13 +40,23 @@ export function Sidebar(props: { onNavigate?: () => void }) {
       </nav>
 
       <div class="sidebar-foot">
-        <div class="link-status" classList={{ ok: conn() === "ok", bad: conn() === "bad" }}>
-          <span class="link-dot" />
+        <div
+          class="link-status"
+          classList={{ ok: conn() === "ok", bad: conn() === "bad" }}
+          role="status"
+          aria-live="polite"
+        >
+          <span class="link-dot" aria-hidden="true" />
           <span class="link-label">
             {conn() === "ok" ? "LINK UP" : conn() === "bad" ? "LINK DOWN" : "LINKING"}
           </span>
         </div>
-        <div class="link-host">{snapshot()?.wifi.ip ?? "stackchan.local"}</div>
+        <div class="link-host" aria-label="Device address">
+          {snapshot()?.wifi.ip ?? "stackchan.local"}
+        </div>
+        <div class="link-hint">
+          Press <kbd>?</kbd> for shortcuts
+        </div>
       </div>
     </aside>
   );

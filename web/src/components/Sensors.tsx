@@ -40,7 +40,15 @@ export function Sensors() {
   return (
     <section>
       <h2>Sensors</h2>
-      <Show when={data()} fallback={<small>waiting for first poll…</small>}>
+      <Show
+        when={data()}
+        fallback={
+          <div class="empty">
+            <div class="empty-title">No sensor reads yet</div>
+            <small>/sensors polls every 1 s.</small>
+          </div>
+        }
+      >
         {(s) => (
           <dl class="row">
             <dt>IMU accel (g)</dt>

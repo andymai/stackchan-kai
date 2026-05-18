@@ -45,8 +45,8 @@ const NAV_KEYS = Object.fromEntries(SECTIONS.map((s) => [s.hotkey, s.id]));
 function PageHead(props: { title: string; tag?: string }) {
   return (
     <div class="page-head">
-      <h2 class="page-title">{props.title}</h2>
-      <div class="page-rule" />
+      <h2 class="page-title" aria-live="polite">{props.title}</h2>
+      <div class="page-rule" aria-hidden="true" />
       <Show when={props.tag}>{(t) => <span class="page-tag">{t()}</span>}</Show>
     </div>
   );
@@ -173,7 +173,7 @@ export function App() {
     <>
       <div class="shell">
         <Sidebar />
-        <div class="main">
+        <main class="main" aria-label="Operator console">
           <StatusBar />
           <CrashBanner />
           <div class="content">
@@ -218,7 +218,7 @@ export function App() {
               </Match>
             </Switch>
           </div>
-        </div>
+        </main>
       </div>
       <Toast />
       <Show when={overlay()}>

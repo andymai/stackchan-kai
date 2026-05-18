@@ -38,7 +38,12 @@ export function Telemetry() {
       <h2>Telemetry</h2>
       <Show
         when={snapshot()}
-        fallback={<small>waiting for first SSE sample…</small>}
+        fallback={
+          <div class="empty">
+            <div class="empty-title">No telemetry yet</div>
+            <small>Cards fill in once samples arrive on /state/stream.</small>
+          </div>
+        }
       >
         <div class="spark-grid">
           <SparkCard

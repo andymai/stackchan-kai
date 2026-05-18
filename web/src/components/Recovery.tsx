@@ -52,8 +52,9 @@ export function Recovery() {
         </button>
         <button
           type="button"
+          class="btn-danger"
           onClick={factoryReset}
-          style="margin-left:auto;border-color:var(--bad);color:var(--bad)"
+          style="margin-left:auto"
         >
           Factory reset…
         </button>
