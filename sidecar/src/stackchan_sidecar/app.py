@@ -11,7 +11,6 @@ from fastapi.responses import JSONResponse
 from .auth import make_verifier
 from .companion import register_companion
 from .config import Settings
-from .session_status import SessionStatus
 from .errors import (
     ErrorCode,
     audio_validation_status,
@@ -21,6 +20,7 @@ from .errors import (
 from .llm import Emotion, LLMProvider, sanitize_short
 from .personas import load_persona
 from .retry import StageDeadlineError, retry_with_timeout
+from .session_status import SessionStatus
 from .session_store import SessionStore, Turn, session_store_lifespan
 from .stt import STTProvider
 

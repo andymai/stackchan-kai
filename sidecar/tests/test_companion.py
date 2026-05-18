@@ -166,7 +166,7 @@ def test_firmware_cmd_forwards_body_and_bearer(monkeypatch: pytest.MonkeyPatch) 
     class FakeResp:
         status_code = 200
         text = '{"ok":true}'
-        headers = {"content-type": "application/json"}
+        headers: typing.ClassVar[dict[str, str]] = {"content-type": "application/json"}
 
         def json(self) -> dict[str, object]:
             return {"ok": True}
@@ -175,7 +175,7 @@ def test_firmware_cmd_forwards_body_and_bearer(monkeypatch: pytest.MonkeyPatch) 
         def __init__(self, *_: object, **__: object) -> None:
             pass
 
-        async def __aenter__(self) -> "FakeClient":
+        async def __aenter__(self) -> FakeClient:
             return self
 
         async def __aexit__(self, *_: object) -> None:
@@ -214,7 +214,7 @@ def test_firmware_cmd_502_when_firmware_unreachable(monkeypatch: pytest.MonkeyPa
         def __init__(self, *_: object, **__: object) -> None:
             pass
 
-        async def __aenter__(self) -> "FakeClient":
+        async def __aenter__(self) -> FakeClient:
             return self
 
         async def __aexit__(self, *_: object) -> None:

@@ -125,7 +125,7 @@ def register_companion(app: FastAPI, settings: Settings) -> None:
             while not await request.is_disconnected():
                 try:
                     await asyncio.wait_for(status.changed(), timeout=2.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield b": keepalive\n\n"
                     continue
                 yield _format_status(status.get())
