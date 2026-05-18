@@ -184,9 +184,11 @@ const DEVICE_NAME_FILE: &str = "DEVICE.NAM";
 /// dance as the session UUID.
 const DEVICE_NAME_STAGING_FILE: &str = "DEVICE.NEW";
 
-/// Cap on the `DEVICE.NAM` file. BLE GAP local-name maxes at 22
-/// bytes; 32 absorbs a trailing newline and small margin.
-const MAX_DEVICE_NAME_BYTES: u32 = 32;
+/// Cap on the `DEVICE.NAM` file. Matches the BLE GAP local-name
+/// hard limit so a name that survives `write_device_name` will
+/// also survive the advertise layer — keeps the stored value and
+/// the advertised value in lockstep.
+const MAX_DEVICE_NAME_BYTES: u32 = 22;
 
 /// Filename for the operator-triggered camera capture. Single fixed
 /// name (no rotation) so each capture overwrites the previous —

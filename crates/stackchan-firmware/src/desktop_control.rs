@@ -183,8 +183,14 @@ fn reply_status(boot: Instant) {
 /// with the reason and we skip the reset (no point cycling if the
 /// new name isn't actually on disk).
 async fn set_name(name: &str) {
-    defmt::info!("desktop_control: name → {=str}", name);
-    let outcome = crate::storage::with_storage(|s| s.write_device_name(name)).await;
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        defmt::warn!("desktop_control: name → empty; rejecting without reboot");
+        ack("name", false, 0, Some("empty name"));
+        return;
+    }
+    defmt::info!("desktop_control: name → {=str}", trimmed);
+    let outcome = crate::storage::with_storage(|s| s.write_device_name(trimmed)).await;
     match outcome {
         Some(Ok(())) => {
             ack("name", true, 0, None);
