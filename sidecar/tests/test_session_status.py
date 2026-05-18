@@ -103,6 +103,38 @@ async def test_changed_wakes_multiple_subscribers() -> None:
     assert sorted(seen) == ["a", "b"]
 
 
+def test_preflight_failure_does_not_broadcast(
+    fake_stt: object, fake_llm: object, settings: object
+) -> None:
+    # Pre-flight validation failures (bad content type, body size) must
+    # not poke the SessionStatus — the state machine never claimed to be
+    # "thinking" for that request. Without this guard every malformed
+    # POST would push `idle(error)` deltas to every SSE subscriber.
+    from fastapi.testclient import TestClient
+
+    from stackchan_sidecar.app import create_app
+
+    app = create_app(settings, fake_stt, fake_llm)  # type: ignore[arg-type]
+    status: SessionStatus = app.state.session_status
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/v1/listen",
+            content=b"x" * 1024,
+            headers={
+                "Authorization": "Bearer test-token-do-not-use-in-prod",
+                "Content-Type": "application/octet-stream",
+            },
+        )
+    assert r.status_code in (400, 415)
+    snap = status.get()
+    assert snap.state == "idle"
+    assert snap.error is None
+    # mark_failed (which a pre-flight failure must NOT call) sets last_turn
+    # to whatever was there before — None on a fresh holder.
+    assert snap.last_turn is None
+
+
 def test_snapshot_to_dict_drops_none_fields() -> None:
     s = SessionStatus()
     raw = snapshot_to_dict(s.get())

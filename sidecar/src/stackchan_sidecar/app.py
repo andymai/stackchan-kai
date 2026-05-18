@@ -60,19 +60,15 @@ def _failure(
     return JSONResponse(build_envelope(kind), status_code=status)
 
 
-def _audio_failure(
-    code: ErrorCode,
-    *,
-    request_id: str,
-    session_id: str,
-    session_status: SessionStatus | None = None,
-) -> JSONResponse:
+def _audio_failure(code: ErrorCode, *, request_id: str, session_id: str) -> JSONResponse:
+    # Pre-flight validation failures (bad content type, body size) happen
+    # before `mark_thinking` — the state machine never entered "thinking"
+    # for this request, so we don't poke session_status here.
     return _failure(
         code,
         request_id=request_id,
         session_id=session_id,
         status=audio_validation_status(code),
-        session_status=session_status,
     )
 
 
@@ -121,12 +117,7 @@ def create_app(
 
         ct_err = _validate_content_type(content_type)
         if ct_err is not None:
-            return _audio_failure(
-                ct_err,
-                request_id=request_id,
-                session_id=session_id,
-                session_status=session_status,
-            )
+            return _audio_failure(ct_err, request_id=request_id, session_id=session_id)
 
         declared_length = request.headers.get("content-length")
         if declared_length is not None:
@@ -137,37 +128,26 @@ def create_app(
                     ErrorCode.BAD_CONTENT_LENGTH,
                     request_id=request_id,
                     session_id=session_id,
-                    session_status=session_status,
                 )
             if declared > _MAX_BODY_BYTES:
                 return _audio_failure(
                     ErrorCode.AUDIO_TOO_LARGE,
                     request_id=request_id,
                     session_id=session_id,
-                    session_status=session_status,
                 )
 
         body = await request.body()
         if not body:
             return _audio_failure(
-                ErrorCode.AUDIO_EMPTY,
-                request_id=request_id,
-                session_id=session_id,
-                session_status=session_status,
+                ErrorCode.AUDIO_EMPTY, request_id=request_id, session_id=session_id
             )
         if len(body) > _MAX_BODY_BYTES:
             return _audio_failure(
-                ErrorCode.AUDIO_TOO_LARGE,
-                request_id=request_id,
-                session_id=session_id,
-                session_status=session_status,
+                ErrorCode.AUDIO_TOO_LARGE, request_id=request_id, session_id=session_id
             )
         if len(body) < _MIN_BODY_BYTES:
             return _audio_failure(
-                ErrorCode.AUDIO_TOO_SMALL,
-                request_id=request_id,
-                session_id=session_id,
-                session_status=session_status,
+                ErrorCode.AUDIO_TOO_SMALL, request_id=request_id, session_id=session_id
             )
 
         session_status.mark_thinking(request_id=request_id, session_id=session_id)

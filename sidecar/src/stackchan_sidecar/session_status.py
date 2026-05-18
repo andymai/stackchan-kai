@@ -93,9 +93,7 @@ class SessionStatus:
         )
         self._broadcast()
 
-    def mark_failed(
-        self, *, request_id: str, session_id: str, error: str
-    ) -> None:
+    def mark_failed(self, *, request_id: str, session_id: str, error: str) -> None:
         self._snapshot = Snapshot(
             state="idle",
             request_id=request_id,

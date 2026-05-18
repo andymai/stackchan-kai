@@ -160,9 +160,7 @@ def register_companion(app: FastAPI, settings: Settings) -> None:
             raise HTTPException(status_code=502, detail="firmware unreachable") from None
 
         if resp.status_code >= 400:
-            _LOG.info(
-                "firmware-cmd %s returned %s: %s", name, resp.status_code, resp.text[:200]
-            )
+            _LOG.info("firmware-cmd %s returned %s: %s", name, resp.status_code, resp.text[:200])
 
         ct = resp.headers.get("content-type", "")
         payload: Any
