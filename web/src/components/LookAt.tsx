@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { postJson } from "../auth";
 import { showToast } from "../store";
+import { PosePad } from "./PosePad";
 
 const HOLD_MS = 30_000;
 
@@ -24,7 +25,8 @@ export function LookAt() {
   return (
     <section>
       <h2>Look-at</h2>
-      <div class="grid grid-2">
+      <PosePad />
+      <div class="grid grid-2" style="margin-top:12px">
         <label>
           Pan: <span>{pan()}°</span>
           <input
@@ -50,7 +52,10 @@ export function LookAt() {
           />
         </label>
       </div>
-      <small>Sliders POST /look-at on release. Holds for 30 s.</small>
+      <small>
+        Drag the pad for a quick aim; sliders POST on release for fine tweaks. Holds for 30 s. Dashed
+        outline shows the servo's actual position when available.
+      </small>
     </section>
   );
 }

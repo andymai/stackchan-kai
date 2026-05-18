@@ -602,6 +602,134 @@ small {
   letter-spacing: 0.3px;
 }
 
+/* ─── Sparkline ─────────────────────────────────────────────────── */
+
+.sparkline {
+  display: block;
+  overflow: visible;
+}
+
+.sparkline-axis {
+  stroke: var(--border-strong);
+  stroke-dasharray: 2 3;
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.spark-card {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.spark-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.spark-label {
+  font: 10px/1 var(--mono);
+  letter-spacing: 1.2px;
+  color: var(--fg-faint);
+}
+
+.spark-value {
+  font: 600 13px/1 var(--mono);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.spark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+/* ─── Pose pad ──────────────────────────────────────────────────── */
+
+.pose-pad-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.pose-pad {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  aspect-ratio: 320 / 200;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.pose-pad .pad-bg {
+  fill: var(--surface-2);
+}
+
+.pose-pad .pad-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.pose-pad .pad-axis {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  opacity: 0.9;
+}
+
+.pose-pad .pad-cmd circle:first-child {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 4px var(--accent-line));
+}
+
+.pose-pad .pad-cmd-halo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.pose-pad .pad-actual {
+  fill: none;
+  stroke: var(--fg-muted);
+  stroke-width: 2;
+  stroke-dasharray: 3 3;
+}
+
+.pose-pad .pad-link {
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.pose-pad .pad-label {
+  font: 10px var(--mono);
+  letter-spacing: 1px;
+  fill: var(--fg-faint);
+}
+
+.pose-pad .pad-label-r {
+  text-anchor: end;
+}
+
+.pad-center {
+  justify-self: start;
+}
+
+.status-bar-aux {
+  display: grid;
+  grid-template-columns: 90px 90px;
+  gap: 10px;
+  align-items: center;
+}
+
 /* ─── Toast ────────────────────────────────────────────────────── */
 
 .toast {

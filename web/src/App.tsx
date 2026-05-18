@@ -21,6 +21,7 @@ import { Settings } from "./components/Settings";
 import { Pair } from "./components/Pair";
 import { Speak } from "./components/Speak";
 import { TaskHealth } from "./components/TaskHealth";
+import { Telemetry } from "./components/Telemetry";
 import { Toast } from "./components/Toast";
 
 const EMOTION_KEYS: Record<string, string> = {
@@ -180,6 +181,7 @@ export function App() {
               <Match when={section() === "status"}>
                 <PageHead title="Status" tag="LIVE" />
                 <State />
+                <Telemetry />
               </Match>
               <Match when={section() === "behavior"}>
                 <PageHead title="Behavior" />

@@ -1,7 +1,8 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { postJson } from "../auth";
 import { toggleMute } from "../actions";
-import { showToast, snapshot } from "../store";
+import { series, showToast, snapshot } from "../store";
+import { Sparkline } from "./Sparkline";
 
 const DEBOUNCE_MS = 250;
 
@@ -55,7 +56,14 @@ export function Audio() {
           }}
         />
       </label>
-      <div class="btn-row">
+      <div class="spark-card" style="margin-top:8px">
+        <div class="spark-head">
+          <span class="spark-label">VOLUME · LAST 2m</span>
+          <span class="spark-value">{volume()}%</span>
+        </div>
+        <Sparkline values={series("audio_volume_pct")} width={300} height={32} min={0} max={100} fill="var(--accent-soft)" />
+      </div>
+      <div class="btn-row" style="margin-top:8px">
         <button type="button" onClick={toggleMute} data-shortcut="mute">
           {muted() ? "Unmute" : "Mute"}
         </button>

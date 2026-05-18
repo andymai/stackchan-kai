@@ -20,6 +20,45 @@ export function showToast(msg: string, bad = false): void {
   toastTimer = setTimeout(() => setToastVal(null), 2500);
 }
 
+// Rolling window of SSE samples. ~2 min at the firmware's ~1 Hz cadence;
+// the sparkline components pick whichever slice they need.
+export type Sample = {
+  t: number;
+  battery_pct: number | null;
+  audio_volume_pct: number;
+  pan_deg: number;
+  tilt_deg: number;
+  pan_actual_deg: number | null;
+  tilt_actual_deg: number | null;
+};
+
+const MAX_SAMPLES = 120;
+let ring: Sample[] = [];
+export const [history, setHistory] = createSignal<readonly Sample[]>([]);
+
+function pushSample(s: AvatarSnapshot): void {
+  ring.push({
+    t: Date.now(),
+    battery_pct: s.battery.percent,
+    audio_volume_pct: s.audio.volume_pct,
+    pan_deg: s.head_pose.pan_deg,
+    tilt_deg: s.head_pose.tilt_deg,
+    pan_actual_deg: s.head_actual?.pan_deg ?? null,
+    tilt_actual_deg: s.head_actual?.tilt_deg ?? null,
+  });
+  if (ring.length > MAX_SAMPLES) ring = ring.slice(ring.length - MAX_SAMPLES);
+  setHistory(ring.slice());
+}
+
+export function series<K extends keyof Sample>(key: K): number[] {
+  const out: number[] = [];
+  for (const s of history()) {
+    const v = s[key];
+    if (typeof v === "number") out.push(v);
+  }
+  return out;
+}
+
 export function connectStream(): void {
   const open = () => {
     const es = new EventSource("/state/stream");
@@ -31,7 +70,9 @@ export function connectStream(): void {
     };
     es.onmessage = (ev) => {
       try {
-        setSnapshot(JSON.parse(ev.data) as AvatarSnapshot);
+        const snap = JSON.parse(ev.data) as AvatarSnapshot;
+        setSnapshot(snap);
+        pushSample(snap);
       } catch {
         // SSE payloads occasionally arrive partial during reconnect; drop.
       }
