@@ -1,5 +1,6 @@
 import { Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
 import { connectStream } from "./store";
+import { resetEmotion, toggleMute } from "./actions";
 import { SECTIONS, goto, section, useHashRouter } from "./nav";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -51,13 +52,27 @@ function PageHead(props: { title: string; tag?: string }) {
 }
 
 function KbdOverlay(props: { onClose: () => void }) {
+  let panel: HTMLDivElement | undefined;
+  const prevFocus = document.activeElement as HTMLElement | null;
+
+  onMount(() => panel?.focus());
+  onCleanup(() => prevFocus?.focus?.());
+
   return (
-    <div class="kbd-overlay" onClick={props.onClose} role="dialog" aria-label="Keyboard shortcuts">
-      <div class="kbd-panel" onClick={(e) => e.stopPropagation()}>
+    <div class="kbd-overlay" onClick={props.onClose} role="presentation">
+      <div
+        ref={panel}
+        class="kbd-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        tabindex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <h3>Shortcuts</h3>
         <dl class="kbd-grid">
           <dt>1-9 0 q w e</dt>
-          <dd>set emotion</dd>
+          <dd>set emotion (Behavior)</dd>
           <dt>r</dt>
           <dd>reset</dd>
           <dt>m</dt>
@@ -136,12 +151,12 @@ export function App() {
       return;
     }
     if (k === "r") {
-      document.querySelector<HTMLButtonElement>('button[data-shortcut="reset"]')?.click();
+      void resetEmotion();
       ev.preventDefault();
       return;
     }
     if (k === "m") {
-      document.querySelector<HTMLButtonElement>('button[data-shortcut="mute"]')?.click();
+      void toggleMute();
       ev.preventDefault();
     }
   };

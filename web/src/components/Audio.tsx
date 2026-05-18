@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { postJson } from "../auth";
+import { toggleMute } from "../actions";
 import { showToast, snapshot } from "../store";
 
 const DEBOUNCE_MS = 250;
@@ -32,16 +33,6 @@ export function Audio() {
         showToast((e as Error).message, true);
       }
     }, DEBOUNCE_MS);
-  };
-
-  const toggleMute = async () => {
-    const next = !muted();
-    try {
-      await postJson("/mute", { muted: next });
-      showToast(next ? "muted" : "unmuted");
-    } catch (e) {
-      showToast((e as Error).message, true);
-    }
   };
 
   return (
