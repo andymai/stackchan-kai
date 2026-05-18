@@ -899,7 +899,20 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ProtoError> {
             out.push(byte);
         }
     }
-    if bits >= 6 || padding > 2 {
+    // Final group must satisfy the data/padding parity from RFC
+    // 4648 §4: every 4 input chars decode to 3 bytes. A short final
+    // group of 2 data chars (`bits == 4`) requires `==`; 3 data
+    // chars (`bits == 2`) requires `=`; an aligned group needs no
+    // padding. A 1-char tail (`bits == 6`) is always invalid.
+    // Without this strict check, `"Zg="` decodes to the same byte
+    // as `"Zg=="` and a truncated transmission goes undetected.
+    let expected_padding = match bits {
+        0 => 0,
+        4 => 2,
+        2 => 1,
+        _ => return Err(ProtoError::InvalidBase64),
+    };
+    if padding != expected_padding {
         return Err(ProtoError::InvalidBase64);
     }
     Ok(out)
@@ -929,6 +942,28 @@ mod tests {
     fn base64_rejects_non_alphabet() {
         assert!(matches!(
             base64_decode("Zm9*"),
+            Err(ProtoError::InvalidBase64)
+        ));
+    }
+
+    #[test]
+    fn base64_rejects_wrong_padding_count() {
+        // `Zg=` decodes to the same `b"f"` as the correctly-padded
+        // `Zg==`, but accepting it lets a truncated transmission
+        // pass undetected. RFC 4648 §4 requires exactly 2 padding
+        // chars for a 2-char residual.
+        assert!(matches!(
+            base64_decode("Zg="),
+            Err(ProtoError::InvalidBase64)
+        ));
+        // Same for a 3-char residual missing its single padding char.
+        assert!(matches!(
+            base64_decode("Zm8"),
+            Err(ProtoError::InvalidBase64)
+        ));
+        // And rejected: an aligned group with stray padding.
+        assert!(matches!(
+            base64_decode("Zm9v="),
             Err(ProtoError::InvalidBase64)
         ));
     }

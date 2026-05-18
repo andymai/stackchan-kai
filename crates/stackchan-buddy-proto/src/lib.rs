@@ -43,7 +43,7 @@ pub use frame::LineFramer;
 pub use parse::{parse_inbound, parse_outbound};
 pub use types::{
     Ack, BatteryStatus, Cmd, ContentBlock, Decision, Inbound, Outbound, Prompt, Snapshot,
-    StatusData, SysStatus, Turn, UserStats,
+    StatusData, SysStatus, Turn, UserStats, is_safe_relative_path,
 };
 
 /// Nordic UART Service base UUID (`6e400001-b5a3-f393-e0a9-e50e24dcca9e`).

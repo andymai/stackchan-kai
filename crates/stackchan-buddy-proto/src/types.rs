@@ -143,8 +143,11 @@ pub enum Cmd {
     /// `{"cmd":"file","path":"manifest.json","size":412}` — start
     /// of one file within a folder push.
     File {
-        /// Relative path inside the folder. The receiver MUST
-        /// reject `..` and absolute paths.
+        /// Relative path inside the folder. Always validate via
+        /// [`is_safe_relative_path`] before joining onto a writable
+        /// root — the desktop sends whatever filenames appeared in
+        /// the dropped folder, including traversal attempts from a
+        /// malicious central.
         path: String,
         /// File size in bytes.
         size: u32,
@@ -280,4 +283,116 @@ pub struct UserStats {
     pub naps: u32,
     /// `lvl` — buddy "level" (a free-form gamification counter).
     pub level: u32,
+}
+
+/// Validate a [`Cmd::File`] path before joining it onto a
+/// writable root.
+///
+/// Returns `false` for empty input, absolute paths (Unix or
+/// Windows), backslash separators, `..` segments, lone `.`
+/// segments, leading `~`, embedded NUL, and Windows drive prefixes
+/// like `C:`. Conservative by design: the folder-push protocol is
+/// meant to carry filenames from a single dropped folder with no
+/// recursion, so anything more exotic is suspicious and worth
+/// rejecting at the edge rather than after a write has hit disk.
+///
+/// Returns `true` for the safe path, ready to be appended to a
+/// trusted base directory.
+#[must_use]
+pub fn is_safe_relative_path(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    if path.starts_with('/') || path.starts_with('\\') || path.starts_with('~') {
+        return false;
+    }
+    if path.contains('\\') || path.contains('\0') {
+        return false;
+    }
+    // Reject Windows drive prefixes (`C:`, `c:\path`, etc.) even
+    // though we don't run on Windows — the desktop is cross-platform
+    // and the constraint is "no absolute paths in any form".
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    // Reject any `..` or `.` segment. Split on `/` rather than
+    // walking codepoint-by-codepoint because the protocol is
+    // POSIX-style.
+    for segment in path.split('/') {
+        if segment.is_empty() || segment == ".." || segment == "." {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "tests assert structural invariants; .expect / .unwrap are the standard test idiom"
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_paths_accepted() {
+        for path in [
+            "manifest.json",
+            "idle_0.gif",
+            "subdir/icon.png",
+            "deep/nested/path.bin",
+            "file with spaces.txt",
+            "unicode_名前.dat",
+        ] {
+            assert!(is_safe_relative_path(path), "should accept: {path:?}");
+        }
+    }
+
+    #[test]
+    fn traversal_segments_rejected() {
+        for path in [
+            "..",
+            "../etc/passwd",
+            "foo/..",
+            "foo/../bar",
+            "a/b/../../c",
+            ".",
+            "./hidden",
+        ] {
+            assert!(!is_safe_relative_path(path), "should reject: {path:?}");
+        }
+    }
+
+    #[test]
+    fn absolute_paths_rejected() {
+        for path in [
+            "/etc/passwd",
+            "/",
+            "\\Windows\\System32",
+            "\\",
+            "C:/Users/admin/file",
+            "c:\\foo",
+            "~/private",
+            "~root/.ssh/id_rsa",
+        ] {
+            assert!(!is_safe_relative_path(path), "should reject: {path:?}");
+        }
+    }
+
+    #[test]
+    fn empty_and_null_rejected() {
+        assert!(!is_safe_relative_path(""));
+        assert!(!is_safe_relative_path("foo\0bar"));
+    }
+
+    #[test]
+    fn backslash_separator_rejected() {
+        // Windows-style separators are rejected even when the path
+        // doesn't otherwise look absolute, because joining with a
+        // POSIX base later would not interpret them as separators
+        // and a malicious filename could slip in literal backslashes.
+        assert!(!is_safe_relative_path("foo\\bar"));
+    }
 }
