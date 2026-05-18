@@ -1,16 +1,16 @@
 //! Claude Desktop Hardware Buddy plumbing.
 //!
-//! [`BUDDY_INBOUND`] fans parsed [`Inbound`] messages out to the
+//! [`DESKTOP_INBOUND`] fans parsed [`Inbound`] messages out to the
 //! firmware-side consumers that act on them — face / toast / LED
 //! ring, permission decision UX, and the folder-push / status /
-//! owner / time-sync handlers. [`BUDDY_OUTBOUND`] is the
+//! owner / time-sync handlers. [`DESKTOP_OUTBOUND`] is the
 //! single-slot reply channel a consumer signals to send a
 //! permission decision or ack back to the desktop.
 //!
-//! [`BuddySession`] holds the per-connection [`LineFramer`] plus a
+//! [`DesktopSession`] holds the per-connection [`LineFramer`] plus a
 //! few diagnostic counters. The GATT layer creates one per
 //! connection in `super::server::gatt_events_task`, feeds inbound
-//! bytes through [`BuddySession::ingest`], and drops it on
+//! bytes through [`DesktopSession::ingest`], and drops it on
 //! disconnect — the framer's partial line never leaks across
 //! connections.
 
@@ -19,9 +19,9 @@ use alloc::vec::Vec;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_sync::signal::Signal;
-use stackchan_buddy_proto::{Inbound, LineFramer, Outbound, ProtoError, parse_inbound};
+use stackchan_desktop_protocol::{Inbound, LineFramer, Outbound, ProtoError, parse_inbound};
 
-/// `PubSub` channel fan-out for inbound buddy messages.
+/// `PubSub` channel fan-out for inbound desktop messages.
 ///
 /// Capacity 4 absorbs the desktop's burst pattern on connect
 /// (snapshot + owner + time-sync arrive back-to-back). 4 subscriber
@@ -29,7 +29,7 @@ use stackchan_buddy_proto::{Inbound, LineFramer, Outbound, ProtoError, parse_inb
 /// decision UX, the folder-push writer, and a future hook.
 /// Each subscriber receives the same `Inbound` clone — cheap given
 /// the ≤10 Hz heartbeat rate and the firmware's PSRAM heap.
-pub static BUDDY_INBOUND: PubSubChannel<CriticalSectionRawMutex, Inbound, 4, 4, 1> =
+pub static DESKTOP_INBOUND: PubSubChannel<CriticalSectionRawMutex, Inbound, 4, 4, 1> =
     PubSubChannel::new();
 
 /// Single-slot outbound queue.
@@ -41,10 +41,10 @@ pub static BUDDY_INBOUND: PubSubChannel<CriticalSectionRawMutex, Inbound, 4, 4, 
 /// has one outstanding prompt at a time — a second signal before
 /// the first is consumed means the operator changed their decision
 /// faster than the BLE link could carry it.
-pub static BUDDY_OUTBOUND: Signal<CriticalSectionRawMutex, Outbound> = Signal::new();
+pub static DESKTOP_OUTBOUND: Signal<CriticalSectionRawMutex, Outbound> = Signal::new();
 
-/// Per-connection state for the buddy NUS service.
-pub struct BuddySession {
+/// Per-connection state for the desktop NUS service.
+pub struct DesktopSession {
     /// Line accumulator for the NUS RX characteristic. Each ATT
     /// write may carry a fragment, a complete line, or several
     /// lines back-to-back — the framer yields whole `\n`-terminated
@@ -56,13 +56,13 @@ pub struct BuddySession {
     parse_failures: u32,
 }
 
-impl Default for BuddySession {
+impl Default for DesktopSession {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BuddySession {
+impl DesktopSession {
     /// Empty session — no buffered bytes, no parse failures yet.
     #[must_use]
     pub const fn new() -> Self {
@@ -74,7 +74,7 @@ impl BuddySession {
 
     /// Absorb one ATT-write payload, drain any newly complete lines
     /// through the parser, and publish each parsed [`Inbound`] onto
-    /// [`BUDDY_INBOUND`].
+    /// [`DESKTOP_INBOUND`].
     ///
     /// Parse failures are counted in [`Self::parse_failures`] and
     /// logged at `warn` level. The connection is NOT torn down on
@@ -92,9 +92,9 @@ impl BuddySession {
         // publisher slot; per-line acquisition would still work via
         // immediate drop, but coalescing avoids the slot churn on
         // the common case of many lines arriving in one write.
-        let Ok(publisher) = BUDDY_INBOUND.publisher() else {
+        let Ok(publisher) = DESKTOP_INBOUND.publisher() else {
             defmt::warn!(
-                "buddy: BUDDY_INBOUND publisher slot exhausted; dropping {=usize} line(s)",
+                "desktop: DESKTOP_INBOUND publisher slot exhausted; dropping {=usize} line(s)",
                 lines.len()
             );
             return;
@@ -105,7 +105,7 @@ impl BuddySession {
                 Err(err) => {
                     self.parse_failures = self.parse_failures.saturating_add(1);
                     defmt::warn!(
-                        "buddy: parse failed ({}, total={=u32})",
+                        "desktop: parse failed ({}, total={=u32})",
                         log_proto_error(&err),
                         self.parse_failures,
                     );
@@ -116,7 +116,7 @@ impl BuddySession {
 
     /// Drop any partially accumulated bytes. Called on disconnect
     /// so a half-line doesn't poison the next central's session
-    /// (`BuddySession` is per-connection, but the static can't
+    /// (`DesktopSession` is per-connection, but the static can't
     /// model that without a Cell — this method is the explicit
     /// reset path).
     pub fn reset(&mut self) {

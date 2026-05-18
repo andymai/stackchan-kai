@@ -1,4 +1,4 @@
-# stackchan-buddy-proto
+# stackchan-desktop-protocol
 
 Wire protocol for the Claude Desktop Hardware Buddy BLE bridge.
 
@@ -37,7 +37,7 @@ protocol][ref] for the field-by-field spec.
 ## API
 
 ```rust
-use stackchan_buddy_proto::{parse_inbound, Inbound, Outbound, Decision, render_outbound};
+use stackchan_desktop_protocol::{parse_inbound, Inbound, Outbound, Decision, render_outbound};
 
 let line = br#"{"total":1,"running":0,"waiting":1,"msg":"approve: Bash"}"#;
 let Inbound::Snapshot(snap) = parse_inbound(line)? else { unreachable!() };

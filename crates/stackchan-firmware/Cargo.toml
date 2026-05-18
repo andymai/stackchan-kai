@@ -41,8 +41,8 @@ stackchan-net = { path = "../stackchan-net", default-features = false }
 # the Claude desktop apps speak to maker devices. Pure data and
 # parsers (`no_std` + `alloc`); the GATT plumbing lives in
 # `src/ble/server.rs` and feeds parsed inbound messages onto
-# `BUDDY_INBOUND` for downstream consumers.
-stackchan-buddy-proto = { path = "../stackchan-buddy-proto" }
+# `DESKTOP_INBOUND` for downstream consumers.
+stackchan-desktop-protocol = { path = "../stackchan-desktop-protocol" }
 # Streaming mel-spectrogram frontend used by the wake-word task —
 # 480-sample window, 160-sample hop, 40 int8 mel bins. Pure-Rust
 # `no_std + alloc`; pulled in unconditionally because the firmware

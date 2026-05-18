@@ -4835,19 +4835,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "stackchan-buddy-proto"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "stackchan-core"
 version = "0.36.0"
 dependencies = [
  "embedded-graphics",
  "heapless 0.8.0",
  "micromath",
+]
+
+[[package]]
+name = "stackchan-desktop-protocol"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4896,8 +4896,8 @@ dependencies = [
  "sha1_smol",
  "si12t",
  "stackchan-audio-features",
- "stackchan-buddy-proto",
  "stackchan-core",
+ "stackchan-desktop-protocol",
  "stackchan-net",
  "stackchan-tts",
  "static_cell",

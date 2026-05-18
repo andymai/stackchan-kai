@@ -1,4 +1,4 @@
-//! Typed errors for the buddy protocol.
+//! Typed errors for the desktop protocol.
 
 use alloc::string::String;
 

@@ -2,7 +2,7 @@
 //!
 //! Strategy: parse each line into a small generic JSON value tree
 //! (alloc'd once), then dispatch on the top-level keys. This is
-//! simpler than streaming dispatch because the buddy protocol's
+//! simpler than streaming dispatch because the desktop protocol's
 //! discriminator (`cmd` vs `evt` vs `time` vs none) is
 //! content-based rather than position-based; a few hundred extra
 //! bytes of allocation per line is negligible given the
@@ -23,7 +23,7 @@ use crate::types::{
     StatusData, SysStatus, Turn, UserStats,
 };
 
-/// Parse one newline-delimited buddy message.
+/// Parse one newline-delimited desktop message.
 ///
 /// `line` must be a single JSON object (no trailing newline; the
 /// framer strips it). Empty inputs return [`ProtoError::MalformedJson`].

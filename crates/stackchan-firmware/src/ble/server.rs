@@ -95,14 +95,14 @@ use embassy_time::{Duration, Timer};
 // the right impls are picked.
 use heapless_09::String as HString;
 use heapless_09::Vec as HVec;
-use stackchan_buddy_proto::{Outbound, render_outbound};
 use stackchan_core::Emotion;
+use stackchan_desktop_protocol::{Outbound, render_outbound};
 use stackchan_net::ble_command::{self, BleError, EMOTION_WRITE_LEN, LOOK_AT_LEN, SPEAK_LEN};
 use stackchan_net::blufi;
 use trouble_host::Address;
 use trouble_host::prelude::*;
 
-use super::buddy::{BUDDY_OUTBOUND, BuddySession};
+use super::desktop::{DESKTOP_OUTBOUND, DesktopSession};
 
 use crate::audio::AudioPersistOutcome;
 use crate::camera::CAMERA_MODE_SIGNAL;
@@ -146,12 +146,12 @@ const PROV_PSK_MIN: usize = 8;
 /// layer chunking, so one ATT write maps to exactly one frame.
 const BLUFI_FRAME_BUF: usize = 247;
 
-/// Buffer cap for the buddy NUS RX / TX characteristics. Same
+/// Buffer cap for the desktop NUS RX / TX characteristics. Same
 /// reasoning as [`BLUFI_FRAME_BUF`]: 247 bytes is the largest payload
 /// a central can deliver in a single ATT operation on a standard
-/// 251-byte LL PDU link. The buddy protocol's newline-delimited JSON
+/// 251-byte LL PDU link. The desktop protocol's newline-delimited JSON
 /// happily fragments across multiple writes — the per-connection
-/// [`BuddySession`] reassembles via [`stackchan_buddy_proto::LineFramer`].
+/// [`DesktopSession`] reassembles via [`stackchan_desktop_protocol::LineFramer`].
 const NUS_FRAME_BUF: usize = 247;
 
 /// Maximum simultaneous BLE centrals. One phone at a time is plenty.
@@ -209,7 +209,7 @@ pub struct StackchanServer {
     /// Nordic UART Service — the wire protocol the Claude desktop
     /// apps speak to maker devices. RX accepts newline-delimited
     /// JSON; TX notifies decisions + acks. Parsing + framing live in
-    /// [`super::buddy`].
+    /// [`super::desktop`].
     pub nus: NusService,
 }
 
@@ -359,14 +359,14 @@ pub struct BluFiService {
 /// protocol carrier. The de-facto serial-over-BLE shape: one write
 /// characteristic for desktop → device, one notify for device →
 /// desktop. Newline-delimited UTF-8 JSON. Wire spec lives in
-/// [`stackchan_buddy_proto`].
+/// [`stackchan_desktop_protocol`].
 #[allow(missing_docs)]
 #[gatt_service(uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e")]
 pub struct NusService {
     /// RX — desktop writes newline-delimited JSON objects here. The
-    /// per-connection [`BuddySession`] accumulates fragmented writes
+    /// per-connection [`DesktopSession`] accumulates fragmented writes
     /// and surfaces parsed messages on
-    /// [`super::buddy::BUDDY_INBOUND`].
+    /// [`super::desktop::DESKTOP_INBOUND`].
     #[characteristic(
         uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
         write,
@@ -375,8 +375,8 @@ pub struct NusService {
     pub rx: HVec<u8, NUS_FRAME_BUF>,
     /// TX — device notifies replies (permission decisions, acks) on
     /// this characteristic. The serve loop drains
-    /// [`super::buddy::BUDDY_OUTBOUND`] and renders the outbound
-    /// JSON through [`super::buddy::BuddySession`] (which appends a
+    /// [`super::desktop::DESKTOP_OUTBOUND`] and renders the outbound
+    /// JSON through [`super::desktop::DesktopSession`] (which appends a
     /// trailing `\n`).
     #[characteristic(uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", read, notify)]
     pub tx: HVec<u8, NUS_FRAME_BUF>,
@@ -596,9 +596,9 @@ struct WriteHandles {
     /// `BluFi` inbound-frame characteristic. Writes are parsed via
     /// [`stackchan_net::blufi::parse_frame`] and surfaced in defmt.
     blufi_frame: u16,
-    /// Buddy NUS RX characteristic. Writes feed the per-connection
-    /// [`BuddySession`] which accumulates lines and publishes onto
-    /// [`super::buddy::BUDDY_INBOUND`].
+    /// Desktop NUS RX characteristic. Writes feed the per-connection
+    /// [`DesktopSession`] which accumulates lines and publishes onto
+    /// [`super::desktop::DESKTOP_INBOUND`].
     nus_rx: u16,
 }
 
@@ -710,8 +710,8 @@ enum WriteAction {
     /// `ControlSubtype::ConnectToAp`) lands in a follow-up; this
     /// slice proves the GATT plumbing.
     BluFiFrame(blufi::Frame),
-    /// Raw bytes from the buddy NUS RX characteristic. Fed into the
-    /// per-connection [`BuddySession`] which handles line framing
+    /// Raw bytes from the desktop NUS RX characteristic. Fed into the
+    /// per-connection [`DesktopSession`] which handles line framing
     /// and parsing.
     NusBytes(Vec<u8>),
 }
@@ -754,11 +754,11 @@ async fn gatt_events_task<P: PacketPool>(
 ) {
     let handles = WriteHandles::new(server);
     let mut blufi_session = BluFiSession::new();
-    let mut buddy_session = BuddySession::new();
+    let mut desktop_session = DesktopSession::new();
     // Drain any stale outbound that piled up while no central was
     // connected. The signal is latest-wins; an aged reply for an
     // expired permission prompt would just confuse the desktop.
-    let _ = BUDDY_OUTBOUND.try_take();
+    let _ = DESKTOP_OUTBOUND.try_take();
     let mut link = WIFI_LINK_WATCH.receiver();
     if link.is_none() {
         defmt::warn!(
@@ -768,18 +768,18 @@ async fn gatt_events_task<P: PacketPool>(
     loop {
         // Race three sources: GATT events (always), BluFi link
         // push (only after the central has committed a
-        // `ConnectToAp`), and buddy outbound replies. Selecting on
+        // `ConnectToAp`), and desktop outbound replies. Selecting on
         // a non-active link receiver would spin the loop pointlessly
-        // pre-commit, so we still gate that arm. Buddy outbound is
+        // pre-commit, so we still gate that arm. Desktop outbound is
         // always live — a connected central can issue NUS writes
         // immediately, and the spec doesn't gate replies on prior
         // inbound state.
         let event = {
             let conn_next = conn.next();
-            let buddy_tx = BUDDY_OUTBOUND.wait();
+            let desktop_tx = DESKTOP_OUTBOUND.wait();
             if let (Some(rx), true) = (link.as_mut(), blufi_session.watch_link) {
                 let link_next = rx.changed();
-                match select3(conn_next, link_next, buddy_tx).await {
+                match select3(conn_next, link_next, desktop_tx).await {
                     Either3::First(event) => event,
                     Either3::Second(new_state) => {
                         notify_blufi_link_transition(server, conn, &mut blufi_session, new_state)
@@ -787,15 +787,15 @@ async fn gatt_events_task<P: PacketPool>(
                         continue;
                     }
                     Either3::Third(reply) => {
-                        notify_buddy_outbound(server, conn, &reply).await;
+                        notify_desktop_outbound(server, conn, &reply).await;
                         continue;
                     }
                 }
             } else {
-                match select(conn_next, buddy_tx).await {
+                match select(conn_next, desktop_tx).await {
                     Either::First(event) => event,
                     Either::Second(reply) => {
-                        notify_buddy_outbound(server, conn, &reply).await;
+                        notify_desktop_outbound(server, conn, &reply).await;
                         continue;
                     }
                 }
@@ -805,7 +805,7 @@ async fn gatt_events_task<P: PacketPool>(
             GattConnectionEvent::Disconnected { reason } => {
                 defmt::info!("ble: gatt disconnect ({})", defmt::Debug2Format(&reason));
                 super::clear_passkey();
-                // `buddy_session` is stack-local and dropped on
+                // `desktop_session` is stack-local and dropped on
                 // return; the `LineFramer` buffer goes with it.
                 return;
             }
@@ -815,7 +815,7 @@ async fn gatt_events_task<P: PacketPool>(
                     conn,
                     &handles,
                     &mut blufi_session,
-                    &mut buddy_session,
+                    &mut desktop_session,
                     event,
                 )
                 .await;
@@ -859,7 +859,7 @@ async fn dispatch_gatt_event<P: PacketPool>(
     conn: &GattConnection<'_, '_, P>,
     handles: &WriteHandles,
     blufi_session: &mut BluFiSession,
-    buddy_session: &mut BuddySession,
+    desktop_session: &mut DesktopSession,
     event: GattEvent<'_, '_, P>,
 ) {
     let decision = match &event {
@@ -895,7 +895,7 @@ async fn dispatch_gatt_event<P: PacketPool>(
             if !accepted {
                 return;
             }
-            apply_write_action(server, conn, blufi_session, buddy_session, action).await;
+            apply_write_action(server, conn, blufi_session, desktop_session, action).await;
         }
     }
 }
@@ -916,13 +916,13 @@ fn decide_write<P: PacketPool>(
         return WriteDecision::Accept(WriteAction::ProvisioningPsk);
     }
     if handle == handles.nus_rx {
-        // Buddy NUS writes are not auth-gated at the GATT layer.
+        // Desktop NUS writes are not auth-gated at the GATT layer.
         // The reference protocol explicitly supports unencrypted
         // devices; per-link security is reported separately via the
         // `sec` field on the status ack. Copy the bytes onto the
         // heap because the GATT borrow ends with the `accept()`
         // reply and we need to hand them to the per-connection
-        // `BuddySession` in `apply_write_action`.
+        // `DesktopSession` in `apply_write_action`.
         return WriteDecision::Accept(WriteAction::NusBytes(data.to_vec()));
     }
     if handle == handles.blufi_frame {
@@ -1040,7 +1040,7 @@ async fn apply_write_action<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
     blufi_session: &mut BluFiSession,
-    buddy_session: &mut BuddySession,
+    desktop_session: &mut DesktopSession,
     action: WriteAction,
 ) {
     match action {
@@ -1074,7 +1074,7 @@ async fn apply_write_action<P: PacketPool>(
         }
         WriteAction::NusBytes(bytes) => {
             defmt::trace!("ble: nus rx {=usize}B", bytes.len());
-            buddy_session.ingest(&bytes);
+            desktop_session.ingest(&bytes);
         }
     }
 }
@@ -1162,14 +1162,7 @@ async fn handle_blufi_frame<P: PacketPool>(
     }
 }
 
-/// Build a `BluFi` frame with the next outbound sequence, copy it into
-/// a [`HVec`] sized to the notify characteristic, and notify the
-/// central. `set` updates the GATT table value so a central that
-/// reads instead of subscribing sees the latest status.
-///
-/// Notify failures are logged at `trace` because pre-subscribe writes
-/// race the central's CCCD subscription — the most common cause is
-/// Render a buddy [`Outbound`] message + trailing newline and emit
+/// Render a desktop [`Outbound`] message + trailing newline and emit
 /// it on the NUS TX characteristic. Payloads larger than
 /// [`NUS_FRAME_BUF`] are split into consecutive notify operations;
 /// the desktop's framer reassembles by accumulating until it sees
@@ -1179,7 +1172,7 @@ async fn handle_blufi_frame<P: PacketPool>(
 /// pattern's "peer not subscribed yet" tolerance) rather than
 /// torn-down — the desktop will reconnect and the next outbound is
 /// what matters.
-async fn notify_buddy_outbound<P: PacketPool>(
+async fn notify_desktop_outbound<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
     reply: &Outbound,
@@ -1541,7 +1534,8 @@ async fn notify_task<P: PacketPool>(
         // `Disconnected` arm, which terminates the outer
         // `select(events, notify)`. Returning here on every error
         // would race that path and end the connection on the first
-        // pre-subscription tick — the Greptile P2.
+        // pre-subscription tick — see the comment above for the
+        // rationale.
         if let Err(e) = battery_handle.notify(conn, &battery_pct).await {
             defmt::trace!(
                 "ble: battery notify skipped ({}) — peer not subscribed?",

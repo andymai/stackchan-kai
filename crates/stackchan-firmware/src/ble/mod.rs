@@ -21,12 +21,12 @@
 //!   (one-byte enum, [`stackchan_core::Emotion::wire_byte`]).
 //!   Notify on transition only.
 //! - **Nordic UART Service (`6e400001-…`)** — the Claude Desktop
-//!   Hardware Buddy wire protocol ([`stackchan_buddy_proto`]). RX
+//!   Hardware Buddy wire protocol ([`stackchan_desktop_protocol`]). RX
 //!   accepts newline-delimited JSON; TX notifies decisions + acks.
-//!   Inbound bytes feed a per-connection [`buddy::BuddySession`]
+//!   Inbound bytes feed a per-connection [`desktop::DesktopSession`]
 //!   that publishes parsed messages onto
-//!   [`buddy::BUDDY_INBOUND`]; outbound replies arrive on
-//!   [`buddy::BUDDY_OUTBOUND`].
+//!   [`desktop::DESKTOP_INBOUND`]; outbound replies arrive on
+//!   [`desktop::DESKTOP_OUTBOUND`].
 //! - **Provisioning custom service** — writeable SSID + PSK
 //!   characteristics. Writing the PSK commits the staged SSID + new
 //!   PSK and signals [`crate::net::wifi::WIFI_RECONFIG`].
@@ -50,7 +50,7 @@
 //! `Signal`s.
 
 pub mod bonds;
-pub mod buddy;
+pub mod desktop;
 mod server;
 mod task;
 
