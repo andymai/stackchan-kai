@@ -202,6 +202,10 @@ async fn set_name(name: &str) {
             defmt::info!("desktop_control: rebooting to pick up new BLE name");
             esp_hal::system::software_reset();
         }
+        Some(Err(crate::storage::StorageError::TooLarge)) => {
+            defmt::warn!("desktop_control: name too long (> 22 bytes)");
+            ack("name", false, 0, Some("name too long"));
+        }
         Some(Err(e)) => {
             defmt::warn!(
                 "desktop_control: write_device_name failed ({})",
