@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .llm import SHORT_MAX, Emotion, sanitize_short
+from .llm import Emotion, sanitize_short
 
 
 class Stage(StrEnum):
@@ -118,7 +118,6 @@ def audio_validation_status(code: ErrorCode) -> int:
 
 
 __all__ = [
-    "SHORT_MAX",
     "ErrorCode",
     "FailureKind",
     "Stage",

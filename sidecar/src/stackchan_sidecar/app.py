@@ -66,11 +66,7 @@ def _validate_content_type(content_type: str) -> ErrorCode | None:
     match = _RATE_RE.search(content_type)
     if match is None:
         return None
-    try:
-        rate = int(match.group(1))
-    except ValueError:
-        return ErrorCode.AUDIO_RATE_UNSUPPORTED
-    if rate != _EXPECTED_SAMPLE_RATE:
+    if int(match.group(1)) != _EXPECTED_SAMPLE_RATE:
         return ErrorCode.AUDIO_RATE_UNSUPPORTED
     return None
 
