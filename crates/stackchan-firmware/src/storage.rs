@@ -174,6 +174,20 @@ const SESSION_UUID_STAGING_FILE: &str = "SESSION.NEW";
 /// unbounded SRAM allocation at boot.
 const MAX_SESSION_UUID_BYTES: u32 = 64;
 
+/// File holding the operator-supplied BLE local name, set via the
+/// Hardware Buddy `{"cmd":"name","name":"..."}` message. Empty /
+/// missing reverts to the MAC-suffixed default at boot. Persisted
+/// rather than RAM-only so a `cmd:name` survives reboots.
+const DEVICE_NAME_FILE: &str = "DEVICE.NAM";
+
+/// Atomic-write staging name for the device name. Same staged-copy
+/// dance as the session UUID.
+const DEVICE_NAME_STAGING_FILE: &str = "DEVICE.NEW";
+
+/// Cap on the `DEVICE.NAM` file. BLE GAP local-name maxes at 22
+/// bytes; 32 absorbs a trailing newline and small margin.
+const MAX_DEVICE_NAME_BYTES: u32 = 32;
+
 /// Filename for the operator-triggered camera capture. Single fixed
 /// name (no rotation) so each capture overwrites the previous —
 /// the workflow is "trigger, eject SD, view, repeat", not a
@@ -437,6 +451,62 @@ where
         }
         self.write_file(SESSION_UUID_STAGING_FILE, uuid.as_bytes())?;
         self.copy_then_delete(SESSION_UUID_STAGING_FILE, SESSION_UUID_FILE)?;
+        Ok(())
+    }
+
+    /// Read `/sd/DEVICE.NAM` — the operator-supplied BLE local name
+    /// set via the Hardware Buddy `cmd:name` message — as a trimmed
+    /// UTF-8 string. Returns `Ok(None)` if the file is absent (the
+    /// boot path falls back to the MAC-suffixed default).
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Read`] on a partial / failed read,
+    /// [`StorageError::TooLarge`] if the file exceeds
+    /// [`MAX_DEVICE_NAME_BYTES`], [`StorageError::NotUtf8`] if the
+    /// bytes don't decode as UTF-8.
+    pub fn read_device_name(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let Ok(file) = root.open_file_in_dir(DEVICE_NAME_FILE, Mode::ReadOnly) else {
+            return Ok(None);
+        };
+        let len = file.length();
+        if len > MAX_DEVICE_NAME_BYTES {
+            return Err(StorageError::TooLarge);
+        }
+        let len = len as usize;
+        let mut buf = alloc::vec![0u8; len];
+        let n = file.read(&mut buf).map_err(|_| StorageError::Read)?;
+        buf.truncate(n);
+        let text = alloc::string::String::from_utf8(buf).map_err(|_| StorageError::NotUtf8)?;
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(trimmed))
+        }
+    }
+
+    /// Atomically replace `/sd/DEVICE.NAM` with `name`. The new name
+    /// takes effect on next boot — the BLE advertised name is
+    /// captured into a `StaticCell` early in `main` and not
+    /// re-readable from disk while the firmware runs.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Write`] on any underlying write failure,
+    /// [`StorageError::TooLarge`] if `name` exceeds
+    /// [`MAX_DEVICE_NAME_BYTES`].
+    pub fn write_device_name(&mut self, name: &str) -> Result<(), StorageError> {
+        if name.len() > MAX_DEVICE_NAME_BYTES as usize {
+            return Err(StorageError::TooLarge);
+        }
+        self.write_file(DEVICE_NAME_STAGING_FILE, name.as_bytes())?;
+        self.copy_then_delete(DEVICE_NAME_STAGING_FILE, DEVICE_NAME_FILE)?;
         Ok(())
     }
 
