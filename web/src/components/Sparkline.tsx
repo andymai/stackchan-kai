@@ -8,7 +8,6 @@ type Props = {
   max?: number;
   stroke?: string;
   fill?: string;
-  zeroLine?: boolean;
 };
 
 export function Sparkline(props: Props) {
@@ -17,14 +16,14 @@ export function Sparkline(props: Props) {
 
   const geom = createMemo(() => {
     const vs = props.values;
-    if (vs.length === 0) return null;
+    if (vs.length < 2) return null;
 
     const lo = props.min ?? Math.min(...vs);
     const hi = props.max ?? Math.max(...vs);
     const span = hi - lo || 1;
     const w = width();
     const h = height();
-    const stepX = vs.length > 1 ? w / (vs.length - 1) : 0;
+    const stepX = w / (vs.length - 1);
 
     let path = "";
     let area = `M 0 ${h} `;
