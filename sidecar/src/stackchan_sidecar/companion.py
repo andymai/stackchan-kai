@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
