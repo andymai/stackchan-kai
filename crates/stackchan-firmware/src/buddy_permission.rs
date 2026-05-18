@@ -98,7 +98,8 @@ impl ZoneEdge {
     }
 }
 
-/// Render task. Spawns once at boot, runs for the firmware lifetime.
+/// Permission task. Spawns once at boot, runs for the firmware
+/// lifetime.
 #[embassy_executor::task]
 pub async fn buddy_permission_task() -> ! {
     let Ok(mut sub) = BUDDY_INBOUND.subscriber() else {
@@ -134,7 +135,7 @@ struct State {
     /// Id of the prompt currently displayed, if any. Cleared when
     /// the desktop withdraws the prompt OR after we commit a
     /// decision.
-    active_prompt_id: Option<heapless::String<48>>,
+    active_prompt_id: Option<alloc::string::String>,
     /// Wall-clock arrival time of the active prompt. Used to
     /// (later) decorate the operator-facing UX with elapsed
     /// seconds.
@@ -144,7 +145,7 @@ struct State {
     /// Last id we sent a decision for + when. Suppresses duplicate
     /// sends if a late body-touch edge fires before the desktop
     /// withdraws the prompt.
-    last_decided: Option<(heapless::String<48>, Instant)>,
+    last_decided: Option<(alloc::string::String, Instant)>,
     /// Press / release edge detector for the left zone (deny).
     left_edge: ZoneEdge,
     /// Press / release edge detector for the center zone (cancel).
@@ -160,42 +161,53 @@ fn on_message(message: Inbound, state: &mut State) {
     }
 }
 
+/// Latch a fresh prompt and fire the operator notifications (LCD
+/// wake + chime + toast). Used both when no prompt was active
+/// (rising edge from idle) and when a different prompt id arrives
+/// in place of an existing one — replacement is operator-visible
+/// too, so it needs the same side effects.
+fn notify_new_prompt(
+    state: &mut State,
+    new_id: alloc::string::String,
+    replaced: Option<alloc::string::String>,
+) {
+    if let Some(prev) = replaced {
+        defmt::info!(
+            "buddy_permission: prompt replaced ({=str} → {=str})",
+            prev.as_str(),
+            new_id.as_str()
+        );
+    } else {
+        defmt::info!(
+            "buddy_permission: prompt arrived (id={=str})",
+            new_id.as_str()
+        );
+    }
+    state.active_prompt_id = Some(new_id);
+    state.prompt_arrived_at = Some(Instant::now());
+    state.armed = None;
+    sleep::wake_if_sleeping();
+    queue_phrase(PhraseId::PickupChirp);
+    toast::push(ToastLevel::Warn, "approve? tap-twice back", HalClock.now());
+}
+
 /// React to one heartbeat snapshot. Handles both the rising edge
 /// (new prompt appeared) and the falling edge (prompt withdrawn).
 fn on_snapshot(snap: &Snapshot, state: &mut State) {
+    // `alloc::string::String` rather than a fixed-cap `heapless`
+    // string so an unusually long id (the spec doesn't bound it)
+    // can't collapse to `""` and conflict with another oversized id
+    // in the decision latch.
     let inbound_id = snap
         .prompt
         .as_ref()
-        .map(|p| heapless::String::<48>::try_from(p.id.as_str()).unwrap_or_default());
+        .map(|p| alloc::string::String::from(p.id.as_str()));
 
     let active_id = state.active_prompt_id.clone();
 
     match (active_id, inbound_id) {
-        (None, Some(new_id)) => {
-            // Rising edge — first time we've seen this prompt.
-            defmt::info!(
-                "buddy_permission: prompt arrived (id={=str})",
-                new_id.as_str()
-            );
-            state.active_prompt_id = Some(new_id);
-            state.prompt_arrived_at = Some(Instant::now());
-            state.armed = None;
-            sleep::wake_if_sleeping();
-            queue_phrase(PhraseId::PickupChirp);
-            toast::push(ToastLevel::Warn, "approve? tap-twice back", HalClock.now());
-        }
-        (Some(prev), Some(new)) if prev != new => {
-            // Different prompt id — desktop replaced one prompt
-            // with another. Treat as rising edge for the new id.
-            defmt::info!(
-                "buddy_permission: prompt replaced ({=str} → {=str})",
-                prev.as_str(),
-                new.as_str()
-            );
-            state.active_prompt_id = Some(new);
-            state.prompt_arrived_at = Some(Instant::now());
-            state.armed = None;
-        }
+        (None, Some(new_id)) => notify_new_prompt(state, new_id, None),
+        (Some(prev), Some(new)) if prev != new => notify_new_prompt(state, new, Some(prev)),
         (Some(_), None) => {
             // Falling edge — desktop withdrew the prompt before we
             // committed a decision (user clicked Approve in the
