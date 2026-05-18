@@ -24,6 +24,7 @@ pub mod audio_debug;
 pub mod ble;
 pub mod board;
 pub mod body_touch;
+pub mod buddy_permission;
 pub mod buddy_render;
 pub mod button;
 pub mod camera;

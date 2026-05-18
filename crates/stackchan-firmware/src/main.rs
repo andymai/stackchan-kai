@@ -1614,6 +1614,13 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(ble_task) failed: {}", defmt::Debug2Format(&e));
     }
 
+    if let Err(e) = spawner.spawn(stackchan_firmware::buddy_permission::buddy_permission_task()) {
+        defmt::panic!(
+            "spawn(buddy_permission_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
+    }
+
     if let Err(e) = spawner.spawn(stackchan_firmware::buddy_render::buddy_render_task()) {
         defmt::panic!(
             "spawn(buddy_render_task) failed: {}",
