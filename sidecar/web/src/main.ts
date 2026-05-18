@@ -1,6 +1,8 @@
+import { EMOTION_CHIPS, setEmotion, startListen } from "./actions";
 import { buildScene, setStatusTone } from "./scene";
 import {
   batteryTone,
+  connectAgentStream,
   connectStream,
   createState,
   tickPose,
@@ -9,17 +11,66 @@ import {
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hudLink = document.getElementById("hud-link")!;
+const hudAgent = document.getElementById("hud-agent")!;
 const hudEmotion = document.getElementById("hud-emotion")!;
 const hudPose = document.getElementById("hud-pose")!;
 const hudBattery = document.getElementById("hud-battery")!;
 const hudWifi = document.getElementById("hud-wifi")!;
 
+const thinkingEl = document.getElementById("thinking")!;
+const subtitleEl = document.getElementById("subtitle")!;
+const subtitleUserEl = document.getElementById("subtitle-user")!;
+const subtitleReplyEl = document.getElementById("subtitle-reply")!;
+
+const pttEl = document.getElementById("ptt") as HTMLButtonElement;
+const chipsEl = document.getElementById("chips")!;
+
 const scene = buildScene(canvas);
 const state = createState();
 connectStream("/v1/state-proxy", state);
+connectAgentStream("/v1/session-status", state);
 
 window.addEventListener("resize", scene.resize);
 
+// ── Controls ──────────────────────────────────────────────────────
+
+const chipButtons = new Map<string, HTMLButtonElement>();
+for (const { id, label } of EMOTION_CHIPS) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "chip";
+  btn.dataset.emotion = id;
+  btn.textContent = label;
+  btn.addEventListener("click", () => {
+    void setEmotion(id);
+  });
+  chipsEl.appendChild(btn);
+  chipButtons.set(id, btn);
+}
+
+let pttBusy = false;
+pttEl.addEventListener("click", async () => {
+  if (pttBusy) return;
+  pttBusy = true;
+  pttEl.disabled = true;
+  try {
+    await startListen();
+  } finally {
+    pttBusy = false;
+    pttEl.disabled = false;
+  }
+});
+
+// ── Subtitle TTL ──────────────────────────────────────────────────
+// Surface the latest turn for ~12 s after completion; after that hide
+// so it doesn't loiter on top of the scene forever.
+const SUBTITLE_TTL_MS = 12_000;
+let lastTurnId: number | null = null;
+let lastTurnShownAt = 0;
+
+// ── Render loop ───────────────────────────────────────────────────
+
+let lastChipActive = "";
 let lastT = performance.now() / 1000;
 
 function frame(): void {
@@ -36,7 +87,6 @@ function frame(): void {
   scene.head.rotation.y = state.pan;
   scene.head.rotation.x = state.tilt;
 
-  // Breath: gentle vertical bob, ~10 mm peak-to-peak at ~6 BPM equivalent.
   const breath = Math.sin(now * 0.6) * 0.018;
   scene.scene.position.y = breath;
 
@@ -48,8 +98,19 @@ function frame(): void {
 
   setStatusTone(scene.status, batteryTone(state.snapshot));
 
+  // ── HUD ────────────────────────────────────────────────────────
   hudLink.textContent = state.conn;
   hudLink.dataset.conn = state.conn;
+  const agentLabel =
+    state.agentConn === "live"
+      ? state.agent?.state === "thinking"
+        ? "thinking"
+        : "idle"
+      : state.agentConn;
+  hudAgent.textContent = agentLabel;
+  hudAgent.dataset.conn = state.agentConn;
+  hudAgent.dataset.state = state.agent?.state ?? "";
+
   hudEmotion.textContent = (state.snapshot?.emotion ?? "—").toUpperCase();
   if (state.snapshot) {
     const p = state.snapshot.head_actual ?? state.snapshot.head_pose;
@@ -63,6 +124,33 @@ function frame(): void {
     hudPose.textContent = "—";
     hudBattery.textContent = "—";
     hudWifi.textContent = "—";
+  }
+
+  // ── Thinking indicator ─────────────────────────────────────────
+  const thinking = state.agent?.state === "thinking";
+  thinkingEl.classList.toggle("hidden", !thinking);
+
+  // ── Active emotion chip ────────────────────────────────────────
+  const activeEmotion = state.snapshot?.emotion ?? "";
+  if (activeEmotion !== lastChipActive) {
+    chipButtons.get(lastChipActive)?.classList.remove("active");
+    chipButtons.get(activeEmotion)?.classList.add("active");
+    lastChipActive = activeEmotion;
+  }
+
+  // ── Subtitle TTL handling ──────────────────────────────────────
+  const turn = state.agent?.last_turn;
+  if (turn) {
+    if (turn.completed_at !== lastTurnId) {
+      lastTurnId = turn.completed_at;
+      lastTurnShownAt = performance.now();
+      subtitleUserEl.textContent = turn.transcript || "(silence)";
+      subtitleReplyEl.textContent = turn.reply_short;
+    }
+    const age = performance.now() - lastTurnShownAt;
+    subtitleEl.classList.toggle("hidden", age > SUBTITLE_TTL_MS);
+  } else {
+    subtitleEl.classList.add("hidden");
   }
 
   scene.renderer.render(scene.scene, scene.camera);

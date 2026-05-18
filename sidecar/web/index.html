@@ -9,10 +9,15 @@
   <body>
     <div id="app">
       <canvas id="scene"></canvas>
+
       <aside id="hud">
         <div class="row">
           <span class="hud-label">LINK</span>
           <span id="hud-link" class="hud-value">linking…</span>
+        </div>
+        <div class="row">
+          <span class="hud-label">AGENT</span>
+          <span id="hud-agent" class="hud-value">linking…</span>
         </div>
         <div class="row">
           <span class="hud-label">EMOTION</span>
@@ -31,6 +36,32 @@
           <span id="hud-wifi" class="hud-value">—</span>
         </div>
       </aside>
+
+      <div id="thinking" class="thinking hidden" aria-live="polite">
+        <span class="thinking-dot"></span>
+        <span class="thinking-dot"></span>
+        <span class="thinking-dot"></span>
+        <span class="thinking-label">thinking…</span>
+      </div>
+
+      <div id="subtitle" class="subtitle hidden" aria-live="polite">
+        <div class="subtitle-row">
+          <span class="subtitle-tag">YOU</span>
+          <span id="subtitle-user" class="subtitle-text"></span>
+        </div>
+        <div class="subtitle-row">
+          <span class="subtitle-tag subtitle-tag-reply">SC</span>
+          <span id="subtitle-reply" class="subtitle-text subtitle-reply"></span>
+        </div>
+      </div>
+
+      <div id="controls" class="controls">
+        <button id="ptt" class="ptt" type="button" aria-label="Start listen window">
+          <span class="ptt-icon">●</span>
+          <span class="ptt-label">PUSH TO LISTEN</span>
+        </button>
+        <div id="chips" class="chips" role="toolbar" aria-label="Emotion presets"></div>
+      </div>
     </div>
     <script type="module" src="./src/main.ts"></script>
   </body>

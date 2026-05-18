@@ -1,6 +1,23 @@
 // Types mirror crates/stackchan-core's AvatarSnapshot wire format.
 export type Pose = { pan_deg: number; tilt_deg: number };
 
+// Voice agent state — wire format from /v1/session-status on the sidecar.
+export type Turn = {
+  transcript: string;
+  reply_short: string;
+  emotion: string;
+  completed_at: number;
+};
+
+export type SessionStatus = {
+  state: "idle" | "thinking";
+  request_id?: string | null;
+  session_id?: string | null;
+  last_turn?: Turn;
+  error?: string;
+  updated_at: number;
+};
+
 export type AvatarSnapshot = {
   emotion: string;
   mood: string;
@@ -19,6 +36,8 @@ export type ConnState = "linking" | "live" | "down";
 export type StateModel = {
   snapshot: AvatarSnapshot | null;
   conn: ConnState;
+  agentConn: ConnState;
+  agent: SessionStatus | null;
   // Smoothed view-state — radians, lerped toward target each frame.
   pan: number;
   tilt: number;
@@ -43,6 +62,8 @@ export function createState(): StateModel {
   return {
     snapshot: null,
     conn: "linking",
+    agentConn: "linking",
+    agent: null,
     pan: 0,
     tilt: 0,
     eyeOffsetX: 0,
@@ -54,7 +75,11 @@ export function createState(): StateModel {
   };
 }
 
-export function connectStream(url: string, model: StateModel): () => void {
+function connectSse<T>(
+  url: string,
+  onMessage: (data: T) => void,
+  setConn: (s: ConnState) => void,
+): () => void {
   let es: EventSource | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
@@ -62,18 +87,16 @@ export function connectStream(url: string, model: StateModel): () => void {
   const open = (): void => {
     if (closed) return;
     es = new EventSource(url);
-    es.onopen = () => {
-      model.conn = "live";
-    };
+    es.onopen = () => setConn("live");
     es.onmessage = (ev) => {
       try {
-        model.snapshot = JSON.parse(ev.data) as AvatarSnapshot;
+        onMessage(JSON.parse(ev.data) as T);
       } catch {
         // partial payloads can land during reconnect — drop quietly
       }
     };
     es.onerror = () => {
-      model.conn = "down";
+      setConn("down");
       es?.close();
       es = null;
       if (!closed) retry = setTimeout(open, 1500);
@@ -86,6 +109,30 @@ export function connectStream(url: string, model: StateModel): () => void {
     if (retry != null) clearTimeout(retry);
     es?.close();
   };
+}
+
+export function connectStream(url: string, model: StateModel): () => void {
+  return connectSse<AvatarSnapshot>(
+    url,
+    (snap) => {
+      model.snapshot = snap;
+    },
+    (c) => {
+      model.conn = c;
+    },
+  );
+}
+
+export function connectAgentStream(url: string, model: StateModel): () => void {
+  return connectSse<SessionStatus>(
+    url,
+    (s) => {
+      model.agent = s;
+    },
+    (c) => {
+      model.agentConn = c;
+    },
+  );
 }
 
 export function targetPose(model: StateModel): Pose {
