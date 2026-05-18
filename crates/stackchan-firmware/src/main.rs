@@ -1628,6 +1628,13 @@ async fn main(spawner: Spawner) -> ! {
         );
     }
 
+    if let Err(e) = spawner.spawn(stackchan_firmware::buddy_control::buddy_control_task()) {
+        defmt::panic!(
+            "spawn(buddy_control_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
+    }
+
     // Sample the chip's hardware RNG twice — once for IdleDrift
     // (eyes), once for IdleHeadDrift (head). Using independent seeds
     // keeps the two idle schedules from drifting in lockstep across a
