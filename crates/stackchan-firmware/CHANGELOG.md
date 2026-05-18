@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.88.0...stackchan-firmware-v0.89.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** buddy_render task + Claude-prefixed BLE name ([#369](https://github.com/andymai/stackchan-kai/issues/369)) ([ac674e1](https://github.com/andymai/stackchan-kai/commit/ac674e1f3a3ba8374363627a5da85da6adf6d450))
+
 ## [0.88.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.87.0...stackchan-firmware-v0.88.0) (2026-05-18)
 
 
