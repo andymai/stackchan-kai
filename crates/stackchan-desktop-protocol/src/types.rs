@@ -281,7 +281,9 @@ pub struct UserStats {
     pub velocity: u32,
     /// `nap` — naps / sleep cycles.
     pub naps: u32,
-    /// `lvl` — buddy "level" (a free-form gamification counter).
+    /// `lvl` — free-form gamification counter ("level"). The
+    /// device picks the increment cadence; the desktop just
+    /// displays the value.
     pub level: u32,
 }
 

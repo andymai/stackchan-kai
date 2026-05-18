@@ -1,11 +1,11 @@
-//! Buddy command-surface handler: status / owner / name / unpair
+//! Desktop command-surface handler: status / owner / name / unpair
 //! / time-sync / turn events / folder push.
 //!
-//! Subscribes to [`crate::ble::buddy::BUDDY_INBOUND`] for the
-//! `cmd`- and `evt`-tagged messages the other buddy tasks
-//! ([`crate::buddy_render`], [`crate::buddy_permission`]) don't
+//! Subscribes to [`crate::ble::desktop::DESKTOP_INBOUND`] for the
+//! `cmd`- and `evt`-tagged messages the other desktop tasks
+//! ([`crate::desktop_render`], [`crate::desktop_permission`]) don't
 //! consume themselves, and signals replies on
-//! [`crate::ble::buddy::BUDDY_OUTBOUND`].
+//! [`crate::ble::desktop::DESKTOP_OUTBOUND`].
 //!
 //! - **status** → builds a [`StatusData`] from the current
 //!   battery / uptime / heap / approval+deny counters and replies.
@@ -16,7 +16,7 @@
 //! - **unpair** → wipes the SD-backed bonds via
 //!   [`crate::ble::bonds::save_all`] with an empty list, then acks.
 //! - **time** (`{"time":[epoch,tz]}`) → logs. The BM8563 RTC is
-//!   driven by [`crate::wallclock`]'s SNTP path; buddy time is
+//!   driven by [`crate::wallclock`]'s SNTP path; desktop time is
 //!   advisory until a follow-up slice wires it in.
 //! - **turn** events → push the assistant's first text block into
 //!   the toast band so the operator sees the recent reply.
@@ -28,13 +28,13 @@ use alloc::string::ToString;
 use embassy_sync::pubsub::WaitResult;
 use embassy_time::{Duration, Instant};
 use heapless_09::Vec as HVec;
-use stackchan_buddy_proto::{
+use stackchan_core::Clock;
+use stackchan_desktop_protocol::{
     Ack, BatteryStatus, Cmd, ContentBlock, Inbound, Outbound, StatusData, SysStatus, Turn,
 };
-use stackchan_core::Clock;
 
 use crate::ble::bonds;
-use crate::ble::buddy::{BUDDY_INBOUND, BUDDY_OUTBOUND};
+use crate::ble::desktop::{DESKTOP_INBOUND, DESKTOP_OUTBOUND};
 use crate::clock::HalClock;
 use crate::net::snapshot;
 use crate::toast::{self, ToastLevel};
@@ -48,24 +48,24 @@ const TOAST_PREVIEW_BYTES: usize = 64;
 /// Command-surface task. Spawns once at boot, runs for the
 /// firmware lifetime.
 #[embassy_executor::task]
-pub async fn buddy_control_task() -> ! {
-    let Ok(mut sub) = BUDDY_INBOUND.subscriber() else {
+pub async fn desktop_control_task() -> ! {
+    let Ok(mut sub) = DESKTOP_INBOUND.subscriber() else {
         defmt::error!(
-            "buddy_control: BUDDY_INBOUND subscriber slot exhausted; task parking forever"
+            "desktop_control: DESKTOP_INBOUND subscriber slot exhausted; task parking forever"
         );
         loop {
             embassy_time::Timer::after(Duration::from_secs(3600)).await;
         }
     };
     let boot = Instant::now();
-    defmt::info!("buddy_control: armed (status / owner / name / unpair / turn / push)");
+    defmt::info!("desktop_control: armed (status / owner / name / unpair / turn / push)");
 
     loop {
         let message = match sub.next_message().await {
             WaitResult::Message(m) => m,
             WaitResult::Lagged(n) => {
                 defmt::warn!(
-                    "buddy_control: subscriber lagged, dropped {=u64} message(s)",
+                    "desktop_control: subscriber lagged, dropped {=u64} message(s)",
                     n
                 );
                 continue;
@@ -80,12 +80,12 @@ async fn handle(message: Inbound, boot: Instant) {
     match message {
         Inbound::Cmd(Cmd::Status) => reply_status(boot),
         Inbound::Cmd(Cmd::Owner { name }) => {
-            defmt::info!("buddy_control: owner = {=str}", name.as_str());
+            defmt::info!("desktop_control: owner = {=str}", name.as_str());
             ack("owner", true, 0, None);
         }
         Inbound::Cmd(Cmd::SetName { name }) => {
             defmt::info!(
-                "buddy_control: name → {=str} (persistence pending)",
+                "desktop_control: name → {=str} (persistence pending)",
                 name.as_str()
             );
             ack("name", true, 0, None);
@@ -95,7 +95,7 @@ async fn handle(message: Inbound, boot: Instant) {
         }
         Inbound::Cmd(Cmd::CharBegin { name, total }) => {
             defmt::info!(
-                "buddy_control: char_begin {=str} ({=u32}B) — rejecting (no SD writer yet)",
+                "desktop_control: char_begin {=str} ({=u32}B) — rejecting (no SD writer yet)",
                 name.as_str(),
                 total
             );
@@ -108,7 +108,7 @@ async fn handle(message: Inbound, boot: Instant) {
         }
         Inbound::Cmd(Cmd::File { path, size }) => {
             defmt::warn!(
-                "buddy_control: stray file {=str} ({=u32}B) outside a char window",
+                "desktop_control: stray file {=str} ({=u32}B) outside a char window",
                 path.as_str(),
                 size
             );
@@ -116,7 +116,7 @@ async fn handle(message: Inbound, boot: Instant) {
         }
         Inbound::Cmd(Cmd::Chunk { data }) => {
             defmt::warn!(
-                "buddy_control: stray chunk ({=usize}B) outside a file window",
+                "desktop_control: stray chunk ({=usize}B) outside a file window",
                 data.len()
             );
             ack("chunk", false, 0, Some("no file in progress"));
@@ -128,7 +128,7 @@ async fn handle(message: Inbound, boot: Instant) {
             tz_offset_secs,
         } => {
             defmt::info!(
-                "buddy_control: time-sync epoch={=i64} tz={=i32} (RTC write pending)",
+                "desktop_control: time-sync epoch={=i64} tz={=i32} (RTC write pending)",
                 epoch_secs,
                 tz_offset_secs
             );
@@ -164,7 +164,7 @@ fn reply_status(boot: Instant) {
         }),
         stats: None, // counters land alongside operator-visible UX in a follow-up
     };
-    BUDDY_OUTBOUND.signal(Outbound::StatusAck(data));
+    DESKTOP_OUTBOUND.signal(Outbound::StatusAck(data));
 }
 
 /// Wipe the bonds file and send the ack. Bond wipe takes effect
@@ -178,7 +178,7 @@ fn reply_status(boot: Instant) {
 /// re-pair). Reasons are short fixed strings so defmt + the wire
 /// stay terse.
 async fn unpair() {
-    defmt::info!("buddy_control: unpair — wiping bonds");
+    defmt::info!("desktop_control: unpair — wiping bonds");
     let empty: HVec<trouble_host::prelude::BondInformation, 8> = HVec::new();
     match bonds::save_all(&empty).await {
         Ok(()) => ack("unpair", true, 0, None),
@@ -198,7 +198,7 @@ fn render_turn(turn: &Turn) {
         .unwrap_or_default();
     if preview.is_empty() {
         defmt::trace!(
-            "buddy_control: turn — no text block ({=usize} content item(s))",
+            "desktop_control: turn — no text block ({=usize} content item(s))",
             turn.content.len()
         );
         return;
@@ -228,9 +228,9 @@ fn text_preview(block: &ContentBlock) -> Option<alloc::string::String> {
 }
 
 /// Helper that signals a generic [`Ack`] back on
-/// [`BUDDY_OUTBOUND`].
+/// [`DESKTOP_OUTBOUND`].
 fn ack(cmd: &str, ok: bool, n: u32, error: Option<&str>) {
-    BUDDY_OUTBOUND.signal(Outbound::Ack(Ack {
+    DESKTOP_OUTBOUND.signal(Outbound::Ack(Ack {
         cmd: cmd.into(),
         ok,
         n,

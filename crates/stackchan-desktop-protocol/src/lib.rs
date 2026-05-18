@@ -1,4 +1,4 @@
-//! # stackchan-buddy-proto
+//! # stackchan-desktop-protocol
 //!
 //! Wire protocol for the Claude Desktop Hardware Buddy BLE bridge.
 //! Newline-delimited UTF-8 JSON over the Nordic UART Service, one

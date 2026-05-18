@@ -1,9 +1,9 @@
 //! Operator-facing permission decision flow.
 //!
-//! Subscribes to [`crate::ble::buddy::BUDDY_INBOUND`] for snapshot
+//! Subscribes to [`crate::ble::desktop::DESKTOP_INBOUND`] for snapshot
 //! prompts and to the body-touch sensor for back-of-head taps, and
 //! sends [`Outbound::Permission`] back on
-//! [`crate::ble::buddy::BUDDY_OUTBOUND`].
+//! [`crate::ble::desktop::DESKTOP_OUTBOUND`].
 //!
 //! ## Sleep + chime
 //!
@@ -11,7 +11,7 @@
 //! avatar had drifted off) and queues a [`PhraseId::PickupChirp`] —
 //! a brief upward sweep designed to draw attention without being
 //! intrusive. The autonomy gate is left to
-//! [`crate::buddy_render`]; this task only cares about the decision.
+//! [`crate::desktop_render`]; this task only cares about the decision.
 //!
 //! ## Tap-twice gesture
 //!
@@ -33,11 +33,11 @@
 use embassy_futures::select::{Either, select};
 use embassy_sync::pubsub::WaitResult;
 use embassy_time::{Duration, Instant, Ticker};
-use stackchan_buddy_proto::{Decision, Inbound, Outbound, Snapshot};
 use stackchan_core::voice::{Locale, PhraseId, Priority};
 use stackchan_core::{Clock, RemoteCommand};
+use stackchan_desktop_protocol::{Decision, Inbound, Outbound, Snapshot};
 
-use crate::ble::buddy::{BUDDY_INBOUND, BUDDY_OUTBOUND};
+use crate::ble::desktop::{DESKTOP_INBOUND, DESKTOP_OUTBOUND};
 use crate::clock::HalClock;
 use crate::net::http::REMOTE_COMMAND_SIGNAL;
 use crate::net::snapshot;
@@ -101,16 +101,16 @@ impl ZoneEdge {
 /// Permission task. Spawns once at boot, runs for the firmware
 /// lifetime.
 #[embassy_executor::task]
-pub async fn buddy_permission_task() -> ! {
-    let Ok(mut sub) = BUDDY_INBOUND.subscriber() else {
+pub async fn desktop_permission_task() -> ! {
+    let Ok(mut sub) = DESKTOP_INBOUND.subscriber() else {
         defmt::error!(
-            "buddy_permission: BUDDY_INBOUND subscriber slot exhausted; task parking forever"
+            "desktop_permission: DESKTOP_INBOUND subscriber slot exhausted; task parking forever"
         );
         loop {
             embassy_time::Timer::after(Duration::from_secs(3600)).await;
         }
     };
-    defmt::info!("buddy_permission: armed (tap-twice on left=deny / right=approve)");
+    defmt::info!("desktop_permission: armed (tap-twice on left=deny / right=approve)");
 
     let mut state = State::default();
     let mut ticker = Ticker::every(Duration::from_millis(POLL_PERIOD_MS));
@@ -120,7 +120,7 @@ pub async fn buddy_permission_task() -> ! {
             Either::First(WaitResult::Message(m)) => on_message(m, &mut state),
             Either::First(WaitResult::Lagged(n)) => {
                 defmt::warn!(
-                    "buddy_permission: subscriber lagged, dropped {=u64} message(s)",
+                    "desktop_permission: subscriber lagged, dropped {=u64} message(s)",
                     n
                 );
             }
@@ -154,7 +154,7 @@ struct State {
     right_edge: ZoneEdge,
 }
 
-/// React to one inbound buddy message.
+/// React to one inbound desktop message.
 fn on_message(message: Inbound, state: &mut State) {
     if let Inbound::Snapshot(snap) = message {
         on_snapshot(&snap, state);
@@ -173,13 +173,13 @@ fn notify_new_prompt(
 ) {
     if let Some(prev) = replaced {
         defmt::info!(
-            "buddy_permission: prompt replaced ({=str} → {=str})",
+            "desktop_permission: prompt replaced ({=str} → {=str})",
             prev.as_str(),
             new_id.as_str()
         );
     } else {
         defmt::info!(
-            "buddy_permission: prompt arrived (id={=str})",
+            "desktop_permission: prompt arrived (id={=str})",
             new_id.as_str()
         );
     }
@@ -212,7 +212,7 @@ fn on_snapshot(snap: &Snapshot, state: &mut State) {
             // Falling edge — desktop withdrew the prompt before we
             // committed a decision (user clicked Approve in the
             // desktop UI, or the request timed out upstream).
-            defmt::info!("buddy_permission: prompt withdrawn upstream");
+            defmt::info!("desktop_permission: prompt withdrawn upstream");
             state.active_prompt_id = None;
             state.prompt_arrived_at = None;
             state.armed = None;
@@ -246,7 +246,7 @@ fn on_tick(state: &mut State) {
     }
 
     if centre_released && state.armed.is_some() {
-        defmt::info!("buddy_permission: armed gesture cancelled (centre)");
+        defmt::info!("desktop_permission: armed gesture cancelled (centre)");
         state.armed = None;
         return;
     }
@@ -267,7 +267,7 @@ fn handle_zone_tap(state: &mut State, zone: ArmedZone) {
         }
         _ => {
             defmt::info!(
-                "buddy_permission: armed ({=str}); tap again to confirm",
+                "desktop_permission: armed ({=str}); tap again to confirm",
                 match zone {
                     ArmedZone::Left => "deny",
                     ArmedZone::Right => "approve",
@@ -300,11 +300,11 @@ fn commit(state: &mut State, zone: ArmedZone, now: Instant) {
         ArmedZone::Right => PhraseId::WakeChirp,
     };
     defmt::info!(
-        "buddy_permission: decision {=str} → {=str}",
+        "desktop_permission: decision {=str} → {=str}",
         prompt_id.as_str(),
         decision.as_wire(),
     );
-    BUDDY_OUTBOUND.signal(Outbound::Permission {
+    DESKTOP_OUTBOUND.signal(Outbound::Permission {
         id: prompt_id.as_str().into(),
         decision,
     });
@@ -323,7 +323,7 @@ fn expire_stale(state: &mut State) {
     if let Some((_, when)) = state.armed
         && now.duration_since(when) >= Duration::from_millis(TAP_TWICE_WINDOW_MS)
     {
-        defmt::trace!("buddy_permission: armed gesture timed out");
+        defmt::trace!("desktop_permission: armed gesture timed out");
         state.armed = None;
     }
     if let Some((_, when)) = &state.last_decided

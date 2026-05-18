@@ -1,4 +1,4 @@
-//! End-to-end coverage of the buddy wire protocol — parse a
+//! End-to-end coverage of the desktop wire protocol — parse a
 //! realistic fixture for every [`Inbound`] variant, render every
 //! [`Outbound`] variant, and verify the [`LineFramer`] drives the
 //! parser across fragmented input the way BLE notifications would.
@@ -10,7 +10,7 @@
     reason = "tests assert structural invariants; panic / expect / unwrap are the standard test idiom"
 )]
 
-use stackchan_buddy_proto::{
+use stackchan_desktop_protocol::{
     Ack, BatteryStatus, Cmd, Decision, Inbound, LineFramer, Outbound, StatusData, SysStatus,
     UserStats, parse_inbound, parse_outbound, render_outbound,
 };

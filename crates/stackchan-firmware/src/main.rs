@@ -1578,7 +1578,7 @@ async fn main(spawner: Spawner) -> ! {
         use core::fmt::Write as _;
         let mut s: heapless::String<32> = heapless::String::new();
         // Must start with `Claude` so Claude Desktop's Hardware
-        // Buddy picker filters us in. `Claude stk-XXXXXX` is 17
+        // Desktop picker filters us in. `Claude stk-XXXXXX` is 17
         // bytes — comfortably under the 22-byte BLE GAP-name cap
         // and leaves headroom for an operator-supplied display
         // name in a later slice. The mDNS hostname stays
@@ -1614,23 +1614,24 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(ble_task) failed: {}", defmt::Debug2Format(&e));
     }
 
-    if let Err(e) = spawner.spawn(stackchan_firmware::buddy_permission::buddy_permission_task()) {
+    if let Err(e) = spawner.spawn(stackchan_firmware::desktop_permission::desktop_permission_task())
+    {
         defmt::panic!(
-            "spawn(buddy_permission_task) failed: {}",
+            "spawn(desktop_permission_task) failed: {}",
             defmt::Debug2Format(&e)
         );
     }
 
-    if let Err(e) = spawner.spawn(stackchan_firmware::buddy_render::buddy_render_task()) {
+    if let Err(e) = spawner.spawn(stackchan_firmware::desktop_render::desktop_render_task()) {
         defmt::panic!(
-            "spawn(buddy_render_task) failed: {}",
+            "spawn(desktop_render_task) failed: {}",
             defmt::Debug2Format(&e)
         );
     }
 
-    if let Err(e) = spawner.spawn(stackchan_firmware::buddy_control::buddy_control_task()) {
+    if let Err(e) = spawner.spawn(stackchan_firmware::desktop_control::desktop_control_task()) {
         defmt::panic!(
-            "spawn(buddy_control_task) failed: {}",
+            "spawn(desktop_control_task) failed: {}",
             defmt::Debug2Format(&e)
         );
     }

@@ -73,7 +73,7 @@ pub async fn load_all() -> HVec<BondInformation, MAX_BONDS> {
 ///
 /// Callers that only care about best-effort persistence
 /// (`PairingComplete`) can discard the `Result` with `let _ =`.
-/// Callers that ack back to a peer (the buddy `unpair` handler)
+/// Callers that ack back to a peer (the desktop `unpair` handler)
 /// need the result to report honestly.
 ///
 /// # Errors
