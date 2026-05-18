@@ -20,7 +20,6 @@ connectStream("/v1/state-proxy", state);
 
 window.addEventListener("resize", scene.resize);
 
-let lastEmotion = "";
 let lastT = performance.now() / 1000;
 
 function frame(): void {
@@ -41,14 +40,11 @@ function frame(): void {
   const breath = Math.sin(now * 0.6) * 0.018;
   scene.scene.position.y = breath;
 
-  // Refresh face decal only when emotion changes — eye offset is cheap so
-  // we redraw on every frame to keep the microsaccade live.
-  const emo = state.snapshot?.emotion ?? "neutral";
-  if (emo !== lastEmotion || state.snapshot != null) {
-    scene.face.draw(emo, state.eyeOffsetX, state.eyeOffsetY);
-    scene.faceTexture.needsUpdate = true;
-    lastEmotion = emo;
-  }
+  // Redraw the face every frame so the microsaccade offset stays live.
+  // The eye/mouth shape lookup is two object reads, cheaper than tracking
+  // a "did the emotion change" guard that bypassed itself anyway.
+  scene.face.draw(state.snapshot?.emotion ?? "neutral", state.eyeOffsetX, state.eyeOffsetY);
+  scene.faceTexture.needsUpdate = true;
 
   setStatusTone(scene.status, batteryTone(state.snapshot));
 

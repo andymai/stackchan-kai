@@ -93,9 +93,7 @@ def test_state_proxy_relays_upstream_error_envelope(monkeypatch: pytest.MonkeyPa
 def test_register_companion_skips_static_mount_when_dist_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "stackchan_sidecar.companion._resolve_static_dir", lambda: None
-    )
+    monkeypatch.setattr("stackchan_sidecar.companion._resolve_static_dir", lambda: None)
     app = FastAPI()
     register_companion(app, _settings())
     # SSE route still registers regardless of bundle presence.
@@ -112,9 +110,7 @@ def test_register_companion_mounts_static_when_dist_exists(
     fake_dist = tmp_path / "web" / "dist"
     fake_dist.mkdir(parents=True)
     (fake_dist / "index.html").write_text("<html><body>companion</body></html>", encoding="utf-8")
-    monkeypatch.setattr(
-        "stackchan_sidecar.companion._resolve_static_dir", lambda: fake_dist
-    )
+    monkeypatch.setattr("stackchan_sidecar.companion._resolve_static_dir", lambda: fake_dist)
 
     app = FastAPI()
     register_companion(app, _settings())

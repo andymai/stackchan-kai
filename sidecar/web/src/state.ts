@@ -25,6 +25,9 @@ export type StateModel = {
   // Microsaccade eye offset on the face decal (pixels).
   eyeOffsetX: number;
   eyeOffsetY: number;
+  eyeTargetX: number;
+  eyeTargetY: number;
+  nextSaccadeAt: number;
   // Idle breath phase, drives a tiny body bob.
   t: number;
 };
@@ -44,6 +47,9 @@ export function createState(): StateModel {
     tilt: 0,
     eyeOffsetX: 0,
     eyeOffsetY: 0,
+    eyeTargetX: 0,
+    eyeTargetY: 0,
+    nextSaccadeAt: 0,
     t: 0,
   };
 }
@@ -112,18 +118,13 @@ export function tickPose(model: StateModel, dt: number): void {
   model.tilt += ((t.tilt_deg * DEG) - model.tilt) * k;
 }
 
-let nextSaccade = 0;
-let saccadeTarget = { x: 0, y: 0 };
-
 export function tickSaccade(model: StateModel, now: number, dt: number): void {
-  if (now >= nextSaccade) {
-    saccadeTarget = {
-      x: (Math.random() - 0.5) * 2 * SACCADE_AMPL_PX,
-      y: (Math.random() - 0.5) * 2 * SACCADE_AMPL_PX,
-    };
-    nextSaccade = now + SACCADE_MIN_S + Math.random() * (SACCADE_MAX_S - SACCADE_MIN_S);
+  if (now >= model.nextSaccadeAt) {
+    model.eyeTargetX = (Math.random() - 0.5) * 2 * SACCADE_AMPL_PX;
+    model.eyeTargetY = (Math.random() - 0.5) * 2 * SACCADE_AMPL_PX;
+    model.nextSaccadeAt = now + SACCADE_MIN_S + Math.random() * (SACCADE_MAX_S - SACCADE_MIN_S);
   }
   const k = 1 - Math.exp(-10 * dt);
-  model.eyeOffsetX += (saccadeTarget.x - model.eyeOffsetX) * k;
-  model.eyeOffsetY += (saccadeTarget.y - model.eyeOffsetY) * k;
+  model.eyeOffsetX += (model.eyeTargetX - model.eyeOffsetX) * k;
+  model.eyeOffsetY += (model.eyeTargetY - model.eyeOffsetY) * k;
 }

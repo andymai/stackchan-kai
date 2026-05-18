@@ -22,7 +22,6 @@ from .config import Settings
 
 _LOG = logging.getLogger("stackchan_sidecar.companion")
 
-_KEEPALIVE_INTERVAL_S = 15.0
 _UPSTREAM_TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=5.0, pool=5.0)
 
 
@@ -69,7 +68,11 @@ def register_companion(app: FastAPI, settings: Settings) -> None:
                             resp.status_code,
                             text[:200],
                         )
-                        yield b"event: error\ndata: upstream " + str(resp.status_code).encode() + b"\n\n"
+                        yield (
+                            b"event: error\ndata: upstream "
+                            + str(resp.status_code).encode()
+                            + b"\n\n"
+                        )
                         return
                     async for chunk in resp.aiter_raw():
                         if await request.is_disconnected():
