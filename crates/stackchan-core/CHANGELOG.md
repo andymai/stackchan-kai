@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.36.0...stackchan-core-v0.37.0) (2026-05-18)
+
+
+### Features
+
+* **core:** face-level Thinking state across the sidecar round-trip ([#394](https://github.com/andymai/stackchan-kai/issues/394)) ([4a3fdfd](https://github.com/andymai/stackchan-kai/commit/4a3fdfddab93f4b3af024725b314072fdff4e577))
+
 ## [0.36.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.35.0...stackchan-core-v0.36.0) (2026-05-15)
 
 
