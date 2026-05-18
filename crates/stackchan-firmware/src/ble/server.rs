@@ -805,7 +805,8 @@ async fn gatt_events_task<P: PacketPool>(
             GattConnectionEvent::Disconnected { reason } => {
                 defmt::info!("ble: gatt disconnect ({})", defmt::Debug2Format(&reason));
                 super::clear_passkey();
-                buddy_session.reset();
+                // `buddy_session` is stack-local and dropped on
+                // return; the `LineFramer` buffer goes with it.
                 return;
             }
             GattConnectionEvent::Gatt { event } => {
