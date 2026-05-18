@@ -33,6 +33,14 @@ connectAgentStream("/v1/session-status", state);
 
 window.addEventListener("resize", scene.resize);
 
+// Skip DOM mutation when the text hasn't changed. aria-live spans use
+// MutationObserver-like semantics, so a no-op assignment can still
+// re-announce on some screen readers — this avoids that without forcing
+// every caller to remember an inline equality guard.
+function setText(el: HTMLElement, value: string): void {
+  if (el.textContent !== value) el.textContent = value;
+}
+
 // Respect prefers-reduced-motion for the breath bob + saccade jitter.
 // The pose lerp + emotion-driven face still need to track state — the
 // preference affects ambient idle motion, not informative motion.
@@ -117,31 +125,35 @@ function frame(): void {
   setStatusTone(scene.status, batteryTone(state.snapshot));
 
   // ── HUD ────────────────────────────────────────────────────────
-  hudLink.textContent = state.conn;
-  hudLink.dataset.conn = state.conn;
+  // Equality-guard every textContent write below. The aria-live HUD
+  // spans ride this 60 Hz loop; without the guard each frame is a DOM
+  // childList mutation that some screen readers re-announce. Pose is
+  // the exception — it has no aria-live and changes every frame anyway.
+  setText(hudLink, state.conn);
+  if (hudLink.dataset.conn !== state.conn) hudLink.dataset.conn = state.conn;
+
   const agentLabel =
     state.agentConn === "live"
       ? state.agent?.state === "thinking"
         ? "thinking"
         : "idle"
       : state.agentConn;
-  hudAgent.textContent = agentLabel;
-  hudAgent.dataset.conn = state.agentConn;
-  hudAgent.dataset.state = state.agent?.state ?? "";
+  setText(hudAgent, agentLabel);
+  if (hudAgent.dataset.conn !== state.agentConn) hudAgent.dataset.conn = state.agentConn;
+  const agentState = state.agent?.state ?? "";
+  if (hudAgent.dataset.state !== agentState) hudAgent.dataset.state = agentState;
 
-  hudEmotion.textContent = (state.snapshot?.emotion ?? "—").toUpperCase();
+  setText(hudEmotion, (state.snapshot?.emotion ?? "—").toUpperCase());
   if (state.snapshot) {
     const p = state.snapshot.head_actual ?? state.snapshot.head_pose;
     hudPose.textContent = `${p.pan_deg.toFixed(0)}° / ${p.tilt_deg.toFixed(0)}°`;
     const b = state.snapshot.battery;
-    hudBattery.textContent = b.percent != null ? `${b.percent}%` : "—";
-    hudWifi.textContent = state.snapshot.wifi.connected
-      ? (state.snapshot.wifi.ip ?? "up")
-      : "down";
+    setText(hudBattery, b.percent != null ? `${b.percent}%` : "—");
+    setText(hudWifi, state.snapshot.wifi.connected ? (state.snapshot.wifi.ip ?? "up") : "down");
   } else {
     hudPose.textContent = "—";
-    hudBattery.textContent = "—";
-    hudWifi.textContent = "—";
+    setText(hudBattery, "—");
+    setText(hudWifi, "—");
   }
 
   // ── Empty overlay ─────────────────────────────────────────────
