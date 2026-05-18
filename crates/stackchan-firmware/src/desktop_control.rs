@@ -173,6 +173,24 @@ fn char_begin(push: &mut PushState, name: &str, total: u32) {
         ack("char_begin", false, 0, Some("unsafe char name"));
         return;
     }
+    // Char names map to a single FAT directory entry under
+    // `/sd/desktop/`; embedded-sdmmc can't traverse `/` inside a
+    // single `open_dir` call. Reject up front instead of failing
+    // every file commit in the push with a misleading "sd write
+    // failed".
+    if name.contains('/') {
+        defmt::warn!(
+            "desktop_control: char_begin {=str} — slash in char name not supported",
+            name
+        );
+        ack(
+            "char_begin",
+            false,
+            0,
+            Some("slash in char name not supported"),
+        );
+        return;
+    }
     // Reset any stragglers from a prior interrupted push.
     *push = PushState::default();
     push.active_char = Some(name.to_string());
@@ -323,19 +341,26 @@ async fn file_end(push: &mut PushState) {
     }
 }
 
-/// End the current folder push. Always succeeds — the per-file
-/// commits happened in `file_end`; `char_end` is just the
-/// teardown signal.
+/// End the current folder push. The per-file commits happened in
+/// `file_end`; `char_end` is the teardown signal. If a file is
+/// still open (desktop sent `char_end` before `file_end`) we
+/// refuse with `ok:false` rather than silently dropping the
+/// buffered bytes — the desktop is bug-reporting an incomplete
+/// push and should retry.
 fn char_end(push: &mut PushState) {
+    if push.current_file.is_some() {
+        defmt::warn!("desktop_control: char_end arrived with open file; dropping buffer");
+        push.current_file = None;
+        push.active_char = None;
+        ack("char_end", false, 0, Some("file still open"));
+        return;
+    }
     if let Some(name) = push.active_char.take() {
         defmt::info!("desktop_control: char_end {=str}", name.as_str());
         ack("char_end", true, 0, None);
     } else {
         ack("char_end", false, 0, Some("no char in progress"));
     }
-    // `current_file` should already be None after `file_end`; drop
-    // any stray buffer defensively.
-    push.current_file = None;
 }
 
 /// Build a [`StatusData`] from the firmware's current snapshot and
