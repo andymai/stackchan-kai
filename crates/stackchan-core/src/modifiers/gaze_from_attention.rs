@@ -131,7 +131,9 @@ impl Modifier for GazeFromAttention {
                 crate::Pose::from_xyz_lookat(x, y, z)
                     .map_or((0, 0), |p| target_to_offset(p.pan_deg, p.tilt_deg))
             }
-            (None, Attention::None | Attention::Listening { .. }) => (0, 0),
+            (None, Attention::None | Attention::Listening { .. } | Attention::Thinking { .. }) => {
+                (0, 0)
+            }
         };
 
         let (prev_x, prev_y) = self.last_offset;

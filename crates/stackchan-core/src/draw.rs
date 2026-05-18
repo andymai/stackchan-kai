@@ -191,6 +191,7 @@ where
         Decorator::Pairing => draw_pairing(target),
         Decorator::Angry => draw_angry(target),
         Decorator::Shy => draw_shy(target),
+        Decorator::Thinking => draw_thinking(target),
     }
 }
 
@@ -508,6 +509,80 @@ where
                 .into_styled(fill(EAR_COLOR))
                 .draw(target)?;
         }
+    }
+    Ok(())
+}
+
+/// Thinking decorator colour — soft cool grey-violet, distinct from
+/// the warm Heart pink and the cool Sweat blue so a glance reads the
+/// state without further cues. Pairs with the stroked outer bubble
+/// (no fill) to evoke the cloud-silhouette trope without competing
+/// with the speech-bubble layer.
+const THINKING_COLOR: Rgb565 = Rgb565::new(15, 32, 18);
+/// Trail-dots + bubble centre column. Same upper-right band as
+/// `HEART_ANCHOR_X`; the trio rises diagonally toward the corner so
+/// the gesture reads from the head outward.
+const THINKING_ANCHOR_X: i32 = 270;
+/// Trail-dots + bubble centre row. Sits above `HEART_ANCHOR_Y` (50)
+/// so the bubble is high in the corner; the trail dots descend back
+/// toward the head.
+const THINKING_ANCHOR_Y: i32 = 22;
+/// Outer bubble diameter — the largest of the three shapes, stroked
+/// (not filled) so the cloud silhouette reads independently of the
+/// speech-bubble fill.
+const THINKING_BUBBLE_DIAMETER: u32 = 18;
+/// Stroke width on the outer bubble. Matches `PAIRING_RING_STROKE`
+/// so concentric-ring decorators read consistently at 320×240.
+const THINKING_BUBBLE_STROKE: u32 = 2;
+/// Medium trail-dot diameter — the bridge between the head and the
+/// bubble.
+const THINKING_MID_DOT_DIAMETER: u32 = 6;
+/// Small trail-dot diameter — the closest dot to the head, smallest
+/// in the rising progression.
+const THINKING_LOW_DOT_DIAMETER: u32 = 3;
+
+/// Draw the thinking overlay: two filled trail-dots ascending toward
+/// a single stroked thought-bubble in the upper-right corner.
+///
+/// Layout (top-down): outer bubble at the anchor, mid-dot ~10 px
+/// down-and-left, low-dot another ~10 px further down-and-left toward
+/// the head. The diagonal trail reads as "rising thought."
+fn draw_thinking<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    #[allow(clippy::cast_possible_wrap)]
+    let bubble_half = (THINKING_BUBBLE_DIAMETER / 2) as i32;
+    let bubble_top_left = EgPoint::new(
+        THINKING_ANCHOR_X - bubble_half,
+        THINKING_ANCHOR_Y - bubble_half,
+    );
+    Circle::new(bubble_top_left, THINKING_BUBBLE_DIAMETER)
+        .into_styled(stroke(THINKING_COLOR, THINKING_BUBBLE_STROKE))
+        .draw(target)?;
+
+    // Trail-dot positions: a diagonal ladder from the head toward the
+    // bubble. Hand-tuned so the dots and the bubble read as a single
+    // rising gesture rather than three isolated shapes.
+    let trail: [(i32, i32, u32); 2] = [
+        (
+            THINKING_ANCHOR_X - 12,
+            THINKING_ANCHOR_Y + 16,
+            THINKING_MID_DOT_DIAMETER,
+        ),
+        (
+            THINKING_ANCHOR_X - 22,
+            THINKING_ANCHOR_Y + 28,
+            THINKING_LOW_DOT_DIAMETER,
+        ),
+    ];
+    for (cx, cy, diameter) in trail {
+        #[allow(clippy::cast_possible_wrap)]
+        let half = (diameter / 2) as i32;
+        let top_left = EgPoint::new(cx - half, cy - half);
+        Circle::new(top_left, diameter)
+            .into_styled(fill(THINKING_COLOR))
+            .draw(target)?;
     }
     Ok(())
 }

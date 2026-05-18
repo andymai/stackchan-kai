@@ -193,12 +193,23 @@ impl Modifier for HeadFromAttention {
         &META
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single dense match across attention variants + diff-and-undo bookkeeping; \
+                  splitting would force the smoother state out of the local frame and read worse"
+    )]
     fn update(&mut self, entity: &mut Entity) {
         let now = entity.tick.now;
 
         // Edge detection for the Listening ease state machine. Only
-        // observes Listening transitions — Tracking has no ease.
-        let listening = matches!(entity.mind.attention, Attention::Listening { .. });
+        // observes Listening / Thinking transitions — Tracking has no
+        // ease. Thinking shares the cocked-head tilt so the pose holds
+        // across the sidecar round-trip after a listen window closes,
+        // rather than releasing and re-applying.
+        let listening = matches!(
+            entity.mind.attention,
+            Attention::Listening { .. } | Attention::Thinking { .. }
+        );
         match (listening, self.listen_since.is_some()) {
             (true, false) => {
                 self.listen_since = Some(now);
@@ -296,7 +307,10 @@ impl Modifier for HeadFromAttention {
                         (0.0, 0.0)
                     }
                 }
-                (None, Attention::Listening { .. } | Attention::None) => {
+                (
+                    None,
+                    Attention::Listening { .. } | Attention::Thinking { .. } | Attention::None,
+                ) => {
                     // Drop the smoother anchor so a future Tracking /
                     // Point run re-anchors at the live target (no
                     // stale chase).

@@ -76,13 +76,13 @@ use stackchan_core::{
     modifiers::{
         AttentionFromTracking, BatteryOverlayFromPerception, Blink, Breath, BubbleExpiry,
         DancePlayer, DecoratorExpiry, DecoratorFromBodyTouch, DecoratorFromEmotion,
-        DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake, DormancyFromActivity,
-        EmotionCycle, EmotionFromAmbient, EmotionFromBattery, EmotionFromIntent, EmotionFromRemote,
-        EmotionFromTouch, EmotionFromVoice, GazeFromAttention, HeadFromAttention,
-        HeadFromBodyGesture, HeadFromEmotion, HeadFromIntent, IdleDrift, IdleHeadDrift,
-        IdleMicroExpression, IntentFromBodyTouch, IntentFromLoud, LostTargetSearch,
-        MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier, Soliloquy,
-        StyleFromEmotion, StyleFromIntent, StyleFromMood,
+        DecoratorFromListening, DecoratorFromLoud, DecoratorFromShake, DecoratorFromThinking,
+        DormancyFromActivity, EmotionCycle, EmotionFromAmbient, EmotionFromBattery,
+        EmotionFromIntent, EmotionFromRemote, EmotionFromTouch, EmotionFromVoice,
+        GazeFromAttention, HeadFromAttention, HeadFromBodyGesture, HeadFromEmotion, HeadFromIntent,
+        IdleDrift, IdleHeadDrift, IdleMicroExpression, IntentFromBodyTouch, IntentFromLoud,
+        LostTargetSearch, MicrosaccadeFromAttention, MouthFromAudio, RemoteCommandModifier,
+        Soliloquy, StyleFromEmotion, StyleFromIntent, StyleFromMood,
     },
     render_leds,
     skills::{Handling, Listening, Petting},
@@ -269,6 +269,7 @@ async fn render_task(
     let mut decorator_from_listening = DecoratorFromListening::new();
     let mut decorator_from_loud = DecoratorFromLoud::new();
     let mut decorator_from_shake = DecoratorFromShake::new();
+    let mut decorator_from_thinking = DecoratorFromThinking::new();
     // `behavior.battery_icon_enabled` flips at boot via STACKCHAN.RON;
     // if the operator later toggles it via PUT /settings, the change
     // takes effect on the next reboot (same as soliloquy_enabled
@@ -391,6 +392,9 @@ async fn render_task(
         .expect("registry full");
     director
         .add_modifier(&mut decorator_from_listening)
+        .expect("registry full");
+    director
+        .add_modifier(&mut decorator_from_thinking)
         .expect("registry full");
     director
         .add_modifier(&mut battery_overlay)
@@ -533,6 +537,16 @@ async fn render_task(
                     // sidecar URL is configured.
                     stackchan_firmware::agent_sidecar::PTT_TRIGGER.signal(duration_ms);
                     entity.input.remote_command = Some(RemoteCommand::StartListen { duration_ms });
+                }
+                RemoteCommand::EnterThinking { hold_ms } => {
+                    // Sidecar-internal transition: the agent task
+                    // fires this onto the same signal once the PCM
+                    // capture window closes and the HTTP round-trip
+                    // begins. Forward to the modifier to swap the
+                    // face from Listening (Ear) to Thinking
+                    // (thought-bubble) while the network request is
+                    // in flight.
+                    entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms });
                 }
                 other => entity.input.remote_command = Some(other),
             }

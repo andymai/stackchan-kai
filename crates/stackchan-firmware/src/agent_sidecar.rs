@@ -17,12 +17,20 @@
 //!    PSRAM-allocated `Vec<i16>`.
 //! 3. The captured PCM is posted to the operator-configured
 //!    `behavior.agent_sidecar_url` (raw little-endian s16,
-//!    `Content-Type: audio/L16;rate=16000;channels=1`).
+//!    `Content-Type: audio/L16;rate=16000;channels=1`). The task
+//!    fires [`RemoteCommand::EnterThinking`] on the same signal as
+//!    the listen command so the face transitions from Listening
+//!    (Ear decorator) to Thinking (thought-bubble) for the duration
+//!    of the network round-trip.
 //! 4. The sidecar's JSON reply
 //!    (`{"text":"...","emotion":"..."}`, OpenAI-Chat-Completions
 //!    -shaped projection) surfaces on the firmware toast band, and
 //!    any `emotion` tag fires a [`RemoteCommand::SetEmotion`] so
-//!    the avatar mirrors the agent's mood.
+//!    the avatar mirrors the agent's mood. The `SetEmotion` handler in
+//!    [`stackchan_core::modifiers::RemoteCommandModifier`] clears
+//!    the in-flight thinking hold as a side effect, so the
+//!    thought-bubble fades out at the same instant the emotion +
+//!    speech-bubble carry the reply.
 //!
 //! Empty `agent_sidecar_url` (the default) parks the task — no
 //! socket, no pubsub slot, no PTT consumer.
@@ -287,6 +295,21 @@ pub async fn agent_sidecar_task(
             continue;
         }
 
+        // Swap the face from Listening (Ear) to Thinking
+        // (thought-bubble) for the network round-trip. Hold is sized
+        // to the request timeout so the bubble has an upper bound on
+        // pathological reply latency. A successful reply fires
+        // `RemoteCommand::SetEmotion` below, which clears the
+        // thinking hold via the modifier's SetEmotion side effect.
+        // On timeout or POST failure the hold expires naturally.
+        REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::EnterThinking {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "REQUEST_TIMEOUT_MS is a 5-digit const; truncation is impossible at the source"
+            )]
+            hold_ms: REQUEST_TIMEOUT_MS as u32,
+        });
+
         let outcome = embassy_time::with_timeout(
             Duration::from_millis(REQUEST_TIMEOUT_MS),
             post_pcm(
@@ -390,11 +413,19 @@ fn apply_outcome(
                     emotion: e,
                     hold_ms: 2_500,
                 });
+            } else {
+                // Reply landed but the sidecar declined to tag an
+                // emotion — `SetEmotion`'s thinking-clear side effect
+                // would have run otherwise. Fall back to an explicit
+                // clear so the thought-bubble fades with the toast
+                // instead of lingering for the full request timeout.
+                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
             }
         }
         Ok(Err(e)) => {
             defmt::warn!("agent-sidecar: POST failed ({:?})", e);
             toast_warn("sidecar: post failed");
+            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
         }
         Err(_) => {
             defmt::warn!(
@@ -402,6 +433,7 @@ fn apply_outcome(
                 REQUEST_TIMEOUT_MS
             );
             toast_warn("sidecar: timed out");
+            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
         }
     }
 }

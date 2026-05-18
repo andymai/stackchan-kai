@@ -108,6 +108,45 @@ pub enum RemoteCommand {
         /// 500 ms tail each tick and fades on release.
         duration_ms: u32,
     },
+    /// Mark the avatar as awaiting an external reply — set
+    /// [`crate::Attention::Thinking`] and hold for `hold_ms`. While
+    /// the hold is active,
+    /// [`crate::modifiers::DecoratorFromThinking`] arms the
+    /// [`crate::Decorator::Thinking`] overlay (thought-bubble cluster).
+    ///
+    /// Producer: the firmware sidecar-agent task fires this once the
+    /// PCM capture window closes and the HTTP round-trip begins, so
+    /// the face transitions Listening → Thinking while the network
+    /// request is in flight.
+    ///
+    /// The reply, when it lands, fires
+    /// [`Self::SetEmotion`]; the modifier's `SetEmotion` handler
+    /// clears any active Thinking hold as a side effect, so the
+    /// thought-bubble fades out at the same instant the emotion +
+    /// speech-bubble carry the reply. If no reply arrives, the hold
+    /// expires naturally after `hold_ms` and attention falls back to
+    /// `None`.
+    EnterThinking {
+        /// Cap on the thinking window in milliseconds. Sized to the
+        /// firmware's sidecar request timeout so a vanished sidecar
+        /// doesn't leave the thought-bubble showing forever.
+        hold_ms: u32,
+    },
+    /// Release any active thinking hold without touching emotion.
+    ///
+    /// Producer: the firmware sidecar-agent task on every code path
+    /// that closes a round-trip but does not fire
+    /// [`Self::SetEmotion`] — a successful reply that carries no
+    /// `emotion` tag, a POST failure, or a request timeout. The
+    /// common case (reply carries an emotion) already clears the
+    /// thinking hold via [`Self::SetEmotion`]'s side effect, so this
+    /// variant is only fired on the off-paths.
+    ///
+    /// Distinct from [`Self::Reset`] in that it leaves the operator's
+    /// active emotion / look-at holds intact — only the thinking
+    /// hold and the corresponding [`crate::Attention::Thinking`]
+    /// attention slot are released.
+    ExitThinking,
 }
 
 /// Pending inputs the modifier graph consumes.

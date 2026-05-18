@@ -694,4 +694,90 @@ mod integration_tests {
         director.run(&mut avatar, Instant::from_millis(10_400));
         assert_eq!(avatar.face.style.blink_rate_scale, SCALE_DEFAULT);
     }
+
+    /// End-to-end voice loop: an operator triggers `StartListen`,
+    /// then the agent-sidecar task fires `EnterThinking` once PCM
+    /// capture closes, then a sidecar reply lands as `SetEmotion`.
+    ///
+    /// The visible face state must transition
+    /// `Ear → Thinking → emotion-driven decorator (or none)` across
+    /// these three frames, with the `SetEmotion` arrival clearing
+    /// the thinking attention so the thought-bubble fades and the
+    /// emotion + speech bubble carry the reply.
+    #[test]
+    fn voice_loop_listen_then_think_then_reply_clears_thinking() {
+        use stackchan_core::Decorator;
+        use stackchan_core::Instant;
+        use stackchan_core::input::RemoteCommand;
+        use stackchan_core::mind::Attention;
+        use stackchan_core::modifiers::{
+            DecoratorExpiry, DecoratorFromListening, DecoratorFromThinking, RemoteCommandModifier,
+        };
+
+        let mut entity = Entity::default();
+        let mut remote = RemoteCommandModifier::new();
+        let mut decorator_listening = DecoratorFromListening::new();
+        let mut decorator_thinking = DecoratorFromThinking::new();
+        let mut decorator_expiry = DecoratorExpiry::new();
+
+        let mut director = Director::new();
+        director.add_modifier(&mut remote).unwrap();
+        director.add_modifier(&mut decorator_expiry).unwrap();
+        director.add_modifier(&mut decorator_listening).unwrap();
+        director.add_modifier(&mut decorator_thinking).unwrap();
+
+        // 1. Operator-driven `POST /listen` lands a StartListen.
+        entity.input.remote_command = Some(RemoteCommand::StartListen {
+            duration_ms: 30_000,
+        });
+        director.run(&mut entity, Instant::from_millis(0));
+        assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
+        assert!(matches!(
+            entity.face.decorator,
+            Some(d) if d.kind == Decorator::Ear
+        ));
+
+        // 2. Agent-sidecar task fires EnterThinking once the PCM
+        //    capture window closes and the HTTP round-trip begins.
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 15_000 });
+        director.run(&mut entity, Instant::from_millis(3_000));
+        assert!(matches!(entity.mind.attention, Attention::Thinking { .. }));
+        assert!(matches!(
+            entity.face.decorator,
+            Some(d) if d.kind == Decorator::Thinking
+        ));
+
+        // The thinking decorator armed at t=3000 has expires_at=3500
+        // (500ms tail). Sidecar replies typically land mid-tail.
+        // Drive the reply at t=3200 so we observe the tail behavior
+        // before DecoratorExpiry sweeps.
+        //
+        // 3. Sidecar reply lands. SetEmotion arrives via
+        //    REMOTE_COMMAND_SIGNAL; the RemoteCommandModifier's
+        //    SetEmotion handler clears the in-flight thinking hold
+        //    as a side effect, so attention drops to None. The
+        //    decorator slot still reads Thinking until the 500ms
+        //    tail expires — DecoratorExpiry fades it cleanly.
+        entity.input.remote_command = Some(RemoteCommand::SetEmotion {
+            emotion: Emotion::Happy,
+            hold_ms: 2_500,
+        });
+        director.run(&mut entity, Instant::from_millis(3_200));
+        assert_eq!(entity.mind.attention, Attention::None);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+        assert!(
+            matches!(
+                entity.face.decorator,
+                Some(d) if d.kind == Decorator::Thinking
+            ),
+            "thought-bubble still drawing during the tail window"
+        );
+
+        // 4. Past the tail — DecoratorExpiry sweeps the thought-bubble.
+        director.run(&mut entity, Instant::from_millis(4_000));
+        assert!(
+            entity.face.decorator.is_none(),
+            "DecoratorExpiry must clear the thought-bubble after the 500ms tail"
+        );
+    }
 }
