@@ -1,5 +1,6 @@
 import { For, createSignal } from "solid-js";
 import { postJson } from "../auth";
+import { resetEmotion } from "../actions";
 import { showToast } from "../store";
 
 // Wire-string vocabulary mirrors `Emotion::wire_str` in
@@ -35,15 +36,6 @@ export function Emotion() {
     }
   };
 
-  const reset = async () => {
-    try {
-      await postJson("/reset", null);
-      showToast("reset");
-    } catch (e) {
-      showToast((e as Error).message, true);
-    }
-  };
-
   return (
     <section>
       <h2>Emotion</h2>
@@ -55,7 +47,7 @@ export function Emotion() {
             </button>
           )}
         </For>
-        <button onClick={reset} style="margin-left:auto" data-shortcut="reset">
+        <button onClick={resetEmotion} style="margin-left:auto" data-shortcut="reset">
           Reset
         </button>
       </div>
