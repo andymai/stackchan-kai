@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.93.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.92.0...stackchan-firmware-v0.93.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** persist cmd:name to /sd/DEVICE.NAM + soft-reset ([#383](https://github.com/andymai/stackchan-kai/issues/383)) ([f43977a](https://github.com/andymai/stackchan-kai/commit/f43977abc17df01fac444301808e00fc5e2e658a))
+
 ## [0.92.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.91.2...stackchan-firmware-v0.92.0) (2026-05-18)
 
 
