@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -13,12 +14,12 @@ from .conftest import TEST_TOKEN
 
 
 def _settings(**overrides: object) -> Settings:
-    base = dict(
-        SIDECAR_BEARER_TOKEN=TEST_TOKEN,
-        ANTHROPIC_API_KEY="sk-ant-test",
-    )
+    base: dict[str, object] = {
+        "SIDECAR_BEARER_TOKEN": TEST_TOKEN,
+        "ANTHROPIC_API_KEY": "sk-ant-test",
+    }
     base.update(overrides)
-    return Settings(**base)
+    return Settings(**base)  # type: ignore[arg-type]
 
 
 def test_register_companion_noop_when_disabled() -> None:
@@ -57,7 +58,7 @@ def test_state_proxy_relays_upstream_error_envelope(monkeypatch: pytest.MonkeyPa
         async def aread(self) -> bytes:
             return b"upstream offline"
 
-        async def aiter_raw(self):  # pragma: no cover - not reached on 503
+        async def aiter_raw(self) -> AsyncIterator[bytes]:  # pragma: no cover
             if False:
                 yield b""
 
