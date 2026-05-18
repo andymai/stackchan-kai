@@ -10,9 +10,10 @@
 //! - **status** → builds a [`StatusData`] from the current
 //!   battery / uptime / heap / approval+deny counters and replies.
 //! - **owner** → logs + acks.
-//! - **name** → logs + acks. Persistence to `/sd/RUNTIME.RON`
-//!   joins a later slice; the in-RAM name visible over BLE doesn't
-//!   change until that lands.
+//! - **name** → writes `/sd/DEVICE.NAM` and soft-resets so the
+//!   new name takes effect on the next advertise cycle (the BLE
+//!   local name is captured into a `StaticCell` early in `main`).
+//!   The ack flushes before the reset.
 //! - **unpair** → wipes the SD-backed bonds via
 //!   [`crate::ble::bonds::save_all`] with an empty list, then acks.
 //! - **time** (`{"time":[epoch,tz]}`) → fans the epoch out to
@@ -84,11 +85,7 @@ async fn handle(message: Inbound, boot: Instant) {
             ack("owner", true, 0, None);
         }
         Inbound::Cmd(Cmd::SetName { name }) => {
-            defmt::info!(
-                "desktop_control: name → {=str} (persistence pending)",
-                name.as_str()
-            );
-            ack("name", true, 0, None);
+            set_name(&name).await;
         }
         Inbound::Cmd(Cmd::Unpair) => {
             unpair().await;
@@ -168,6 +165,59 @@ fn reply_status(boot: Instant) {
         stats: None, // counters land alongside operator-visible UX in a follow-up
     };
     DESKTOP_OUTBOUND.signal(Outbound::StatusAck(data));
+}
+
+/// Persist the desktop-supplied BLE name to `/sd/DEVICE.NAM` and
+/// soft-reset the device so the new name takes effect on the next
+/// advertise cycle.
+///
+/// The BLE local name is captured into a `StaticCell` early in
+/// `main`; there's no in-flight way to swap it. The reboot avoids
+/// the more invasive "hot-swap the advertise name" refactor that
+/// would otherwise be needed. Operators see the reboot as the
+/// device cycling once after they hit "Save" in the desktop's
+/// Hardware Buddy panel — a one-second blip, then the device
+/// reappears with the new name.
+///
+/// On SD-absent / write-failure paths the ack reports `ok: false`
+/// with the reason and we skip the reset (no point cycling if the
+/// new name isn't actually on disk).
+async fn set_name(name: &str) {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        defmt::warn!("desktop_control: name → empty; rejecting without reboot");
+        ack("name", false, 0, Some("empty name"));
+        return;
+    }
+    defmt::info!("desktop_control: name → {=str}", trimmed);
+    let outcome = crate::storage::with_storage(|s| s.write_device_name(trimmed)).await;
+    match outcome {
+        Some(Ok(())) => {
+            ack("name", true, 0, None);
+            // Best-effort: give the BLE notify path a tick to flush
+            // the ack onto the wire before we reboot, otherwise the
+            // desktop sees the disconnect first and may interpret
+            // the missing ack as failure.
+            embassy_time::Timer::after(Duration::from_millis(250)).await;
+            defmt::info!("desktop_control: rebooting to pick up new BLE name");
+            esp_hal::system::software_reset();
+        }
+        Some(Err(crate::storage::StorageError::TooLarge)) => {
+            defmt::warn!("desktop_control: name too long (> 22 bytes)");
+            ack("name", false, 0, Some("name too long"));
+        }
+        Some(Err(e)) => {
+            defmt::warn!(
+                "desktop_control: write_device_name failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            ack("name", false, 0, Some("sd write failed"));
+        }
+        None => {
+            defmt::warn!("desktop_control: no SD mounted; cannot persist name");
+            ack("name", false, 0, Some("no sd mounted"));
+        }
+    }
 }
 
 /// Wipe the bonds file and send the ack. Bond wipe takes effect

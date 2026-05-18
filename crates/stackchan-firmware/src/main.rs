@@ -1587,17 +1587,39 @@ async fn main(spawner: Spawner) -> ! {
     #[allow(clippy::items_after_statements)]
     static BLE_NAME: StaticCell<heapless::String<32>> = StaticCell::new();
     let ble_mac = esp_hal::efuse::Efuse::mac_address();
+    // First, try the operator-supplied name from
+    // `/sd/DEVICE.NAM` (set via the Hardware Buddy `cmd:name`
+    // message). Fall back to the MAC-suffixed default. The name
+    // must start with `Claude` so the Hardware Buddy picker filters
+    // us in; the default does, and a desktop-set override is
+    // assumed to as well — we don't enforce the prefix.
+    let persisted_name = stackchan_firmware::storage::with_storage(
+        stackchan_firmware::storage::FirmwareStorage::read_device_name,
+    )
+    .await
+    .and_then(|r| match r {
+        Ok(opt) => opt,
+        Err(e) => {
+            defmt::warn!(
+                "ble: device name read failed ({}); using MAC-suffixed default",
+                defmt::Debug2Format(&e)
+            );
+            None
+        }
+    });
     let ble_name: &'static str = {
         use core::fmt::Write as _;
         let mut s: heapless::String<32> = heapless::String::new();
-        // Must start with `Claude` so Claude Desktop's Hardware
-        // Desktop picker filters us in. `Claude stk-XXXXXX` is 17
-        // bytes — comfortably under the 22-byte BLE GAP-name cap
-        // and leaves headroom for an operator-supplied display
-        // name in a later slice. The mDNS hostname stays
-        // `stackchan-…` separately so LAN-side discovery isn't
-        // affected.
-        if let Err(e) = write!(
+        if let Some(name) = persisted_name.as_deref() {
+            // Cap at heapless::String<32>'s capacity. Operator
+            // names longer than the BLE GAP 22-byte limit will be
+            // rejected by the advertise layer; here we just keep
+            // the buffer write infallible.
+            let n = name.len().min(32);
+            if let Err(e) = s.push_str(&name[..n]) {
+                defmt::panic!("ble: name copy failed: {}", defmt::Debug2Format(&e));
+            }
+        } else if let Err(e) = write!(
             &mut s,
             "Claude stk-{:02x}{:02x}{:02x}",
             ble_mac[3], ble_mac[4], ble_mac[5]
@@ -1606,6 +1628,7 @@ async fn main(spawner: Spawner) -> ! {
         }
         BLE_NAME.init(s).as_str()
     };
+    defmt::info!("ble: advertising as {=str}", ble_name);
     let ble_connector = match esp_radio::ble::controller::BleConnector::new(
         radio,
         peripherals.BT,
