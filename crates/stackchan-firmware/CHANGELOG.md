@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.91.1...stackchan-firmware-v0.91.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* **firmware:** buddy unpair ack honors bond-wipe result + control cleanups ([#378](https://github.com/andymai/stackchan-kai/issues/378)) ([7497ebb](https://github.com/andymai/stackchan-kai/commit/7497ebb8e27227337ca5db7eaf127eaa738662cb))
+
 ## [0.91.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.91.0...stackchan-firmware-v0.91.1) (2026-05-18)
 
 
