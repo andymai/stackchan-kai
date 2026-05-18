@@ -68,13 +68,38 @@ pub async fn load_all() -> HVec<BondInformation, MAX_BONDS> {
 
 /// Persist the entire bond list atomically. Called on each
 /// `PairingComplete` event with the latest snapshot from
-/// `Stack::get_bond_information`.
-pub async fn save_all(bonds: &[BondInformation]) {
+/// `Stack::get_bond_information`, and on `unpair` with an empty
+/// list to wipe stored bonds.
+///
+/// Callers that only care about best-effort persistence
+/// (`PairingComplete`) can discard the `Result` with `let _ =`.
+/// Callers that ack back to a peer (the buddy `unpair` handler)
+/// need the result to report honestly.
+///
+/// # Errors
+///
+/// Returns `Err` with a short fixed reason when the SD card is
+/// absent (`"no sd mounted"`) or the FAT write fails
+/// (`"sd write failed"`). The underlying [`StorageError`] is logged
+/// at `warn` level inside this function and the wire-friendly
+/// reason is returned to the caller.
+///
+/// [`StorageError`]: crate::storage::StorageError
+pub async fn save_all(bonds: &[BondInformation]) -> Result<(), &'static str> {
     let encoded = encode(bonds);
     match with_storage(|s| s.write_bonds(&encoded)).await {
-        Some(Ok(())) => defmt::info!("ble: bonds: persisted {=usize} bond(s)", bonds.len()),
-        Some(Err(e)) => defmt::warn!("ble: bonds: write failed ({})", e),
-        None => defmt::warn!("ble: bonds: no SD mounted; cannot persist"),
+        Some(Ok(())) => {
+            defmt::info!("ble: bonds: persisted {=usize} bond(s)", bonds.len());
+            Ok(())
+        }
+        Some(Err(e)) => {
+            defmt::warn!("ble: bonds: write failed ({})", e);
+            Err("sd write failed")
+        }
+        None => {
+            defmt::warn!("ble: bonds: no SD mounted; cannot persist");
+            Err("no sd mounted")
+        }
     }
 }
 

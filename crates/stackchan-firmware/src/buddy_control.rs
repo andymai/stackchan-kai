@@ -45,8 +45,8 @@ use crate::toast::{self, ToastLevel};
 /// turn event.
 const TOAST_PREVIEW_BYTES: usize = 64;
 
-/// Render task. Spawns once at boot, runs for the firmware
-/// lifetime.
+/// Command-surface task. Spawns once at boot, runs for the
+/// firmware lifetime.
 #[embassy_executor::task]
 pub async fn buddy_control_task() -> ! {
     let Ok(mut sub) = BUDDY_INBOUND.subscriber() else {
@@ -142,7 +142,6 @@ async fn handle(message: Inbound, boot: Instant) {
 /// signal it as an ack reply.
 fn reply_status(boot: Instant) {
     let snap = snapshot::read();
-    let sensors = snapshot::read_sensors();
 
     let battery = snap.battery.percent.map(|pct| BatteryStatus {
         pct,
@@ -150,9 +149,6 @@ fn reply_status(boot: Instant) {
         ma: 0,      // current draw isn't surfaced in the snapshot
         usb: false, // usb-attach state isn't surfaced today
     });
-    // Suppress the unused-binding warning when no battery field
-    // is set yet — the snapshot is empty pre-AXP2101 init.
-    let _ = sensors;
 
     let uptime_secs =
         u32::try_from(Instant::now().duration_since(boot).as_secs()).unwrap_or(u32::MAX);
@@ -175,11 +171,19 @@ fn reply_status(boot: Instant) {
 /// immediately on disk; the current pairing remains live until the
 /// central disconnects (the desktop typically does so after a
 /// `Forget`).
+///
+/// The ack reports the wipe's actual outcome: if the SD card is
+/// absent or the write fails, `ok: false` goes back to the desktop
+/// (otherwise on next boot the unchanged bonds would silently
+/// re-pair). Reasons are short fixed strings so defmt + the wire
+/// stay terse.
 async fn unpair() {
     defmt::info!("buddy_control: unpair — wiping bonds");
     let empty: HVec<trouble_host::prelude::BondInformation, 8> = HVec::new();
-    bonds::save_all(&empty).await;
-    ack("unpair", true, 0, None);
+    match bonds::save_all(&empty).await {
+        Ok(()) => ack("unpair", true, 0, None),
+        Err(reason) => ack("unpair", false, 0, Some(reason)),
+    }
 }
 
 /// Push the first text content block from a completed turn onto
@@ -210,15 +214,15 @@ fn text_preview(block: &ContentBlock) -> Option<alloc::string::String> {
         return None;
     }
     // Walk char boundaries so a multi-byte UTF-8 codepoint never
-    // gets cut mid-sequence.
-    let mut taken = 0;
+    // gets cut mid-sequence. `char_indices` yields byte offsets;
+    // the next-char check is `i + ch.len_utf8() > cap` so the
+    // longest prefix that fits remains in `end`.
     let mut end = 0;
     for (i, ch) in text.char_indices() {
-        if taken + ch.len_utf8() > TOAST_PREVIEW_BYTES {
+        if i + ch.len_utf8() > TOAST_PREVIEW_BYTES {
             break;
         }
         end = i + ch.len_utf8();
-        taken += ch.len_utf8();
     }
     Some(text[..end].to_string())
 }
