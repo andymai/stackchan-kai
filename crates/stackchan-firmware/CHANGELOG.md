@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.94.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.93.0...stackchan-firmware-v0.94.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** folder-push receiver writes /sd/desktop/&lt;char&gt;/&lt;file&gt; ([#384](https://github.com/andymai/stackchan-kai/issues/384)) ([d734622](https://github.com/andymai/stackchan-kai/commit/d734622fcb3a538ab17d8a0f1e9e9e473ab1732a))
+
 ## [0.93.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.92.0...stackchan-firmware-v0.93.0) (2026-05-18)
 
 
