@@ -837,7 +837,9 @@ async fn gatt_events_task<P: PacketPool>(
                 );
                 if bond.is_some() {
                     let snapshot = stack.get_bond_information();
-                    super::bonds::save_all(&snapshot).await;
+                    // Best-effort persistence on pairing-complete;
+                    // `save_all` already logs the failure reason.
+                    let _ = super::bonds::save_all(&snapshot).await;
                 }
             }
             GattConnectionEvent::PairingFailed(e) => {
