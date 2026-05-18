@@ -190,6 +190,11 @@ const DEVICE_NAME_STAGING_FILE: &str = "DEVICE.NEW";
 /// the advertised value in lockstep.
 const MAX_DEVICE_NAME_BYTES: u32 = 22;
 
+/// Top-level directory for assets pushed via the Hardware Buddy
+/// folder-push protocol. Each char-begin creates a `<name>/`
+/// subdir under this root and files land flat inside.
+const DESKTOP_ASSETS_DIR: &str = "desktop";
+
 /// Filename for the operator-triggered camera capture. Single fixed
 /// name (no rotation) so each capture overwrites the previous —
 /// the workflow is "trigger, eject SD, view, repeat", not a
@@ -756,6 +761,63 @@ where
         }
         self.write_file(BONDS_STAGING_FILE, data)?;
         self.copy_then_delete(BONDS_STAGING_FILE, BONDS_FILE)?;
+        Ok(())
+    }
+
+    /// Truncate-write `data` into `/sd/desktop/<char_name>/<file_name>`.
+    /// Used by the Hardware Buddy folder-push receiver in
+    /// [`crate::desktop_control`].
+    ///
+    /// `<char_name>` is created under `/sd/desktop/` if missing;
+    /// existing dirs are reused. Both directory components are
+    /// expected to already be validated via
+    /// [`stackchan_desktop_protocol::is_safe_relative_path`] by the
+    /// caller — this method does no path validation of its own.
+    /// Each call writes one file in full; the [`crate::desktop_control`]
+    /// folder-push state machine buffers the bytes in PSRAM across
+    /// chunk messages and commits via this method on `file_end`.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Volume`] on FAT-mount failure,
+    /// [`StorageError::Write`] on any underlying write failure.
+    pub fn write_desktop_file(
+        &self,
+        char_name: &str,
+        file_name: &str,
+        data: &[u8],
+    ) -> Result<(), StorageError> {
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        // Top-level `/sd/desktop/` — created once per session,
+        // ignored if already present.
+        let desktop_dir = if let Ok(d) = root.open_dir(DESKTOP_ASSETS_DIR) {
+            d
+        } else {
+            root.make_dir_in_dir(DESKTOP_ASSETS_DIR)
+                .map_err(|_| StorageError::Write)?;
+            root.open_dir(DESKTOP_ASSETS_DIR)
+                .map_err(|_| StorageError::Write)?
+        };
+        // Per-char subdir — same open-or-create pattern.
+        let char_dir = if let Ok(d) = desktop_dir.open_dir(char_name) {
+            d
+        } else {
+            desktop_dir
+                .make_dir_in_dir(char_name)
+                .map_err(|_| StorageError::Write)?;
+            desktop_dir
+                .open_dir(char_name)
+                .map_err(|_| StorageError::Write)?
+        };
+        let file = char_dir
+            .open_file_in_dir(file_name, Mode::ReadWriteCreateOrTruncate)
+            .map_err(|_| StorageError::Write)?;
+        file.write(data).map_err(|_| StorageError::Write)?;
+        file.flush().map_err(|_| StorageError::Write)?;
         Ok(())
     }
 
