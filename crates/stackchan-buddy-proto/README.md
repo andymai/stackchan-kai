@@ -53,6 +53,12 @@ assert_eq!(reply.as_str(), r#"{"cmd":"permission","id":"req_abc","decision":"onc
 [`LineFramer`] accumulates a stream of byte slices (BLE notifications fragment
 at the MTU boundary) and yields one complete line at a time.
 
+`is_safe_relative_path(&str) -> bool` rejects empty input, absolute paths,
+`..` / `.` segments, leading `~`, embedded NUL, backslash separators, and
+Windows drive prefixes. Call it on every `Cmd::File.path` before joining it
+onto a writable root — the desktop sends whatever filenames appeared in the
+dropped folder.
+
 ## Hand-rolled JSON
 
 Same rationale as [`stackchan_net::bare_json`]: avoid `serde` / `serde_json` so
