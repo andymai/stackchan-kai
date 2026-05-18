@@ -245,6 +245,19 @@ fn file_announce(push: &mut PushState, path: &str, size: u32) {
         ack("file", false, 0, Some("subdirectories not supported"));
         return;
     }
+    // FAT short/long-name table rejects these even though POSIX
+    // allows them; without this guard a bad name passes
+    // `is_safe_relative_path` and fails at `open_file_in_dir` with
+    // a generic `"sd write failed"` after we've already buffered
+    // all chunks.
+    if path.contains(['*', '?', ':', '<', '>', '|', '"']) {
+        defmt::warn!(
+            "desktop_control: file {=str} — illegal FAT filename character",
+            path
+        );
+        ack("file", false, 0, Some("illegal filename character"));
+        return;
+    }
     if size > MAX_DESKTOP_FILE_BYTES {
         defmt::warn!(
             "desktop_control: file {=str} too large ({=u32}B > {=u32}B cap)",
@@ -287,9 +300,13 @@ fn chunk(push: &mut PushState, data: &[u8]) {
             MAX_DESKTOP_FILE_BYTES
         );
         ack("chunk", false, 0, Some("file exceeds size cap"));
-        // Drop the half-written file so a subsequent `file_end`
-        // doesn't commit truncated bytes to disk.
+        // Drop the half-written file AND end the push so a
+        // pipelined `file_end` doesn't reach the "no file in
+        // progress" branch (which would surface a second
+        // `ok:false` with a confusingly different reason). The
+        // desktop must restart with a fresh `char_begin`.
         push.current_file = None;
+        push.active_char = None;
         return;
     }
     file.buffer.extend_from_slice(data);
