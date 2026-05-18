@@ -196,9 +196,35 @@ fn file_announce(push: &mut PushState, path: &str, size: u32) {
         ack("file", false, 0, Some("no folder push in progress"));
         return;
     }
+    // A prior `file` without `file_end` is a desktop bug — refuse
+    // to silently drop the in-flight buffer (the desktop already
+    // received `ok:true` for that file's announce + chunks and
+    // would otherwise think the data landed).
+    if push.current_file.is_some() {
+        defmt::warn!(
+            "desktop_control: file {=str} arrived with prior file still open",
+            path
+        );
+        ack("file", false, 0, Some("prior file not ended"));
+        push.current_file = None;
+        return;
+    }
     if !is_safe_relative_path(path) {
         defmt::warn!("desktop_control: file {=str} — unsafe path", path);
         ack("file", false, 0, Some("unsafe file path"));
+        return;
+    }
+    // Folder push is documented as flat — no subdirectories. The
+    // `is_safe_relative_path` check accepts `subdir/icon.png` for
+    // other callers, but FAT doesn't traverse `/` inside a single
+    // `open_file_in_dir`, so accept here would commit a
+    // mid-transfer failure. Reject up front instead.
+    if path.contains('/') {
+        defmt::warn!(
+            "desktop_control: file {=str} — subdirectories not supported",
+            path
+        );
+        ack("file", false, 0, Some("subdirectories not supported"));
         return;
     }
     if size > MAX_DESKTOP_FILE_BYTES {
