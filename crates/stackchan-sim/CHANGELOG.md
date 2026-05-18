@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.21.0...stackchan-sim-v0.22.0) (2026-05-18)
+
+
+### Features
+
+* **core:** face-level Thinking state across the sidecar round-trip ([#394](https://github.com/andymai/stackchan-kai/issues/394)) ([4a3fdfd](https://github.com/andymai/stackchan-kai/commit/4a3fdfddab93f4b3af024725b314072fdff4e577))
+
 ## [0.21.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.20.4...stackchan-sim-v0.21.0) (2026-05-15)
 
 
