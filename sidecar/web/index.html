@@ -10,18 +10,18 @@
     <div id="app">
       <canvas id="scene"></canvas>
 
-      <aside id="hud">
+      <aside id="hud" aria-label="Device telemetry">
         <div class="row">
           <span class="hud-label">LINK</span>
-          <span id="hud-link" class="hud-value">linking…</span>
+          <span id="hud-link" class="hud-value" aria-live="polite">linking…</span>
         </div>
         <div class="row">
           <span class="hud-label">AGENT</span>
-          <span id="hud-agent" class="hud-value">linking…</span>
+          <span id="hud-agent" class="hud-value" aria-live="polite">linking…</span>
         </div>
         <div class="row">
           <span class="hud-label">EMOTION</span>
-          <span id="hud-emotion" class="hud-value">—</span>
+          <span id="hud-emotion" class="hud-value" aria-live="polite">—</span>
         </div>
         <div class="row">
           <span class="hud-label">POSE</span>
@@ -29,13 +29,21 @@
         </div>
         <div class="row">
           <span class="hud-label">BATTERY</span>
-          <span id="hud-battery" class="hud-value">—</span>
+          <span id="hud-battery" class="hud-value" aria-live="polite">—</span>
         </div>
         <div class="row">
           <span class="hud-label">WIFI</span>
-          <span id="hud-wifi" class="hud-value">—</span>
+          <span id="hud-wifi" class="hud-value" aria-live="polite">—</span>
         </div>
       </aside>
+
+      <div id="empty-overlay" class="empty-overlay hidden" role="status" aria-live="polite">
+        <div class="empty-overlay-title">Waiting for device</div>
+        <div class="empty-overlay-sub">
+          Sidecar is proxying /state/stream and /session-status. Make sure the
+          firmware is reachable at STACKCHAN_FIRMWARE_URL.
+        </div>
+      </div>
 
       <div id="thinking" class="thinking hidden" aria-live="polite">
         <span class="thinking-dot"></span>
@@ -55,9 +63,9 @@
         </div>
       </div>
 
-      <div id="controls" class="controls">
-        <button id="ptt" class="ptt" type="button" aria-label="Start listen window">
-          <span class="ptt-icon">●</span>
+      <div id="controls" class="controls" role="group" aria-label="Operator controls">
+        <button id="ptt" class="ptt" type="button" aria-label="Open a listen window on the device">
+          <span class="ptt-icon" aria-hidden="true">●</span>
           <span class="ptt-label">PUSH TO LISTEN</span>
         </button>
         <div id="chips" class="chips" role="toolbar" aria-label="Emotion presets"></div>

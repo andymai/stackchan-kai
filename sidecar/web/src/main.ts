@@ -21,6 +21,7 @@ const thinkingEl = document.getElementById("thinking")!;
 const subtitleEl = document.getElementById("subtitle")!;
 const subtitleUserEl = document.getElementById("subtitle-user")!;
 const subtitleReplyEl = document.getElementById("subtitle-reply")!;
+const emptyEl = document.getElementById("empty-overlay")!;
 
 const pttEl = document.getElementById("ptt") as HTMLButtonElement;
 const chipsEl = document.getElementById("chips")!;
@@ -32,6 +33,11 @@ connectAgentStream("/v1/session-status", state);
 
 window.addEventListener("resize", scene.resize);
 
+// Respect prefers-reduced-motion for the breath bob + saccade jitter.
+// The pose lerp + emotion-driven face still need to track state — the
+// preference affects ambient idle motion, not informative motion.
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
 // ── Controls ──────────────────────────────────────────────────────
 
 const chipButtons = new Map<string, HTMLButtonElement>();
@@ -41,6 +47,8 @@ for (const { id, label } of EMOTION_CHIPS) {
   btn.className = "chip";
   btn.dataset.emotion = id;
   btn.textContent = label;
+  btn.setAttribute("aria-label", `Set emotion ${label}`);
+  btn.setAttribute("aria-pressed", "false");
   btn.addEventListener("click", () => {
     void setEmotion(id);
   });
@@ -52,11 +60,15 @@ let pttBusy = false;
 pttEl.addEventListener("click", async () => {
   if (pttBusy) return;
   pttBusy = true;
+  pttEl.classList.add("is-loading");
+  pttEl.setAttribute("aria-busy", "true");
   pttEl.disabled = true;
   try {
     await startListen();
   } finally {
     pttBusy = false;
+    pttEl.classList.remove("is-loading");
+    pttEl.removeAttribute("aria-busy");
     pttEl.disabled = false;
   }
 });
@@ -82,13 +94,19 @@ function frame(): void {
   state.t = now;
 
   tickPose(state, dt);
-  tickSaccade(state, now, dt);
+  if (!reducedMotion.matches) {
+    tickSaccade(state, now, dt);
+  } else {
+    state.eyeOffsetX = 0;
+    state.eyeOffsetY = 0;
+  }
 
   scene.head.rotation.y = state.pan;
   scene.head.rotation.x = state.tilt;
 
-  const breath = Math.sin(now * 0.6) * 0.018;
-  scene.scene.position.y = breath;
+  // Breath: gentle vertical bob, ~10 mm peak-to-peak. Skipped when the
+  // operator opted out of idle motion.
+  scene.scene.position.y = reducedMotion.matches ? 0 : Math.sin(now * 0.6) * 0.018;
 
   // Redraw the face every frame so the microsaccade offset stays live.
   // The eye/mouth shape lookup is two object reads, cheaper than tracking
@@ -126,6 +144,13 @@ function frame(): void {
     hudWifi.textContent = "—";
   }
 
+  // ── Empty overlay ─────────────────────────────────────────────
+  // Surfaces a hint when neither stream has produced a sample yet so
+  // a fresh visitor doesn't stare at a frozen face wondering whether
+  // the firmware is reachable.
+  const noStreams = state.snapshot == null && state.agent == null;
+  emptyEl.classList.toggle("hidden", !noStreams);
+
   // ── Thinking indicator ─────────────────────────────────────────
   const thinking = state.agent?.state === "thinking";
   thinkingEl.classList.toggle("hidden", !thinking);
@@ -133,8 +158,16 @@ function frame(): void {
   // ── Active emotion chip ────────────────────────────────────────
   const activeEmotion = state.snapshot?.emotion ?? "";
   if (activeEmotion !== lastChipActive) {
-    chipButtons.get(lastChipActive)?.classList.remove("active");
-    chipButtons.get(activeEmotion)?.classList.add("active");
+    const prev = chipButtons.get(lastChipActive);
+    const curr = chipButtons.get(activeEmotion);
+    if (prev) {
+      prev.classList.remove("active");
+      prev.setAttribute("aria-pressed", "false");
+    }
+    if (curr) {
+      curr.classList.add("active");
+      curr.setAttribute("aria-pressed", "true");
+    }
     lastChipActive = activeEmotion;
   }
 
