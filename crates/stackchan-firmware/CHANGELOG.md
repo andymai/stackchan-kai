@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.87.0...stackchan-firmware-v0.88.0) (2026-05-18)
+
+
+### Features
+
+* **firmware:** NUS GATT service + per-connection buddy line framer ([#368](https://github.com/andymai/stackchan-kai/issues/368)) ([1ff3441](https://github.com/andymai/stackchan-kai/commit/1ff34414ac7ffd7606448f288b8a8600c9fb0ee2))
+
 ## [0.87.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.86.1...stackchan-firmware-v0.87.0) (2026-05-17)
 
 
