@@ -78,7 +78,7 @@ for the details.
 - **Local inputs** — FT6336U touch, Si12T body-touch strip, LTR-553 ambient + proximity, NEC IR decoder
 - **Timekeeping + peripherals** — BM8563 RTC, PY32 co-processor, WS2812 neck LED ring (`just leds-bench`)
 - **Camera tracking** — GC0308 capture into a block-grid motion tracker, engagement-driven gaze with microsaccades and lost-target search
-- **Voice agent path** — opt-in. Wake word fires from on-device microWakeWord inference (TFLite Micro + ESP-NN, model on SD card) or operator-initiated `POST /listen`; the firmware uploads captured PCM to a sidecar URL of your choice and renders the JSON reply (`text`, `emotion`) on the toast band. STT and LLM live in the sidecar — kai never embeds them.
+- **Voice agent path** — opt-in. Wake word fires from on-device microWakeWord inference (TFLite Micro + ESP-NN, model on SD card) or operator-initiated `POST /listen`; the firmware uploads captured PCM to a sidecar URL of your choice and renders the JSON reply (`text`, `emotion`) on the toast band. STT and LLM live in the sidecar — kai never embeds them. End-to-end setup in [docs/voice.md](./docs/voice.md).
 - **Optional autonomy** — opt-in soliloquy bubbles at random intervals; opt-in top-of-hour chime
 - **Host-side sim** — runs the full modifier stack on the host with pixel-golden tests + an `egui` visualiser (`cargo run -p stackchan-sim --bin viz --features viz`); cuts behaviour iteration from ~30 s build cycles to under a second
 - **Safe by default** — no `unwrap` in library code, typed errors throughout, `unsafe` denied workspace-wide
