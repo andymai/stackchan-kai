@@ -4,9 +4,11 @@
 //! `ExternalController` (built from `esp_radio`'s `BleConnector`) and
 //! drives an advertise → accept-connection → serve-GATT loop for the
 //! firmware lifetime. The advertised local name is
-//! `stackchan-XXXXXX`, where `XXXXXX` is the last three bytes of the
-//! Wi-Fi MAC; clients see the same handle whether they discover us
-//! over BLE or mDNS.
+//! `Claude stk-XXXXXX`, where `XXXXXX` is the last three bytes of
+//! the Wi-Fi MAC. The `Claude ` prefix is required for Claude
+//! Desktop's Hardware Buddy picker to filter the device in. The
+//! mDNS hostname stays `stackchan-XXXXXX` separately so LAN-side
+//! discovery isn't affected.
 //!
 //! Services exposed (in declaration order):
 //!
