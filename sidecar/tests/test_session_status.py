@@ -150,5 +150,7 @@ def test_snapshot_to_dict_drops_none_fields() -> None:
         emotion="happy",
     )
     raw = snapshot_to_dict(s.get())
-    assert raw["last_turn"]["transcript"] == "hi"
+    turn = raw["last_turn"]
+    assert isinstance(turn, dict)
+    assert turn["transcript"] == "hi"
     assert "error" not in raw
