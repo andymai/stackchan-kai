@@ -90,6 +90,16 @@ web-build:
 web-typecheck:
     cd web && npm install --no-audit --no-fund && npm run typecheck
 
+# Build the sidecar 3D companion bundle. Vite + three.js → `sidecar/web/dist/`.
+# The sidecar's `register_companion` mounts this directory under `/companion/`
+# when it exists. Independent of `web-build`; not chained into the firmware
+# recipes because the companion is served by the host sidecar, not the device.
+sidecar-companion-build:
+    cd sidecar/web && npm install --no-audit --no-fund && npm run build
+
+sidecar-companion-typecheck:
+    cd sidecar/web && npm install --no-audit --no-fund && npm run typecheck
+
 # ----- Firmware (requires `source ~/export-esp.sh` first) ------------------
 
 # Firmware-side compile check. Runs from inside the firmware crate so the

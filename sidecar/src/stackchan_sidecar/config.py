@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     deepgram_api_key: str = Field(default="", alias="DEEPGRAM_API_KEY")
 
+    firmware_url: str = Field(default="http://stackchan.local", alias="STACKCHAN_FIRMWARE_URL")
+    firmware_token: str = Field(default="", alias="STACKCHAN_FIRMWARE_TOKEN")
+    companion_enabled: bool = Field(default=True, alias="SIDECAR_COMPANION_ENABLED")
+
 
 def load_settings() -> Settings:
     settings = Settings()
