@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.91.0...stackchan-firmware-v0.91.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **firmware:** buddy_permission — notify on prompt replacement; lift prompt-id cap ([#376](https://github.com/andymai/stackchan-kai/issues/376)) ([28ca829](https://github.com/andymai/stackchan-kai/commit/28ca829ed4ba024a1fb086cc33baba54b2403ba9))
+
 ## [0.91.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.90.0...stackchan-firmware-v0.91.0) (2026-05-18)
 
 
