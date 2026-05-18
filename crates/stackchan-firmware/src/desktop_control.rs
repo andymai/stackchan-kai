@@ -15,9 +15,9 @@
 //!   change until that lands.
 //! - **unpair** → wipes the SD-backed bonds via
 //!   [`crate::ble::bonds::save_all`] with an empty list, then acks.
-//! - **time** (`{"time":[epoch,tz]}`) → logs. The BM8563 RTC is
-//!   driven by [`crate::wallclock`]'s SNTP path; desktop time is
-//!   advisory until a follow-up slice wires it in.
+//! - **time** (`{"time":[epoch,tz]}`) → fans the epoch out to
+//!   [`crate::desktop_time::DESKTOP_RTC_WRITE_REQUEST`] for the
+//!   dedicated writer task; tz is logged only (BM8563 stores UTC).
 //! - **turn** events → push the assistant's first text block into
 //!   the toast band so the operator sees the recent reply.
 //! - **`char_begin` / `file` / `chunk` / `file_end` / `char_end`** →
@@ -128,10 +128,13 @@ async fn handle(message: Inbound, boot: Instant) {
             tz_offset_secs,
         } => {
             defmt::info!(
-                "desktop_control: time-sync epoch={=i64} tz={=i32} (RTC write pending)",
+                "desktop_control: time-sync epoch={=i64} tz={=i32}",
                 epoch_secs,
                 tz_offset_secs
             );
+            // Hand the epoch off to the dedicated writer task; tz
+            // is logged-only today (the BM8563 stores UTC).
+            crate::desktop_time::DESKTOP_RTC_WRITE_REQUEST.signal(epoch_secs);
         }
         Inbound::Turn(turn) => render_turn(&turn),
         Inbound::Snapshot(_) => {}

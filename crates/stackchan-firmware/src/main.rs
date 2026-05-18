@@ -1557,6 +1557,19 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(chime_task) failed: {}", defmt::Debug2Format(&e));
     }
 
+    // Desktop time-sync writer — pushes desktop-supplied epoch
+    // seconds into the BM8563 when `desktop_control` receives a
+    // `{"time":[..]}` message. Coexists with the SNTP RTC writer
+    // via the shared I²C bus mutex.
+    if let Err(e) = spawner.spawn(stackchan_firmware::desktop_time::desktop_time_task(
+        board_io.i2c_bus,
+    )) {
+        defmt::panic!(
+            "spawn(desktop_time_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
+    }
+
     // Reminder dispatcher — drains due reminders at 1 Hz and routes
     // them through `REMOTE_COMMAND_SIGNAL` for the speak path. The
     // queue is empty at boot so the task is a low-cost noop until an

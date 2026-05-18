@@ -32,6 +32,7 @@ pub mod crash;
 pub mod desktop_control;
 pub mod desktop_permission;
 pub mod desktop_render;
+pub mod desktop_time;
 pub mod event_log;
 pub mod framebuffer;
 pub mod head;
