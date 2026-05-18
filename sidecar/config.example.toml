@@ -9,3 +9,14 @@ log_level = "INFO"
 stt_provider = "faster_whisper"
 llm_provider = "anthropic"
 ollama_host = "http://localhost:11434"
+
+# Resilience. Per-stage timeouts wrap each provider call; bounded retries
+# cover transient upstream classes (Anthropic 529, OpenAI 5xx, Deepgram 5xx,
+# httpx network errors). The total deadline is shared across STT + LLM so a
+# slow STT can't starve the LLM call.
+stt_timeout_seconds = 10.0
+llm_timeout_seconds = 20.0
+total_timeout_seconds = 30.0
+stt_max_attempts = 2
+llm_max_attempts = 2
+retry_initial_backoff_seconds = 0.5

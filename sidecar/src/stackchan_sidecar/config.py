@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     llm_provider: Literal["anthropic", "openai", "ollama"] = "anthropic"
     ollama_host: str = "http://localhost:11434"
 
+    stt_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    llm_timeout_seconds: float = Field(default=20.0, gt=0.0)
+    total_timeout_seconds: float = Field(default=30.0, gt=0.0)
+    stt_max_attempts: int = Field(default=2, ge=1)
+    llm_max_attempts: int = Field(default=2, ge=1)
+    retry_initial_backoff_seconds: float = Field(default=0.5, ge=0.0)
+
     bearer_token: str = Field(default="", alias="SIDECAR_BEARER_TOKEN")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
