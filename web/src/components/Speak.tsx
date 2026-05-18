@@ -73,7 +73,7 @@ export function Speak() {
           class="btn-primary"
           classList={{ "is-loading": busy() }}
           aria-busy={busy()}
-          disabled={busy()}
+          aria-disabled={busy()}
           onClick={send}
         >
           Speak

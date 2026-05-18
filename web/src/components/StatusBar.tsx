@@ -19,7 +19,10 @@ function Stat(props: {
     >
       <div class="stat-label">{props.label}</div>
       <div class="stat-value" aria-live="polite">
-        <Show when={!props.loading} fallback={<span class="skeleton skeleton-row">—</span>}>
+        <Show
+          when={!props.loading}
+          fallback={<span class="skeleton skeleton-row" aria-hidden="true">—</span>}
+        >
           {props.value ?? "—"}
         </Show>
       </div>

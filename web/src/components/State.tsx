@@ -2,24 +2,36 @@ import { Show } from "solid-js";
 import { snapshot } from "../store";
 
 function Skeleton(props: { width?: string }) {
-  return <span class="skeleton skeleton-row" style={props.width ? `min-width:${props.width}` : ""}>—</span>;
+  // aria-hidden so the em-dash placeholder isn't announced; the parent
+  // dd is still in the a11y tree but conveys no information until the
+  // real value arrives.
+  return (
+    <span
+      class="skeleton skeleton-row"
+      style={props.width ? `min-width:${props.width}` : ""}
+      aria-hidden="true"
+    >
+      —
+    </span>
+  );
 }
 
 export function State() {
+  const s = () => snapshot();
   return (
     <section aria-label="State">
       <h2>State</h2>
       <dl class="row">
         <dt>Emotion</dt>
         <dd>
-          <Show when={snapshot()?.emotion} fallback={<Skeleton width="6ch" />}>
-            {(e) => e()}
+          <Show when={s() != null} fallback={<Skeleton width="6ch" />}>
+            {s()?.emotion || <Skeleton width="6ch" />}
           </Show>
         </dd>
         <dt>Mood</dt>
         <dd>
-          <Show when={snapshot()?.mood} fallback={<Skeleton width="6ch" />}>
-            {(m) => m()}
+          <Show when={s() != null} fallback={<Skeleton width="6ch" />}>
+            {s()?.mood || <Skeleton width="6ch" />}
           </Show>
         </dd>
         <dt>Decorator</dt>
