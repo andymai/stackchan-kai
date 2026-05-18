@@ -1,5 +1,5 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
-import type { EventsResponse } from "../types";
+import type { EventEntry, EventsResponse } from "../types";
 import { showToast } from "../store";
 
 const POLL_MS = 3000;
@@ -12,6 +12,10 @@ function fmtTimestamp(ms: number): string {
   if (h > 0) return `${h}h${m.toString().padStart(2, "0")}m${s.toString().padStart(2, "0")}s`;
   if (m > 0) return `${m}m${s.toString().padStart(2, "0")}s`;
   return `${s}s`;
+}
+
+function kindClass(k: EventEntry["kind"]): string {
+  return `tl-row tl-${k}`;
 }
 
 export function Events() {
@@ -42,22 +46,32 @@ export function Events() {
       <Show when={data()} fallback={<small>waiting for first poll…</small>}>
         {(s) => (
           <>
-            <small>{s().total} since boot</small>
-            <div class="grid" style="margin-top:8px;font-family:ui-monospace,monospace;font-size:12px">
-              <For each={s().events.slice().reverse()}>
-                {(e) => (
-                  <div style="display:grid;grid-template-columns:max-content max-content 1fr;gap:8px;align-items:baseline">
-                    <span style="color:var(--muted);font-variant-numeric:tabular-nums">
-                      {fmtTimestamp(e.at_ms)}
-                    </span>
-                    <span style={`color:${e.kind === "warn" ? "var(--bad)" : e.kind === "control" ? "var(--accent)" : "var(--muted)"}`}>
-                      {e.kind}
-                    </span>
-                    <span>{e.message}</span>
-                  </div>
-                )}
-              </For>
+            <div class="tl-head">
+              <span class="tl-count">{s().total}</span>
+              <span class="tl-count-label">since boot</span>
+              <span class="tl-legend">
+                <span class="tl-legend-item tl-lifecycle">lifecycle</span>
+                <span class="tl-legend-item tl-control">control</span>
+                <span class="tl-legend-item tl-warn">warn</span>
+              </span>
             </div>
+            <Show
+              when={s().events.length > 0}
+              fallback={<small>no events buffered</small>}
+            >
+              <ol class="timeline">
+                <For each={s().events.slice().reverse()}>
+                  {(e) => (
+                    <li class={kindClass(e.kind)}>
+                      <span class="tl-time">{fmtTimestamp(e.at_ms)}</span>
+                      <span class="tl-dot" aria-hidden="true" />
+                      <span class="tl-kind">{e.kind}</span>
+                      <span class="tl-msg">{e.message}</span>
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
           </>
         )}
       </Show>
