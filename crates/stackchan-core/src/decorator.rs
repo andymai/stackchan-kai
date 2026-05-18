@@ -45,6 +45,12 @@ pub enum Decorator {
     /// Pink hash-mark blush under each cheek — the embarrassed
     /// crosshatch trope, amplifying [`crate::Emotion::Loved`].
     Shy,
+    /// Anime thought-bubble cluster — the rising-bubbles trope, drawn
+    /// at the upper-right above the head while
+    /// [`crate::Attention::Thinking`] holds. Armed by
+    /// [`crate::modifiers::DecoratorFromThinking`] across the sidecar
+    /// round-trip window that follows a closed listen capture.
+    Thinking,
 }
 
 impl Decorator {
@@ -65,6 +71,7 @@ impl Decorator {
             Self::Pairing => "pairing",
             Self::Angry => "angry",
             Self::Shy => "shy",
+            Self::Thinking => "thinking",
         }
     }
 
@@ -80,6 +87,7 @@ impl Decorator {
             Self::Pairing => 4,
             Self::Angry => 5,
             Self::Shy => 6,
+            Self::Thinking => 7,
         }
     }
 
@@ -96,6 +104,7 @@ impl Decorator {
         Self::Pairing,
         Self::Angry,
         Self::Shy,
+        Self::Thinking,
     ];
 }
 
@@ -141,7 +150,7 @@ mod tests {
     fn all_length_matches_variant_count() {
         assert_eq!(
             Decorator::ALL.len(),
-            7,
+            8,
             "update Decorator::ALL when adding a variant"
         );
     }
@@ -155,6 +164,7 @@ mod tests {
         assert_eq!(Decorator::Pairing.wire_byte(), 4);
         assert_eq!(Decorator::Angry.wire_byte(), 5);
         assert_eq!(Decorator::Shy.wire_byte(), 6);
+        assert_eq!(Decorator::Thinking.wire_byte(), 7);
     }
 
     #[test]

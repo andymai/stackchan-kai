@@ -109,6 +109,14 @@ returns:
 Response status must be `2xx`. Anything else (4xx, 5xx) is treated
 as a failure and surfaces as a `sidecar: post failed` toast.
 
+The avatar's face mirrors the round-trip in three beats:
+`Listening` (Ear decorator) during PCM capture →
+`Thinking` (thought-bubble) while the POST is in flight →
+the emotion + speech bubble carrying the reply. The thinking hold
+clears the instant a `SetEmotion` lands, so the bubble fades in
+sync with the visible reply. If the round-trip times out or fails,
+the hold expires naturally after 15 s.
+
 Backslash-escaped quotes inside the value strings are not handled
 by the firmware-side parser. A well-behaved sidecar emits clean
 ASCII / UTF-8 strings without embedded quotes; if literal quotes

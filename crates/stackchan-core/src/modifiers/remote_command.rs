@@ -76,6 +76,12 @@ pub struct RemoteCommandModifier {
     /// live, [`Self::update`] re-arms [`Decorator::Pairing`] on
     /// `entity.face.decorator` each tick.
     pairing_hold: Option<Instant>,
+    /// Active thinking-window hold, if any. `(since, hold_until)`.
+    /// `since` pins to the entry frame so [`Attention::Thinking`] is
+    /// re-asserted with a stable timestamp each tick (mirrors
+    /// [`Self::listen_hold`]). A follow-up `SetEmotion` clears this
+    /// hold as a side effect — see [`Self::apply`].
+    thinking_hold: Option<(Instant, Instant)>,
 }
 
 impl RemoteCommandModifier {
@@ -88,6 +94,7 @@ impl RemoteCommandModifier {
             lookat_point_hold: None,
             listen_hold: None,
             pairing_hold: None,
+            thinking_hold: None,
         }
     }
 
@@ -102,6 +109,18 @@ impl RemoteCommandModifier {
                 entity.mind.autonomy.manual_until = Some(until);
                 entity.mind.autonomy.source = Some(OverrideSource::Remote);
                 self.emotion_hold = Some((emotion, until));
+                // Sidecar reply transition: a SetEmotion landing while
+                // we're mid-Thinking means the reply has arrived, so
+                // the thought-bubble has served its purpose. Clear the
+                // hold (the per-tick re-assert below would otherwise
+                // hold attention on Thinking through `hold_ms`) and
+                // release the attention slot so DecoratorExpiry's tail
+                // can fade the bubble out cleanly.
+                if let Some((since, _)) = self.thinking_hold.take()
+                    && matches!(entity.mind.attention, Attention::Thinking { since: s } if s == since)
+                {
+                    entity.mind.attention = Attention::None;
+                }
             }
             RemoteCommand::LookAt { target, hold_ms } => {
                 let until = now + u64::from(hold_ms);
@@ -126,6 +145,7 @@ impl RemoteCommandModifier {
                 self.lookat_point_hold = None;
                 self.listen_hold = None;
                 self.pairing_hold = None;
+                self.thinking_hold = None;
             }
             RemoteCommand::Speak { .. } => {
                 // Audio dispatch is firmware-only; the producer drains
@@ -152,6 +172,15 @@ impl RemoteCommandModifier {
                     PAIRING_DECORATOR_TAIL_MS,
                 ));
                 self.pairing_hold = Some(until);
+            }
+            RemoteCommand::EnterThinking { hold_ms } => {
+                let until = now + u64::from(hold_ms);
+                entity.mind.attention = Attention::Thinking { since: now };
+                self.thinking_hold = Some((now, until));
+                // A fresh thinking window supersedes any in-flight
+                // listen hold — the listen capture has ended, the
+                // round-trip is now the thing we're showing.
+                self.listen_hold = None;
             }
         }
     }
@@ -253,6 +282,20 @@ impl Modifier for RemoteCommandModifier {
                 ));
             } else {
                 self.pairing_hold = None;
+            }
+        }
+
+        if let Some((since, until)) = self.thinking_hold {
+            if now < until {
+                entity.mind.attention = Attention::Thinking { since };
+            } else {
+                self.thinking_hold = None;
+                // Same release-guard idiom as `listen_hold`: only clear
+                // if attention is still our Thinking variant — another
+                // modifier may have stomped it.
+                if matches!(entity.mind.attention, Attention::Thinking { since: s } if s == since) {
+                    entity.mind.attention = Attention::None;
+                }
             }
         }
     }
@@ -621,5 +664,131 @@ mod tests {
         let after_reset = entity.face.decorator;
         step(&mut m, &mut entity, 200);
         assert_eq!(entity.face.decorator, after_reset);
+    }
+
+    #[test]
+    fn enter_thinking_sets_attention_and_pins_since() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(100);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 5_000 });
+        step(&mut m, &mut entity, 100);
+
+        match entity.mind.attention {
+            Attention::Thinking { since } => {
+                assert_eq!(since, Instant::from_millis(100));
+            }
+            other => panic!("expected Thinking, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn thinking_hold_re_asserts_against_stomping() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 1_000 });
+        step(&mut m, &mut entity, 0);
+
+        entity.mind.attention = Attention::None;
+        step(&mut m, &mut entity, 200);
+        assert!(
+            matches!(entity.mind.attention, Attention::Thinking { .. }),
+            "hold must re-assert Thinking against mid-frame stomps"
+        );
+    }
+
+    #[test]
+    fn thinking_hold_expires_back_to_none() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 500 });
+        step(&mut m, &mut entity, 0);
+        step(&mut m, &mut entity, 600);
+        assert_eq!(entity.mind.attention, Attention::None);
+    }
+
+    #[test]
+    fn set_emotion_clears_active_thinking() {
+        // Reply-arrival side effect: a SetEmotion landing mid-Thinking
+        // means the sidecar reply has come back, so the thought-bubble
+        // has served its purpose. Attention drops to None on the same
+        // tick; the emotion + speech-bubble carry the visible reply.
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 10_000 });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Thinking { .. }));
+
+        entity.input.remote_command = Some(RemoteCommand::SetEmotion {
+            emotion: Emotion::Happy,
+            hold_ms: 2_000,
+        });
+        step(&mut m, &mut entity, 500);
+
+        assert_eq!(entity.mind.attention, Attention::None);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
+    }
+
+    #[test]
+    fn set_emotion_does_not_clear_unrelated_thinking_attention() {
+        // If something else has written Attention::Thinking with a
+        // different `since`, SetEmotion's clear is scoped to our hold.
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 10_000 });
+        step(&mut m, &mut entity, 0);
+
+        let foreign_since = Instant::from_millis(999);
+        entity.mind.attention = Attention::Thinking {
+            since: foreign_since,
+        };
+        entity.input.remote_command = Some(RemoteCommand::SetEmotion {
+            emotion: Emotion::Happy,
+            hold_ms: 2_000,
+        });
+        step(&mut m, &mut entity, 500);
+
+        // The foreign Thinking attention survives the SetEmotion.
+        assert_eq!(
+            entity.mind.attention,
+            Attention::Thinking {
+                since: foreign_since,
+            }
+        );
+    }
+
+    #[test]
+    fn enter_thinking_supersedes_listen_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::StartListen {
+            duration_ms: 30_000,
+        });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
+
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 5_000 });
+        step(&mut m, &mut entity, 100);
+        assert!(matches!(entity.mind.attention, Attention::Thinking { .. }));
+
+        // The listen hold must not resurrect Listening on the next tick.
+        step(&mut m, &mut entity, 200);
+        assert!(matches!(entity.mind.attention, Attention::Thinking { .. }));
+    }
+
+    #[test]
+    fn reset_clears_thinking_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms: 30_000 });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Thinking { .. }));
+
+        entity.input.remote_command = Some(RemoteCommand::Reset);
+        step(&mut m, &mut entity, 100);
+        assert_eq!(entity.mind.attention, Attention::None);
+
+        // Subsequent ticks do not resurrect Thinking.
+        step(&mut m, &mut entity, 500);
+        assert_eq!(entity.mind.attention, Attention::None);
     }
 }

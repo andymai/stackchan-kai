@@ -148,6 +148,24 @@ pub enum Attention {
         /// When the listening attention began.
         since: Instant,
     },
+    /// Waiting on a sidecar / external agent reply after a listen
+    /// window closes. Distinct from [`Self::Listening`] so the face
+    /// can show a "thinking" decorator while the network round-trip
+    /// is in flight, without disturbing the head pose easing that
+    /// the Listening branch already drives.
+    ///
+    /// Set by [`crate::modifiers::RemoteCommandModifier`] in response
+    /// to [`crate::RemoteCommand::EnterThinking`]; cleared either when
+    /// the hold expires or when a follow-up
+    /// [`crate::RemoteCommand::SetEmotion`] lands (the reply carries
+    /// the emotion, so the thinking state has served its purpose).
+    /// [`crate::modifiers::HeadFromAttention`] holds the same upward
+    /// listen-tilt across Listening + Thinking; only the decorator
+    /// differs.
+    Thinking {
+        /// When the thinking attention began.
+        since: Instant,
+    },
     /// Tracking a moving target detected by the camera. `target` is
     /// the head-pose the engine wants to look at (already in safe
     /// pan/tilt range — the firmware tracker handles clamping); `since`
