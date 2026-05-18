@@ -207,6 +207,19 @@ def test_audio_rate_omitted_accepted(
     assert r.status_code == 200
 
 
+def test_audio_bitrate_does_not_mask_missing_rate(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    r = client.post(
+        "/v1/listen",
+        content=pcm_payload,
+        headers={**auth_headers, "Content-Type": "audio/L16;bitrate=128000"},
+    )
+    assert r.status_code == 200
+
+
 def test_audio_body_too_small(
     client: TestClient,
     auth_headers: dict[str, str],

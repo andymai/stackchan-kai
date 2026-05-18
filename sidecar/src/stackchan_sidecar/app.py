@@ -26,7 +26,7 @@ _LOG = logging.getLogger("stackchan_sidecar")
 _MAX_BODY_BYTES = 30 * 16000 * 2 + 1024
 _MIN_BODY_BYTES = 640  # 20 ms @ 16 kHz mono s16; anything smaller is operator error
 _EXPECTED_SAMPLE_RATE = 16000
-_RATE_RE = re.compile(r"rate=(\d+)", re.IGNORECASE)
+_RATE_RE = re.compile(r"\brate=(\d+)", re.IGNORECASE)
 
 
 def _failure(
