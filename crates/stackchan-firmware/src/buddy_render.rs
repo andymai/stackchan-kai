@@ -17,10 +17,11 @@
 //!
 //! Emotion holds are re-asserted on every snapshot the desktop
 //! sends. The reference protocol guarantees a keepalive every 10 s,
-//! so a 2 s hold safely covers two consecutive keepalive intervals
+//! so a 25 s hold safely covers two consecutive keepalive intervals
 //! without letting autonomy slip in between, and a dropped link
 //! falls back to autonomy within one hold window.
 
+use embassy_sync::pubsub::WaitResult;
 use stackchan_buddy_proto::{Cmd, Inbound, Snapshot};
 use stackchan_core::{Clock, Emotion, RemoteCommand};
 
@@ -55,7 +56,16 @@ pub async fn buddy_render_task() -> ! {
     let mut last_emotion: Option<Emotion> = None;
 
     loop {
-        let message = sub.next_message_pure().await;
+        let message = match sub.next_message().await {
+            WaitResult::Message(m) => m,
+            WaitResult::Lagged(n) => {
+                defmt::warn!(
+                    "buddy_render: subscriber lagged, dropped {=u64} message(s)",
+                    n
+                );
+                continue;
+            }
+        };
         match message {
             Inbound::Snapshot(snap) => apply_snapshot(&snap, &mut last_emotion),
             Inbound::Cmd(Cmd::Owner { name }) => {
