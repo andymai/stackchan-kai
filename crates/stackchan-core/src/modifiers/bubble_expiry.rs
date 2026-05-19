@@ -87,4 +87,44 @@ mod tests {
         m.update(&mut entity);
         assert!(entity.face.bubble.is_none());
     }
+
+    #[test]
+    fn clears_well_after_deadline() {
+        let mut entity = Entity::default();
+        entity.face.bubble = Some(BubbleState {
+            text: "hi",
+            expires_at: Instant::from_millis(1_000),
+        });
+        let mut m = BubbleExpiry::new();
+
+        entity.tick.now = Instant::from_millis(10_000);
+        m.update(&mut entity);
+        assert!(entity.face.bubble.is_none());
+    }
+
+    #[test]
+    fn re_arm_after_expiry_survives_next_sweep() {
+        let mut entity = Entity::default();
+        let mut m = BubbleExpiry::new();
+
+        entity.face.bubble = Some(BubbleState {
+            text: "first",
+            expires_at: Instant::from_millis(1_000),
+        });
+        entity.tick.now = Instant::from_millis(1_500);
+        m.update(&mut entity);
+        assert!(entity.face.bubble.is_none());
+
+        entity.face.bubble = Some(BubbleState {
+            text: "second",
+            expires_at: Instant::from_millis(3_000),
+        });
+        entity.tick.now = Instant::from_millis(1_600);
+        m.update(&mut entity);
+        assert_eq!(
+            entity.face.bubble.map(|b| b.text),
+            Some("second"),
+            "fresh bubble must survive the next sweep"
+        );
+    }
 }
