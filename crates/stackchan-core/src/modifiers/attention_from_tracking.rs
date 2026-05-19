@@ -860,4 +860,32 @@ mod tests {
         }
         assert_eq!(entity.mind.attention, Attention::None);
     }
+
+    #[test]
+    fn with_config_overrides_defaults() {
+        // Pin that with_config stores both lock_ticks and release_ms.
+        // Pick distinct non-default values so a no-op constructor
+        // would fail the assertion.
+        let m = AttentionFromTracking::with_config(7, 9_999);
+        assert_eq!(m.lock_ticks, 7);
+        assert_eq!(m.release_ms, 9_999);
+        // Face-lock thresholds default to FACE_LOCK_HITS /
+        // FACE_RELEASE_MISSES so the constructor only takes the two
+        // motion-tracking knobs.
+        assert_eq!(m.face_lock_hits, FACE_LOCK_HITS);
+        assert_eq!(m.face_release_misses, FACE_RELEASE_MISSES);
+    }
+
+    #[test]
+    fn default_matches_new_constructor() {
+        let from_default = <AttentionFromTracking as Default>::default();
+        let from_new = AttentionFromTracking::new();
+        assert_eq!(from_default.lock_ticks, from_new.lock_ticks);
+        assert_eq!(from_default.release_ms, from_new.release_ms);
+        assert_eq!(from_default.face_lock_hits, from_new.face_lock_hits);
+        assert_eq!(
+            from_default.face_release_misses,
+            from_new.face_release_misses,
+        );
+    }
 }
