@@ -1067,6 +1067,31 @@ mod tests {
     }
 
     #[test]
+    fn config_accessor_returns_supplied_config() {
+        let mut cfg = TrackerConfig::DEFAULT;
+        cfg.fov_h_deg = 45.0;
+        let t = Tracker::new(cfg);
+        assert!((t.config().fov_h_deg - 45.0).abs() < f32::EPSILON);
+        // Identity stays — config is borrowed, not cloned.
+        assert_eq!(t.config().blocks_x, TrackerConfig::DEFAULT.blocks_x);
+    }
+
+    #[test]
+    fn step_with_undersized_frame_returns_warmup() {
+        // A frame smaller than frame_width * frame_height * 2 bytes
+        // exits early with Motion::Warmup and no candidates. Tests
+        // the safety-net branch that protects fill_block_luma from
+        // out-of-bounds reads on truncated DMA captures.
+        let mut t = Tracker::new(TrackerConfig::DEFAULT);
+        let short = alloc::vec::Vec::from([0u8; 16]); // way under 320*240*2
+        let out = t.step(&short, 33);
+        assert!(matches!(out.motion, Motion::Warmup));
+        assert_eq!(out.fired_cells, 0);
+        assert!(out.candidates.is_empty());
+        assert!(!out.face_present);
+    }
+
+    #[test]
     fn target_pose_saturates_at_pan_clamp() {
         // Alternate blank ↔ patch-far-right so every transition fires
         // cells exclusively on the right side of the frame, biasing
