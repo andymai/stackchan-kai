@@ -27,7 +27,7 @@ use super::snapshot::{self, AvatarSnapshot};
 ///
 /// `GET /` serves this; the bundle uses the SSE / POST / PUT routes
 /// for live state and control.
-pub(super) const DASHBOARD_GZ: &[u8] = include_bytes!("../../../../web/dist/index.html.gz");
+const DASHBOARD_GZ: &[u8] = include_bytes!("../../../../web/dist/index.html.gz");
 
 /// Lightweight error wrapping for the request handler — ferries
 /// socket and parse failures to a single `warn` log line at the
@@ -336,7 +336,7 @@ pub(super) async fn write_status_for_error(socket: &mut TcpSocket<'_>, err: &Htt
 /// challenge header (RFC 6750 §3). Strict HTTP clients use the
 /// challenge to know which auth scheme to negotiate; without it
 /// they may treat the response as a hard failure.
-pub(super) async fn write_unauthorized(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
+async fn write_unauthorized(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
     let body = "unauthorized\n";
     let header = format!(
         "HTTP/1.1 401 Unauthorized\r\n\
