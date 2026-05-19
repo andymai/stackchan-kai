@@ -1013,10 +1013,13 @@ mod tests {
 
     #[test]
     fn string_unicode_escapes_decode() {
-        // BMP code point.
-        assert_eq!(parse_str(r#""é""#).unwrap(), "é");
-        // Astral plane code point via UTF-16 surrogate pair (😀 = U+1F600).
-        assert_eq!(parse_str(r#""😀""#).unwrap(), "😀");
+        // BMP code point via `\uXXXX` escape — drives parse_unicode_escape's
+        // happy path. (Literal UTF-8 chars in the input bypass the escape
+        // parser through the `_` arm of parse_string's match.)
+        assert_eq!(parse_str(r#""\u00e9""#).unwrap(), "é");
+        // Astral plane code point via UTF-16 surrogate pair
+        // (😀 = U+1F600 = `😀`).
+        assert_eq!(parse_str(r#""\ud83d\ude00""#).unwrap(), "😀");
     }
 
     #[test]
@@ -1088,10 +1091,12 @@ mod tests {
 
     #[test]
     fn unicode_low_surrogate_out_of_range_rejected() {
-        // High surrogate followed by `\u` where the second value
-        // isn't in the low-surrogate range.
+        // High surrogate followed by a second `\u` escape whose value
+        // sits outside the low-surrogate range (0xDC00..=0xDFFF). The
+        // input passes the `starts_with("\\u")` guard so we get past
+        // the lone-high-surrogate check, then fail the range check.
         assert!(matches!(
-            parse_str(r#""\ud83dA""#),
+            parse_str(r#""\ud83d\u0041""#),
             Err(ProtoError::MalformedJson(_))
         ));
     }
