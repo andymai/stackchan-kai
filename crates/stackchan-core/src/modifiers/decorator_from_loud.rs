@@ -187,4 +187,102 @@ mod tests {
         step(&mut m, &mut entity, f32::INFINITY, 100);
         assert!(entity.face.decorator.is_none());
     }
+
+    #[test]
+    fn every_emotion_variant_categorized_for_sweat() {
+        // Pin the sweat allowlist exhaustively. Iterates
+        // `Emotion::ALL` (the canonical variant slice, length-pinned
+        // by `all_length_matches_variant_count` in `emotion.rs`) so
+        // adding a new variant flows through both the iteration and
+        // the exhaustive `match` below without a parallel-list to
+        // maintain. The `match` provides compile-time exhaustiveness
+        // (no wildcard) so a new variant forces a deliberate
+        // categorize-or-deny decision instead of silently landing in
+        // `emotion_admits_sweat`'s no-admit `matches!` bucket.
+        for &variant in Emotion::ALL {
+            let expected_admit = match variant {
+                Emotion::Sad
+                | Emotion::Surprised
+                | Emotion::Angry
+                | Emotion::Mad
+                | Emotion::Confused => true,
+                Emotion::Neutral
+                | Emotion::Happy
+                | Emotion::Sleepy
+                | Emotion::Doubt
+                | Emotion::Boring
+                | Emotion::Hi
+                | Emotion::Loved
+                | Emotion::Curious => false,
+            };
+            assert_eq!(
+                emotion_admits_sweat(variant),
+                expected_admit,
+                "Emotion::{variant:?} sweat-admit classification drifted"
+            );
+        }
+    }
+
+    #[test]
+    fn loud_overwrites_existing_decorator_on_admit() {
+        // Sweat is unconditional on admit — a Heart decorator from a
+        // recent petting moment loses to a startling loud spike. Pins
+        // last-write-wins on `face.decorator`; the priority order
+        // between decorator modifiers is encoded in their `priority`
+        // values, not in any conditional inside `update`.
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Sad;
+        entity.face.decorator = Some(DecoratorState::hold_for(
+            Decorator::Heart,
+            Instant::from_millis(0),
+            5_000,
+        ));
+        let mut m = DecoratorFromLoud::new();
+        step(&mut m, &mut entity, 0.6, 33);
+        let state = entity
+            .face
+            .decorator
+            .expect("decorator should be present after admit");
+        assert_eq!(
+            state.kind,
+            Decorator::Sweat,
+            "Sweat must overwrite the prior Heart on admit"
+        );
+    }
+
+    #[test]
+    fn rising_edge_during_disallowed_emotion_locks_out_subsequent_admit() {
+        // A loud spike that begins while Happy doesn't arm Sweat — the
+        // rising edge happens and `armed_above` flips. If the emotion
+        // then shifts to Sad while the loud sample is still above
+        // threshold, no fresh edge is detected (the existing
+        // implementation correlates the edge to a single audio event,
+        // not to a per-frame emotion check). Pinning this so a future
+        // "let emotion changes count as a fresh edge" PR has to opt
+        // in deliberately rather than discovering the surprise later.
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Happy;
+        let mut m = DecoratorFromLoud::with_params(3_000, 0.4);
+        step(&mut m, &mut entity, 0.6, 0);
+        assert!(
+            entity.face.decorator.is_none(),
+            "Happy gate suppresses arm on the rising edge"
+        );
+
+        entity.mind.affect.emotion = Emotion::Sad;
+        step(&mut m, &mut entity, 0.6, 33);
+        assert!(
+            entity.face.decorator.is_none(),
+            "mid-event emotion shift does not retroactively arm Sweat"
+        );
+
+        // Quiet resets the edge; the next rise (still Sad) arms.
+        step(&mut m, &mut entity, 0.05, 200);
+        step(&mut m, &mut entity, 0.6, 250);
+        let state = entity
+            .face
+            .decorator
+            .expect("post-quiet rising edge while Sad should arm");
+        assert_eq!(state.kind, Decorator::Sweat);
+    }
 }
