@@ -517,9 +517,12 @@ mod tests {
 
     #[test]
     fn with_db_window_overrides_silence_and_full() {
-        let m = MouthFromAudio::new().with_db_window(-50.0, -10.0);
-        assert!((m.silence_db - -50.0).abs() < f32::EPSILON);
-        assert!((m.full_db - -10.0).abs() < f32::EPSILON);
+        // Pick values distinct from DEFAULT_SILENCE_DB / DEFAULT_FULL_DB
+        // so a no-op `with_db_window` would fail this test — otherwise
+        // the assertion is vacuous (the defaults already satisfy it).
+        let m = MouthFromAudio::new().with_db_window(-40.0, -20.0);
+        assert!((m.silence_db - -40.0).abs() < f32::EPSILON);
+        assert!((m.full_db - -20.0).abs() < f32::EPSILON);
     }
 
     #[test]
