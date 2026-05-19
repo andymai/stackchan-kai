@@ -15,6 +15,7 @@ pub mod esp_now;
 pub mod http;
 pub mod mdns;
 pub mod mdns_follower;
+mod respond;
 pub mod snapshot;
 pub mod sntp;
 pub mod stack;
