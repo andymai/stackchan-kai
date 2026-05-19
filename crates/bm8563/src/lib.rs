@@ -26,7 +26,7 @@
 //! # }
 //! ```
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
 use embedded_hal_async::i2c::I2c;
@@ -284,8 +284,120 @@ const fn encode_datetime(dt: DateTime) -> [u8; 7] {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test scaffolding: Infallible bus error makes unwrap() sound"
+)]
+#[allow(
+    clippy::future_not_send,
+    reason = "test mocks hold RefCell for event recording; single-threaded block_on runs them"
+)]
+#[allow(
+    clippy::panic,
+    reason = "test scaffolding: mock panics if the driver issues an unexpected op shape"
+)]
 mod tests {
     use super::*;
+
+    use core::cell::RefCell;
+    use core::future::Future;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embedded_hal_async::i2c::{Operation, SevenBitAddress};
+
+    /// One bus interaction recorded by the mock.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Event {
+        /// `write_read`: (address, register, requested read length).
+        WriteRead(u8, u8, usize),
+        /// `write` of an arbitrary-length byte block (address +
+        /// payload). Captured whole so tests can assert on the exact
+        /// register-block bytes the driver emits.
+        Write(u8, Vec<u8>),
+    }
+
+    /// Event log + FIFO of canned read responses.
+    struct Harness {
+        events: RefCell<Vec<Event>>,
+        read_responses: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self {
+                events: RefCell::new(Vec::new()),
+                read_responses: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn queue_read(&self, bytes: Vec<u8>) {
+            self.read_responses.borrow_mut().push(bytes);
+        }
+
+        fn events(&self) -> Vec<Event> {
+            self.events.borrow().clone()
+        }
+    }
+
+    /// Mock I²C bus understanding the two driver shapes:
+    /// `[Write([reg]), Read(buf)]` and `[Write(reg + payload)]`.
+    struct MockI2c<'a> {
+        harness: &'a Harness,
+    }
+
+    impl embedded_hal_async::i2c::ErrorType for MockI2c<'_> {
+        type Error = core::convert::Infallible;
+    }
+
+    impl embedded_hal_async::i2c::I2c for MockI2c<'_> {
+        async fn transaction(
+            &mut self,
+            address: SevenBitAddress,
+            operations: &mut [Operation<'_>],
+        ) -> Result<(), Self::Error> {
+            match operations {
+                [Operation::Write(w), Operation::Read(r)] => {
+                    assert_eq!(w.len(), 1, "write_read prelude must be a single reg byte");
+                    let mut responses = self.harness.read_responses.borrow_mut();
+                    assert!(!responses.is_empty(), "no canned read response queued");
+                    let response = responses.remove(0);
+                    drop(responses);
+                    assert_eq!(
+                        response.len(),
+                        r.len(),
+                        "canned response length mismatch (queued {} vs requested {})",
+                        response.len(),
+                        r.len()
+                    );
+                    r.copy_from_slice(&response);
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::WriteRead(address, w[0], r.len()));
+                }
+                [Operation::Write(w)] => {
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::Write(address, w.to_vec()));
+                }
+                other => panic!("unexpected operation shape: {} ops", other.len()),
+            }
+            Ok(())
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut fut = pin!(future);
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
 
     #[test]
     fn bcd_roundtrip_common_values() {
@@ -374,5 +486,137 @@ mod tests {
         let bytes = [0x80 | u8_to_bcd(42), 0, 0, 1, 0, u8_to_bcd(1), 0];
         let decoded = decode_datetime(bytes);
         assert_eq!(decoded.seconds, 42);
+    }
+
+    #[test]
+    fn century_boundary_year_2000_clears_century_bit() {
+        // First year of the 21st century: encode must clear the
+        // CENTURY bit (which means "20th century" on the wire) and
+        // decode must round-trip back to 2000. The reverse side
+        // (year=1999 → bit set) is already pinned by
+        // `decode_century_flag_uses_20th_century`.
+        let dt = DateTime {
+            year: 2000,
+            month: 1,
+            day: 1,
+            weekday: 6, // 2000-01-01 was a Saturday
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+        };
+        let bytes = encode_datetime(dt);
+        assert_eq!(
+            bytes[5] & CENTURY_FLAG,
+            0,
+            "century bit must be CLEAR for 21st-century dates"
+        );
+        let decoded = decode_datetime(bytes);
+        assert_eq!(decoded.year, 2000);
+        assert_eq!(decoded, dt);
+    }
+
+    #[test]
+    fn decode_masks_reserved_bits_in_weekday_day_and_month_registers() {
+        // Real chips sometimes return reserved bits as 1. Pin the
+        // masks so noise in those bits doesn't leak into the decoded
+        // calendar fields — a decoder that dropped any of the masks
+        // would silently produce out-of-range day / month / weekday
+        // values that downstream display code would render as
+        // garbage.
+        let bytes = [
+            u8_to_bcd(30),                       // seconds = 30, VL clear
+            u8_to_bcd(15),                       // minutes
+            0xC0 | u8_to_bcd(7),                 // hours = 7, upper bits 6-7 reserved set
+            0xC0 | u8_to_bcd(28),                // day = 28, upper bits 6-7 reserved set
+            0xF8 | 3,                            // weekday = 3, bits 3-7 noise
+            CENTURY_FLAG | 0xE0 | u8_to_bcd(11), // month = 11, century=1, bits 5-7 noise
+            u8_to_bcd(99),                       // year = 1999 (with century=1)
+        ];
+        let decoded = decode_datetime(bytes);
+        assert_eq!(
+            decoded.hours, 7,
+            "hours mask 0x3F must strip reserved bits 6-7"
+        );
+        assert_eq!(
+            decoded.day, 28,
+            "day mask 0x3F must strip reserved bits 6-7"
+        );
+        assert_eq!(decoded.weekday, 3, "weekday mask 0x07 must strip bits 3-7");
+        assert_eq!(
+            decoded.month, 11,
+            "month mask 0x1F must strip century + bits 5-6"
+        );
+        assert_eq!(decoded.year, 1999);
+    }
+
+    #[test]
+    fn init_writes_zero_to_control_1_and_control_2() {
+        let harness = Harness::new();
+        let mut bus = MockI2c { harness: &harness };
+        let mut rtc = Bm8563::new(&mut bus);
+        block_on(rtc.init()).unwrap();
+        assert_eq!(
+            harness.events(),
+            vec![
+                Event::Write(ADDRESS, vec![REG_CONTROL_1, 0x00]),
+                Event::Write(ADDRESS, vec![REG_CONTROL_2, 0x00]),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_datetime_returns_voltage_low_when_vl_bit_set() {
+        // First byte of the burst is `VL | seconds`. VL set means the
+        // backup-battery dropped at some point and the time is
+        // unreliable — the driver must surface this as a typed error
+        // rather than handing back garbled seconds.
+        let harness = Harness::new();
+        // 7-byte burst: VL bit set in seconds byte, everything else
+        // valid-looking BCD.
+        harness.queue_read(vec![
+            0x80 | u8_to_bcd(0), // VL=1, seconds=0
+            u8_to_bcd(0),
+            u8_to_bcd(0),
+            u8_to_bcd(1),
+            0,
+            u8_to_bcd(1),
+            u8_to_bcd(0),
+        ]);
+        let mut bus = MockI2c { harness: &harness };
+        let mut rtc = Bm8563::new(&mut bus);
+        let err = block_on(rtc.read_datetime()).unwrap_err();
+        assert!(matches!(err, Error::VoltageLow), "got {err:?}");
+    }
+
+    #[test]
+    fn write_datetime_emits_register_plus_seven_byte_block() {
+        // Pins the wire format: the I²C write is `[REG_VL_SECONDS]` +
+        // the 7 encoded bytes, atomic single transaction. A future
+        // refactor that split this into per-register writes would
+        // surface here.
+        let harness = Harness::new();
+        let mut bus = MockI2c { harness: &harness };
+        let mut rtc = Bm8563::new(&mut bus);
+        let dt = DateTime {
+            year: 2026,
+            month: 5,
+            day: 19,
+            weekday: 2, // Tuesday
+            hours: 14,
+            minutes: 30,
+            seconds: 45,
+        };
+        block_on(rtc.write_datetime(dt)).unwrap();
+        let expected_payload = encode_datetime(dt);
+        let events = harness.events();
+        assert_eq!(events.len(), 1, "must be a single atomic write");
+        match &events[0] {
+            Event::Write(addr, payload) => {
+                assert_eq!(*addr, ADDRESS);
+                assert_eq!(payload[0], REG_VL_SECONDS);
+                assert_eq!(payload[1..], expected_payload);
+            }
+            Event::WriteRead(..) => panic!("write_datetime should not issue a read"),
+        }
     }
 }
