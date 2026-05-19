@@ -508,7 +508,6 @@ mod tests {
         //      are intentionally close).
         use alloc::vec::Vec;
         let biases: Vec<HeadBias> = Emotion::ALL.iter().map(|&e| targets_for(e)).collect();
-        assert_eq!(biases.len(), Emotion::ALL.len());
         for (i, a) in biases.iter().enumerate() {
             for (j, b) in biases.iter().enumerate().skip(i + 1) {
                 assert!(
