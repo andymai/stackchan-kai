@@ -459,9 +459,9 @@ mod tests {
     #[test]
     fn read_chip_id_returns_bus_bytes_even_when_wrong() {
         // Driver returns raw bytes; the caller decides what to do
-        // about a mismatch. Mock answers with 0xFF on every
-        // unconfigured register — pin that the driver doesn't
-        // silently normalise.
+        // about a mismatch. Mock answers with whatever is canned for
+        // CHIP_ID1 / CHIP_ID2 (here a non-genuine pair) — pin that
+        // the driver doesn't silently normalise.
         let mut adc = Es7210::new(MockI2c::with_chip_id(0xAA, 0xBB));
         let (lo, hi) = block_on(adc.read_chip_id()).unwrap();
         assert_eq!((lo, hi), (0xAA, 0xBB));
@@ -470,9 +470,9 @@ mod tests {
     #[test]
     fn init_full_sequence_matches_esp_adf_reference() {
         // Pins the entire write order. This is the contract with the
-        // esp-adf reference port: 4 reset writes, 4 clock-tree writes,
-        // 8 power-up writes, 2 gain writes, 1 analog re-assert,
-        // 2 closing-reset writes = 21 register writes total.
+        // esp-adf reference port: 2 opening-reset + 4 clock-tree +
+        // 7 power-up + 2 mic-select + 2 gain + 1 analog re-assert +
+        // 2 closing-reset = 20 register writes total.
         let mut adc = Es7210::new(MockI2c::with_chip_id(CHIP_ID1, CHIP_ID2));
         block_on(adc.init(&mut NoopDelay)).unwrap();
         let writes = adc.bus.writes.borrow().clone();
