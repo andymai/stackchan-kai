@@ -251,4 +251,43 @@ mod tests {
         step(&mut skill, &mut entity, u64::from(PETTING_SUSTAIN_TICKS));
         assert_eq!(entity.mind.intent, Intent::Petted);
     }
+
+    #[test]
+    fn with_sustain_ticks_overrides_default_threshold() {
+        // Custom sustain — set lower so the test doesn't have to grind
+        // through 30 ticks before the intent flips.
+        let mut skill = Petting::with_sustain_ticks(3);
+        let mut entity = touched_entity(BodyTouch {
+            centre: 3,
+            ..BodyTouch::default()
+        });
+        step(&mut skill, &mut entity, 2);
+        assert_eq!(entity.mind.intent, Intent::Idle);
+        step(&mut skill, &mut entity, 1);
+        assert_eq!(entity.mind.intent, Intent::Petted);
+    }
+
+    #[test]
+    fn default_matches_new_threshold() {
+        let from_default = <Petting as Default>::default();
+        assert_eq!(from_default.sustain_ticks, PETTING_SUSTAIN_TICKS);
+    }
+
+    #[test]
+    fn meta_declares_intent_write_at_skill_priority() {
+        let skill = Petting::new();
+        let meta = skill.meta();
+        assert_eq!(meta.name, "Petting");
+        assert_eq!(meta.writes, &[Field::Intent]);
+        assert_eq!(meta.priority, 50);
+    }
+
+    #[test]
+    fn should_fire_is_always_true() {
+        // The sustain counter advances every frame, so the skill must
+        // run on every tick — including when no touch is present.
+        let skill = Petting::new();
+        let entity = Entity::default();
+        assert!(skill.should_fire(&entity));
+    }
 }
