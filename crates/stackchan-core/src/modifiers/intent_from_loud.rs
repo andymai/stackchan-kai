@@ -440,4 +440,70 @@ mod tests {
         assert_eq!(entity.mind.intent, Intent::Startled);
         assert_eq!(entity.voice.chirp_request, Some(ChirpKind::Startle));
     }
+
+    #[test]
+    fn rising_edge_inside_own_hold_does_not_re_fire() {
+        // After firing, a second above-threshold edge inside the hold
+        // window must NOT re-anchor the hold (otherwise a continuous
+        // loud environment would extend Startled indefinitely).
+        let mut m = IntentFromLoud::with_config(0.3, 500);
+        let mut entity = with_rms(0, Some(0.01));
+        m.update(&mut entity); // arm last_loud = Some(false)
+
+        entity.tick.now = Instant::from_millis(33);
+        entity.perception.audio_rms = Some(0.6);
+        m.update(&mut entity); // fires
+        let first_hold = entity.mind.autonomy.manual_until;
+        // Drop below + come back above-threshold inside the hold.
+        entity.tick.now = Instant::from_millis(100);
+        entity.perception.audio_rms = Some(0.05);
+        m.update(&mut entity);
+        // Clear the chirp so we can spot whether a second fire would write it.
+        entity.voice.chirp_request = None;
+        entity.tick.now = Instant::from_millis(200);
+        entity.perception.audio_rms = Some(0.8);
+        m.update(&mut entity);
+        // Hold unchanged, no fresh chirp.
+        assert_eq!(entity.mind.autonomy.manual_until, first_hold);
+        assert_eq!(entity.voice.chirp_request, None);
+    }
+
+    #[test]
+    fn with_config_overrides_threshold_and_hold() {
+        // Custom threshold lower than the default, with a tiny hold so
+        // both knobs are observable from a single rising-edge fire.
+        let mut m = IntentFromLoud::with_config(0.1, 200);
+        let mut entity = with_rms(0, Some(0.05));
+        m.update(&mut entity);
+
+        entity.tick.now = Instant::from_millis(33);
+        entity.perception.audio_rms = Some(0.15);
+        m.update(&mut entity);
+
+        assert_eq!(entity.mind.intent, Intent::Startled);
+        assert_eq!(
+            entity.mind.autonomy.manual_until,
+            Some(Instant::from_millis(33 + 200)),
+        );
+    }
+
+    #[test]
+    fn default_matches_new_tuning() {
+        let from_default = <IntentFromLoud as Default>::default();
+        let from_new = IntentFromLoud::new();
+        assert!((from_default.threshold - from_new.threshold).abs() < f32::EPSILON);
+        assert_eq!(from_default.hold_ms, from_new.hold_ms);
+    }
+
+    #[test]
+    fn meta_declares_affect_phase_and_intent_write() {
+        let m = IntentFromLoud::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "IntentFromLoud");
+        assert_eq!(meta.phase, Phase::Affect);
+        assert_eq!(meta.priority, -65);
+        assert!(meta.writes.contains(&Field::Intent));
+        assert!(meta.writes.contains(&Field::ChirpRequest));
+        assert!(meta.reads.contains(&Field::AudioRms));
+    }
 }
