@@ -219,4 +219,23 @@ mod tests {
         assert_eq!(state.kind, Decorator::Dizzy);
         assert_eq!(state.expires_at, Instant::from_millis(DIZZY_HOLD_MS));
     }
+
+    #[test]
+    fn default_matches_new_hold() {
+        let from_default = <DecoratorFromShake as Default>::default();
+        let from_new = DecoratorFromShake::new();
+        assert_eq!(from_default.hold_ms, from_new.hold_ms);
+        assert_eq!(from_default.hold_ms, DIZZY_HOLD_MS);
+    }
+
+    #[test]
+    fn meta_declares_decoration_phase_and_decorator_write() {
+        let m = DecoratorFromShake::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "DecoratorFromShake");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, 20);
+        assert_eq!(meta.writes, &[Field::Decorator]);
+        assert_eq!(meta.reads, &[Field::Intent]);
+    }
 }
