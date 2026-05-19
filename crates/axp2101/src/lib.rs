@@ -657,9 +657,15 @@ mod tests {
     }
 
     #[test]
-    fn check_short_press_edge_returns_true_and_clears_when_set() {
-        // Status bit set → returns true and clears via write-back.
-        let bus = MockI2c::new().with_register(REG_IRQ_STATUS_1, IRQ_SHORT_PRESS_BIT);
+    fn check_short_press_edge_returns_true_and_clears_only_short_press_bit() {
+        // Stage the register with multiple bits set so the assertion
+        // distinguishes the correct `write_reg(IRQ_SHORT_PRESS_BIT)`
+        // from a buggy `write_reg(status)` that would clear unrelated
+        // bits too — the AXP2101's write-1-to-clear semantics mean an
+        // overbroad mask would drop the press-edge bit the caller
+        // hadn't acknowledged yet.
+        let staged = IRQ_SHORT_PRESS_BIT | IRQ_PRESS_EDGE_BIT;
+        let bus = MockI2c::new().with_register(REG_IRQ_STATUS_1, staged);
         let mut pmic = Axp2101::new(bus);
         let fired = block_on(pmic.check_short_press_edge()).unwrap();
         assert!(fired);
@@ -673,7 +679,10 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(clears.len(), 1, "expected one clearing write");
-        assert_eq!(clears[0].1[1], IRQ_SHORT_PRESS_BIT);
+        assert_eq!(
+            clears[0].1[1], IRQ_SHORT_PRESS_BIT,
+            "must clear only the short-press bit, not the staged press-edge bit",
+        );
     }
 
     #[test]
