@@ -509,4 +509,33 @@ mod tests {
             Event::Write(ADDRESS, vec![REG_SENS1, 0x77, 0x77, 0x77, 0x77, 0x77]),
         );
     }
+
+    #[test]
+    fn with_address_overrides_default() {
+        // Alt-address constructor for boards that strap the chip to
+        // a non-default I²C address.
+        let harness = Harness::new();
+        let bus = MockI2c { harness: &harness };
+        let chip = Si12t::with_address(bus, 0x42);
+        assert_eq!(chip.address(), 0x42);
+    }
+
+    #[test]
+    fn new_uses_default_address() {
+        let harness = Harness::new();
+        let bus = MockI2c { harness: &harness };
+        let chip = Si12t::new(bus);
+        assert_eq!(chip.address(), ADDRESS);
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // routes the bus error through this. Mock uses Infallible so
+        // the runtime path can't fire; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+        }
+    }
 }
