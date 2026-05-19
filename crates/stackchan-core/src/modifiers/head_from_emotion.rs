@@ -495,4 +495,30 @@ mod tests {
         assert_eq!(b.pan_deg, 10.0);
         assert_eq!(b.tilt_deg, -5.0);
     }
+
+    #[test]
+    fn targets_for_returns_unique_bias_for_every_emotion() {
+        // Iterate every Emotion::ALL entry to:
+        //   1. Exercise every arm of the targets_for match.
+        //   2. Pin that no two emotions land on identical biases —
+        //      clippy::match_same_arms catches the source-level
+        //      duplicate but a clever future re-tune could
+        //      accidentally collide two variants at the same numeric
+        //      value (e.g. Loved at 3.5 / Hi at 4.0 / Happy at 3.0
+        //      are intentionally close).
+        use alloc::vec::Vec;
+        let biases: Vec<HeadBias> = Emotion::ALL.iter().map(|&e| targets_for(e)).collect();
+        assert_eq!(biases.len(), Emotion::ALL.len());
+        for (i, a) in biases.iter().enumerate() {
+            for (j, b) in biases.iter().enumerate().skip(i + 1) {
+                assert!(
+                    a != b,
+                    "{:?} and {:?} share bias ({:?})",
+                    Emotion::ALL[i],
+                    Emotion::ALL[j],
+                    a,
+                );
+            }
+        }
+    }
 }
