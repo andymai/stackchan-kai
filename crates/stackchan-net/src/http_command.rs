@@ -2070,4 +2070,257 @@ mod tests {
             other => panic!("expected LookAt, got {other:?}"),
         }
     }
+
+    // ============================================================
+    // Coverage for the routes that had zero direct tests.
+    // ============================================================
+
+    #[test]
+    fn parse_motion_accepts_every_named_motion_variant() {
+        // Iterate NamedMotion::ALL so a future variant added in core
+        // automatically lands in this round-trip — matches the
+        // pattern parse_mood_accepts_every_wire_string uses for
+        // Mood::ALL.
+        for &m in NamedMotion::ALL {
+            let body = alloc::format!(r#"{{"motion":"{}"}}"#, m.wire_str());
+            assert_eq!(parse_motion(&body).unwrap(), m);
+        }
+    }
+
+    #[test]
+    fn parse_motion_rejects_unknown_string() {
+        let err = parse_motion(r#"{"motion":"wave"}"#).unwrap_err();
+        assert!(matches!(err, JsonError::UnknownMotion), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_motion_rejects_missing_motion_key() {
+        let err = parse_motion("{}").unwrap_err();
+        assert!(
+            matches!(err, JsonError::MissingKey("motion")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_motion_rejects_duplicate_motion_key() {
+        let err = parse_motion(r#"{"motion":"nod","motion":"shake"}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("motion")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_motion_rejects_unknown_key() {
+        let err = parse_motion(r#"{"motion":"nod","extra":"x"}"#).unwrap_err();
+        assert!(matches!(err, JsonError::UnknownKey), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_toast_happy_path() {
+        let req = parse_toast(r#"{"level":"warn","message":"battery low"}"#).unwrap();
+        assert_eq!(req.level, "warn");
+        assert_eq!(req.message, "battery low");
+    }
+
+    #[test]
+    fn parse_toast_message_defaults_to_empty() {
+        // `message` is optional — empty toast still renders the band.
+        let req = parse_toast(r#"{"level":"error"}"#).unwrap();
+        assert_eq!(req.level, "error");
+        assert_eq!(req.message, "");
+    }
+
+    #[test]
+    fn parse_toast_rejects_missing_level() {
+        let err = parse_toast(r#"{"message":"hi"}"#).unwrap_err();
+        assert!(matches!(err, JsonError::MissingKey("level")), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_toast_rejects_duplicate_level() {
+        let err = parse_toast(r#"{"level":"warn","level":"error"}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("level")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_toast_rejects_duplicate_message() {
+        let err = parse_toast(r#"{"level":"warn","message":"a","message":"b"}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("message")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_toast_rejects_unknown_key() {
+        let err = parse_toast(r#"{"level":"warn","extra":"x"}"#).unwrap_err();
+        assert!(matches!(err, JsonError::UnknownKey), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_start_listen_uses_default_duration_when_absent() {
+        let cmd = parse_start_listen("{}").unwrap();
+        match cmd {
+            RemoteCommand::StartListen { duration_ms } => {
+                assert_eq!(duration_ms, DEFAULT_LISTEN_DURATION_MS);
+            }
+            other => panic!("expected StartListen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_start_listen_accepts_explicit_duration() {
+        let cmd = parse_start_listen(r#"{"duration_ms":5000}"#).unwrap();
+        match cmd {
+            RemoteCommand::StartListen { duration_ms } => assert_eq!(duration_ms, 5000),
+            other => panic!("expected StartListen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_start_listen_rejects_duplicate_duration() {
+        let err = parse_start_listen(r#"{"duration_ms":1,"duration_ms":2}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("duration_ms")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_start_listen_rejects_unknown_key() {
+        let err = parse_start_listen(r#"{"extra":1}"#).unwrap_err();
+        assert!(matches!(err, JsonError::UnknownKey), "got {err:?}");
+    }
+
+    #[test]
+    fn phrase_wire_str_round_trips_every_known_phrase() {
+        // Pin the inverse of parse_phrase for every public variant.
+        // Unknown variants (non_exhaustive escape) fall back to
+        // "unknown" — exercised separately.
+        use stackchan_core::voice::PhraseId;
+        let known = [
+            (PhraseId::WakeChirp, "wake_chirp"),
+            (PhraseId::PickupChirp, "pickup_chirp"),
+            (PhraseId::StartleChirp, "startle_chirp"),
+            (PhraseId::LowBatteryChirp, "low_battery_chirp"),
+            (
+                PhraseId::CameraModeEnteredChirp,
+                "camera_mode_entered_chirp",
+            ),
+            (PhraseId::CameraModeExitedChirp, "camera_mode_exited_chirp"),
+            (PhraseId::Greeting, "greeting"),
+            (PhraseId::AcknowledgeName, "acknowledge_name"),
+            (PhraseId::BatteryLow, "battery_low"),
+        ];
+        for (id, wire) in known {
+            assert_eq!(phrase_wire_str(id), wire);
+        }
+    }
+
+    // ============================================================
+    // Duplicate-key + unknown-key error paths on the bigger routes.
+    // ============================================================
+
+    #[test]
+    fn parse_set_emotion_rejects_duplicate_hold_ms() {
+        let err =
+            parse_set_emotion(r#"{"emotion":"happy","hold_ms":1000,"hold_ms":2000}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("hold_ms")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_look_at_rejects_each_duplicate_key() {
+        for (body, key) in [
+            (r#"{"pan_deg":1,"pan_deg":2,"tilt_deg":0}"#, "pan_deg"),
+            (r#"{"pan_deg":0,"tilt_deg":1,"tilt_deg":2}"#, "tilt_deg"),
+            (
+                r#"{"pan_deg":0,"tilt_deg":0,"hold_ms":1,"hold_ms":2}"#,
+                "hold_ms",
+            ),
+        ] {
+            let err = parse_look_at(body).unwrap_err();
+            match err {
+                JsonError::DuplicateKey(actual) => assert_eq!(actual, key, "for body {body}"),
+                other => panic!("body {body}: expected DuplicateKey({key}), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_look_at_rejects_unknown_key() {
+        let err = parse_look_at(r#"{"pan_deg":0,"tilt_deg":0,"extra":1}"#).unwrap_err();
+        assert!(matches!(err, JsonError::UnknownKey), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_look_at_point_rejects_each_duplicate_key() {
+        for (body, key) in [
+            (r#"{"x":1,"x":2,"y":0,"z":1}"#, "x"),
+            (r#"{"y":1,"y":2,"x":0,"z":0}"#, "y"),
+            (r#"{"x":0,"y":0,"z":1,"z":2}"#, "z"),
+            (r#"{"x":0,"y":0,"z":1,"hold_ms":1,"hold_ms":2}"#, "hold_ms"),
+        ] {
+            let err = parse_look_at_point(body).unwrap_err();
+            match err {
+                JsonError::DuplicateKey(actual) => assert_eq!(actual, key, "for body {body}"),
+                other => panic!("body {body}: expected DuplicateKey({key}), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_speak_rejects_duplicate_locale() {
+        let err = parse_speak(r#"{"phrase":"greeting","locale":"en","locale":"ja"}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("locale")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_mood_rejects_duplicate_mood_key() {
+        let err = parse_mood(r#"{"mood":"focus","mood":"calm"}"#).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("mood")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_mood_rejects_unknown_key() {
+        let err = parse_mood(r#"{"mood":"focus","extra":1}"#).unwrap_err();
+        assert!(matches!(err, JsonError::UnknownKey), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_head_offsets_rejects_out_of_range_tilt() {
+        // tilt > HEAD_OFFSET_LIMIT_DEG must reject as BadValue.
+        let body = r#"{"yaw_offset_deg":0,"tilt_offset_deg":99}"#;
+        let err = parse_head_offsets(body).unwrap_err();
+        assert!(matches!(err, JsonError::BadValue), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_head_offsets_rejects_duplicate_tilt() {
+        let body = r#"{"yaw_offset_deg":0,"tilt_offset_deg":1,"tilt_offset_deg":2}"#;
+        let err = parse_head_offsets(body).unwrap_err();
+        assert!(
+            matches!(err, JsonError::DuplicateKey("tilt_offset_deg")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_cancel_reminder_rejects_duplicate_id() {
+        let err = parse_cancel_reminder(r#"{"id":1,"id":2}"#).unwrap_err();
+        assert!(matches!(err, JsonError::DuplicateKey("id")), "got {err:?}");
+    }
 }
