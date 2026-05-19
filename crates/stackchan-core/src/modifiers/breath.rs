@@ -233,4 +233,39 @@ mod tests {
         }
         assert_eq!(entity.face.left_eye.center.y, baseline_y);
     }
+
+    #[test]
+    fn new_defaults_to_documented_cycle_and_amplitude() {
+        let b = Breath::new();
+        assert_eq!(b.cycle_ms, DEFAULT_CYCLE_MS);
+        assert_eq!(b.amplitude_px, DEFAULT_AMPLITUDE_PX);
+        assert_eq!(b.last_offset_px, 0);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <Breath as Default>::default();
+        let from_new = Breath::new();
+        assert_eq!(from_default.cycle_ms, from_new.cycle_ms);
+        assert_eq!(from_default.amplitude_px, from_new.amplitude_px);
+    }
+
+    #[test]
+    fn meta_declares_expression_phase_and_facial_writes() {
+        let m = Breath::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "Breath");
+        assert_eq!(meta.phase, Phase::Expression);
+        assert_eq!(meta.priority, 0);
+        assert_eq!(
+            meta.writes,
+            &[
+                Field::LeftEyeCenter,
+                Field::RightEyeCenter,
+                Field::MouthCenter,
+            ],
+        );
+        assert!(meta.reads.contains(&Field::BreathDepthScale));
+        assert!(meta.reads.contains(&Field::Attention));
+    }
 }
