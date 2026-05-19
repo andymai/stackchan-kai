@@ -673,21 +673,37 @@ mod tests {
         async fn delay_ns(&mut self, _ns: u32) {}
     }
 
+    /// Minimal executor that polls until ready. Contract: every future
+    /// passed in must be **synchronously ready on the first or
+    /// near-first poll** — the [`MockI2c`] and [`NoopDelay`] used in
+    /// these tests never yield `Poll::Pending`. A fuel guard catches
+    /// the foot-gun where a future test helper introduces a Pending
+    /// path (staged delays, partial reads) and would otherwise spin
+    /// forever with no diagnostic, by panicking with a clear message
+    /// after `MAX_POLLS` attempts.
     fn block_on<F: Future>(future: F) -> F::Output {
+        // 64 polls is generous — every driver call lands in O(1)
+        // polls against the synchronous mocks; init's blob-upload
+        // loop is iterative inside the future, not poll-iterative.
+        const MAX_POLLS: u32 = 64;
         let waker = Waker::noop();
         let mut cx = Context::from_waker(waker);
         let mut fut = pin!(future);
-        loop {
+        for _ in 0..MAX_POLLS {
             if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
                 return v;
             }
         }
+        panic!(
+            "block_on fuel exhausted ({MAX_POLLS} polls) — a future yielded Pending. \
+             The MockI2c / NoopDelay test harness only supports synchronously-ready futures."
+        );
     }
 
     /// Queue the read responses the [`Bmi270::init`] happy path expects:
-    /// one chip-id read (`0x24`), then `INIT_POLL_MAX_ATTEMPTS` reads
-    /// that all return `0x01` so the first poll succeeds on attempt 1.
-    /// (The poll loop only consumes as many responses as it needs.)
+    /// one chip-id read returning `CHIP_ID` (`0x24`), then a single
+    /// `INTERNAL_STATUS` read returning `INTERNAL_STATUS_INIT_OK`
+    /// (`0x01`) so the poll loop succeeds on its first attempt.
     fn queue_init_happy_path(harness: &Harness) {
         // CHIP_ID probe.
         harness.queue_read(vec![CHIP_ID]);
