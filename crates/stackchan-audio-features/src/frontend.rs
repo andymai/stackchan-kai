@@ -347,4 +347,21 @@ mod tests {
         fe.push_samples(&[0_i16; WINDOW_SAMPLES / 2], |_| frames += 1);
         assert_eq!(frames, 0);
     }
+
+    #[test]
+    fn default_constructs_same_as_new() {
+        // Both paths build the mel filterbank from the same const
+        // configuration; two MelFrontends consuming identical input
+        // must produce identical frames.
+        let mut from_default = <MelFrontend as Default>::default();
+        let mut from_new = MelFrontend::new();
+        let silence = [0_i16; WINDOW_SAMPLES];
+        let mut frames_d: Vec<MelFrame> = Vec::new();
+        let mut frames_n: Vec<MelFrame> = Vec::new();
+        from_default.push_samples(&silence, |f| frames_d.push(f));
+        from_new.push_samples(&silence, |f| frames_n.push(f));
+        assert_eq!(frames_d.len(), 1);
+        assert_eq!(frames_n.len(), 1);
+        assert_eq!(frames_d[0].features, frames_n[0].features);
+    }
 }
