@@ -504,4 +504,74 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn default_matches_new_constructor() {
+        let from_default = <MouthFromAudio as Default>::default();
+        let from_new = MouthFromAudio::new();
+        assert!((from_default.silence_db - from_new.silence_db).abs() < f32::EPSILON);
+        assert!((from_default.full_db - from_new.full_db).abs() < f32::EPSILON);
+        assert!((from_default.attack_ms - from_new.attack_ms).abs() < f32::EPSILON);
+        assert!((from_default.release_ms - from_new.release_ms).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn with_db_window_overrides_silence_and_full() {
+        let m = MouthFromAudio::new().with_db_window(-50.0, -10.0);
+        assert!((m.silence_db - -50.0).abs() < f32::EPSILON);
+        assert!((m.full_db - -10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn with_timings_overrides_attack_and_release() {
+        let m = MouthFromAudio::new().with_timings(75.0, 200.0);
+        assert!((m.attack_ms - 75.0).abs() < f32::EPSILON);
+        assert!((m.release_ms - 200.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn target_from_rms_zero_when_silence_eq_full() {
+        // span == 0 must short-circuit to 0.0 rather than divide by
+        // zero. Defensive guard for misconfigured (silence_db == full_db).
+        let m = MouthFromAudio::new().with_db_window(-30.0, -30.0);
+        // Any RMS well above the inaudible threshold lands on the span
+        // check rather than the silence shortcut.
+        let t = m.target_from_rms(0.5);
+        assert!(t.abs() < f32::EPSILON, "got {t}");
+    }
+
+    #[test]
+    fn one_minus_exp_approx_saturates_above_4() {
+        // x ≥ 4 must return exactly 1.0 — pins the snap-to-target
+        // behavior the envelope relies on when dt >> τ.
+        assert!((one_minus_exp_approx(4.0) - 1.0).abs() < f32::EPSILON);
+        assert!((one_minus_exp_approx(10.0) - 1.0).abs() < f32::EPSILON);
+        assert!((one_minus_exp_approx(f32::INFINITY) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn one_minus_exp_approx_zero_for_non_positive_input() {
+        assert!(one_minus_exp_approx(0.0).abs() < f32::EPSILON);
+        assert!(one_minus_exp_approx(-1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn clamp_unit_handles_nan_negative_and_above_one() {
+        assert!(clamp_unit(f32::NAN).abs() < f32::EPSILON);
+        assert!(clamp_unit(-0.5).abs() < f32::EPSILON);
+        assert!((clamp_unit(1.5) - 1.0).abs() < f32::EPSILON);
+        // In-range pass-through.
+        assert!((clamp_unit(0.42) - 0.42).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn modifier_meta_advertises_audio_rms_and_tx_lip_sync_reads() {
+        let m = MouthFromAudio::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "MouthFromAudio");
+        assert_eq!(meta.phase, Phase::Audio);
+        assert_eq!(meta.priority, 0);
+        assert_eq!(meta.reads, &[Field::AudioRms, Field::TxLipSync]);
+        assert_eq!(meta.writes, &[Field::MouthOpen]);
+    }
 }
