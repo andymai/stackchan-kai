@@ -202,4 +202,27 @@ mod tests {
         assert_eq!(Mood::from_wire_str("NEUTRAL"), None); // case sensitive
         assert_eq!(Mood::from_wire_str("ecstatic"), None);
     }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    #[test]
+    fn multiplier_table_pins_every_arm() {
+        // Pins each (variant, multiplier) pair so the per-arm match
+        // values can't drift without a test update — and so every match
+        // arm in blink/breath/drift_multiplier is exercised.
+        let table = [
+            (Mood::Neutral, 1.0_f32, 1.0_f32, 1.0_f32),
+            (Mood::Calm, 0.7, 1.2, 0.7),
+            (Mood::Playful, 1.4, 0.9, 1.3),
+            (Mood::Focus, 0.6, 0.85, 0.5),
+            (Mood::Sleepy, 0.4, 1.4, 0.4),
+        ];
+        for (m, blink, breath, drift) in table {
+            assert!(near(m.blink_multiplier(), blink), "blink for {m:?}");
+            assert!(near(m.breath_multiplier(), breath), "breath for {m:?}");
+            assert!(near(m.drift_multiplier(), drift), "drift for {m:?}");
+        }
+    }
 }
