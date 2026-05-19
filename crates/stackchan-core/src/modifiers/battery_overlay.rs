@@ -162,4 +162,38 @@ mod tests {
         m.update(&mut e);
         assert!(!e.face.battery_overlay.expect("set").charging);
     }
+
+    #[test]
+    fn new_and_default_construct_disabled_instance() {
+        // Both `new()` and `Default::default()` should produce a
+        // disabled modifier that no-ops when ticked.
+        for ctor_name in ["new", "default"] {
+            let mut m = if ctor_name == "new" {
+                BatteryOverlayFromPerception::new()
+            } else {
+                BatteryOverlayFromPerception::default()
+            };
+            let mut e = Entity::default();
+            e.perception.battery_percent = Some(50);
+            m.update(&mut e);
+            assert!(
+                e.face.battery_overlay.is_none(),
+                "{ctor_name}: disabled modifier must not write overlay",
+            );
+        }
+    }
+
+    #[test]
+    fn modifier_meta_advertises_battery_overlay_writes() {
+        // Pin the meta surface so Director's assert_only_writes
+        // enforcement keeps matching the actual writes inside update.
+        let m = BatteryOverlayFromPerception::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "BatteryOverlayFromPerception");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, 5);
+        assert!(meta.reads.contains(&Field::BatteryPercent));
+        assert!(meta.reads.contains(&Field::UsbPowerPresent));
+        assert_eq!(meta.writes, &[Field::BatteryOverlay]);
+    }
 }
