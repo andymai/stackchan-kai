@@ -628,4 +628,83 @@ mod tests {
             .count();
         assert_eq!(status_writes, 0);
     }
+
+    #[test]
+    fn enable_power_key_short_press_irq_or_in_short_press_bit() {
+        // Read-modify-write: should preserve existing IRQ_EN_1 bits
+        // and set IRQ_SHORT_PRESS_BIT. Stage the register with one
+        // unrelated bit already set, then confirm the write keeps it
+        // and ORs in the short-press bit.
+        let prior = 1 << 7;
+        let bus = MockI2c::new().with_register(REG_IRQ_EN_1, prior);
+        let mut pmic = Axp2101::new(bus);
+        block_on(pmic.enable_power_key_short_press_irq()).unwrap();
+
+        let writes_to_en1: Vec<(u8, Vec<u8>)> = pmic
+            .bus
+            .transactions
+            .borrow()
+            .iter()
+            .filter(|(_, buf)| buf.len() == 2 && buf[0] == REG_IRQ_EN_1)
+            .cloned()
+            .collect();
+        assert_eq!(
+            writes_to_en1.len(),
+            1,
+            "expected exactly one IRQ_EN_1 write"
+        );
+        assert_eq!(writes_to_en1[0].1[1], prior | IRQ_SHORT_PRESS_BIT);
+    }
+
+    #[test]
+    fn check_short_press_edge_returns_true_and_clears_when_set() {
+        // Status bit set → returns true and clears via write-back.
+        let bus = MockI2c::new().with_register(REG_IRQ_STATUS_1, IRQ_SHORT_PRESS_BIT);
+        let mut pmic = Axp2101::new(bus);
+        let fired = block_on(pmic.check_short_press_edge()).unwrap();
+        assert!(fired);
+
+        let clears: Vec<(u8, Vec<u8>)> = pmic
+            .bus
+            .transactions
+            .borrow()
+            .iter()
+            .filter(|(_, buf)| buf.len() == 2 && buf[0] == REG_IRQ_STATUS_1)
+            .cloned()
+            .collect();
+        assert_eq!(clears.len(), 1, "expected one clearing write");
+        assert_eq!(clears[0].1[1], IRQ_SHORT_PRESS_BIT);
+    }
+
+    #[test]
+    fn check_short_press_edge_returns_false_without_clearing_when_idle() {
+        // Status bit unset → returns false and skips the clearing
+        // write (saves bus bandwidth at idle, mirroring
+        // take_power_key_edges_skips_clear_when_no_edge_set).
+        let bus = MockI2c::new().with_register(REG_IRQ_STATUS_1, 0);
+        let mut pmic = Axp2101::new(bus);
+        let fired = block_on(pmic.check_short_press_edge()).unwrap();
+        assert!(!fired);
+
+        let clears = pmic
+            .bus
+            .transactions
+            .borrow()
+            .iter()
+            .filter(|(_, buf)| buf.len() == 2 && buf[0] == REG_IRQ_STATUS_1)
+            .count();
+        assert_eq!(clears, 0, "must not write to STATUS_1 when bit isn't set");
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` in the
+        // driver routes the bus error through this. The mock uses
+        // Infallible, so the runtime conversion path can't be reached;
+        // exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+        }
+    }
 }
