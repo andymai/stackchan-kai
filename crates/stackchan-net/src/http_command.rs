@@ -806,6 +806,77 @@ pub fn parse_enter_pairing(body: &str) -> Result<RemoteCommand, JsonError> {
     })
 }
 
+/// Default thinking-window hold for MCP `enter_thinking`.
+///
+/// Matches the firmware sidecar agent's `REQUEST_TIMEOUT_MS` so an
+/// MCP caller that doesn't specify gets the same upper bound an
+/// internal `EnterThinking` would. Operators can override per
+/// request.
+pub const DEFAULT_THINKING_HOLD_MS: u32 = 15_000;
+
+/// Parse an MCP `enter_thinking` body into a [`RemoteCommand::EnterThinking`].
+///
+/// All keys are optional. Missing body or empty `{}` defaults to
+/// [`DEFAULT_THINKING_HOLD_MS`]; the only key recognised is
+/// `hold_ms` (u32). Same shape as [`parse_enter_pairing`] modulo
+/// the field name change `duration_ms` → `hold_ms`.
+///
+/// # Errors
+///
+/// Returns a [`JsonError`] variant for unknown keys or malformed
+/// JSON shape.
+pub fn parse_enter_thinking(body: &str) -> Result<RemoteCommand, JsonError> {
+    let mut hold_ms: Option<u32> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "hold_ms" => {
+                if hold_ms.is_some() {
+                    return Err(JsonError::DuplicateKey("hold_ms"));
+                }
+                hold_ms = Some(parse_u32(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(RemoteCommand::EnterThinking {
+        hold_ms: hold_ms.unwrap_or(DEFAULT_THINKING_HOLD_MS),
+    })
+}
+
+/// Parse a no-argument MCP body (empty `{}` accepted) and return
+/// the carried [`RemoteCommand`] variant. Used by MCP tools whose
+/// HTTP twins are zero-body fire-and-forget (`exit_thinking`,
+/// `reset`).
+///
+/// # Errors
+///
+/// Returns [`JsonError::UnknownKey`] on any non-empty object.
+fn parse_no_args(body: &str, cmd: RemoteCommand) -> Result<RemoteCommand, JsonError> {
+    visit_object(body, |_key, _scanner| Err(JsonError::UnknownKey))?;
+    Ok(cmd)
+}
+
+/// Parse an MCP `exit_thinking` body. No payload — accepts `{}` or
+/// missing body.
+///
+/// # Errors
+///
+/// Returns [`JsonError::UnknownKey`] on any non-empty object.
+pub fn parse_exit_thinking(body: &str) -> Result<RemoteCommand, JsonError> {
+    parse_no_args(body, RemoteCommand::ExitThinking)
+}
+
+/// Parse an MCP `reset` body. No payload — accepts `{}` or missing
+/// body.
+///
+/// # Errors
+///
+/// Returns [`JsonError::UnknownKey`] on any non-empty object.
+pub fn parse_reset(body: &str) -> Result<RemoteCommand, JsonError> {
+    parse_no_args(body, RemoteCommand::Reset)
+}
+
 /// Single-pass byte cursor over the body. Each parse helper advances
 /// past the value it consumes (without consuming the trailing comma
 /// or `}` — those belong to [`visit_object`]).
@@ -1585,6 +1656,71 @@ mod tests {
         assert!(matches!(
             parse_enter_pairing(r#"{"duration_ms":1,"duration_ms":2}"#),
             Err(JsonError::DuplicateKey("duration_ms"))
+        ));
+    }
+
+    #[test]
+    fn enter_thinking_defaults_to_request_timeout() {
+        let cmd = parse_enter_thinking(r"{}").unwrap();
+        assert_eq!(
+            cmd,
+            RemoteCommand::EnterThinking {
+                hold_ms: DEFAULT_THINKING_HOLD_MS
+            }
+        );
+    }
+
+    #[test]
+    fn enter_thinking_accepts_explicit_hold() {
+        let cmd = parse_enter_thinking(r#"{"hold_ms":3000}"#).unwrap();
+        assert_eq!(cmd, RemoteCommand::EnterThinking { hold_ms: 3_000 });
+    }
+
+    #[test]
+    fn enter_thinking_rejects_unknown_key() {
+        // `duration_ms` is the enter_pairing field name; the thinking
+        // variant uses `hold_ms` (mirrors RemoteCommand::EnterThinking).
+        // An accidental cross-paste would land here.
+        assert!(matches!(
+            parse_enter_thinking(r#"{"duration_ms":1000}"#),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn enter_thinking_rejects_duplicate_key() {
+        assert!(matches!(
+            parse_enter_thinking(r#"{"hold_ms":1,"hold_ms":2}"#),
+            Err(JsonError::DuplicateKey("hold_ms"))
+        ));
+    }
+
+    #[test]
+    fn exit_thinking_accepts_empty_object() {
+        assert_eq!(
+            parse_exit_thinking(r"{}").unwrap(),
+            RemoteCommand::ExitThinking
+        );
+    }
+
+    #[test]
+    fn exit_thinking_rejects_any_key() {
+        assert!(matches!(
+            parse_exit_thinking(r#"{"hold_ms":1}"#),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn reset_accepts_empty_object() {
+        assert_eq!(parse_reset(r"{}").unwrap(), RemoteCommand::Reset);
+    }
+
+    #[test]
+    fn reset_rejects_any_key() {
+        assert!(matches!(
+            parse_reset(r#"{"target":"emotion"}"#),
+            Err(JsonError::UnknownKey)
         ));
     }
 
