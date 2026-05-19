@@ -2077,14 +2077,11 @@ mod tests {
 
     #[test]
     fn parse_motion_accepts_every_named_motion_variant() {
-        // Round-trip each NamedMotion variant through the wire form
-        // to pin the dispatch + the from_wire_str integration.
-        for m in [
-            NamedMotion::Greet,
-            NamedMotion::Nod,
-            NamedMotion::Shake,
-            NamedMotion::Laugh,
-        ] {
+        // Iterate NamedMotion::ALL so a future variant added in core
+        // automatically lands in this round-trip — matches the
+        // pattern parse_mood_accepts_every_wire_string uses for
+        // Mood::ALL.
+        for &m in NamedMotion::ALL {
             let body = alloc::format!(r#"{{"motion":"{}"}}"#, m.wire_str());
             assert_eq!(parse_motion(&body).unwrap(), m);
         }
@@ -2266,6 +2263,7 @@ mod tests {
     #[test]
     fn parse_look_at_point_rejects_each_duplicate_key() {
         for (body, key) in [
+            (r#"{"x":1,"x":2,"y":0,"z":1}"#, "x"),
             (r#"{"y":1,"y":2,"x":0,"z":0}"#, "y"),
             (r#"{"x":0,"y":0,"z":1,"z":2}"#, "z"),
             (r#"{"x":0,"y":0,"z":1,"hold_ms":1,"hold_ms":2}"#, "hold_ms"),
