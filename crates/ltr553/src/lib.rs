@@ -25,7 +25,7 @@
 //! # }
 //! ```
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
 use embedded_hal_async::i2c::I2c;
@@ -243,8 +243,127 @@ fn lux_from_channels(ch0: u16, ch1: u16) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test scaffolding: Infallible bus error makes unwrap() sound"
+)]
+#[allow(
+    clippy::future_not_send,
+    reason = "test mocks hold RefCell for event recording; single-threaded block_on runs them"
+)]
+#[allow(
+    clippy::panic,
+    reason = "test scaffolding: mock panics if the driver issues an unexpected op shape"
+)]
+#[allow(
+    clippy::suboptimal_flops,
+    reason = "test expectations mirror the production formula's bare-* + bare-+ shape; \
+              switching to mul_add here would obscure the formula-equivalence check"
+)]
 mod tests {
     use super::*;
+
+    use core::cell::RefCell;
+    use core::future::Future;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embedded_hal_async::i2c::{Operation, SevenBitAddress};
+
+    /// Event recorded by the mock harness.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Event {
+        /// `write_read`: (address, register-byte, requested read length).
+        WriteRead(u8, u8, usize),
+        /// `write` of `[reg, value]`.
+        Write(u8, u8, u8),
+    }
+
+    /// Event log + queue of canned read responses.
+    struct Harness {
+        events: RefCell<Vec<Event>>,
+        read_responses: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self {
+                events: RefCell::new(Vec::new()),
+                read_responses: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn queue_read(&self, bytes: Vec<u8>) {
+            self.read_responses.borrow_mut().push(bytes);
+        }
+
+        fn events(&self) -> Vec<Event> {
+            self.events.borrow().clone()
+        }
+    }
+
+    /// Mock I²C bus that decodes the two patterns the driver issues:
+    /// `[Write([reg]), Read(buf)]` (=`write_read`) and `[Write([reg,
+    /// val])]` (=`write`). Anything else panics so a future driver
+    /// change that emits a different shape surfaces here instead of
+    /// reading garbage out of an unmatched canned response.
+    struct MockI2c<'a> {
+        harness: &'a Harness,
+    }
+
+    impl embedded_hal_async::i2c::ErrorType for MockI2c<'_> {
+        type Error = core::convert::Infallible;
+    }
+
+    impl embedded_hal_async::i2c::I2c for MockI2c<'_> {
+        async fn transaction(
+            &mut self,
+            address: SevenBitAddress,
+            operations: &mut [Operation<'_>],
+        ) -> Result<(), Self::Error> {
+            match operations {
+                [Operation::Write(w), Operation::Read(r)] => {
+                    assert_eq!(w.len(), 1, "write_read prelude should be a single reg byte");
+                    let mut responses = self.harness.read_responses.borrow_mut();
+                    assert!(!responses.is_empty(), "no canned read response queued");
+                    let response = responses.remove(0);
+                    drop(responses);
+                    assert_eq!(
+                        response.len(),
+                        r.len(),
+                        "canned response length mismatch (queued {} vs requested {})",
+                        response.len(),
+                        r.len()
+                    );
+                    r.copy_from_slice(&response);
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::WriteRead(address, w[0], r.len()));
+                }
+                [Operation::Write(w)] => {
+                    assert_eq!(w.len(), 2, "single-write should be [reg, value]");
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::Write(address, w[0], w[1]));
+                }
+                other => panic!("unexpected operation shape: {} ops", other.len()),
+            }
+            Ok(())
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut fut = pin!(future);
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
 
     #[test]
     fn zero_channels_gives_zero_lux() {
@@ -327,5 +446,101 @@ mod tests {
             (got - expected).abs() < 0.001,
             "got {got}, expected {expected} (formula 2 at ratio=0.45 boundary)"
         );
+    }
+
+    #[test]
+    fn init_validates_part_id_then_configures_als_and_ps() {
+        let harness = Harness::new();
+        harness.queue_read(vec![0x9A]); // valid LTR-553, rev nibble A
+        let mut bus = MockI2c { harness: &harness };
+        let mut driver = Ltr553::new(&mut bus);
+        block_on(driver.init()).unwrap();
+
+        let expected = vec![
+            Event::WriteRead(ADDRESS, REG_PART_ID, 1),
+            Event::Write(ADDRESS, REG_ALS_CONTR, ALS_CONTR_ACTIVE_1X),
+            Event::Write(ADDRESS, REG_PS_CONTR, PS_CONTR_ACTIVE),
+        ];
+        assert_eq!(harness.events(), expected);
+    }
+
+    #[test]
+    fn init_rejects_bad_part_id_without_writing_config() {
+        let harness = Harness::new();
+        harness.queue_read(vec![0x82]); // upper nibble != 0x9
+        let mut bus = MockI2c { harness: &harness };
+        let mut driver = Ltr553::new(&mut bus);
+
+        let err = block_on(driver.init()).unwrap_err();
+        assert!(matches!(err, Error::BadPartId(0x82)), "got {err:?}");
+        // No ALS / PS writes should have happened — the part ID gate
+        // short-circuits before any config write.
+        assert_eq!(
+            harness.events(),
+            vec![Event::WriteRead(ADDRESS, REG_PART_ID, 1)]
+        );
+    }
+
+    #[test]
+    fn read_ambient_decodes_ch1_then_ch0_little_endian() {
+        // Datasheet burst order at REG_ALS_DATA_START (0x88):
+        //   CH1_LSB, CH1_MSB, CH0_LSB, CH0_MSB. Pinning so a future
+        //   refactor that swaps the two pairs surfaces here instead
+        //   of as wrong lux numbers in the field.
+        let harness = Harness::new();
+        harness.queue_read(vec![0x34, 0x12, 0x78, 0x56]);
+        let mut bus = MockI2c { harness: &harness };
+        let mut driver = Ltr553::new(&mut bus);
+        let reading = block_on(driver.read_ambient()).unwrap();
+
+        assert_eq!(reading.ch1, 0x1234);
+        assert_eq!(reading.ch0, 0x5678);
+        assert_eq!(
+            harness.events(),
+            vec![Event::WriteRead(ADDRESS, REG_ALS_DATA_START, 4)]
+        );
+        // Spot-check the lux path is wired through: ch1/(ch0+ch1)
+        // here is ~0.21, well below 0.45 → formula 1.
+        let expected_lux = 1.7743 * f32::from(reading.ch0) + 1.1059 * f32::from(reading.ch1);
+        assert!((reading.lux - expected_lux).abs() < 0.01);
+    }
+
+    #[test]
+    fn read_proximity_extracts_11_bit_value() {
+        // Encoded as: PS_DATA_0 = low 8 bits, PS_DATA_1 = high 3 bits
+        // in bits 0..=2. Construct a known 11-bit value (0x456 = 0b100
+        // _0101_0110), distribute it correctly across the two bytes,
+        // and assert the decoder reassembles it.
+        let target: u16 = 0x456;
+        let low = (target & 0xFF) as u8;
+        let high = ((target >> 8) & 0x07) as u8;
+        let harness = Harness::new();
+        harness.queue_read(vec![low, high]);
+        let mut bus = MockI2c { harness: &harness };
+        let mut driver = Ltr553::new(&mut bus);
+        let ps = block_on(driver.read_proximity()).unwrap();
+        assert_eq!(ps, target);
+    }
+
+    #[test]
+    fn read_proximity_ignores_saturation_flag_and_upper_bits_of_high_byte() {
+        // Bit 7 of PS_DATA_1 is the saturation flag; the driver
+        // deliberately ignores it. Bits 3..=6 are reserved. Confirm
+        // the decoder masks to only bits 0..=2 of the high byte so a
+        // saturation event (or noise in reserved bits) doesn't add
+        // garbage to the returned count.
+        let harness = Harness::new();
+        // Low byte = 0xFF; high byte = 0b1111_1101 — saturation+reserved
+        // bits all set, low 3 bits = 0b101 = 5.
+        harness.queue_read(vec![0xFF, 0b1111_1101]);
+        let mut bus = MockI2c { harness: &harness };
+        let mut driver = Ltr553::new(&mut bus);
+        let ps = block_on(driver.read_proximity()).unwrap();
+        // Expected: (5 << 8) | 0xFF = 0x5FF. The realistic regression
+        // to guard against is dropping the `& 0x07` mask entirely:
+        // (0xFD << 8) | 0xFF = 0xFDFF, a 64× overstatement that
+        // would push every saturation event into "object jammed
+        // against the sensor" territory in callers.
+        assert_eq!(ps, 0x5FF);
     }
 }
