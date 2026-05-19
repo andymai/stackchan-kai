@@ -285,4 +285,24 @@ mod tests {
             .expect("post-quiet rising edge while Sad should arm");
         assert_eq!(state.kind, Decorator::Sweat);
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <DecoratorFromLoud as Default>::default();
+        let from_new = DecoratorFromLoud::new();
+        assert_eq!(from_default.armed_above, from_new.armed_above);
+        assert_eq!(from_default.hold_ms, from_new.hold_ms);
+        assert!((from_default.threshold - from_new.threshold).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn meta_declares_decoration_phase_and_decorator_write() {
+        let m = DecoratorFromLoud::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "DecoratorFromLoud");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, 10);
+        assert_eq!(meta.writes, &[Field::Decorator]);
+        assert_eq!(meta.reads, &[Field::AudioRms, Field::Emotion]);
+    }
 }
