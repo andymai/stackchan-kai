@@ -238,4 +238,23 @@ mod tests {
         remote.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <EmotionFromRemote as Default>::default();
+        let from_new = EmotionFromRemote::new();
+        assert_eq!(from_default.mapping.len(), from_new.mapping.len());
+    }
+
+    #[test]
+    fn meta_declares_affect_phase_and_autonomy_write() {
+        let m = EmotionFromRemote::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "EmotionFromRemote");
+        assert_eq!(meta.phase, Phase::Affect);
+        assert_eq!(meta.priority, -90);
+        assert!(meta.writes.contains(&Field::Emotion));
+        assert!(meta.writes.contains(&Field::Autonomy));
+        assert!(meta.reads.contains(&Field::RemotePending));
+    }
 }
