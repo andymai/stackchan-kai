@@ -306,4 +306,51 @@ mod tests {
         let right_delta = entity.face.right_eye.center.x - right_baseline_x;
         assert_eq!(left_delta, right_delta);
     }
+
+    #[test]
+    fn default_matches_new_constructor() {
+        // Default::default() must mirror new(); both produce an
+        // instance with last_offset = (0, 0).
+        let from_default = <GazeFromAttention as Default>::default();
+        let from_new = GazeFromAttention::new();
+        assert_eq!(from_default.last_offset, from_new.last_offset);
+    }
+
+    #[test]
+    fn attention_point_shifts_eyes_via_pose_from_xyz() {
+        // Attention::Point routes through Pose::from_xyz_lookat,
+        // which converts a 3D vector to (pan, tilt) and then to an
+        // eye offset. A point to the right of the camera (+X) must
+        // shift gaze right (positive left_eye.center.x delta).
+        let mut m = GazeFromAttention::new();
+        let mut entity = Entity::default();
+        let baseline_x = entity.face.left_eye.center.x;
+        entity.mind.attention = Attention::Point {
+            target: (1.0, 0.0, -1.0),
+            since: Instant::from_millis(0),
+        };
+        m.update(&mut entity);
+        assert!(
+            entity.face.left_eye.center.x > baseline_x,
+            "+X target should shift gaze right of baseline",
+        );
+    }
+
+    #[test]
+    fn attention_point_at_origin_falls_back_to_zero_offset() {
+        // The (0, 0, 0) singularity makes Pose::from_xyz_lookat
+        // return None; the modifier must fall back to (0, 0) rather
+        // than panic / produce NaN. Pin the contract.
+        let mut m = GazeFromAttention::new();
+        let mut entity = Entity::default();
+        let baseline_left = entity.face.left_eye.center;
+        let baseline_right = entity.face.right_eye.center;
+        entity.mind.attention = Attention::Point {
+            target: (0.0, 0.0, 0.0),
+            since: Instant::from_millis(0),
+        };
+        m.update(&mut entity);
+        assert_eq!(entity.face.left_eye.center, baseline_left);
+        assert_eq!(entity.face.right_eye.center, baseline_right);
+    }
 }
