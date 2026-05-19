@@ -1243,10 +1243,11 @@ mod tests {
     }
 
     #[test]
-    fn scan_breaks_when_scale_step_is_one() {
-        // step_q16 of `Q16_ONE` would loop forever — the function
-        // clamps to `Q16_ONE + 1`. With min == max == Q16_ONE the
-        // sweep runs once and then exits.
+    fn scan_clamps_zero_step_to_prevent_stall() {
+        // step_q16 = 0 is the degenerate case — clamped to `Q16_ONE
+        // + 1` inside `scan`. With min == max == Q16_ONE the sweep
+        // runs exactly once and then exits because next_scale >
+        // max_scale, so the cascade fires on the bright-bottom edge.
         let luma = [
             10, 10, 10, 10, 10, 10, 10, 10, 200, 200, 200, 200, 200, 200, 200, 200,
         ];
@@ -1255,8 +1256,6 @@ mod tests {
         let v = build_view(&luma, 4, 4, &mut sb, &mut sqb);
         let (_d, stages, stumps) = tiny_edge_cascade();
         let cascade = leak_tiny_cascade(stages, stumps);
-        // step_q16 = 0 is the degenerate case; the clamp guarantees
-        // forward progress.
         let det = cascade.scan(&v, Q16_ONE, Q16_ONE, 0, 0);
         assert!(det.is_some());
     }
