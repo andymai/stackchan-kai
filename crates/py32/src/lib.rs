@@ -622,7 +622,8 @@ mod tests {
         let py32 = Py32::new(mock);
         let recovered = py32.release();
         // The recovered bus is the same MockI2c instance — observe via
-        // its empty event log.
-        assert!(recovered.events.borrow().is_empty());
+        // its empty event log. Use the events() helper to match the
+        // style of the other tests in this module.
+        assert!(recovered.events().is_empty());
     }
 }
