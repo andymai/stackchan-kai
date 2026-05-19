@@ -406,4 +406,31 @@ mod tests {
         step(&mut skill, &mut entity, 0, 300);
         assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <Listening as Default>::default();
+        let from_new = Listening::new();
+        assert_eq!(from_default.sustain_ticks, from_new.sustain_ticks);
+        assert!((from_default.threshold - from_new.threshold).abs() < f32::EPSILON);
+        assert_eq!(from_default.release_ms, from_new.release_ms);
+    }
+
+    #[test]
+    fn meta_pins_intent_and_attention_writes() {
+        let skill = Listening::new();
+        let meta = skill.meta();
+        assert_eq!(meta.name, "Listening");
+        assert_eq!(meta.priority, 50);
+        assert_eq!(meta.writes, &[Field::Intent, Field::Attention]);
+    }
+
+    #[test]
+    fn should_fire_is_always_true() {
+        // The sustain + release counters need to tick every frame
+        // regardless of current attention state.
+        let skill = Listening::new();
+        let entity = Entity::default();
+        assert!(skill.should_fire(&entity));
+    }
 }
