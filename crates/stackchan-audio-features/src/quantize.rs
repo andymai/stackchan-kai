@@ -178,4 +178,13 @@ mod tests {
         assert!((p.scale - 0.5).abs() < f32::EPSILON);
         assert_eq!(p.zero_point, -25);
     }
+
+    #[test]
+    fn default_trait_yields_documented_baseline() {
+        // <QuantParams as Default>::default() delegates to DEFAULT;
+        // assert structural equality so the trait surface stays pinned.
+        let from_default = <QuantParams as Default>::default();
+        assert!((from_default.scale - QuantParams::DEFAULT.scale).abs() < f32::EPSILON);
+        assert_eq!(from_default.zero_point, QuantParams::DEFAULT.zero_point);
+    }
 }
