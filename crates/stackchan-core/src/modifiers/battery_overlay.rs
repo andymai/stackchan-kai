@@ -192,8 +192,7 @@ mod tests {
         assert_eq!(meta.name, "BatteryOverlayFromPerception");
         assert_eq!(meta.phase, Phase::Decoration);
         assert_eq!(meta.priority, 5);
-        assert!(meta.reads.contains(&Field::BatteryPercent));
-        assert!(meta.reads.contains(&Field::UsbPowerPresent));
+        assert_eq!(meta.reads, &[Field::BatteryPercent, Field::UsbPowerPresent]);
         assert_eq!(meta.writes, &[Field::BatteryOverlay]);
     }
 }
