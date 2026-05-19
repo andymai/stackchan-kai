@@ -336,4 +336,25 @@ mod tests {
         assert_eq!(entity.mind.affect.emotion, Emotion::Angry);
         assert_eq!(entity.mind.autonomy.source, Some(OverrideSource::Shake));
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <EmotionFromIntent as Default>::default();
+        let from_new = EmotionFromIntent::new();
+        assert_eq!(from_default.last_intent, from_new.last_intent);
+    }
+
+    #[test]
+    fn meta_declares_affect_phase_and_reactive_writes() {
+        let m = EmotionFromIntent::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "EmotionFromIntent");
+        assert_eq!(meta.phase, Phase::Affect);
+        assert_eq!(meta.priority, -80);
+        assert_eq!(meta.reads, &[Field::Intent, Field::Autonomy]);
+        assert_eq!(
+            meta.writes,
+            &[Field::Emotion, Field::Autonomy, Field::ChirpRequest],
+        );
+    }
 }
