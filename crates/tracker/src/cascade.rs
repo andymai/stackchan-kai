@@ -1118,4 +1118,361 @@ mod tests {
     }
 
     extern crate alloc;
+
+    // ============================================================
+    // IntegralView out-of-bounds + Cascade helper coverage.
+    // ============================================================
+
+    #[test]
+    fn window_area_multiplies() {
+        let cascade = Cascade {
+            window_w: 24,
+            window_h: 24,
+            stages: &[],
+        };
+        assert_eq!(cascade.window_area(), 576);
+    }
+
+    #[test]
+    fn integral_oob_rect_returns_zero() {
+        // Both `rect_sum` and `rect_sum_sq` defensively return 0
+        // when the requested rectangle escapes the source plane.
+        let luma = [10u8; 16];
+        let mut sb = [0u32; 25];
+        let mut sqb = [0u64; 25];
+        let v = build_view(&luma, 4, 4, &mut sb, &mut sqb);
+        // x + w > width.
+        assert_eq!(v.rect_sum(3, 0, 2, 1), 0);
+        assert_eq!(v.rect_sum_sq(3, 0, 2, 1), 0);
+        // y + h > height.
+        assert_eq!(v.rect_sum(0, 3, 1, 2), 0);
+        assert_eq!(v.rect_sum_sq(0, 3, 1, 2), 0);
+    }
+
+    #[test]
+    fn integral_view_dimensions_exposed() {
+        let luma = [0u8; 12];
+        let mut sb = [0u32; 20];
+        let mut sqb = [0u64; 20];
+        let v = build_view(&luma, 4, 3, &mut sb, &mut sqb);
+        assert_eq!(v.width(), 4);
+        assert_eq!(v.height(), 3);
+    }
+
+    // ============================================================
+    // luma_from_rgb565_frame — was 0% before this PR.
+    // ============================================================
+
+    #[test]
+    fn luma_from_rgb565_writes_expected_pixel_count() {
+        // 2×2 frame, alternating pure-red / pure-green pixels. Out
+        // length must match w × h on success.
+        let frame: [u8; 8] = [
+            0xF8, 0x00, 0x07, 0xE0, // red, green
+            0x07, 0xE0, 0xF8, 0x00, // green, red
+        ];
+        let mut out = [0u8; 4];
+        let n = luma_from_rgb565_frame(&frame, 2, 2, &mut out);
+        assert_eq!(n, 4);
+        // Reds and greens have different luma; the alternation must
+        // surface as alternating output bytes.
+        assert_ne!(out[0], out[1]);
+        assert_eq!(out[0], out[3]);
+        assert_eq!(out[1], out[2]);
+    }
+
+    #[test]
+    fn luma_from_rgb565_rejects_short_out_buffer() {
+        let frame = [0u8; 8];
+        let mut out = [0u8; 3]; // < 4 pixels
+        assert_eq!(luma_from_rgb565_frame(&frame, 2, 2, &mut out), 0);
+    }
+
+    #[test]
+    fn luma_from_rgb565_rejects_short_frame_buffer() {
+        let frame = [0u8; 6]; // < 4 × 2 bytes
+        let mut out = [0u8; 4];
+        assert_eq!(luma_from_rgb565_frame(&frame, 2, 2, &mut out), 0);
+    }
+
+    // ============================================================
+    // Cascade::evaluate edge cases.
+    // ============================================================
+
+    #[test]
+    fn evaluate_returns_none_when_window_escapes_view() {
+        let luma = [10u8; 16];
+        let mut sb = [0u32; 25];
+        let mut sqb = [0u64; 25];
+        let v = build_view(&luma, 4, 4, &mut sb, &mut sqb);
+        let (_d, stages, stumps) = tiny_edge_cascade();
+        let cascade = leak_tiny_cascade(stages, stumps);
+        // 4×4 base window at (wx=1, wy=0) extends to x=5 > width=4.
+        assert_eq!(cascade.evaluate(&v, 1, 0, Q16_ONE), None);
+    }
+
+    #[test]
+    fn evaluate_returns_none_for_zero_scale() {
+        // `scale_q16 = 0` → scaled window dim is 0; evaluate must
+        // reject without dividing by zero or panicking.
+        let luma = [10u8; 16];
+        let mut sb = [0u32; 25];
+        let mut sqb = [0u64; 25];
+        let v = build_view(&luma, 4, 4, &mut sb, &mut sqb);
+        let (_d, stages, stumps) = tiny_edge_cascade();
+        let cascade = leak_tiny_cascade(stages, stumps);
+        assert_eq!(cascade.evaluate(&v, 0, 0, 0), None);
+    }
+
+    // ============================================================
+    // Cascade::scan break paths + scale-step monotonicity.
+    // ============================================================
+
+    #[test]
+    fn scan_breaks_when_min_scale_too_large_for_view() {
+        // 6×6 view, base 4×4 cascade — at scale 2× the window is 8×8,
+        // larger than the view; the loop must break immediately.
+        let luma = [10u8; 36];
+        let mut sb = [0u32; 49];
+        let mut sqb = [0u64; 49];
+        let v = build_view(&luma, 6, 6, &mut sb, &mut sqb);
+        let (_d, stages, stumps) = tiny_edge_cascade();
+        let cascade = leak_tiny_cascade(stages, stumps);
+        let det = cascade.scan(&v, Q16_ONE * 2, Q16_ONE * 4, Q16_ONE * 5 / 4, 1);
+        assert!(det.is_none(), "scan should not find anything at 2×+ scale");
+    }
+
+    #[test]
+    fn scan_breaks_when_scale_step_is_one() {
+        // step_q16 of `Q16_ONE` would loop forever — the function
+        // clamps to `Q16_ONE + 1`. With min == max == Q16_ONE the
+        // sweep runs once and then exits.
+        let luma = [
+            10, 10, 10, 10, 10, 10, 10, 10, 200, 200, 200, 200, 200, 200, 200, 200,
+        ];
+        let mut sb = [0u32; 25];
+        let mut sqb = [0u64; 25];
+        let v = build_view(&luma, 4, 4, &mut sb, &mut sqb);
+        let (_d, stages, stumps) = tiny_edge_cascade();
+        let cascade = leak_tiny_cascade(stages, stumps);
+        // step_q16 = 0 is the degenerate case; the clamp guarantees
+        // forward progress.
+        let det = cascade.scan(&v, Q16_ONE, Q16_ONE, 0, 0);
+        assert!(det.is_some());
+    }
+
+    // ============================================================
+    // scale_dim u16::MAX saturation path.
+    // ============================================================
+
+    #[test]
+    fn scale_dim_saturates_when_product_overflows_u16() {
+        // `scale_dim` is private but `Cascade::scan` calls it; pick a
+        // scale large enough that base × scale_q16 / Q16_ONE > u16::MAX.
+        // With base=24, scale ~ 0xFFFFFFFF, the product overflows
+        // u16 and the function must clamp to u16::MAX without panic.
+        let luma = [10u8; 16];
+        let mut sb = [0u32; 25];
+        let mut sqb = [0u64; 25];
+        let v = build_view(&luma, 4, 4, &mut sb, &mut sqb);
+        let (_d, stages, stumps) = tiny_edge_cascade();
+        let cascade = leak_tiny_cascade(stages, stumps);
+        // Scan from a huge min scale to an even huger max — every
+        // scale produces a saturated window dim, scan rejects them.
+        let det = cascade.scan(&v, u32::MAX / 2, u32::MAX, u32::MAX / 4, 1);
+        assert!(det.is_none());
+    }
+
+    // ============================================================
+    // `better()` stage-tiebreaker.
+    // ============================================================
+
+    #[test]
+    fn better_prefers_higher_stage_pass_count() {
+        let lower = Detection {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+            scale_q16: Q16_ONE,
+            stages_passed: 5,
+        };
+        let higher = Detection {
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 4, // smaller, but more stages.
+            scale_q16: Q16_ONE,
+            stages_passed: 10,
+        };
+        assert!(better(&higher, &lower));
+        assert!(!better(&lower, &higher));
+    }
+
+    #[test]
+    fn better_tiebreaks_on_window_area() {
+        let small = Detection {
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 4,
+            scale_q16: Q16_ONE,
+            stages_passed: 5,
+        };
+        let large = Detection {
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 8,
+            scale_q16: Q16_ONE * 2,
+            stages_passed: 5,
+        };
+        assert!(better(&large, &small));
+        assert!(!better(&small, &large));
+    }
+
+    // ============================================================
+    // CascadeScratch + scan_around_centroid (the public face-scan API).
+    // ============================================================
+
+    #[test]
+    fn cascade_scratch_default_matches_new() {
+        // Both `new()` and `Default::default()` produce all-zero scratch.
+        let a = CascadeScratch::new();
+        let b = CascadeScratch::default();
+        assert_eq!(a.luma, b.luma);
+        // sum / sum_sq are too large to compare element-by-element
+        // in a test buffer; spot-check the first row.
+        assert_eq!(a.sum[..32], b.sum[..32]);
+        assert_eq!(a.sum_sq[..32], b.sum_sq[..32]);
+        // Spot-check that the buffers are zeroed.
+        assert!(a.luma.iter().all(|&v| v == 0));
+        assert!(a.sum[..32].iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn roi_around_centroid_rejects_zero_dim_frame() {
+        assert_eq!(roi_around_centroid(0, 48, (0.0, 0.0), 32), None);
+        assert_eq!(roi_around_centroid(48, 0, (0.0, 0.0), 32), None);
+    }
+
+    #[test]
+    fn roi_around_centroid_rejects_zero_dim_roi() {
+        assert_eq!(roi_around_centroid(48, 48, (0.0, 0.0), 0), None);
+    }
+
+    #[test]
+    fn roi_around_centroid_clamps_to_frame() {
+        // Centroid (-1, -1) is the top-left corner; the ROI must
+        // clamp to (0, 0).
+        let (x, y, w, h) = roi_around_centroid(64, 64, (-1.0, -1.0), 32).unwrap();
+        assert_eq!((x, y, w, h), (0, 0, 32, 32));
+        // Centroid (1, 1) is the bottom-right; ROI clamps to
+        // (frame - dim).
+        let (x, y, w, h) = roi_around_centroid(64, 64, (1.0, 1.0), 32).unwrap();
+        assert_eq!((x, y, w, h), (32, 32, 32, 32));
+    }
+
+    #[test]
+    fn roi_around_centroid_clamps_max_dim() {
+        // `roi_dim` larger than the frame clamps to min(MAX_ROI, frame).
+        let (_, _, w, h) = roi_around_centroid(48, 48, (0.0, 0.0), 200).unwrap();
+        assert_eq!((w, h), (48, 48));
+    }
+
+    /// Build a 64×64 RGB565 frame with a synthetic dark-top / bright-
+    /// bottom edge centered on the frame. Pure-color RGB565 keeps the
+    /// luma conversion simple and predictable.
+    fn synth_edge_frame() -> alloc::boxed::Box<[u8]> {
+        let mut buf = alloc::vec![0u8; 64 * 64 * 2].into_boxed_slice();
+        for y in 0..64 {
+            // Pure-black pixels in top half, pure-white in bottom half.
+            // RGB565: white = 0xFFFF, black = 0x0000.
+            let (hi, lo) = if y < 32 { (0x00, 0x00) } else { (0xFF, 0xFF) };
+            for x in 0..64 {
+                let off = (y * 64 + x) * 2;
+                buf[off] = hi;
+                buf[off + 1] = lo;
+            }
+        }
+        buf
+    }
+
+    #[test]
+    fn scan_around_centroid_returns_none_for_zero_dim_frame() {
+        let frame = [0u8; 0];
+        let mut scratch = alloc::boxed::Box::new(CascadeScratch::new());
+        assert!(
+            crate::FRONTAL_FACE
+                .scan_around_centroid(&frame, 0, 0, (0.0, 0.0), 32, &mut scratch)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn scan_around_centroid_returns_none_for_truncated_frame() {
+        // Frame buffer shorter than `w × h × 2` — the inner-loop bounds
+        // check trips and returns None.
+        let frame = [0u8; 8]; // claims 64×64 but only 4 px of data.
+        let mut scratch = alloc::boxed::Box::new(CascadeScratch::new());
+        assert!(
+            crate::FRONTAL_FACE
+                .scan_around_centroid(&frame, 64, 64, (0.0, 0.0), 32, &mut scratch)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn scan_around_centroid_finds_nothing_in_uniform_frame() {
+        // 64×64 grey RGB565 — no face structure; the real frontal
+        // cascade must not fire. Exercises the full
+        // ROI extraction → integral image → scan path with the
+        // FRONTAL_FACE cascade and a heap-allocated scratch.
+        let mut frame = alloc::vec![0u8; 64 * 64 * 2].into_boxed_slice();
+        for chunk in frame.chunks_exact_mut(2) {
+            chunk[0] = 0x84; // mid-grey RGB565 high byte
+            chunk[1] = 0x10;
+        }
+        let mut scratch = alloc::boxed::Box::new(CascadeScratch::new());
+        let result =
+            crate::FRONTAL_FACE.scan_around_centroid(&frame, 64, 64, (0.0, 0.0), 48, &mut scratch);
+        assert!(result.is_none(), "uniform frame must not fire");
+    }
+
+    #[test]
+    fn scan_around_centroid_runs_full_pipeline_on_edge_frame() {
+        // Synthetic dark/bright edge frame. The real frontal cascade
+        // is unlikely to fire on a non-face pattern, but the call must
+        // run through the full pipeline (ROI extraction + luma
+        // conversion + integral images + scan) without panicking. The
+        // assertion is just that the call returns *some* answer — we
+        // don't pretend the frontal cascade should recognise a
+        // black-on-white edge as a face.
+        let frame = synth_edge_frame();
+        let mut scratch = alloc::boxed::Box::new(CascadeScratch::new());
+        let _ =
+            crate::FRONTAL_FACE.scan_around_centroid(&frame, 64, 64, (0.0, 0.0), 48, &mut scratch);
+    }
+
+    #[test]
+    fn scan_around_centroid_finds_face_with_tiny_cascade() {
+        // Use the test-only tiny edge cascade to verify the pipeline
+        // produces a non-empty detection when the cascade *does*
+        // fire. The synthetic edge frame has bright bottom-half;
+        // a 4×4 tiny cascade with the right edge stump fires inside
+        // the ROI, the result is translated back to frame coordinates,
+        // and the normalised centroid lands inside [-1, 1].
+        let frame = synth_edge_frame();
+        let (_d, stages, stumps) = tiny_edge_cascade();
+        let tiny = leak_tiny_cascade(stages, stumps);
+        let mut scratch = alloc::boxed::Box::new(CascadeScratch::new());
+        let det = tiny
+            .scan_around_centroid(&frame, 64, 64, (0.0, 0.0), 32, &mut scratch)
+            .expect("tiny cascade must fire on synthetic edge frame");
+        assert!(det.centroid.0 >= -1.0 && det.centroid.0 <= 1.0);
+        assert!(det.centroid.1 >= -1.0 && det.centroid.1 <= 1.0);
+        let (fx, fy, fw, fh) = det.frame_rect;
+        assert!(u32::from(fx) + u32::from(fw) <= 64);
+        assert!(u32::from(fy) + u32::from(fh) <= 64);
+    }
 }
