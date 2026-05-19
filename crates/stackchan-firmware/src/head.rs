@@ -19,7 +19,7 @@
 //! | Pan   | 1 (yaw)     | `+pan_deg` → bigger step count |
 //! | Tilt  | 2 (pitch)   | `+tilt_deg` → bigger step count |
 //!
-//! Invert a direction by flipping [`PAN_DIRECTION`] / [`TILT_DIRECTION`]
+//! Invert a direction by flipping `PAN_DIRECTION` / `TILT_DIRECTION`
 //! to `-1.0`. The sign-discovery step is the first bench-test with a
 //! real unit; until then both default to `+1.0`.
 //!

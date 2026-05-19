@@ -13,10 +13,10 @@
 //! 3. RX: honour the pairing window — when [`PAIR_WINDOW`] is signalled
 //!    (by `POST /pair`), accept frames from senders that aren't on
 //!    the static-peer allowlist; outside the window, drop them.
-//! 4. TX: every [`TX_TICK_MS`] poll the avatar snapshot; emit a
+//! 4. TX: every `TX_TICK_MS` poll the avatar snapshot; emit a
 //!    `PoseMirror` frame when the pose moved by more than
-//!    [`POSE_TX_EPSILON_DEG`], and a `Heartbeat` frame at
-//!    [`HEARTBEAT_INTERVAL_MS`] cadence (skipped when a pose-mirror
+//!    `POSE_TX_EPSILON_DEG`, and a `Heartbeat` frame at
+//!    `HEARTBEAT_INTERVAL_MS` cadence (skipped when a pose-mirror
 //!    went out in the same tick — they double as liveness).
 //!
 //! TX targets the broadcast MAC. ESP-NOW broadcast can't be encrypted,

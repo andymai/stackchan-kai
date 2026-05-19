@@ -76,7 +76,7 @@ static RECORDING: AtomicBool = AtomicBool::new(false);
 /// # Safety
 ///
 /// Touches the `static mut CRASH_LATCH`. Panic handlers run with
-/// every other CPU activity suspended, and [`RECORDING`] serialises
+/// every other CPU activity suspended, and `RECORDING` serialises
 /// re-entrant calls.
 pub fn record_panic(info: &PanicInfo<'_>) {
     if RECORDING.swap(true, Ordering::SeqCst) {

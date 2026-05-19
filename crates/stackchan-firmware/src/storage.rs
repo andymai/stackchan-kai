@@ -84,7 +84,7 @@ static SHARED_STORAGE: Mutex<CriticalSectionRawMutex, StorageHolder> =
 pub static CONFIG_SNAPSHOT: Mutex<CriticalSectionRawMutex, Option<stackchan_net::Config>> =
     Mutex::new(None);
 
-/// Move `storage` into [`SHARED_STORAGE`], replacing whatever was
+/// Move `storage` into `SHARED_STORAGE`, replacing whatever was
 /// there. Called once from the boot path after a successful mount.
 pub async fn install_storage(storage: FirmwareStorage) {
     SHARED_STORAGE.lock().await.0 = Some(storage);
@@ -376,7 +376,7 @@ where
     ///
     /// [`StorageError::Read`] on a partial / failed read,
     /// [`StorageError::TooLarge`] if the file exceeds
-    /// [`MAX_RUNTIME_BYTES`], [`StorageError::NotUtf8`] if the bytes
+    /// `MAX_RUNTIME_BYTES`, [`StorageError::NotUtf8`] if the bytes
     /// don't decode as UTF-8.
     pub fn read_runtime(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
         let volume = self
@@ -420,7 +420,7 @@ where
     ///
     /// [`StorageError::Read`] on a partial / failed read,
     /// [`StorageError::TooLarge`] if the file exceeds
-    /// [`MAX_SESSION_UUID_BYTES`], [`StorageError::NotUtf8`] if the
+    /// `MAX_SESSION_UUID_BYTES`, [`StorageError::NotUtf8`] if the
     /// bytes don't decode as UTF-8.
     pub fn read_session_uuid(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
         let volume = self
@@ -451,7 +451,7 @@ where
     ///
     /// [`StorageError::Write`] on any underlying write failure,
     /// [`StorageError::TooLarge`] if `uuid` exceeds
-    /// [`MAX_SESSION_UUID_BYTES`].
+    /// `MAX_SESSION_UUID_BYTES`.
     pub fn write_session_uuid(&mut self, uuid: &str) -> Result<(), StorageError> {
         if uuid.len() > MAX_SESSION_UUID_BYTES as usize {
             return Err(StorageError::TooLarge);
@@ -470,7 +470,7 @@ where
     ///
     /// [`StorageError::Read`] on a partial / failed read,
     /// [`StorageError::TooLarge`] if the file exceeds
-    /// [`MAX_DEVICE_NAME_BYTES`], [`StorageError::NotUtf8`] if the
+    /// `MAX_DEVICE_NAME_BYTES`, [`StorageError::NotUtf8`] if the
     /// bytes don't decode as UTF-8.
     pub fn read_device_name(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
         let volume = self
@@ -507,7 +507,7 @@ where
     ///
     /// [`StorageError::Write`] on any underlying write failure,
     /// [`StorageError::TooLarge`] if `name` exceeds
-    /// [`MAX_DEVICE_NAME_BYTES`].
+    /// `MAX_DEVICE_NAME_BYTES`.
     pub fn write_device_name(&mut self, name: &str) -> Result<(), StorageError> {
         if name.len() > MAX_DEVICE_NAME_BYTES as usize {
             return Err(StorageError::TooLarge);
@@ -526,7 +526,7 @@ where
     ///
     /// [`StorageError::Read`] on a partial read,
     /// [`StorageError::TooLarge`] if the file exceeds
-    /// [`MAX_BONDS_BYTES`].
+    /// `MAX_BONDS_BYTES`.
     pub fn read_bonds(&mut self) -> Result<Vec<u8>, StorageError> {
         let volume = self
             .mgr
@@ -556,7 +556,7 @@ where
     ///
     /// [`StorageError::Read`] on a partial read,
     /// [`StorageError::TooLarge`] if the file exceeds
-    /// [`MAX_WAKE_WORD_BYTES`].
+    /// `MAX_WAKE_WORD_BYTES`.
     pub fn read_wake_word_model(&mut self) -> Result<Vec<u8>, StorageError> {
         let volume = self
             .mgr
@@ -612,7 +612,7 @@ where
     ///
     /// [`StorageError::Read`] on a partial / failed read,
     /// [`StorageError::TooLarge`] if the file exceeds
-    /// [`MAX_CRASH_BYTES`], [`StorageError::NotUtf8`] if the bytes
+    /// `MAX_CRASH_BYTES`, [`StorageError::NotUtf8`] if the bytes
     /// don't decode as UTF-8.
     pub fn read_crash(&mut self) -> Result<Option<alloc::string::String>, StorageError> {
         let volume = self
@@ -749,7 +749,7 @@ where
     ///
     /// [`StorageError::Write`] on any underlying write failure,
     /// [`StorageError::TooLarge`] if `data` exceeds
-    /// [`MAX_BONDS_BYTES`].
+    /// `MAX_BONDS_BYTES`.
     pub fn write_bonds(&mut self, data: &[u8]) -> Result<(), StorageError> {
         // `usize > MAX_BONDS_BYTES as usize` is the strictly-stronger
         // form: covers both targets where `usize` is 32 bits (firmware,

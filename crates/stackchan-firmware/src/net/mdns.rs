@@ -51,7 +51,7 @@ use super::wifi::{WIFI_LINK_WATCH, WifiLinkState};
 
 /// Latest-wins pose lifted from a leader's mDNS TXT record.
 ///
-/// Set by [`serve_loop`] whenever an inbound multicast packet
+/// Set by `serve_loop` whenever an inbound multicast packet
 /// carries a TXT record matching the configured
 /// `behavior.follower_leader_hostname`. Drained by the follower
 /// task ([`crate::net::mdns_follower::follower_task`]) which

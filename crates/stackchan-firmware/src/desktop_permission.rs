@@ -18,7 +18,7 @@
 //! Single taps are too easy to fat-finger on a device that lives on
 //! a desk surrounded by other things. The pattern instead requires
 //! two taps of the same zone within
-//! [`TAP_TWICE_WINDOW_MS`] for a decision to commit. The left zone
+//! `TAP_TWICE_WINDOW_MS` for a decision to commit. The left zone
 //! decides **deny**, the right zone decides **approve once** (the
 //! only two values the wire protocol carries today). The center
 //! zone clears any armed half-tap.

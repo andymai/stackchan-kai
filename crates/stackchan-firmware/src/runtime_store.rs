@@ -14,7 +14,7 @@
 //! atomic-write-tested via `STACKCHAN.RON`, and already covered by
 //! the offline-first fallback (the firmware boots fine without an
 //! SD). A future swap to a real NVS backend is a backend-only
-//! change — the public API of [`RuntimeState`] / [`load`] / [`save`]
+//! change — the public API of [`RuntimeState`] / `load` / `save`
 //! stays the same.
 //!
 //! ## Wire format
