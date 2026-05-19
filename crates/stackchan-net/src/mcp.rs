@@ -815,6 +815,304 @@ mod tests {
         assert_eq!(s, r#"{"content":[{"type":"text","text":"hello"}]}"#);
     }
 
+    // ============================================================
+    // JsonRpcErrorCode — `as_i32` / `message` were partially covered;
+    // the InvalidRequest / InvalidParams / InternalError arms had no
+    // direct tests despite firing in real error paths.
+    // ============================================================
+
+    #[test]
+    fn jsonrpc_error_code_numeric_values() {
+        assert_eq!(JsonRpcErrorCode::ParseError.as_i32(), -32_700);
+        assert_eq!(JsonRpcErrorCode::InvalidRequest.as_i32(), -32_600);
+        assert_eq!(JsonRpcErrorCode::MethodNotFound.as_i32(), -32_601);
+        assert_eq!(JsonRpcErrorCode::InvalidParams.as_i32(), -32_602);
+        assert_eq!(JsonRpcErrorCode::InternalError.as_i32(), -32_603);
+    }
+
+    #[test]
+    fn jsonrpc_error_code_messages() {
+        assert_eq!(JsonRpcErrorCode::ParseError.message(), "Parse error");
+        assert_eq!(
+            JsonRpcErrorCode::InvalidRequest.message(),
+            "Invalid Request"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::MethodNotFound.message(),
+            "Method not found"
+        );
+        assert_eq!(JsonRpcErrorCode::InvalidParams.message(), "Invalid params");
+        assert_eq!(JsonRpcErrorCode::InternalError.message(), "Internal error");
+    }
+
+    // ============================================================
+    // parse_request error paths.
+    // ============================================================
+
+    #[test]
+    fn parse_request_rejects_non_object_top_level() {
+        // Bare array, scalar, etc.
+        for body in ["[]", "42", "\"x\"", "null"] {
+            let err = parse_request(body).expect_err("non-object top-level should reject");
+            assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+        }
+    }
+
+    #[test]
+    fn parse_request_rejects_unterminated_object() {
+        // No closing `}`. The loop walks past the last key/value and
+        // hits EOF.
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"x""#;
+        let err = parse_request(body).expect_err("missing `}` should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_missing_comma_between_members() {
+        // `"id":1` followed by `"method":...` with no comma. The
+        // second iteration of the loop expects `,` and bails.
+        let body = r#"{"jsonrpc":"2.0" "id":1,"method":"x"}"#;
+        let err = parse_request(body).expect_err("missing `,` should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_missing_colon_after_key() {
+        let body = r#"{"jsonrpc" "2.0","id":1,"method":"x"}"#;
+        let err = parse_request(body).expect_err("missing `:` should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_unknown_top_level_key() {
+        // Anything outside {jsonrpc, id, method, params}.
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"x","extra":"y"}"#;
+        let err = parse_request(body).expect_err("unknown key should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn parse_request_rejects_wrong_jsonrpc_string_type() {
+        // `jsonrpc` must be a string value; an integer doesn't even
+        // make it past read_string and lands in ParseError.
+        let body = r#"{"jsonrpc":2,"id":1,"method":"x"}"#;
+        let err = parse_request(body).expect_err("non-string jsonrpc should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_non_integer_id() {
+        let body = r#"{"jsonrpc":"2.0","id":"oops","method":"x"}"#;
+        let err = parse_request(body).expect_err("string id should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn parse_request_rejects_overflowed_id() {
+        // `i64::MAX + 1` — out of `i64` range.
+        let body = r#"{"jsonrpc":"2.0","id":9223372036854775808,"method":"x"}"#;
+        let err = parse_request(body).expect_err("overflow should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn parse_request_accepts_array_params() {
+        // params can be any JSON value; `take_value` walks until
+        // balanced, so an array works as well as an object. The
+        // captured slice still re-parses for downstream use.
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"x","params":[1,2,3]}"#;
+        let req = parse_request(body).expect("array params should parse");
+        assert_eq!(req.params_raw, Some("[1,2,3]"));
+    }
+
+    #[test]
+    fn parse_request_accepts_scalar_params() {
+        // Likewise scalars: tests the `_` arm of `take_value`.
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"x","params":42}"#;
+        let req = parse_request(body).expect("scalar params should parse");
+        assert_eq!(req.params_raw, Some("42"));
+    }
+
+    #[test]
+    fn parse_request_rejects_unbalanced_params() {
+        // Missing closing `]` on the params array.
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"x","params":[1,2"#;
+        let err = parse_request(body).expect_err("unbalanced params should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    // ============================================================
+    // read_string error paths via parse_request keys.
+    // ============================================================
+
+    #[test]
+    fn parse_request_rejects_non_string_key() {
+        // Integer where a key string should be. read_string returns
+        // "expected string".
+        let body = r#"{"jsonrpc":"2.0","id":1,42:"x"}"#;
+        let err = parse_request(body).expect_err("non-string key should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_dangling_string_escape() {
+        // `\` at the end of input — read_string's dangling-escape arm.
+        let body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\\";
+        let err = parse_request(body).expect_err("dangling escape should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_unsupported_string_escape() {
+        // `\u` — we don't support unicode escapes in the MCP parser
+        // (the module docs call this out explicitly).
+        let body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\\u00C0\"}";
+        let err = parse_request(body).expect_err("\\u escape should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_accepts_supported_string_escapes() {
+        // Every escape from the read_string match arm: \" \\ \/ \n \r \t \b \f.
+        let body =
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"a\\\"b\\\\c\\/d\\ne\\rf\\tg\\bh\\fi\"}";
+        let req = parse_request(body).expect("all supported escapes should parse");
+        // The slice is borrowed unescaped — that's fine, the consumer
+        // does its own un-escaping when needed.
+        assert!(req.method.contains("\\\""));
+        assert!(req.method.contains("\\n"));
+    }
+
+    #[test]
+    fn parse_request_rejects_unterminated_string() {
+        // String key without closing `"` — read_string's tail "unterminated string" return.
+        let body = "{\"jsonrpc\":\"2.0\",\"id";
+        let err = parse_request(body).expect_err("unterminated string should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    // ============================================================
+    // find_string_field / find_object_field error paths.
+    // ============================================================
+
+    #[test]
+    fn find_string_field_rejects_non_object() {
+        let err = find_string_field("not an object", "name").expect_err("non-object should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_string_field_rejects_unterminated_object() {
+        // Searched key doesn't match the present one, so the loop
+        // walks past + hits EOF without finding `}`.
+        let err = find_string_field(r#"{"name":"x""#, "missing")
+            .expect_err("unterminated object should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_string_field_rejects_missing_comma() {
+        let err = find_string_field(r#"{"a":"1" "b":"2"}"#, "b")
+            .expect_err("missing comma should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_string_field_rejects_missing_colon() {
+        let err = find_string_field(r#"{"a" "1"}"#, "a").expect_err("missing colon should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_string_field_rejects_non_string_value_for_target_key() {
+        // Key matches but value isn't a string.
+        let err = find_string_field(r#"{"name":42}"#, "name")
+            .expect_err("non-string value should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_string_field_rejects_unbalanced_skipped_value() {
+        // Key doesn't match; we have to skip the value. If that value
+        // is malformed, the InvalidParams skip-fail path fires.
+        let err = find_string_field(r#"{"other":[1,2,"name":"x"}"#, "name")
+            .expect_err("unbalanced skipped value should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_object_field_returns_none_when_absent() {
+        assert_eq!(
+            find_object_field(r#"{"other":"x"}"#, "arguments").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn find_object_field_rejects_non_object() {
+        let err = find_object_field("[1,2]", "arguments").expect_err("non-object should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_object_field_rejects_unterminated_object() {
+        let err = find_object_field(r#"{"arguments":{"a":1}"#, "missing")
+            .expect_err("unterminated object should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_object_field_rejects_missing_comma() {
+        let err =
+            find_object_field(r#"{"a":1 "b":2}"#, "b").expect_err("missing comma should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_object_field_rejects_missing_colon() {
+        let err = find_object_field(r#"{"a" 1}"#, "a").expect_err("missing colon should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_object_field_rejects_malformed_target_value() {
+        // Key matches but value is unbalanced.
+        let err = find_object_field(r#"{"arguments":{"a":1"#, "arguments")
+            .expect_err("malformed target value should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    #[test]
+    fn find_object_field_rejects_malformed_skipped_value() {
+        // Key doesn't match; the value we're skipping is unbalanced.
+        let err = find_object_field(r#"{"other":[1,2,"arguments":{}}"#, "arguments")
+            .expect_err("malformed skipped value should reject");
+        assert_eq!(err.code, JsonRpcErrorCode::InvalidParams);
+    }
+
+    // ============================================================
+    // escape_string — `\r`, `\t`, and the control-char branch.
+    // ============================================================
+
+    #[test]
+    fn escape_string_handles_carriage_return_and_tab() {
+        assert_eq!(escape_string("a\rb\tc"), "a\\rb\\tc");
+    }
+
+    #[test]
+    fn escape_string_emits_unicode_escape_for_control_chars() {
+        // U+0001 (SOH) — falls through to the `\\u{:04x}` branch.
+        let input = "\u{0001}";
+        assert_eq!(escape_string(input), "\\u0001");
+    }
+
+    #[test]
+    fn escape_string_passes_through_non_ascii() {
+        // Non-ASCII UTF-8 bytes (e.g. CJK / emoji) aren't escape-
+        // candidates — they pass through unchanged.
+        assert_eq!(escape_string("日本😀"), "日本😀");
+    }
+
     #[test]
     fn tools_list_json_is_valid_round_trip_against_parser() {
         // Sanity: the static catalogue is itself valid JSON. Round-
