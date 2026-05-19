@@ -403,3 +403,92 @@ pub struct Mind {
     /// own reaction window). `None` until the first gesture lands.
     pub last_gesture: Option<(BodyGesture, Instant)>,
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::float_cmp,
+    reason = "tests assert exact accessor behaviour; small enums + pure functions"
+)]
+mod tests {
+    use super::*;
+
+    fn ms(t: u64) -> Instant {
+        Instant::from_millis(t)
+    }
+
+    #[test]
+    fn engagement_is_engaged_for_locked_and_releasing_only() {
+        assert!(!Engagement::Idle.is_engaged());
+        assert!(!Engagement::Locking { hits: 2 }.is_engaged());
+        assert!(
+            Engagement::Locked {
+                centroid: (0.0, 0.0),
+                at: ms(0),
+            }
+            .is_engaged()
+        );
+        assert!(
+            Engagement::Releasing {
+                centroid: (0.0, 0.0),
+                at: ms(0),
+                misses: 4,
+            }
+            .is_engaged()
+        );
+    }
+
+    #[test]
+    fn engagement_centroid_present_only_for_locked_and_releasing() {
+        // Idle / Locking carry no centroid.
+        assert_eq!(Engagement::Idle.centroid(), None);
+        assert_eq!(Engagement::Locking { hits: 1 }.centroid(), None);
+        // Locked / Releasing return the stored centroid verbatim.
+        let c = (0.25, -0.5);
+        assert_eq!(
+            Engagement::Locked {
+                centroid: c,
+                at: ms(0),
+            }
+            .centroid(),
+            Some(c)
+        );
+        assert_eq!(
+            Engagement::Releasing {
+                centroid: c,
+                at: ms(0),
+                misses: 1,
+            }
+            .centroid(),
+            Some(c)
+        );
+    }
+
+    #[test]
+    fn dormancy_is_asleep_and_is_awake_are_inverses() {
+        assert!(Dormancy::Awake.is_awake());
+        assert!(!Dormancy::Awake.is_asleep());
+
+        let asleep = Dormancy::Asleep { since: ms(1_000) };
+        assert!(asleep.is_asleep());
+        assert!(!asleep.is_awake());
+    }
+
+    #[test]
+    fn mind_default_is_idle_and_awake_with_no_overrides() {
+        // The default `Mind` represents "nothing happening" — every
+        // sub-component is at its default. Pinning this matters because
+        // many `Director` start-of-tick paths assume `Mind::default()`
+        // is the no-op baseline.
+        let m = Mind::default();
+        assert_eq!(m.affect.emotion, Emotion::default());
+        assert_eq!(m.autonomy.manual_until, None);
+        assert_eq!(m.autonomy.source, None);
+        assert_eq!(m.intent, Intent::Idle);
+        assert!(matches!(m.attention, Attention::None));
+        assert!(matches!(m.engagement, Engagement::Idle));
+        assert!(m.dormancy.is_awake());
+        assert_eq!(m.mood, Mood::default());
+        assert_eq!(m.last_gesture, None);
+    }
+}
