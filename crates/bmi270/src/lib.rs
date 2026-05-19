@@ -40,7 +40,7 @@
 //! # }
 //! ```
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
 mod config_blob;
@@ -459,6 +459,16 @@ fn decode_measurement(buf: [u8; DATA_LEN]) -> Measurement {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "tests assert structural invariants; .expect / .unwrap / panic! are the standard test idiom"
+)]
+#[allow(
+    clippy::future_not_send,
+    reason = "test mocks hold RefCell for event recording; single-threaded block_on runs them"
+)]
 mod tests {
     use super::*;
 
@@ -513,6 +523,421 @@ mod tests {
                 .is_multiple_of(BLOB_CHUNK_BYTES),
             "BLOB_CHUNK_BYTES ({BLOB_CHUNK_BYTES}) must divide CONFIG_FILE length ({})",
             config_blob::CONFIG_FILE.len(),
+        );
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // in the driver routes the bus error through this conversion.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+            _ => panic!("expected Error::I2c"),
+        }
+    }
+
+    // --- I²C-path coverage via the shared MockI2c pattern ---
+
+    use core::cell::RefCell;
+    use core::future::Future;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embedded_hal_async::delay::DelayNs;
+    use embedded_hal_async::i2c::{Operation, SevenBitAddress};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Event {
+        /// `(address, register, len)` for a register read.
+        WriteRead(u8, u8, usize),
+        /// `(address, payload_bytes)` for a register / burst write.
+        Write(u8, Vec<u8>),
+    }
+
+    /// Per-address NACK switch: harness can mark a specific I²C
+    /// address as unresponsive so `detect()` can be tested.
+    #[derive(Default)]
+    struct Harness {
+        events: RefCell<Vec<Event>>,
+        read_responses: RefCell<Vec<Vec<u8>>>,
+        nack_addresses: RefCell<Vec<u8>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn queue_read(&self, bytes: Vec<u8>) {
+            self.read_responses.borrow_mut().push(bytes);
+        }
+
+        fn nack_address(&self, address: u8) {
+            self.nack_addresses.borrow_mut().push(address);
+        }
+
+        fn events(&self) -> Vec<Event> {
+            self.events.borrow().clone()
+        }
+
+        fn writes(&self) -> Vec<(u8, Vec<u8>)> {
+            self.events()
+                .into_iter()
+                .filter_map(|e| match e {
+                    Event::Write(addr, bytes) => Some((addr, bytes)),
+                    Event::WriteRead(..) => None,
+                })
+                .collect()
+        }
+
+        fn reads(&self) -> Vec<(u8, u8, usize)> {
+            self.events()
+                .into_iter()
+                .filter_map(|e| match e {
+                    Event::WriteRead(a, r, n) => Some((a, r, n)),
+                    Event::Write(..) => None,
+                })
+                .collect()
+        }
+    }
+
+    /// I²C bus error returned for explicitly-NACKed addresses.
+    #[derive(Debug, PartialEq, Eq)]
+    struct MockBusError;
+
+    impl embedded_hal_async::i2c::Error for MockBusError {
+        fn kind(&self) -> embedded_hal_async::i2c::ErrorKind {
+            embedded_hal_async::i2c::ErrorKind::NoAcknowledge(
+                embedded_hal_async::i2c::NoAcknowledgeSource::Address,
+            )
+        }
+    }
+
+    struct MockI2c<'a> {
+        harness: &'a Harness,
+    }
+
+    impl embedded_hal_async::i2c::ErrorType for MockI2c<'_> {
+        type Error = MockBusError;
+    }
+
+    impl embedded_hal_async::i2c::I2c for MockI2c<'_> {
+        async fn transaction(
+            &mut self,
+            address: SevenBitAddress,
+            operations: &mut [Operation<'_>],
+        ) -> Result<(), Self::Error> {
+            if self.harness.nack_addresses.borrow().contains(&address) {
+                return Err(MockBusError);
+            }
+            match operations {
+                [Operation::Write(w), Operation::Read(r)] => {
+                    assert_eq!(w.len(), 1, "write_read prelude must be a single reg byte");
+                    let mut responses = self.harness.read_responses.borrow_mut();
+                    assert!(
+                        !responses.is_empty(),
+                        "no canned read response queued (addr={address:#x}, reg={:#x})",
+                        w[0]
+                    );
+                    let response = responses.remove(0);
+                    drop(responses);
+                    assert_eq!(
+                        response.len(),
+                        r.len(),
+                        "canned response length mismatch (queued {} vs requested {})",
+                        response.len(),
+                        r.len()
+                    );
+                    r.copy_from_slice(&response);
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::WriteRead(address, w[0], r.len()));
+                }
+                [Operation::Write(w)] => {
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::Write(address, w.to_vec()));
+                }
+                other => panic!("unexpected operation shape: {} ops", other.len()),
+            }
+            Ok(())
+        }
+    }
+
+    /// `DelayNs` no-op — tests don't need real sleeps.
+    struct NoopDelay;
+    impl DelayNs for NoopDelay {
+        async fn delay_ns(&mut self, _ns: u32) {}
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut fut = pin!(future);
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    /// Queue the read responses the [`Bmi270::init`] happy path expects:
+    /// one chip-id read (`0x24`), then `INIT_POLL_MAX_ATTEMPTS` reads
+    /// that all return `0x01` so the first poll succeeds on attempt 1.
+    /// (The poll loop only consumes as many responses as it needs.)
+    fn queue_init_happy_path(harness: &Harness) {
+        // CHIP_ID probe.
+        harness.queue_read(vec![CHIP_ID]);
+        // INTERNAL_STATUS poll — first attempt returns init-ok.
+        harness.queue_read(vec![INTERNAL_STATUS_INIT_OK]);
+    }
+
+    #[test]
+    fn new_sets_address_without_touching_bus() {
+        let harness = Harness::new();
+        let bus = MockI2c { harness: &harness };
+        let imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        assert_eq!(imu.address(), ADDRESS_PRIMARY);
+        // No bus operations expected at this point.
+        assert!(harness.events().is_empty());
+    }
+
+    #[test]
+    fn read_chip_id_reads_register_zero() {
+        let harness = Harness::new();
+        harness.queue_read(vec![CHIP_ID]);
+        let bus = MockI2c { harness: &harness };
+        let mut imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        let id = block_on(imu.read_chip_id()).unwrap();
+        assert_eq!(id, CHIP_ID);
+        assert_eq!(
+            harness.reads(),
+            vec![(ADDRESS_PRIMARY, REG_CHIP_ID, 1)],
+            "should read REG_CHIP_ID at the primary address"
+        );
+    }
+
+    #[test]
+    fn detect_resolves_primary_when_it_answers() {
+        let harness = Harness::new();
+        harness.queue_read(vec![CHIP_ID]); // primary answers
+        let bus = MockI2c { harness: &harness };
+        let mut delay = NoopDelay;
+        let imu = block_on(Bmi270::detect(bus, &mut delay)).unwrap();
+        assert_eq!(imu.address(), ADDRESS_PRIMARY);
+    }
+
+    #[test]
+    fn detect_falls_through_to_secondary_when_primary_silent() {
+        // Primary NACKs at the address layer; secondary answers with
+        // the right chip-id.
+        let harness = Harness::new();
+        harness.nack_address(ADDRESS_PRIMARY);
+        harness.queue_read(vec![CHIP_ID]); // secondary answers
+        let bus = MockI2c { harness: &harness };
+        let mut delay = NoopDelay;
+        let imu = block_on(Bmi270::detect(bus, &mut delay)).unwrap();
+        assert_eq!(imu.address(), ADDRESS_SECONDARY);
+    }
+
+    #[test]
+    fn detect_falls_through_when_primary_returns_wrong_id() {
+        // Primary answers but with a wrong byte (e.g. a different
+        // Bosch IMU sharing the address). Driver must try secondary.
+        let harness = Harness::new();
+        harness.queue_read(vec![0xFF]); // primary wrong
+        harness.queue_read(vec![CHIP_ID]); // secondary correct
+        let bus = MockI2c { harness: &harness };
+        let mut delay = NoopDelay;
+        let imu = block_on(Bmi270::detect(bus, &mut delay)).unwrap();
+        assert_eq!(imu.address(), ADDRESS_SECONDARY);
+    }
+
+    #[test]
+    fn detect_returns_not_detected_when_both_addresses_fail() {
+        let harness = Harness::new();
+        harness.nack_address(ADDRESS_PRIMARY);
+        harness.nack_address(ADDRESS_SECONDARY);
+        let bus = MockI2c { harness: &harness };
+        let mut delay = NoopDelay;
+        let result = block_on(Bmi270::detect(bus, &mut delay));
+        match result {
+            Ok(_) => panic!("expected NotDetected; detect resolved an address"),
+            Err(Error::NotDetected) => {}
+            Err(other) => panic!("expected NotDetected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn init_rejects_wrong_chip_id() {
+        // Driver reads chip_id first; if wrong, fails fast.
+        let harness = Harness::new();
+        harness.queue_read(vec![0x42]); // wrong id
+        let bus = MockI2c { harness: &harness };
+        let mut imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        let mut delay = NoopDelay;
+        match block_on(imu.init(&mut delay)) {
+            Err(Error::BadChipId(0x42)) => {}
+            other => panic!("expected BadChipId(0x42), got {other:?}"),
+        }
+        // Only the chip_id read should have happened — no resets, no
+        // blob upload.
+        assert_eq!(harness.reads(), vec![(ADDRESS_PRIMARY, REG_CHIP_ID, 1)]);
+        assert!(
+            harness.writes().is_empty(),
+            "init must not write any registers when chip-id check fails",
+        );
+    }
+
+    #[test]
+    fn init_times_out_when_internal_status_never_signals_init_ok() {
+        // CHIP_ID probe passes, but every INTERNAL_STATUS read returns
+        // `0x00` (init pending), so the poll loop exhausts its attempts
+        // and returns Error::InitTimeout.
+        let harness = Harness::new();
+        harness.queue_read(vec![CHIP_ID]);
+        for _ in 0..INIT_POLL_MAX_ATTEMPTS {
+            harness.queue_read(vec![0x00]);
+        }
+        let bus = MockI2c { harness: &harness };
+        let mut imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        let mut delay = NoopDelay;
+        match block_on(imu.init(&mut delay)) {
+            Err(Error::InitTimeout) => {}
+            other => panic!("expected InitTimeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn init_happy_path_uploads_blob_and_configures_sensors() {
+        let harness = Harness::new();
+        queue_init_happy_path(&harness);
+        let bus = MockI2c { harness: &harness };
+        let mut imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        let mut delay = NoopDelay;
+        block_on(imu.init(&mut delay)).expect("init should succeed");
+
+        let writes = harness.writes();
+        // First write is the soft-reset.
+        assert_eq!(
+            writes[0].1,
+            vec![REG_CMD, CMD_SOFTRESET],
+            "soft-reset first"
+        );
+        // PWR_CONF=0 disables advanced power save before blob upload.
+        assert_eq!(writes[1].1, vec![REG_PWR_CONF, 0x00]);
+        // INIT_CTRL=0 marks the start of the upload.
+        assert_eq!(writes[2].1, vec![REG_INIT_CTRL, 0x00]);
+
+        // Per-chunk pattern: INIT_ADDR_0, INIT_ADDR_1, INIT_DATA burst.
+        // 8192 / 128 = 64 chunks → 64 * 3 + 4 init writes + 5 final
+        // register writes = 201 total writes.
+        let chunk_count = config_blob::CONFIG_FILE.len() / BLOB_CHUNK_BYTES;
+        assert_eq!(chunk_count, 64);
+        let expected_writes_total = 3 /* pre-blob */ + chunk_count * 3 + 1 /* INIT_CTRL=1 */ + 5 /* config + PWR_CTRL */;
+        assert_eq!(
+            writes.len(),
+            expected_writes_total,
+            "expected exactly the writes for soft-reset + blob upload + sensor config",
+        );
+
+        // Spot-check the first chunk's INIT_ADDR_0 / _1 values: word
+        // offset 0 → both zero.
+        assert_eq!(writes[3].1, vec![REG_INIT_ADDR_0, 0x00]);
+        assert_eq!(writes[4].1, vec![REG_INIT_ADDR_1, 0x00]);
+        // Burst write starts with the register byte then 128 data bytes.
+        assert_eq!(writes[5].1.len(), 1 + BLOB_CHUNK_BYTES);
+        assert_eq!(writes[5].1[0], REG_INIT_DATA);
+        assert_eq!(
+            &writes[5].1[1..],
+            &config_blob::CONFIG_FILE[..BLOB_CHUNK_BYTES],
+            "first chunk payload must match the canonical config blob",
+        );
+
+        // Spot-check the second chunk: word offset 64 → INIT_ADDR_0 =
+        // 64 & 0x0F = 0, INIT_ADDR_1 = 64 >> 4 = 4.
+        assert_eq!(writes[6].1, vec![REG_INIT_ADDR_0, 0x00]);
+        assert_eq!(writes[7].1, vec![REG_INIT_ADDR_1, 0x04]);
+
+        // After the last chunk: INIT_CTRL = 1, then four sensor-config
+        // writes, then PWR_CTRL.
+        let post_blob_start = 3 + chunk_count * 3;
+        assert_eq!(writes[post_blob_start].1, vec![REG_INIT_CTRL, 0x01]);
+        assert_eq!(
+            writes[post_blob_start + 1].1,
+            vec![REG_ACC_CONF, ACC_CONF_VALUE]
+        );
+        assert_eq!(
+            writes[post_blob_start + 2].1,
+            vec![REG_ACC_RANGE, ACC_RANGE_VALUE]
+        );
+        assert_eq!(
+            writes[post_blob_start + 3].1,
+            vec![REG_GYR_CONF, GYR_CONF_VALUE]
+        );
+        assert_eq!(
+            writes[post_blob_start + 4].1,
+            vec![REG_GYR_RANGE, GYR_RANGE_VALUE]
+        );
+        assert_eq!(
+            writes[post_blob_start + 5].1,
+            vec![REG_PWR_CTRL, PWR_CTRL_ENABLE]
+        );
+
+        // Reads: chip-id + one INTERNAL_STATUS poll.
+        assert_eq!(
+            harness.reads(),
+            vec![
+                (ADDRESS_PRIMARY, REG_CHIP_ID, 1),
+                (ADDRESS_PRIMARY, REG_INTERNAL_STATUS, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_measurement_burst_reads_twelve_bytes_at_data_start() {
+        let harness = Harness::new();
+        // Fabricated burst: 1 g on accel-z, 100 dps on gyro-x; rest 0.
+        let accel_z_counts: i16 = 8_192;
+        let gyro_x_counts: i16 = 3_277;
+        let mut buf = [0u8; DATA_LEN];
+        let az = accel_z_counts.to_le_bytes();
+        buf[4] = az[0];
+        buf[5] = az[1];
+        let gx = gyro_x_counts.to_le_bytes();
+        buf[6] = gx[0];
+        buf[7] = gx[1];
+        harness.queue_read(buf.to_vec());
+
+        let bus = MockI2c { harness: &harness };
+        let mut imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        let m = block_on(imu.read_measurement()).unwrap();
+        assert!((m.accel_g.2 - 1.0).abs() < 1e-3);
+        assert!((m.gyro_dps.0 - 100.0).abs() < 0.1);
+        assert_eq!(
+            harness.reads(),
+            vec![(ADDRESS_PRIMARY, REG_DATA_START, DATA_LEN)]
+        );
+    }
+
+    #[test]
+    fn read_raw_returns_the_unconverted_burst() {
+        let harness = Harness::new();
+        let canned: [u8; DATA_LEN] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+        ];
+        harness.queue_read(canned.to_vec());
+
+        let bus = MockI2c { harness: &harness };
+        let mut imu = Bmi270::new(bus, ADDRESS_PRIMARY);
+        let buf = block_on(imu.read_raw()).unwrap();
+        assert_eq!(buf, canned);
+        assert_eq!(
+            harness.reads(),
+            vec![(ADDRESS_PRIMARY, REG_DATA_START, DATA_LEN)]
         );
     }
 }
