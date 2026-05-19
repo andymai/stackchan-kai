@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.96.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.95.0...stackchan-firmware-v0.96.0) (2026-05-19)
+
+
+### Features
+
+* **firmware:** face-level Sad reaction on sidecar failure paths ([#397](https://github.com/andymai/stackchan-kai/issues/397)) ([1e645bb](https://github.com/andymai/stackchan-kai/commit/1e645bbbe24ffe9092dc5526827954adc03b4942))
+
 ## [0.95.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.94.0...stackchan-firmware-v0.95.0) (2026-05-18)
 
 
