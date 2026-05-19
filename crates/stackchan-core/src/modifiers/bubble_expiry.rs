@@ -129,10 +129,10 @@ mod tests {
     }
 
     #[test]
-    fn meta_runs_first_in_decoration_phase_with_bubble_write() {
-        // BubbleExpiry must sort before trigger modifiers in
-        // Decoration so they see a clean slate. Pin phase + priority
-        // here so a future re-tune surfaces immediately.
+    fn meta_pins_decoration_phase_and_priority_minus_ten() {
+        // Pins the absolute priority value — ordering relative to
+        // sibling Decoration modifiers is enforced by the Director's
+        // priority sort, not here.
         let m = BubbleExpiry::new();
         let meta = m.meta();
         assert_eq!(meta.name, "BubbleExpiry");
