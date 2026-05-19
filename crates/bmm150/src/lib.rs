@@ -538,6 +538,23 @@ mod tests {
     use core::cell::RefCell;
     use embedded_hal_async::i2c::{Operation, SevenBitAddress};
 
+    /// Plausible trim values lifted from a real BMM150 — kept in one
+    /// place so the compensation + read-measurement tests stay in
+    /// sync if a future port needs to retune them.
+    const TYPICAL_TRIM: Trim = Trim {
+        x1: 0,
+        y1: 0,
+        z4: 0,
+        x2: 26,
+        y2: 26,
+        z2: 6400,
+        z1: 0x9800,
+        xyz1: 0x1D83,
+        z3: 42,
+        xy2: -3,
+        xy1: 0x1D,
+    };
+
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
         use core::pin::pin;
         use core::task::{Context, Poll, Waker};
@@ -823,27 +840,20 @@ mod tests {
         // which compensate_xy treats as "div-by-zero → 0".
         let mut bus = MockBus { harness: &harness };
         let mut mag = Bmm150::new(&mut bus, ADDRESS_PRIMARY);
-        // Plug in the same plausible trim
-        // compensation_produces_finite_values_with_typical_trim uses.
-        mag.trim = Trim {
-            x1: 0,
-            y1: 0,
-            z4: 0,
-            x2: 26,
-            y2: 26,
-            z2: 6400,
-            z1: 0x9800,
-            xyz1: 0x1D83,
-            z3: 42,
-            xy2: -3,
-            xy1: 0x1D,
-        };
+        mag.trim = TYPICAL_TRIM;
         let m = block_on(mag.read_measurement()).unwrap();
-        // Earth field is ~25–65 µT; compensated values must be finite
-        // and well under 1 mT.
+        // Earth field is ~25–65 µT; compensated values must be finite,
+        // well under 1 mT, AND non-zero — the lower bound guards against
+        // a future refactor zeroing every compensation arm at once
+        // (e.g. an overflowed temp3 that silently passes is_finite +
+        // abs() < 1_000.0).
         for (name, v) in [("x", m.mag_ut.0), ("y", m.mag_ut.1), ("z", m.mag_ut.2)] {
             assert!(v.is_finite(), "{name} = {v} not finite");
             assert!(v.abs() < 1_000.0, "{name} = {v} µT out of plausible range");
+            assert!(
+                v.abs() > 0.0,
+                "{name} = {v} suggests compensation collapsed to zero",
+            );
         }
     }
 
@@ -875,22 +885,9 @@ mod tests {
         // mid-range RHALL. We don't have a canonical "expected µT"
         // vector, but compensation must produce finite, non-silly
         // values — regression guard against arithmetic mistakes.
-        let trim = Trim {
-            x1: 0,
-            y1: 0,
-            z4: 0,
-            x2: 26,
-            y2: 26,
-            z2: 6400,
-            z1: 0x9800,
-            xyz1: 0x1D83,
-            z3: 42,
-            xy2: -3,
-            xy1: 0x1D,
-        };
-        let x = compensate_xy(&trim, 500, 0x1D83, Axis::X);
-        let y = compensate_xy(&trim, -500, 0x1D83, Axis::Y);
-        let z = compensate_z(&trim, 100, 0x1D83);
+        let x = compensate_xy(&TYPICAL_TRIM, 500, 0x1D83, Axis::X);
+        let y = compensate_xy(&TYPICAL_TRIM, -500, 0x1D83, Axis::Y);
+        let z = compensate_z(&TYPICAL_TRIM, 100, 0x1D83);
         for (name, v) in [("x", x), ("y", y), ("z", z)] {
             // earth field is ~25-65 µT; compensated LSB is 1/16 µT,
             // so legal range is roughly ±1000 LSBs. Anything bigger
