@@ -508,4 +508,101 @@ mod tests {
         // remote depends on this value being stable.
         assert_eq!(EspNowKind::PoseMirror as u8, 0x06);
     }
+
+    #[test]
+    fn has_body_distinguishes_bodyless_kinds() {
+        // Heartbeat + Reset carry no JSON body; everything else does.
+        assert!(!EspNowKind::Heartbeat.has_body());
+        assert!(!EspNowKind::Reset.has_body());
+        assert!(EspNowKind::SetEmotion.has_body());
+        assert!(EspNowKind::LookAt.has_body());
+        assert!(EspNowKind::Speak.has_body());
+        assert!(EspNowKind::EnterPairing.has_body());
+        assert!(EspNowKind::PoseMirror.has_body());
+    }
+
+    #[test]
+    fn decode_too_short_rejects_undersized_buffer() {
+        // < HEADER_LEN bytes can't possibly be a valid frame.
+        let short = [0x00; 3];
+        assert_eq!(decode(&short), Err(DecodeError::TooShort));
+    }
+
+    #[test]
+    fn decode_oversize_rejects_overlong_buffer() {
+        // > MAX_FRAME_LEN bytes are dropped before any structural
+        // check — the limit is the contract for the receiver's stack
+        // buffer.
+        let huge = alloc::vec![0u8; MAX_FRAME_LEN + 1];
+        assert_eq!(decode(&huge), Err(DecodeError::Oversize(MAX_FRAME_LEN + 1)),);
+    }
+
+    #[test]
+    fn encode_header_rejects_short_buffer() {
+        let mut tiny = [0u8; 3];
+        assert_eq!(
+            encode_header(&mut tiny, EspNowKind::Heartbeat),
+            Err(DecodeError::TooShort),
+        );
+    }
+
+    #[test]
+    fn encode_pose_mirror_rejects_short_buffer() {
+        let mut tiny = [0u8; 3];
+        assert_eq!(
+            encode_pose_mirror(&mut tiny, 0.0, 0.0),
+            Err(DecodeError::TooShort),
+        );
+    }
+
+    #[test]
+    fn encode_pose_mirror_rejects_buffer_too_small_for_body() {
+        // Header fits but the rendered body overflows the remaining
+        // buffer — the `core::fmt::Error` arm of ByteCursor::write_str
+        // maps back to TooShort.
+        let mut buf = [0u8; HEADER_LEN + 4];
+        let err = encode_pose_mirror(&mut buf, 12.5, -7.25).unwrap_err();
+        assert!(matches!(err, DecodeError::TooShort), "got {err:?}");
+    }
+
+    #[test]
+    fn encode_pose_mirror_renders_finite_pose() {
+        // Happy path round-trip: encode then decode back through the
+        // same parser the receiver uses.
+        let mut buf = [0u8; MAX_FRAME_LEN];
+        let n = encode_pose_mirror(&mut buf, 12.5, -7.25).unwrap();
+        let decoded = decode(&buf[..n]).unwrap();
+        match decoded {
+            InboundFrame::Pose { pan_deg, tilt_deg } => {
+                assert!((pan_deg - 12.5).abs() < 0.05);
+                assert!((tilt_deg - -7.25).abs() < 0.1);
+            }
+            other => panic!("expected Pose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn encode_pose_mirror_renders_zero_for_non_finite() {
+        // Defensive fallback in render_pose_body. NaN / inf land as
+        // `0.0` on the wire so a future caller passing raw IMU data
+        // doesn't blow up the parser.
+        let mut buf = [0u8; MAX_FRAME_LEN];
+        let n = encode_pose_mirror(&mut buf, f32::NAN, f32::INFINITY).unwrap();
+        let decoded = decode(&buf[..n]).unwrap();
+        match decoded {
+            InboundFrame::Pose { pan_deg, tilt_deg } => {
+                assert!(pan_deg.abs() < 1e-6);
+                assert!(tilt_deg.abs() < 1e-6);
+            }
+            other => panic!("expected Pose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_error_from_json_error_wraps_bad_body() {
+        // The blanket `From<JsonError> for DecodeError` — every `?`
+        // in decode() routes through it. Exercise directly.
+        let err: DecodeError = JsonError::UnknownKey.into();
+        assert!(matches!(err, DecodeError::BadBody(JsonError::UnknownKey)));
+    }
 }
