@@ -607,40 +607,39 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
     "}",
 );
 
-/// Static MCP `tools/list` result JSON. Tools map onto the existing
-/// HTTP control plane:
+/// Static MCP `tools/list` result JSON.
 ///
-/// - `set_emotion(emotion: string, hold_ms?: integer)`
-/// - `set_mood(mood: string)`
-/// - `set_face_geometry(geometry: string)`
-/// - `look_at(pan_deg: number, tilt_deg: number, hold_ms?: integer)`
-/// - `speak(phrase: string, locale?: string)`
-/// - `start_listen(duration_ms?: integer)`
-/// - `enter_pairing(duration_ms?: integer)`
-/// - `set_volume(level: integer)`
-/// - `set_mute(muted: bool)`
-/// - `create_reminder(fire_in_secs: integer, phrase: string) -> { id }`
-/// - `list_reminders() -> { reminders: [...] }`
-/// - `cancel_reminder(id: integer)`
-/// - `take_photo() -> { url, format, width, height }`
-/// - `sleep()`
-/// - `wake()`
-/// - `get_state()`
+/// Each tool maps onto an existing control surface — either an HTTP
+/// route on the firmware (`POST /emotion`, `POST /look-at`, …) or a
+/// firmware-internal trigger (`enter_thinking` / `exit_thinking` are
+/// fired by the sidecar-agent task; the MCP twins let an external
+/// orchestrator drive the same state). The catalogue groups by
+/// purpose: avatar style (emotion / mood / face geometry), motion
+/// (look-at, look-at-point, play-motion), voice (speak, push-toast,
+/// start-listen, thinking transitions), peripherals (volume / mute /
+/// take-photo), reminders (create / list / cancel), lifecycle (sleep
+/// / wake / get-state / reset), and pairing.
 ///
 /// Schemas are minimal — no enum constraints on emotion / mood /
 /// phrase strings; the firmware-side tool handler returns
-/// `InvalidParams` when an unknown value is passed.
+/// `InvalidParams` when an unknown value is passed. The constant
+/// body below is the authoritative per-tool name + description +
+/// inputSchema; don't duplicate the inventory in this doc comment
+/// because it drifts.
 pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"tools":["#,
     r#"{"name":"set_emotion","description":"Set the avatar's emotion with an optional hold timer (milliseconds). Vocabulary: neutral, happy, sad, sleepy, surprised, angry, doubt, boring, hi, loved, curious, confused, mad.","inputSchema":{"type":"object","properties":{"emotion":{"type":"string"},"hold_ms":{"type":"integer"}},"required":["emotion"]}},"#,
     r#"{"name":"set_mood","description":"Set the operator-selected mood baseline. Vocabulary: neutral, calm, playful, focus, sleepy.","inputSchema":{"type":"object","properties":{"mood":{"type":"string"}},"required":["mood"]}},"#,
     r#"{"name":"set_face_geometry","description":"Set the avatar's face geometry preset — swaps the eye + mouth baseline silhouette while preserving emotion-driven modulators. Vocabulary: default, chibi, wide, sleepy. Persists across reboots via the runtime store.","inputSchema":{"type":"object","properties":{"geometry":{"type":"string"}},"required":["geometry"]}},"#,
     r#"{"name":"look_at","description":"Aim the avatar's head at a pan/tilt target in degrees, with an optional hold timer.","inputSchema":{"type":"object","properties":{"pan_deg":{"type":"number"},"tilt_deg":{"type":"number"},"hold_ms":{"type":"integer"}},"required":["pan_deg","tilt_deg"]}},"#,
+    r#"{"name":"look_at_point","description":"Aim the avatar's head at a 3D world point (right-handed coordinates with +Z forward, +X right, +Y up; units arbitrary, only direction matters). Use when an agent has world coordinates rather than pan/tilt degrees. A target at the origin is rejected as a singularity; use look_at with the neutral pose instead.","inputSchema":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"},"hold_ms":{"type":"integer"}},"required":["x","y","z"]}},"#,
     r#"{"name":"speak","description":"Play a baked phrase or chirp through the speaker.","inputSchema":{"type":"object","properties":{"phrase":{"type":"string"},"locale":{"type":"string"}},"required":["phrase"]}},"#,
     r#"{"name":"play_motion","description":"Play a canonical one-shot motion preset. Vocabulary: greet, nod, shake, laugh. Routed through the same dance-player path as POST /dance.","inputSchema":{"type":"object","properties":{"motion":{"type":"string"}},"required":["motion"]}},"#,
     r#"{"name":"push_toast","description":"Push a short on-screen toast band with warn or error severity. Requires behavior.toast_overlay_enabled in STACKCHAN.RON for the band to actually render. Three-second TTL.","inputSchema":{"type":"object","properties":{"level":{"type":"string","enum":["warn","error"]},"message":{"type":"string"}},"required":["level"]}},"#,
     r#"{"name":"start_listen","description":"Open a listen window: queue an acknowledge chirp, set Attention::Listening, arm the Ear decorator. Default 3000 ms.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
     r#"{"name":"enter_pairing","description":"Open an ESP-NOW pairing window for the configured duration so an external remote can register.","inputSchema":{"type":"object","properties":{"duration_ms":{"type":"integer"}}}},"#,
+    r#"{"name":"enter_thinking","description":"Show the thought-bubble decorator on the avatar's face for a hold window. Use when the host is processing on the avatar's behalf and wants the avatar to visibly read as 'thinking'. A subsequent set_emotion call clears the hold as a side effect; alternatively call exit_thinking explicitly. Default 15000 ms.","inputSchema":{"type":"object","properties":{"hold_ms":{"type":"integer"}}}},"#,
+    r#"{"name":"exit_thinking","description":"Release any active thinking-bubble hold without changing emotion. Symmetric counterpart to enter_thinking; pairs with set_emotion as the two ways to clear the bubble.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"set_volume","description":"Set the speaker volume in percent (0..=100). Persists to STACKCHAN.RON; survives reboot.","inputSchema":{"type":"object","properties":{"level":{"type":"integer","minimum":0,"maximum":100}},"required":["level"]}},"#,
     r#"{"name":"set_mute","description":"Mute or unmute the speaker without losing the persisted volume level. Persists to STACKCHAN.RON.","inputSchema":{"type":"object","properties":{"muted":{"type":"boolean"}},"required":["muted"]}},"#,
     r#"{"name":"create_reminder","description":"Schedule a baked phrase to play in N seconds. Returns the reminder id. Runtime-only — does not survive reboot.","inputSchema":{"type":"object","properties":{"fire_in_secs":{"type":"integer","minimum":1,"maximum":432000},"phrase":{"type":"string"}},"required":["fire_in_secs","phrase"]}},"#,
@@ -649,7 +648,8 @@ pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"name":"take_photo","description":"Trigger the camera to capture the next frame and write it to /sd/CAPTURE.565. The frame is then fetchable via GET /camera/snapshot as raw 320x240 RGB565 big-endian bytes (X-Frame-Format / X-Frame-Width / X-Frame-Height response headers describe the layout). Returns the snapshot URL and dimensions.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"sleep","description":"Enter sleep mode: eyes shut, head limp, LED ring dark, audio TX paused. Wake via the wake tool, any touch on the screen or body-touch pads, or the side power button. Sleep state resets on reboot.","inputSchema":{"type":"object","properties":{}}},"#,
     r#"{"name":"wake","description":"Exit sleep mode and resume the live face / head / LED state.","inputSchema":{"type":"object","properties":{}}},"#,
-    r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}}"#,
+    r#"{"name":"get_state","description":"Return the current avatar snapshot (emotion, mood, head pose, decorator, battery, Wi-Fi, audio).","inputSchema":{"type":"object","properties":{}}},"#,
+    r#"{"name":"reset","description":"Release any active emotion / look-at / listening / thinking holds and return to autonomous behavior. Distinct from sleep — the avatar stays awake; it just lets go of operator-set state.","inputSchema":{"type":"object","properties":{}}}"#,
     "]}",
 );
 

@@ -1292,6 +1292,17 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "look_at_point" => match json::parse_look_at_point(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("look-at-point enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         "speak" => match json::parse_speak(arguments) {
             Ok(cmd) => {
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
@@ -1353,6 +1364,39 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 }
                 REMOTE_COMMAND_SIGNAL.signal(cmd);
                 render_success(id, &render_tool_text_result("pairing window opened"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "enter_thinking" => match json::parse_enter_thinking(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("thinking window opened"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "exit_thinking" => match json::parse_exit_thinking(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("thinking hold released"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "reset" => match json::parse_reset(arguments) {
+            Ok(cmd) => {
+                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                render_success(id, &render_tool_text_result("holds released"))
             }
             Err(e) => render_error(
                 Some(id),
