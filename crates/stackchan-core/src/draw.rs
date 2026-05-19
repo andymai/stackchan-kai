@@ -1336,6 +1336,13 @@ mod tests {
     fn face_with_each_decorator_routes_correctly() {
         // Cover the draw_decorator match: every Decorator variant runs
         // its respective draw_*(target) leaf without panic.
+        //
+        // NB: this array must stay in lockstep with draw_decorator's
+        // match arms. The compiler enforces exhaustiveness on the match
+        // itself (intra-crate `non_exhaustive` doesn't apply); this
+        // array doesn't get the same treatment, so adding a Decorator
+        // variant requires adding it here too — otherwise the new
+        // variant silently goes untested.
         for kind in [
             Decorator::Heart,
             Decorator::Sweat,
