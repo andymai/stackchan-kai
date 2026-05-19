@@ -345,4 +345,36 @@ mod tests {
         );
         assert!((mid - 0.5).abs() < 0.01);
     }
+
+    #[test]
+    fn envelope_handles_degenerate_window_widths() {
+        // attack_ms = 0, elapsed = 0: `elapsed_ms < attack_ms` is
+        // 0 < 0 (false), so the function falls into the decay branch
+        // with `decay_elapsed = 0` — yielding 1.0 from 1 - 0/100.
+        // attack_ms = 50, elapsed = 50, decay_ms = 0: same fall-through
+        // into the decay branch; `decay_elapsed >= decay_ms` is 0 >= 0
+        // (true), short-circuiting to 0.0 before the would-be divide.
+        assert!((envelope(0, 0, 100) - 1.0).abs() < f32::EPSILON);
+        assert!(envelope(50, 50, 0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <HeadFromIntent as Default>::default();
+        let from_new = HeadFromIntent::new();
+        // Both start with no anchored recoil and no prior loud frame.
+        assert_eq!(from_default.started_at, from_new.started_at);
+        assert_eq!(from_default.was_hearing_loud, from_new.was_hearing_loud);
+    }
+
+    #[test]
+    fn meta_declares_motion_phase_and_head_pose_write() {
+        let m = HeadFromIntent::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "HeadFromIntent");
+        assert_eq!(meta.phase, Phase::Motion);
+        assert_eq!(meta.priority, 30);
+        assert_eq!(meta.writes, &[Field::HeadPose]);
+        assert_eq!(meta.reads, &[Field::Intent, Field::HeadPose]);
+    }
 }
