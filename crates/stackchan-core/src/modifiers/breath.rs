@@ -248,6 +248,9 @@ mod tests {
         let from_new = Breath::new();
         assert_eq!(from_default.cycle_ms, from_new.cycle_ms);
         assert_eq!(from_default.amplitude_px, from_new.amplitude_px);
+        // last_offset_px feeds the diff-and-undo path on the first
+        // tick — a stale value would silently corrupt the first delta.
+        assert_eq!(from_default.last_offset_px, from_new.last_offset_px);
     }
 
     #[test]
@@ -265,7 +268,18 @@ mod tests {
                 Field::MouthCenter,
             ],
         );
-        assert!(meta.reads.contains(&Field::BreathDepthScale));
-        assert!(meta.reads.contains(&Field::Attention));
+        // Full reads pin — Breath reads the breath-depth scale, the
+        // attention state (to slow during engagement), and the three
+        // feature centres it then writes back to.
+        assert_eq!(
+            meta.reads,
+            &[
+                Field::BreathDepthScale,
+                Field::Attention,
+                Field::LeftEyeCenter,
+                Field::RightEyeCenter,
+                Field::MouthCenter,
+            ],
+        );
     }
 }
