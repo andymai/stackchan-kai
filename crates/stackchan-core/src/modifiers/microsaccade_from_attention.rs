@@ -351,7 +351,11 @@ mod tests {
             m_b.update(&mut e_b);
             assert_eq!(
                 e_a.face.left_eye.center, e_b.face.left_eye.center,
-                "same-seed instances diverged at t={ms}"
+                "same-seed left eyes diverged at t={ms}"
+            );
+            assert_eq!(
+                e_a.face.right_eye.center, e_b.face.right_eye.center,
+                "same-seed right eyes diverged at t={ms}"
             );
         }
     }
@@ -425,9 +429,11 @@ mod tests {
         );
     }
 
-    /// `rand_offset(0)` must return 0 — the amplitude-clamp would
-    /// otherwise produce a divide-by-zero or NaN-like degenerate
-    /// outcome if a future caller passed a zero or negative cap.
+    /// `rand_offset(0)` must return 0 — boundary guard for any future
+    /// caller that passes a zero or negative amplitude cap. The current
+    /// implementation already handles this via `saturating_add(1)` on
+    /// the span, but pinning the contract here keeps a future
+    /// algorithmic refactor honest.
     #[test]
     fn rand_offset_zero_max_yields_zero() {
         let mut m = MicrosaccadeFromAttention::new();
