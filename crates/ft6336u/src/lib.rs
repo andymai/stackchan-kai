@@ -473,4 +473,28 @@ mod tests {
             vec![Event::WriteRead(CORES3_ADDRESS, REG_G_MODE, TOUCH_READ_LEN)]
         );
     }
+
+    #[test]
+    fn into_inner_returns_underlying_bus() {
+        // into_inner consumes the driver and yields the bus back —
+        // useful for single-task firmware that wants to reuse the bus
+        // for another peripheral after touch init is done.
+        let harness = Harness::new();
+        let bus = MockI2c { harness: &harness };
+        let touch = Ft6336u::new(bus);
+        let _bus_back: MockI2c<'_> = touch.into_inner();
+        // Pure type-level check — compiles iff the inferred type
+        // matches the original bus.
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // routes the bus error through this. Mock uses Infallible so
+        // the runtime path can't fire; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+        }
+    }
 }
