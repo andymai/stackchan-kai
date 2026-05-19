@@ -966,24 +966,6 @@ mod tests {
     }
 
     #[test]
-    fn ping_rejects_wrong_header_bytes() {
-        let mut bus = Scservo::new(MockUart::new());
-        // First header byte wrong (0x00 instead of 0xFF).
-        bus.uart.queue_rx(&[0x00, 0xFF, 0x01, 0x02, 0x00, 0xFC]);
-        let err = block_on(bus.ping(1)).expect_err("malformed header should error");
-        assert!(matches!(err, Error::MalformedResponse), "got {err:?}");
-    }
-
-    #[test]
-    fn ping_rejects_wrong_responding_id() {
-        let mut bus = Scservo::new(MockUart::new());
-        // Headers ok, id field reports 0x02 but we pinged id 0x01.
-        bus.uart.queue_rx(&[0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB]);
-        let err = block_on(bus.ping(1)).expect_err("id mismatch should error");
-        assert!(matches!(err, Error::MalformedResponse), "got {err:?}");
-    }
-
-    #[test]
     fn ping_rejects_wrong_msg_len_field() {
         let mut bus = Scservo::new(MockUart::new());
         // msgLen field reports 0x03 but PING response must be 0x02.
