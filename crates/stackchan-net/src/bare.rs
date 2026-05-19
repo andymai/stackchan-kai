@@ -1123,4 +1123,340 @@ mod tests {
         let err = parse_ron_bare(s).unwrap_err();
         assert!(matches!(err, ConfigError::InvalidCountry(_)), "got {err:?}");
     }
+
+    // ============================================================
+    // Per-block error-path coverage. Every block's "unknown field"
+    // arm and "expected ',' or ')' in <block>" arm were 0-execution.
+    // ============================================================
+
+    /// Shared base: just enough of the schema to satisfy required
+    /// fields. Append more block text and pass through `parse_ron_bare`.
+    fn with_base(extra: &str) -> String {
+        format!(
+            r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                {extra}
+            )
+            "#
+        )
+    }
+
+    fn assert_bare_parse_err(input: &str) -> String {
+        match parse_ron_bare(input).unwrap_err() {
+            ConfigError::BareParse(msg) => msg,
+            other => panic!("expected BareParse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_top_level_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+                surprise: "no",
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unknown top-level field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_missing_comma_between_top_level_fields() {
+        // No comma between mdns and time blocks.
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" )
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("expected ',' or ')'"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_wifi_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US", what: "x" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unknown wifi field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_mdns_field() {
+        let s = with_base("mdns_extra: ()");
+        // Should error on missing colon since mdns_extra isn't a block,
+        // but the test should at least fail parsing.
+        let result = parse_ron_bare(&s);
+        assert!(result.is_err());
+        // Direct mdns body case.
+        let s2 = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h", what: "x" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s2);
+        assert!(msg.contains("unknown mdns field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_time_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"], oops: "no" ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unknown time field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_auth_field() {
+        let s = with_base(r#"auth: ( token: "t", oops: "no" ),"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown auth field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_redacted_auth_token() {
+        // The bare parser refuses the redacted sentinel — the
+        // round-trip path that emits ●●● expects the operator to
+        // type the actual token back. Pin that protection.
+        let redacted = TOKEN_REDACTED;
+        let s = format!(
+            r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+                auth: ( token: "{redacted}" ),
+            )
+            "#
+        );
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("redacted sentinel"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_audio_field() {
+        let s = with_base("audio: ( volume_pct: 50, muted: false, mystery: 1 ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown audio field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_tracker_field() {
+        let s = with_base("tracker: ( fov_h_deg: 60.0, oops: 1 ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown tracker field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_esp_now_field() {
+        let s = with_base("esp_now: ( enabled: false, oops: 1 ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown esp_now field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_behavior_field() {
+        let s = with_base("behavior: ( soliloquy_enabled: false, oops: 1 ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown behavior field"), "got {msg}");
+    }
+
+    // ============================================================
+    // Optional<u8> + literal parser error paths.
+    // ============================================================
+
+    #[test]
+    fn parses_esp_now_channel_some() {
+        let s = with_base(
+            r#"esp_now: ( enabled: true, pmk_hex: "00000000000000000000000000000000", peer_mac: "00:00:00:00:00:00", lmk_hex: "00000000000000000000000000000000", channel: Some(11), tx_rate_hz: 10 ),"#,
+        );
+        let cfg = parse_ron_bare(&s).unwrap();
+        assert_eq!(cfg.esp_now.channel, Some(11));
+    }
+
+    #[test]
+    fn parses_esp_now_channel_none() {
+        let s = with_base(
+            r#"esp_now: ( enabled: true, pmk_hex: "00000000000000000000000000000000", peer_mac: "00:00:00:00:00:00", lmk_hex: "00000000000000000000000000000000", channel: None, tx_rate_hz: 10 ),"#,
+        );
+        let cfg = parse_ron_bare(&s).unwrap();
+        assert_eq!(cfg.esp_now.channel, None);
+    }
+
+    #[test]
+    fn rejects_optional_u8_other_token() {
+        // Anything that's not `Some(...)` or `None` errors clearly.
+        let s = with_base(
+            r#"esp_now: ( enabled: true, pmk_hex: "00000000000000000000000000000000", peer_mac: "00:00:00:00:00:00", lmk_hex: "00000000000000000000000000000000", channel: Maybe(7), tx_rate_hz: 10 ),"#,
+        );
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected Some(...) or None"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_esp_now_channel_value_out_of_u8_range() {
+        let s = with_base(
+            r#"esp_now: ( enabled: true, pmk_hex: "00000000000000000000000000000000", peer_mac: "00:00:00:00:00:00", lmk_hex: "00000000000000000000000000000000", channel: Some(999), tx_rate_hz: 10 ),"#,
+        );
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("u8 literal out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_u32_non_digit() {
+        let s = with_base("behavior: ( auto_torque_release_ms: notanumber ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected unsigned integer"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_i8_out_of_range() {
+        let s = with_base("behavior: ( wake_word_threshold: 999 ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("i8 literal out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_i8_non_digit() {
+        let s = with_base("behavior: ( wake_word_threshold: oops ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected signed integer"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_non_bool_for_bool_field() {
+        let s = with_base("behavior: ( soliloquy_enabled: yes ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected boolean literal"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_string_list_missing_separator() {
+        // sntp_servers has two elements with no comma between.
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a" "b"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("expected ',' or ']' in list"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unterminated_string_literal() {
+        // String literal that never closes.
+        let s = "( wifi: ( ssid: \"unterminated";
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unterminated string literal"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_dangling_backslash() {
+        let s = "( wifi: ( ssid: \"oops\\";
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("dangling backslash"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unsupported_escape() {
+        let s = r#"
+            (
+                wifi: ( ssid: "bad\xescape", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unsupported escape"), "got {msg}");
+    }
+
+    #[test]
+    fn supports_newline_and_tab_escapes() {
+        // \n and \t are the supported escapes; pin that they decode.
+        let s = r#"
+            (
+                wifi: ( ssid: "line\none\ttab", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["a"] ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert_eq!(cfg.wifi.ssid, "line\none\ttab");
+    }
+
+    #[test]
+    fn rejects_identifier_starting_with_digit() {
+        let s = "( 1bad: 0 )";
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("expected identifier"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_eof_when_identifier_expected() {
+        let s = "(";
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("expected identifier, got EOF") || msg.contains("expected identifier"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_open_paren() {
+        // Top-level isn't a tuple struct.
+        let s = "wifi: ()";
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("expected char"), "got {msg}");
+    }
+
+    // ============================================================
+    // Renderer: esp_now Some(channel) emission path.
+    // ============================================================
+
+    #[test]
+    fn renders_esp_now_some_channel() {
+        // The Some-channel renderer arm was uncovered. Build a config
+        // with channel = Some(7) and confirm the rendered string
+        // includes `channel: Some(7),`.
+        let mut cfg = parse_ron_bare(FIXTURE).unwrap();
+        cfg.esp_now.channel = Some(7);
+        let rendered = render_ron_bare(&cfg).unwrap();
+        assert!(
+            rendered.contains("channel: Some(7),"),
+            "rendered = {rendered}"
+        );
+    }
+
+    #[test]
+    fn renders_escapes_in_string_literals() {
+        // push_string_literal's backslash + quote arms — neither was
+        // exercised by FIXTURE values. Round-trip a config whose
+        // ssid contains both kinds of escape.
+        let mut cfg = parse_ron_bare(FIXTURE).unwrap();
+        cfg.wifi.ssid = "back\\slash and \"quote\"".to_string();
+        let rendered = render_ron_bare(&cfg).unwrap();
+        assert!(rendered.contains(r#""back\\slash and \"quote\"""#));
+        let reparsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(reparsed.wifi.ssid, "back\\slash and \"quote\"");
+    }
 }
