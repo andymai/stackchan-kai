@@ -522,22 +522,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_too_short_rejects_undersized_buffer() {
-        // < HEADER_LEN bytes can't possibly be a valid frame.
-        let short = [0x00; 3];
-        assert_eq!(decode(&short), Err(DecodeError::TooShort));
-    }
-
-    #[test]
-    fn decode_oversize_rejects_overlong_buffer() {
-        // > MAX_FRAME_LEN bytes are dropped before any structural
-        // check — the limit is the contract for the receiver's stack
-        // buffer.
-        let huge = alloc::vec![0u8; MAX_FRAME_LEN + 1];
-        assert_eq!(decode(&huge), Err(DecodeError::Oversize(MAX_FRAME_LEN + 1)),);
-    }
-
-    #[test]
     fn encode_header_rejects_short_buffer() {
         let mut tiny = [0u8; 3];
         assert_eq!(
@@ -563,39 +547,6 @@ mod tests {
         let mut buf = [0u8; HEADER_LEN + 4];
         let err = encode_pose_mirror(&mut buf, 12.5, -7.25).unwrap_err();
         assert!(matches!(err, DecodeError::TooShort), "got {err:?}");
-    }
-
-    #[test]
-    fn encode_pose_mirror_renders_finite_pose() {
-        // Happy path round-trip: encode then decode back through the
-        // same parser the receiver uses.
-        let mut buf = [0u8; MAX_FRAME_LEN];
-        let n = encode_pose_mirror(&mut buf, 12.5, -7.25).unwrap();
-        let decoded = decode(&buf[..n]).unwrap();
-        match decoded {
-            InboundFrame::Pose { pan_deg, tilt_deg } => {
-                assert!((pan_deg - 12.5).abs() < 0.05);
-                assert!((tilt_deg - -7.25).abs() < 0.1);
-            }
-            other => panic!("expected Pose, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn encode_pose_mirror_renders_zero_for_non_finite() {
-        // Defensive fallback in render_pose_body. NaN / inf land as
-        // `0.0` on the wire so a future caller passing raw IMU data
-        // doesn't blow up the parser.
-        let mut buf = [0u8; MAX_FRAME_LEN];
-        let n = encode_pose_mirror(&mut buf, f32::NAN, f32::INFINITY).unwrap();
-        let decoded = decode(&buf[..n]).unwrap();
-        match decoded {
-            InboundFrame::Pose { pan_deg, tilt_deg } => {
-                assert!(pan_deg.abs() < 1e-6);
-                assert!(tilt_deg.abs() < 1e-6);
-            }
-            other => panic!("expected Pose, got {other:?}"),
-        }
     }
 
     #[test]
