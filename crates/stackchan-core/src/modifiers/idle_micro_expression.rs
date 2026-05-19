@@ -350,4 +350,30 @@ mod tests {
         m.interval_max_ms = 500; // pathological: max < min
         assert_eq!(m.next_delay_ms(), 1_000);
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <IdleMicroExpression as Default>::default();
+        let from_new = IdleMicroExpression::new();
+        assert_eq!(from_default.interval_min_ms, from_new.interval_min_ms);
+        assert_eq!(from_default.interval_max_ms, from_new.interval_max_ms);
+        assert_eq!(from_default.max_mouth_y_px, from_new.max_mouth_y_px);
+        assert_eq!(from_default.rng_state, from_new.rng_state);
+        // Exhaustive — including the scheduler state, so a future
+        // refactor that swaps in #[derive(Default)] with different
+        // initial values can't pass silently.
+        assert_eq!(from_default.next_fire_at, from_new.next_fire_at);
+        assert_eq!(from_default.last_y_offset, from_new.last_y_offset);
+    }
+
+    #[test]
+    fn meta_declares_expression_phase_and_mouth_writes() {
+        let m = IdleMicroExpression::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "IdleMicroExpression");
+        assert_eq!(meta.phase, Phase::Expression);
+        assert_eq!(meta.priority, 1);
+        assert_eq!(meta.reads, &[Field::MouthCenter]);
+        assert_eq!(meta.writes, &[Field::MouthCenter]);
+    }
 }
