@@ -37,7 +37,7 @@
 //! # }
 //! ```
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
 use embedded_hal_async::i2c::I2c;
@@ -231,6 +231,18 @@ fn decode_touch(buf: [u8; TOUCH_READ_LEN]) -> TouchReport {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test scaffolding: Infallible bus error makes unwrap() sound"
+)]
+#[allow(
+    clippy::future_not_send,
+    reason = "test mocks hold RefCell for event recording; single-threaded block_on runs them"
+)]
+#[allow(
+    clippy::panic,
+    reason = "test scaffolding: mock panics if the driver issues an unexpected op shape"
+)]
 mod tests {
     use super::*;
 
@@ -284,5 +296,181 @@ mod tests {
         let report = decode_touch(buf);
         assert_eq!(report.fingers, 1);
         assert_eq!(report.first, Some((0x0005, 0x0007)));
+    }
+
+    #[test]
+    fn max_12_bit_coordinates_decode_correctly() {
+        // (0xFFF, 0xFFF) is the corner of the 12-bit coordinate space.
+        // High nibble of P1_XH/P1_YH = 0xF, low byte = 0xFF. Pins the
+        // shift+OR composition against a regression that confused the
+        // mask (0x0F) with the multiplier (<< 8).
+        let mut buf = [0u8; TOUCH_READ_LEN];
+        buf[OFFSET_TD_STATUS] = 0x01;
+        buf[OFFSET_P1_XH] = 0x0F;
+        buf[OFFSET_P1_XL] = 0xFF;
+        buf[OFFSET_P1_YH] = 0x0F;
+        buf[OFFSET_P1_YL] = 0xFF;
+        let report = decode_touch(buf);
+        assert_eq!(report.first, Some((0x0FFF, 0x0FFF)));
+    }
+
+    #[test]
+    fn all_ones_burst_decodes_to_fingers_15() {
+        // Unpowered / wedged chips return 0xFF for every byte on the
+        // bus. The decoder reports fingers=15 and coordinates derived
+        // from the masked nibbles. The driver docs promise callers
+        // can filter on fingers > 2 as a sanity check; pinning this
+        // behaviour so it stays a stable failure-mode signal rather
+        // than being silently normalised away.
+        let buf = [0xFF; TOUCH_READ_LEN];
+        let report = decode_touch(buf);
+        assert_eq!(report.fingers, 15);
+        // Coords are still decoded from the masked nibbles.
+        assert_eq!(report.first, Some((0x0FFF, 0x0FFF)));
+        assert!(report.is_touched(), "fingers > 0 still counts as touched");
+    }
+
+    #[test]
+    fn touch_report_point_is_an_alias_for_first() {
+        // Documented alias — pinning equivalence so a future
+        // divergence (e.g. point() applies an axis swap) doesn't
+        // silently happen without a corresponding test update.
+        let report = TouchReport {
+            fingers: 1,
+            first: Some((123, 456)),
+        };
+        assert_eq!(report.point(), report.first);
+
+        let empty = TouchReport::default();
+        assert_eq!(empty.point(), None);
+        assert!(!empty.is_touched());
+    }
+
+    // --- I²C-path coverage via the shared MockI2c pattern ---
+
+    use core::cell::RefCell;
+    use core::future::Future;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use embedded_hal_async::i2c::{Operation, SevenBitAddress};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Event {
+        WriteRead(u8, u8, usize),
+    }
+
+    struct Harness {
+        events: RefCell<Vec<Event>>,
+        read_responses: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self {
+                events: RefCell::new(Vec::new()),
+                read_responses: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn queue_read(&self, bytes: Vec<u8>) {
+            self.read_responses.borrow_mut().push(bytes);
+        }
+
+        fn events(&self) -> Vec<Event> {
+            self.events.borrow().clone()
+        }
+    }
+
+    struct MockI2c<'a> {
+        harness: &'a Harness,
+    }
+
+    impl embedded_hal_async::i2c::ErrorType for MockI2c<'_> {
+        type Error = core::convert::Infallible;
+    }
+
+    impl embedded_hal_async::i2c::I2c for MockI2c<'_> {
+        async fn transaction(
+            &mut self,
+            address: SevenBitAddress,
+            operations: &mut [Operation<'_>],
+        ) -> Result<(), Self::Error> {
+            match operations {
+                [Operation::Write(w), Operation::Read(r)] => {
+                    assert_eq!(w.len(), 1, "write_read prelude must be a single reg byte");
+                    let mut responses = self.harness.read_responses.borrow_mut();
+                    assert!(!responses.is_empty(), "no canned read response queued");
+                    let response = responses.remove(0);
+                    drop(responses);
+                    assert_eq!(
+                        response.len(),
+                        r.len(),
+                        "canned response length mismatch (queued {} vs requested {})",
+                        response.len(),
+                        r.len()
+                    );
+                    r.copy_from_slice(&response);
+                    self.harness
+                        .events
+                        .borrow_mut()
+                        .push(Event::WriteRead(address, w[0], r.len()));
+                }
+                other => panic!("unexpected operation shape: {} ops", other.len()),
+            }
+            Ok(())
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut fut = pin!(future);
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    #[test]
+    fn read_vendor_id_issues_single_byte_read_at_0xa8() {
+        let harness = Harness::new();
+        harness.queue_read(vec![VENDOR_ID_FOCALTECH]);
+        let mut bus = MockI2c { harness: &harness };
+        let mut touch = Ft6336u::new(&mut bus);
+        let id = block_on(touch.read_vendor_id()).unwrap();
+        assert_eq!(id, VENDOR_ID_FOCALTECH);
+        assert_eq!(
+            harness.events(),
+            vec![Event::WriteRead(CORES3_ADDRESS, REG_VENDOR_ID, 1)]
+        );
+    }
+
+    #[test]
+    fn read_touch_does_one_seven_byte_bulk_read_from_g_mode() {
+        // Pins the wire format: a single atomic 7-byte read starting
+        // at REG_G_MODE (0x00). A future "read TD_STATUS, then read
+        // P1 block" refactor would split this into two transactions
+        // and surface here, because non-atomic reads risk a touch
+        // event landing between the two and reporting stale coords
+        // against a fresh count.
+        let harness = Harness::new();
+        let mut response = vec![0u8; TOUCH_READ_LEN];
+        response[OFFSET_TD_STATUS] = 0x01;
+        response[OFFSET_P1_XH] = 0x01;
+        response[OFFSET_P1_XL] = 0x00;
+        response[OFFSET_P1_YH] = 0x00;
+        response[OFFSET_P1_YL] = 0x80;
+        harness.queue_read(response);
+        let mut bus = MockI2c { harness: &harness };
+        let mut touch = Ft6336u::new(&mut bus);
+        let report = block_on(touch.read_touch()).unwrap();
+        assert_eq!(report.fingers, 1);
+        assert_eq!(report.first, Some((0x0100, 0x0080)));
+        assert_eq!(
+            harness.events(),
+            vec![Event::WriteRead(CORES3_ADDRESS, REG_G_MODE, TOUCH_READ_LEN)]
+        );
     }
 }
