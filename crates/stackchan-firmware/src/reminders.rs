@@ -4,7 +4,7 @@
 //! pairs a fire deadline (monotonic [`Instant`]) with a phrase to play
 //! when the deadline arrives. A 1 Hz embassy task drains due entries
 //! and dispatches them through the same
-//! [`REMOTE_COMMAND_SIGNAL`](crate::net::http::REMOTE_COMMAND_SIGNAL)
+//! [`REMOTE_COMMAND_SIGNAL`]
 //! that HTTP / MCP / ESP-NOW use, so the audio path stays uniform.
 //!
 //! ## Why monotonic, not wall-clock
@@ -165,7 +165,7 @@ fn drain_due(now: Instant) -> Vec<Reminder, MAX_REMINDERS> {
     })
 }
 
-/// Embassy task — drains due reminders at [`REMINDER_TICK`] cadence
+/// Embassy task — drains due reminders at `REMINDER_TICK` cadence
 /// and dispatches each through `REMOTE_COMMAND_SIGNAL` as a
 /// [`RemoteCommand::Speak`]. The signal is single-waker, so a burst
 /// of simultaneously-due reminders fires sequentially with one tick

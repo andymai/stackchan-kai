@@ -11,7 +11,7 @@
 //!
 //! ## Hold duration
 //!
-//! The leader's [`PoseAnnouncer`] beats at most every
+//! The leader's `PoseAnnouncer` beats at most every
 //! [`POSE_HEARTBEAT_INTERVAL_MS`] (1 s) even when stationary, so
 //! a 1.5 s hold guarantees the follower never falls back to
 //! autonomy mid-stream from a single dropped multicast packet.

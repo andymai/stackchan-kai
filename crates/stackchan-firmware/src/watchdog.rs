@@ -3,7 +3,7 @@
 //!
 //! Each periodic producer task (audio RMS loop, IMU, ambient, power,
 //! head) calls [`Channel::beat`] once per loop iteration. Every
-//! [`WATCHDOG_PERIOD_MS`], the watchdog task reads each counter, diffs
+//! `WATCHDOG_PERIOD_MS`, the watchdog task reads each counter, diffs
 //! against the previous poll, and emits a `defmt::warn!` if the actual
 //! delta falls below the channel's expected minimum.
 //!
@@ -31,7 +31,7 @@ const WATCHDOG_PERIOD_MS: u64 = 5_000;
 /// One monitored producer task.
 ///
 /// Cadence-aware: `min_per_window` is the smallest beat count we accept
-/// inside a [`WATCHDOG_PERIOD_MS`] poll window before we consider the
+/// inside a `WATCHDOG_PERIOD_MS` poll window before we consider the
 /// channel silent. Set conservatively (~50% of nominal) to absorb
 /// scheduler jitter without false-positives.
 pub struct Channel {
@@ -42,7 +42,7 @@ pub struct Channel {
     /// Counter value at the previous watchdog poll. The watchdog task
     /// swaps this in `check_and_reset`.
     last_polled: AtomicU32,
-    /// Minimum beats expected per [`WATCHDOG_PERIOD_MS`] window.
+    /// Minimum beats expected per `WATCHDOG_PERIOD_MS` window.
     min_per_window: u32,
 }
 
@@ -86,7 +86,7 @@ impl Channel {
 //   power  @ 1000 ms     → 5 nominal    → min 3
 //   head   @ 20 ms       → 250 nominal  → min 150
 
-/// Audio RX-RMS loop. Beats once per published [`AudioRms`] sample
+/// Audio RX-RMS loop. Beats once per published `AudioRms` sample
 /// (~one per 33 ms window).
 pub static AUDIO: Channel = Channel::new("audio", 75);
 /// BMI270 IMU polling loop. Beats once per 10 ms iteration.
@@ -103,7 +103,7 @@ pub static HEAD: Channel = Channel::new("head", 150);
 pub struct TaskHealth {
     /// Channel name. Stable identifier the dashboard renders.
     pub name: &'static str,
-    /// Beats observed in the last [`WATCHDOG_PERIOD_MS`] window.
+    /// Beats observed in the last `WATCHDOG_PERIOD_MS` window.
     pub delta: u32,
     /// Minimum acceptable beats per window — below this is stale.
     pub min_per_window: u32,

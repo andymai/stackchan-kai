@@ -24,15 +24,15 @@
 //! 7. Run RX + TX loops concurrently inside the same embassy task via
 //!    `embassy_futures::join`:
 //!    - RX (`run_rms_loop`): pop DMA samples, compute linear RMS over
-//!      each [`RMS_WINDOW_SAMPLES`]-sample window, normalise against
+//!      each `RMS_WINDOW_SAMPLES`-sample window, normalise against
 //!      full-scale i16, publish on [`AUDIO_RMS_SIGNAL`].
-//!    - TX (`run_tx_loop`): play queued [`AudioClip`]s back-to-back,
+//!    - TX (`run_tx_loop`): play queued `AudioClip`s back-to-back,
 //!      filling with digital silence between/after clips so the
 //!      AW88298 stays clock-locked. Higher-level code (low-battery
 //!      alerts, pickup chirps, startle chirps, etc.) enqueues clips
-//!      via [`try_enqueue_clip`] and the typed
-//!      [`try_enqueue_wake_chirp`] / [`try_enqueue_pickup_chirp`] /
-//!      [`try_enqueue_startle_chirp`] / [`try_enqueue_low_battery_alert`]
+//!      via `try_enqueue_clip` and the typed
+//!      `try_enqueue_wake_chirp` / `try_enqueue_pickup_chirp` /
+//!      `try_enqueue_startle_chirp` / `try_enqueue_low_battery_alert`
 //!      helpers.
 //!
 //! This matches esp-bsp's ordering in `bsp_audio_codec_microphone_init`:
@@ -483,12 +483,12 @@ pub const AUDIO_FRAME_MAX_SUBSCRIBERS: usize = 4;
 
 /// Maximum simultaneous publishers on [`AUDIO_FRAME_PUBSUB`].
 ///
-/// Only [`run_rms_loop`] produces frames; pinned at `1` to make the
+/// Only `run_rms_loop` produces frames; pinned at `1` to make the
 /// single-producer contract explicit at the type level and catch an
 /// accidental second publisher at compile time.
 pub const AUDIO_FRAME_MAX_PUBLISHERS: usize = 1;
 
-/// One PCM capture frame published by [`run_rms_loop`].
+/// One PCM capture frame published by `run_rms_loop`.
 ///
 /// Mono 16-bit signed samples at [`SAMPLE_RATE_HZ`]. Each frame is
 /// `AUDIO_FRAME_SAMPLES` long; consumers reassemble a continuous
@@ -506,7 +506,7 @@ pub struct AudioFrame {
     pub sequence: u32,
 }
 
-/// PCM capture pub-sub — single-publisher ([`run_rms_loop`]) /
+/// PCM capture pub-sub — single-publisher (`run_rms_loop`) /
 /// multi-subscriber.
 ///
 /// Each subscriber gets its own read cursor; a lagging subscriber
@@ -537,7 +537,7 @@ pub static AUDIO_FRAME_CAPTURED: AtomicU32 = AtomicU32::new(0);
 /// `true` while the TX feeder has a clip in flight.
 ///
 /// Set / cleared once per DMA push (~32 ms cadence) inside
-/// [`run_tx_loop`]. The render task reads this each frame and gates
+/// `run_tx_loop`. The render task reads this each frame and gates
 /// `entity.perception.audio_rms` to `None` while playing — without
 /// the gate, the speaker output would re-trigger sound-reactive
 /// modifiers (`EmotionFromVoice` / `IntentFromLoud`) on its own chirps.

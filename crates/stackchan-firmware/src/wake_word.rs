@@ -24,7 +24,7 @@
 //! When the output score crosses the operator-supplied threshold
 //! (`behavior.wake_word_threshold`, default `100`), the task
 //! signals [`crate::net::http::REMOTE_COMMAND_SIGNAL`] with
-//! [`RemoteCommand::StartListen`] for [`POST_WAKE_CAPTURE_MS`]. The
+//! [`RemoteCommand::StartListen`] for `POST_WAKE_CAPTURE_MS`. The
 //! render loop drains the signal and applies the same effects as
 //! an operator-initiated `POST /listen`: trigger the sidecar PCM
 //! capture *and* hand the variant to the modifier graph so the

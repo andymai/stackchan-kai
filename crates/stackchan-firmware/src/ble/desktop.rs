@@ -76,7 +76,7 @@ impl DesktopSession {
     /// through the parser, and publish each parsed [`Inbound`] onto
     /// [`DESKTOP_INBOUND`].
     ///
-    /// Parse failures are counted in [`Self::parse_failures`] and
+    /// Parse failures are counted in `Self::parse_failures` and
     /// logged at `warn` level. The connection is NOT torn down on
     /// parse failure: per spec the desktop is forward-compatible
     /// authority over the schema, and the right firmware response

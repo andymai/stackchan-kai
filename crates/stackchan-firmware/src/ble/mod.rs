@@ -33,7 +33,7 @@
 //!
 //! Pairing: LE Secure Connections with `IoCapabilities::DisplayOnly`.
 //! On the first `PassKeyDisplay` event the 6-digit passkey is latched
-//! into [`PASSKEY_DISPLAY`] and the render task overlays it on the
+//! into `PASSKEY_DISPLAY` and the render task overlays it on the
 //! LCD. Bonds are persisted to the SD card via [`bonds`] so a
 //! re-paired peer skips the passkey dance.
 //!

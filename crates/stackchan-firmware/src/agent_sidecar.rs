@@ -229,7 +229,7 @@ impl defmt::Format for PostError {
 /// - Wait for [`PTT_TRIGGER`].
 /// - Drain pre-trigger pubsub backlog.
 /// - Accumulate frames for `duration_ms` (clamped to
-///   [`CAPTURE_DURATION_CAP_MS`]).
+///   `CAPTURE_DURATION_CAP_MS`).
 /// - POST the PCM to `sidecar_url`.
 /// - Surface the reply via toast; fire `SetEmotion` if tagged.
 ///

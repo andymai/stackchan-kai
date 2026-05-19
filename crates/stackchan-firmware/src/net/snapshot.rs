@@ -367,7 +367,7 @@ static LAST_PUBLISHED: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<Av
 ///
 /// Called once per render tick by the render task. Only publishes
 /// when the snapshot has actually changed AND
-/// [`PUBLISH_MIN_INTERVAL_MS`] has elapsed since the last publish.
+/// `PUBLISH_MIN_INTERVAL_MS` has elapsed since the last publish.
 ///
 /// Cheap when no subscribers are connected (the publisher's
 /// `publish_immediate` returns immediately if the channel has no

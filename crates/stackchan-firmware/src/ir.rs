@@ -9,7 +9,7 @@
 //! ## CoreS3 pin caveat
 //!
 //! The memory cheat-sheet doesn't list the IR receiver's GPIO, so
-//! [`IR_RX_PIN`] is a best-guess `GPIO21` — the pin most commonly used
+//! `IR_RX_PIN` is a best-guess `GPIO21` — the pin most commonly used
 //! on M5Stack boards for IR RX. Flash the firmware and, if no IR
 //! frames decode even with a working remote + `ir-bench`, update
 //! the const against the actual CoreS3 schematic.
@@ -34,7 +34,7 @@ use ir_nec::{NecCommand, Pulse};
 /// Raw NEC commands decoded from the IR receiver: IR task → render task.
 ///
 /// The render task drains via [`Signal::try_take`] each frame and calls
-/// [`stackchan_core::modifiers::EmotionFromRemote::queue`] with the
+/// `stackchan_core::modifiers::EmotionFromRemote::queue` with the
 /// `(address, command)` pair. Signal semantics (latest wins, no backlog)
 /// mean if the user mashes buttons between render ticks, only the most
 /// recent command actually acts — acceptable for an emotion-control UX.

@@ -1,7 +1,7 @@
 //! AXP2101 power-button polling task — short-tap + long-press routing.
 //!
 //! Polls the AXP2101's `IRQ_STATUS_1` at 50 ms (20 Hz) for the
-//! [`IRQ_PRESS_EDGE_BIT`] / [`IRQ_RELEASE_EDGE_BIT`] flags
+//! `IRQ_PRESS_EDGE_BIT` / `IRQ_RELEASE_EDGE_BIT` flags
 //! ([`axp2101::IRQ_PRESS_EDGE_BIT`] etc), times the gap in software,
 //! and routes the result:
 //!

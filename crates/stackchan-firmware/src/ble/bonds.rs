@@ -4,7 +4,7 @@
 //! straight into an encrypted link without re-running the passkey
 //! dance. Each successful pairing appends to the in-memory bond
 //! list trouble-host maintains; we mirror the list onto SD so the
-//! next boot can re-register them via [`Stack::add_bond_information`].
+//! next boot can re-register them via `Stack::add_bond_information`.
 //!
 //! ## Wire format
 //!
