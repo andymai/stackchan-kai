@@ -578,8 +578,8 @@ mod tests {
     #[test]
     fn sine_sequence_len_hint_skips_consumed_segments() {
         // After advancing past the first segment, len_hint should
-        // reflect only the remaining ones. Drive the sequence to
-        // advance segments by exhausting the first.
+        // reflect only the remaining ones — exercises the
+        // `i < self.idx { continue }` arm.
         let mut seq = SineSequence::new(vec![
             SineTableSource::new(SINE_1KHZ, 1), // 16 samples
             SineTableSource::new(SINE_2KHZ, 1), // 8 samples
@@ -587,13 +587,16 @@ mod tests {
         // Drain the first segment fully.
         let mut buf = [0_i16; 16];
         assert_eq!(seq.fill(&mut buf), 16);
-        // First segment is exhausted; next fill will advance idx. We
-        // can't assert idx directly, but len_hint should match what
-        // remains (only the 8-sample second segment).
-        let remaining_buf_fill = drain(Box::new(SineSequence::new(vec![SineTableSource::new(
-            SINE_2KHZ, 1,
-        )])));
-        assert_eq!(remaining_buf_fill.len(), 8);
+        // First segment is exhausted; issue one more fill to advance
+        // `idx` past it. `fill` probes the now-empty segment, hits
+        // the `n == 0` branch, increments idx, then writes one
+        // sample from the second segment into our probe buffer.
+        // 8 − 1 = 7 samples remain in the second segment; len_hint
+        // must skip the consumed first (the `i < self.idx` continue
+        // arm) and return Some(7).
+        let mut probe = [0_i16; 1];
+        seq.fill(&mut probe);
+        assert_eq!(seq.len_hint(), Some(7));
     }
 
     #[test]
