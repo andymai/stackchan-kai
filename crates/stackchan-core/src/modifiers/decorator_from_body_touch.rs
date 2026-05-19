@@ -199,4 +199,23 @@ mod tests {
             "re-armed expiry should be later than the original ({second:?} vs {first:?})"
         );
     }
+
+    #[test]
+    fn default_matches_new_hold() {
+        let from_default = <DecoratorFromBodyTouch as Default>::default();
+        let from_new = DecoratorFromBodyTouch::new();
+        assert_eq!(from_default.hold_ms, from_new.hold_ms);
+        assert_eq!(from_default.hold_ms, HEART_HOLD_MS);
+    }
+
+    #[test]
+    fn meta_declares_decoration_phase_and_decorator_write() {
+        let m = DecoratorFromBodyTouch::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "DecoratorFromBodyTouch");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, 0);
+        assert_eq!(meta.writes, &[Field::Decorator]);
+        assert_eq!(meta.reads, &[Field::BodyTouch, Field::Emotion]);
+    }
 }
