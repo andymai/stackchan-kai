@@ -278,9 +278,12 @@ impl Field {
         Self::ChirpRequest,
         Self::UtteranceRequest,
         Self::IsSpeaking,
+        Self::Gesture,
         Self::TapPending,
         Self::RemotePending,
         Self::RemoteCommand,
+        Self::DanceScript,
+        Self::LedOverride,
     ];
 
     /// Coarse grouping for human-readable reports.
@@ -862,7 +865,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            44,
+            47,
             "update Field::ALL when adding variants"
         );
     }
@@ -1024,19 +1027,44 @@ mod tests {
         assert_eq!(d.skill_count(), 0);
     }
 
+    /// In-lane skill for the registration counter test — declares
+    /// only a `mind.intent` write, which `assert_skill_lane` accepts.
+    struct InLaneSkill;
+    static SKILL_META: SkillMeta = SkillMeta {
+        name: "InLaneSkill",
+        description: "test fixture: declares a Mind write",
+        priority: 0,
+        writes: &[Field::Intent],
+    };
+    impl Skill for InLaneSkill {
+        fn meta(&self) -> &'static SkillMeta {
+            &SKILL_META
+        }
+        fn should_fire(&self, _entity: &Entity) -> bool {
+            false
+        }
+        fn invoke(&mut self, _entity: &mut Entity) -> SkillStatus {
+            SkillStatus::Done
+        }
+    }
+
     #[test]
     fn director_modifier_and_skill_counts_track_registrations() {
-        // `m` must outlive `director` because the registry holds a
-        // `&'a mut dyn Modifier` borrow.
+        // Both `m` and `s` must outlive `director` because the registry
+        // holds `&'a mut dyn` borrows.
         let mut m = OrderRecorder {
             meta: &M_AFFECT_HIGH,
             log_value: 1,
         };
+        let mut s = InLaneSkill;
         let mut director = Director::new();
         assert_eq!(director.modifier_count(), 0);
         assert_eq!(director.skill_count(), 0);
         director.add_modifier(&mut m).unwrap();
         assert_eq!(director.modifier_count(), 1);
         assert_eq!(director.skill_count(), 0);
+        director.add_skill(&mut s).unwrap();
+        assert_eq!(director.modifier_count(), 1);
+        assert_eq!(director.skill_count(), 1);
     }
 }
