@@ -126,18 +126,20 @@ mod tests {
 
     #[test]
     fn default_matches_new_constructor() {
-        // Both constructors produce coefficient tables that compare
-        // bit-identically — the periodic Hann is a `const fn` so the
-        // tables themselves are baked into flash, not computed at
-        // construction time. Pin equivalence so a future refactor
-        // that diverges them surfaces here.
+        // Both paths run the same runtime cosine computation; any
+        // divergence would mean a refactor changed one path without
+        // updating the other. Use bit-exact equality (not a fuzzy
+        // compare) since the constructors are deterministic.
         let from_default = <HannWindow as Default>::default();
         let from_new = HannWindow::new();
         let a = from_default.coefficients();
         let b = from_new.coefficients();
         for k in 0..WINDOW_SAMPLES {
-            assert!(
-                (a[k] - b[k]).abs() < f32::EPSILON,
+            // Compare bit patterns — sidesteps clippy::float_cmp on
+            // the strict f32 equality the assertion actually wants.
+            assert_eq!(
+                a[k].to_bits(),
+                b[k].to_bits(),
                 "coefficient {k} diverged: default={} new={}",
                 a[k],
                 b[k],
