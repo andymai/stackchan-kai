@@ -341,4 +341,54 @@ mod tests {
         };
         assert_eq!(cmd.command, 0x56);
     }
+
+    #[test]
+    fn preamble_space_with_wrong_polarity_rejected() {
+        // Capture-noise case: second pulse is a mark instead of the
+        // expected space (active-high capture started mid-mark, etc.).
+        // The decoder must reject rather than treat the mark as a
+        // space.
+        let mut frame = build_frame(0x0000, 0x00);
+        frame[1].level = true;
+        assert!(decode(&frame).is_none());
+    }
+
+    #[test]
+    fn data_bit_mark_with_wrong_polarity_rejected() {
+        // Bit 0's mark (pulse index 2) should be a mark. If the
+        // hardware delivered it as a space (level = false), the
+        // decoder must reject.
+        let mut frame = build_frame(0x0000, 0x00);
+        frame[2].level = false;
+        assert!(decode(&frame).is_none());
+    }
+
+    #[test]
+    fn data_bit_mark_with_wrong_duration_rejected() {
+        // Mark with correct polarity but wildly wrong duration is
+        // outside the bit-mark tolerance window.
+        let mut frame = build_frame(0x0000, 0x00);
+        frame[2].duration_us = 5_000;
+        assert!(decode(&frame).is_none());
+    }
+
+    #[test]
+    fn data_bit_space_with_wrong_polarity_rejected() {
+        // Bit 0's space (pulse index 3) should be a space. Flipping
+        // its level to a mark must abort decoding rather than
+        // accidentally measuring its duration as a bit-1 timing.
+        let mut frame = build_frame(0x0000, 0x00);
+        frame[3].level = true;
+        assert!(decode(&frame).is_none());
+    }
+
+    #[test]
+    fn data_bit_space_with_unknown_duration_rejected() {
+        // Space duration neither close to BIT_ZERO_SPACE_US nor to
+        // BIT_ONE_SPACE_US — e.g. a corrupted capture sitting between
+        // the two windows. The decoder must reject rather than guess.
+        let mut frame = build_frame(0x0000, 0x00);
+        frame[3].duration_us = 1_000;
+        assert!(decode(&frame).is_none());
+    }
 }
