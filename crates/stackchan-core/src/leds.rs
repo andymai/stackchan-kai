@@ -494,11 +494,11 @@ mod tests {
             entity.mind.affect.emotion = emotion;
             let mut frame = LedFrame::default();
             render_leds(&entity, now, &mut frame);
-            // Every variant should yield *some* non-black pixel at
-            // breath phase 0 — otherwise the palette has degenerated
-            // to all-zeros which would be invisible on the ring.
+            // render_leds writes the same pixel to every slot, so
+            // assert all (not any) to express the contract: every
+            // pixel on the ring is lit, not just one.
             assert!(
-                frame.0.iter().any(|&p| p != 0),
+                frame.0.iter().all(|&p| p != 0),
                 "{emotion:?} produced an all-zero ring",
             );
         }
