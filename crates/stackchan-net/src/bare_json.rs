@@ -176,15 +176,12 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
     out.push_str("\"wifi\":{");
     push_string_field(&mut out, "ssid", &config.wifi.ssid);
     out.push(',');
-    push_string_field(
-        &mut out,
-        "psk",
-        if redact_secrets {
-            PSK_REDACTED
-        } else {
-            &config.wifi.psk
-        },
-    );
+    let psk_view: &str = if redact_secrets && !config.wifi.psk.is_empty() {
+        PSK_REDACTED
+    } else {
+        &config.wifi.psk
+    };
+    push_string_field(&mut out, "psk", psk_view);
     out.push(',');
     push_string_field(&mut out, "country", &config.wifi.country);
     out.push_str("},\"mdns\":{");
@@ -1475,6 +1472,184 @@ mod tests {
         let merged = merge_settings_with_current(new, &current);
         assert!(merged.wifi.psk.is_empty(), "empty PSK clears to empty");
         assert!(merged.auth.token.is_empty(), "empty token disables auth");
+    }
+
+    #[test]
+    fn render_redacts_pmk_hex_when_requested() {
+        let original = full_config();
+        let rendered = render_settings_json(&original, true).unwrap();
+        assert!(
+            rendered.contains("\"pmk_hex\":\"***\""),
+            "expected redacted pmk_hex in: {rendered}"
+        );
+        assert!(
+            !rendered.contains("0123456789abcdef0123456789abcdef"),
+            "pmk_hex leaked through redaction: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_redacts_lmk_hex_when_requested() {
+        let original = full_config();
+        let rendered = render_settings_json(&original, true).unwrap();
+        assert!(
+            rendered.contains("\"lmk_hex\":\"***\""),
+            "expected redacted lmk_hex in: {rendered}"
+        );
+        assert!(
+            !rendered.contains("fedcba9876543210fedcba9876543210"),
+            "lmk_hex leaked through redaction: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_does_not_redact_empty_psk() {
+        // An empty PSK is a meaningful value (open AP); the GET
+        // /settings response has to carry it as `""` instead of the
+        // sentinel so a downstream PUT can echo it back and the merge
+        // step preserves "open AP" rather than substituting the
+        // currently-persisted PSK.
+        let mut cfg = full_config();
+        cfg.wifi.psk = String::new();
+        let redacted = render_settings_json(&cfg, true).unwrap();
+        assert!(
+            redacted.contains("\"psk\":\"\""),
+            "empty psk should render as empty string, not sentinel: {redacted}"
+        );
+    }
+
+    #[test]
+    fn render_does_not_redact_empty_pmk_hex() {
+        let mut cfg = full_config();
+        cfg.esp_now.pmk_hex = String::new();
+        let redacted = render_settings_json(&cfg, true).unwrap();
+        assert!(
+            redacted.contains("\"pmk_hex\":\"\""),
+            "empty pmk_hex should render as empty string: {redacted}"
+        );
+    }
+
+    #[test]
+    fn render_does_not_redact_empty_lmk_hex() {
+        let mut cfg = full_config();
+        cfg.esp_now.lmk_hex = String::new();
+        let redacted = render_settings_json(&cfg, true).unwrap();
+        assert!(
+            redacted.contains("\"lmk_hex\":\"\""),
+            "empty lmk_hex should render as empty string: {redacted}"
+        );
+    }
+
+    #[test]
+    fn merge_substitutes_redacted_pmk_hex_with_current() {
+        let current = full_config();
+        let new = Config {
+            esp_now: EspNowConfig {
+                pmk_hex: ESP_NOW_KEY_REDACTED.to_string(),
+                ..current.esp_now.clone()
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.esp_now.pmk_hex, "0123456789abcdef0123456789abcdef");
+    }
+
+    #[test]
+    fn merge_substitutes_redacted_lmk_hex_with_current() {
+        let current = full_config();
+        let new = Config {
+            esp_now: EspNowConfig {
+                lmk_hex: ESP_NOW_KEY_REDACTED.to_string(),
+                ..current.esp_now.clone()
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.esp_now.lmk_hex, "fedcba9876543210fedcba9876543210");
+    }
+
+    #[test]
+    fn merge_overwrites_every_secret_explicitly() {
+        // Every redacted field has its own branch in
+        // `merge_settings_with_current`; this test pins the
+        // overwrite leg of all five so a future copy-paste bug in
+        // any branch surfaces immediately rather than after a real
+        // operator clobbers their own secret.
+        let current = full_config();
+        let new = Config {
+            wifi: WifiConfig {
+                psk: "new-psk".to_string(),
+                ..current.wifi.clone()
+            },
+            auth: AuthConfig {
+                token: "new-token".to_string(),
+            },
+            esp_now: EspNowConfig {
+                pmk_hex: "11111111111111111111111111111111".to_string(),
+                lmk_hex: "22222222222222222222222222222222".to_string(),
+                ..current.esp_now.clone()
+            },
+            behavior: BehaviorConfig {
+                agent_sidecar_token: "new-sidecar-token".to_string(),
+                ..current.behavior.clone()
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert_eq!(merged.wifi.psk, "new-psk");
+        assert_eq!(merged.auth.token, "new-token");
+        assert_eq!(merged.esp_now.pmk_hex, "11111111111111111111111111111111");
+        assert_eq!(merged.esp_now.lmk_hex, "22222222222222222222222222222222");
+        assert_eq!(merged.behavior.agent_sidecar_token, "new-sidecar-token");
+    }
+
+    #[test]
+    fn merge_clears_every_secret_when_explicitly_empty() {
+        // The empty-string leg of every redacted field. An empty
+        // value isn't the sentinel and must pass through — open AP,
+        // disabled auth, ESP-NOW without encryption, sidecar without
+        // bearer auth are all legitimate operator choices.
+        let current = full_config();
+        let new = Config {
+            wifi: WifiConfig {
+                psk: String::new(),
+                ..current.wifi.clone()
+            },
+            auth: AuthConfig {
+                token: String::new(),
+            },
+            esp_now: EspNowConfig {
+                pmk_hex: String::new(),
+                lmk_hex: String::new(),
+                ..current.esp_now.clone()
+            },
+            behavior: BehaviorConfig {
+                agent_sidecar_token: String::new(),
+                ..current.behavior.clone()
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert!(merged.wifi.psk.is_empty());
+        assert!(merged.auth.token.is_empty());
+        assert!(merged.esp_now.pmk_hex.is_empty());
+        assert!(merged.esp_now.lmk_hex.is_empty());
+        assert!(merged.behavior.agent_sidecar_token.is_empty());
+    }
+
+    #[test]
+    fn redacted_render_then_parse_then_merge_preserves_every_field() {
+        // The canonical GET /settings → echo PUT /settings round
+        // trip. A dashboard that fetches the redacted JSON, leaves
+        // every field untouched, and PUTs the same body back must
+        // end up with byte-identical config — both secret fields
+        // (preserved via the `***` sentinel + merge) and every other
+        // field (passed through render → parse losslessly).
+        let original = full_config();
+        let redacted = render_settings_json(&original, true).unwrap();
+        let parsed = parse_settings_json(&redacted).unwrap();
+        let merged = merge_settings_with_current(parsed, &original);
+        assert_eq!(merged, original, "GET → PUT round trip clobbered a field");
     }
 
     #[test]
