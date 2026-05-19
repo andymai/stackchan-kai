@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(from_default.enabled, from_new.enabled);
         assert!(
             !from_default.enabled,
-            "Soliloquy::new() defaults to disabled"
+            "Default::default() should construct a disabled Soliloquy"
         );
     }
 
