@@ -584,8 +584,9 @@ impl<U: Read + Write> Scservo<U> {
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
-    reason = "MockUart's Infallible error type makes unwrap() on writes \
-              sound — and clearer than matches! for test readability"
+    clippy::expect_used,
+    reason = "MockUart's Infallible error type makes unwrap()/expect() on \
+              writes sound — and clearer than matches! for test readability"
 )]
 mod tests {
     use super::*;
@@ -951,5 +952,49 @@ mod tests {
         // raw bus error routes through this.
         let err: Error<&'static str> = "raw uart fail".into();
         assert!(matches!(err, Error::Uart("raw uart fail")), "got {err:?}");
+    }
+
+    #[test]
+    fn drain_write_status_consumes_six_bytes() {
+        // No parsing — the helper just reads and discards the slave's
+        // ack packet so subsequent commands aren't desynced.
+        let mut bus = Scservo::new(MockUart::new());
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC]);
+        block_on(bus.drain_write_status()).expect("drain succeeds on a queued ack");
+        // RX queue drained; nothing left.
+        assert!(bus.uart.rx_queue.borrow().is_empty());
+    }
+
+    #[test]
+    fn ping_rejects_wrong_msg_len_field() {
+        let mut bus = Scservo::new(MockUart::new());
+        // msgLen field reports 0x03 but PING response must be 0x02.
+        bus.uart.queue_rx(&[0xFF, 0xFF, 0x01, 0x03, 0x00, 0xFB]);
+        let err = block_on(bus.ping(1)).expect_err("wrong msgLen should error");
+        assert!(matches!(err, Error::MalformedResponse), "got {err:?}");
+    }
+
+    #[test]
+    fn read_memory_rejects_wrong_header_bytes() {
+        let mut bus = Scservo::new(MockUart::new());
+        // 1-byte read — total response is 7 bytes (2 hdr + id + len + err + data + checksum).
+        bus.uart
+            .queue_rx(&[0x00, 0xFF, 0x01, 0x03, 0x00, 0x42, 0xB9]);
+        let mut buf = [0u8; 1];
+        let err = block_on(bus.read_memory(1, 0x38, &mut buf))
+            .expect_err("malformed header should error");
+        assert!(matches!(err, Error::MalformedResponse), "got {err:?}");
+    }
+
+    #[test]
+    fn read_memory_rejects_wrong_responding_id() {
+        let mut bus = Scservo::new(MockUart::new());
+        // Id field reports 0x02 but we addressed id 0x01.
+        bus.uart
+            .queue_rx(&[0xFF, 0xFF, 0x02, 0x03, 0x00, 0x42, 0xB8]);
+        let mut buf = [0u8; 1];
+        let err =
+            block_on(bus.read_memory(1, 0x38, &mut buf)).expect_err("id mismatch should error");
+        assert!(matches!(err, Error::MalformedResponse), "got {err:?}");
     }
 }
