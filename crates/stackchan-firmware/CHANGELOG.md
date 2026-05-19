@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.97.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.96.0...stackchan-firmware-v0.97.0) (2026-05-19)
+
+
+### Features
+
+* **mcp:** expose reset / look_at_point / enter_thinking / exit_thinking ([#401](https://github.com/andymai/stackchan-kai/issues/401)) ([8dac71c](https://github.com/andymai/stackchan-kai/commit/8dac71cf15afc8217b103ea691fa11551b143442))
+
 ## [0.96.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.95.0...stackchan-firmware-v0.96.0) (2026-05-19)
 
 
