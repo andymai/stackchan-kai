@@ -276,4 +276,56 @@ mod tests {
         assert_eq!(0x9A & 0xF0, PART_ID_UPPER);
         assert_ne!(0x82 & 0xF0, PART_ID_UPPER); // not LTR-553
     }
+
+    #[test]
+    fn lux_middle_branch_uses_second_formula() {
+        // ratio = 100/(100+100) = 0.50, lands in 0.45..0.64 → formula 2.
+        let ch0 = 100;
+        let ch1 = 100;
+        let expected = 4.2785 * f32::from(ch0) - 1.9548 * f32::from(ch1);
+        let got = lux_from_channels(ch0, ch1);
+        assert!(
+            (got - expected).abs() < 0.001,
+            "got {got}, expected {expected} (mid-ratio formula)"
+        );
+    }
+
+    #[test]
+    fn lux_high_ratio_uses_third_formula() {
+        // ratio = 300/(100+300) = 0.75, lands in 0.64..0.85 → formula 3.
+        let ch0 = 100;
+        let ch1 = 300;
+        let expected = 0.5926 * f32::from(ch0) + 0.1185 * f32::from(ch1);
+        let got = lux_from_channels(ch0, ch1);
+        assert!(
+            (got - expected).abs() < 0.001,
+            "got {got}, expected {expected} (high-ratio formula)"
+        );
+    }
+
+    #[test]
+    fn lux_at_ratio_0_45_boundary_uses_second_formula() {
+        // ratio = 9/(11+9) = 0.45 (rounds to the same nearest f32 as
+        // the literal `0.45`; 0.45 itself is a repeating binary
+        // fraction so neither side is bit-exact, they just agree).
+        // Branch comparators use `<`, so ratio == 0.45 falls out of
+        // formula 1 (`ratio < 0.45` is false) and into formula 2.
+        // Pinning this so a future "<=" tweak surfaces the boundary
+        // ambiguity rather than silently shifting which formula
+        // applies at the cut.
+        let ch0: u16 = 11;
+        let ch1: u16 = 9;
+        let ratio = f32::from(ch1) / f32::from(ch0 + ch1);
+        assert_eq!(
+            ratio.to_bits(),
+            0.45_f32.to_bits(),
+            "fixture didn't land at the boundary: ratio={ratio}"
+        );
+        let expected = 4.2785 * f32::from(ch0) - 1.9548 * f32::from(ch1);
+        let got = lux_from_channels(ch0, ch1);
+        assert!(
+            (got - expected).abs() < 0.001,
+            "got {got}, expected {expected} (formula 2 at ratio=0.45 boundary)"
+        );
+    }
 }
