@@ -252,4 +252,21 @@ mod tests {
         step(&mut cycle, &mut entity, 10_000);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
+
+    #[test]
+    fn current_reports_indexed_emotion_or_none_when_empty() {
+        let cycle = EmotionCycle::with_params(&[Emotion::Happy, Emotion::Sad], 1_000);
+        assert_eq!(cycle.current(), Some(Emotion::Happy));
+        let empty = EmotionCycle::with_params(&[], 1_000);
+        assert_eq!(empty.current(), None);
+    }
+
+    #[test]
+    fn default_constructs_default_sequence() {
+        let from_default = <EmotionCycle as Default>::default();
+        assert_eq!(
+            from_default.current(),
+            Some(EmotionCycle::DEFAULT_SEQUENCE[0]),
+        );
+    }
 }
