@@ -906,9 +906,22 @@ mod tests {
             hold_ms: 2_000,
         });
         step(&mut m, &mut entity, 0);
-        // Mid-hold: still Point.
+        // Capture the entry-frame `since` — it must stay pinned across
+        // re-asserts so ease-in animations don't restart each tick
+        // (same guarantee the 2D LookAt test verifies).
+        let entry_since = match entity.mind.attention {
+            Attention::Point { since, .. } => since,
+            other => panic!("expected Attention::Point at entry, got {other:?}"),
+        };
+        // Mid-hold: still Point with the same `since`.
         step(&mut m, &mut entity, 1_500);
-        assert!(matches!(entity.mind.attention, Attention::Point { .. }));
+        match entity.mind.attention {
+            Attention::Point { since, target } => {
+                assert_eq!(since, entry_since, "since must pin to entry frame");
+                assert_eq!(target, (0.0, 1.0, -2.0));
+            }
+            other => panic!("expected Attention::Point mid-hold, got {other:?}"),
+        }
         // After expiry: released to None (still ours).
         step(&mut m, &mut entity, 2_500);
         assert!(matches!(entity.mind.attention, Attention::None));
