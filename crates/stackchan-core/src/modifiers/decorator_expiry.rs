@@ -87,4 +87,72 @@ mod tests {
         m.update(&mut entity);
         assert!(entity.face.decorator.is_none());
     }
+
+    #[test]
+    fn clears_well_after_deadline() {
+        // A run that misses several ticks (e.g. the firmware paused
+        // during a long render) must still sweep on resume.
+        let mut entity = Entity::default();
+        entity.face.decorator = Some(DecoratorState {
+            kind: Decorator::Heart,
+            expires_at: Instant::from_millis(1_000),
+        });
+        let mut m = DecoratorExpiry::new();
+
+        entity.tick.now = Instant::from_millis(10_000);
+        m.update(&mut entity);
+        assert!(entity.face.decorator.is_none());
+    }
+
+    #[test]
+    fn re_arm_after_expiry_survives_next_sweep() {
+        // Trigger → expiry → trigger again: the second arming must
+        // not be stomped by the very next expiry pass when the new
+        // deadline is still in the future.
+        let mut entity = Entity::default();
+        let mut m = DecoratorExpiry::new();
+
+        entity.face.decorator = Some(DecoratorState {
+            kind: Decorator::Heart,
+            expires_at: Instant::from_millis(1_000),
+        });
+        entity.tick.now = Instant::from_millis(1_500);
+        m.update(&mut entity);
+        assert!(entity.face.decorator.is_none(), "first sweep clears");
+
+        // Trigger modifier re-arms with a fresh future deadline.
+        entity.face.decorator = Some(DecoratorState {
+            kind: Decorator::Sweat,
+            expires_at: Instant::from_millis(3_000),
+        });
+        entity.tick.now = Instant::from_millis(1_600);
+        m.update(&mut entity);
+        assert_eq!(
+            entity.face.decorator.map(|s| s.kind),
+            Some(Decorator::Sweat),
+            "freshly-armed decorator must survive the next sweep"
+        );
+    }
+
+    #[test]
+    fn idempotent_after_clear() {
+        // Two sweeps after the deadline must both leave the slot
+        // empty — no resurrection from stale internal state (this
+        // modifier has none, but the assertion fences the contract).
+        let mut entity = Entity::default();
+        entity.face.decorator = Some(DecoratorState {
+            kind: Decorator::Dizzy,
+            expires_at: Instant::from_millis(500),
+        });
+        let mut m = DecoratorExpiry::new();
+
+        entity.tick.now = Instant::from_millis(1_000);
+        m.update(&mut entity);
+        assert!(entity.face.decorator.is_none());
+
+        // Hand-write None and sweep again — must remain None.
+        entity.tick.now = Instant::from_millis(1_100);
+        m.update(&mut entity);
+        assert!(entity.face.decorator.is_none());
+    }
 }

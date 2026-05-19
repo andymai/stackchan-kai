@@ -780,4 +780,104 @@ mod integration_tests {
             "DecoratorExpiry must clear the thought-bubble after the 500ms tail"
         );
     }
+
+    /// `Emotion::Angry` rising edge fires the Angry decorator via
+    /// `DecoratorFromEmotion`, holds for `DECORATOR_EMOTION_HOLD_MS`,
+    /// then `DecoratorExpiry` sweeps it cleanly. End-to-end coverage
+    /// of the trigger → hold → expire lifecycle for the only
+    /// emotion-driven decorator path in the engine.
+    #[test]
+    fn emotion_driven_decorator_lifecycle_arms_and_clears() {
+        use stackchan_core::Decorator;
+        use stackchan_core::Instant;
+        use stackchan_core::modifiers::{
+            DECORATOR_EMOTION_HOLD_MS, DecoratorExpiry, DecoratorFromEmotion,
+        };
+
+        let mut entity = Entity::default();
+        let mut from_emotion = DecoratorFromEmotion::new();
+        let mut expiry = DecoratorExpiry::new();
+
+        let mut director = Director::new();
+        director.add_modifier(&mut expiry).unwrap();
+        director.add_modifier(&mut from_emotion).unwrap();
+
+        // Neutral baseline — no decorator should arm.
+        director.run(&mut entity, Instant::from_millis(0));
+        assert!(entity.face.decorator.is_none());
+
+        // Rising edge into Angry — decorator arms.
+        entity.mind.affect.emotion = Emotion::Angry;
+        director.run(&mut entity, Instant::from_millis(33));
+        assert!(
+            matches!(
+                entity.face.decorator,
+                Some(d) if d.kind == Decorator::Angry
+            ),
+            "DecoratorFromEmotion arms Angry decorator on rising edge"
+        );
+
+        // Mid-hold the decorator is still drawn.
+        director.run(&mut entity, Instant::from_millis(1_000));
+        assert!(matches!(
+            entity.face.decorator,
+            Some(d) if d.kind == Decorator::Angry
+        ));
+
+        // Past `DECORATOR_EMOTION_HOLD_MS` (3 000 ms from the arm),
+        // DecoratorExpiry must sweep regardless of emotion still being
+        // Angry — sustained emotion does not refresh the hold.
+        director.run(
+            &mut entity,
+            Instant::from_millis(33 + DECORATOR_EMOTION_HOLD_MS + 1),
+        );
+        assert!(
+            entity.face.decorator.is_none(),
+            "DecoratorExpiry must clear the Angry decorator after its hold"
+        );
+    }
+
+    /// `AttentionFromTracking` documents that it must not stomp an
+    /// active `Attention::Listening` even when a tracked face is
+    /// present. This pins that invariant through the Director so a
+    /// future tracker re-ordering can't silently regress it.
+    #[test]
+    fn tracking_does_not_stomp_active_listening() {
+        use stackchan_core::Instant;
+        use stackchan_core::Pose;
+        use stackchan_core::mind::Attention;
+        use stackchan_core::modifiers::{AttentionFromTracking, RemoteCommandModifier};
+
+        let mut entity = Entity::default();
+        let mut remote = RemoteCommandModifier::new();
+        let mut tracking = AttentionFromTracking::new();
+
+        let mut director = Director::new();
+        director.add_modifier(&mut tracking).unwrap();
+        director.add_modifier(&mut remote).unwrap();
+
+        // Operator opens a listen window via POST /listen.
+        entity.input.remote_command = Some(stackchan_core::input::RemoteCommand::StartListen {
+            duration_ms: 30_000,
+        });
+        director.run(&mut entity, Instant::from_millis(0));
+        assert!(
+            matches!(entity.mind.attention, Attention::Listening { .. }),
+            "Listening must be set after StartListen"
+        );
+
+        // Camera reports a sustained motion track at the same time —
+        // tracking would normally drive `Attention::Tracking` but
+        // must not overwrite an operator-set Listening hold.
+        for tick in 1..=20 {
+            entity.perception.tracking =
+                Some(observation(TrackingMotion::Tracking, Pose::new(5.0, -2.0)));
+            director.run(&mut entity, Instant::from_millis(tick * 33));
+            assert!(
+                matches!(entity.mind.attention, Attention::Listening { .. }),
+                "tick {tick}: Listening must survive sustained tracking — \
+                 AttentionFromTracking pins this invariant in its module doc"
+            );
+        }
+    }
 }
