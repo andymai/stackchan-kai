@@ -127,4 +127,18 @@ mod tests {
             "fresh bubble must survive the next sweep"
         );
     }
+
+    #[test]
+    fn meta_pins_decoration_phase_and_priority_minus_ten() {
+        // Pins the absolute priority value — ordering relative to
+        // sibling Decoration modifiers is enforced by the Director's
+        // priority sort, not here.
+        let m = BubbleExpiry::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "BubbleExpiry");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, -10);
+        assert_eq!(meta.reads, &[Field::Bubble]);
+        assert_eq!(meta.writes, &[Field::Bubble]);
+    }
 }
