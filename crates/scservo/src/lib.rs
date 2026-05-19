@@ -925,4 +925,31 @@ mod tests {
         let err = block_on(bus.read_position(1));
         assert!(matches!(err, Err(Error::ChecksumMismatch)));
     }
+
+    #[test]
+    fn into_inner_returns_underlying_uart() {
+        // into_inner consumes the driver and returns the UART so
+        // single-task firmware can reuse it after init.
+        let bus = Scservo::new(MockUart::new());
+        let _uart: MockUart = bus.into_inner();
+    }
+
+    #[test]
+    fn error_from_read_exact_decodes_eof_and_other() {
+        // The `impl From<ReadExactError<E>> for Error<E>` blanket
+        // maps both variants. Exercise both arms directly — the
+        // mock harness routes Eof but not Other.
+        let eof: Error<&'static str> = ReadExactError::UnexpectedEof.into();
+        assert!(matches!(eof, Error::NoResponse), "got {eof:?}");
+        let other: Error<&'static str> = ReadExactError::Other("bus go boom").into();
+        assert!(matches!(other, Error::Uart("bus go boom")), "got {other:?}");
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_uart_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` on a
+        // raw bus error routes through this.
+        let err: Error<&'static str> = "raw uart fail".into();
+        assert!(matches!(err, Error::Uart("raw uart fail")), "got {err:?}");
+    }
 }
