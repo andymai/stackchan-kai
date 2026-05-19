@@ -1948,4 +1948,224 @@ mod tests {
         let from_json = parse_settings_json(&json).unwrap();
         assert_eq!(from_ron, from_json);
     }
+
+    // ============================================================
+    // Per-block error-path coverage — duplicate / unknown / scanner
+    // ============================================================
+
+    /// Boilerplate base body: just enough of the schema to satisfy
+    /// required top-level fields. Append more inside the closing `}`.
+    fn with_base(extra: &str) -> String {
+        format!(
+            r#"{{
+                "wifi":{{"ssid":"n","psk":"p","country":"US"}},
+                "mdns":{{"hostname":"h"}},
+                "time":{{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}
+                {extra}
+            }}"#
+        )
+    }
+
+    fn assert_bare_parse_err(input: &str) -> alloc::string::String {
+        match parse_settings_json(input).unwrap_err() {
+            ConfigError::BareParse(msg) => msg,
+            other => panic!("expected BareParse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_wifi_field() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US","what":"x"},"mdns":{"hostname":"h"},"time":{"tz":"UTC","sntp_servers":["a"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unknown wifi field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_mdns_field() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US"},"mdns":{"hostname":"h","what":"x"},"time":{"tz":"UTC","sntp_servers":["a"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unknown mdns field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_time_field() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US"},"mdns":{"hostname":"h"},"time":{"tz":"UTC","sntp_servers":["a"],"oops":"no"}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unknown time field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_auth_field() {
+        let s = with_base(r#","auth":{"token":"t","oops":"no"}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown auth field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_audio_field() {
+        let s = with_base(r#","audio":{"volume_pct":50,"muted":false,"oops":"no"}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown audio field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_tracker_field() {
+        let s = with_base(r#","tracker":{"fov_h_deg":60.0,"oops":1}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown tracker field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_esp_now_field() {
+        let s = with_base(r#","esp_now":{"enabled":false,"oops":1}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown esp_now field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_behavior_field() {
+        let s = with_base(r#","behavior":{"soliloquy_enabled":false,"oops":1}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown behavior field"), "got {msg}");
+    }
+
+    // Duplicate-field rejection across every block other than wifi
+    // (already covered by rejects_duplicate_nested_field above).
+
+    #[test]
+    fn rejects_duplicate_mdns_field() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US"},"mdns":{"hostname":"a","hostname":"b"},"time":{"tz":"UTC","sntp_servers":["a"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("duplicate mdns field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_time_field() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US"},"mdns":{"hostname":"h"},"time":{"tz":"UTC","tz":"PST","sntp_servers":["a"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("duplicate time field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_auth_field() {
+        let s = with_base(r#","auth":{"token":"a","token":"b"}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("duplicate auth field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_tracker_field() {
+        let s = with_base(r#","tracker":{"fov_h_deg":60.0,"fov_h_deg":80.0}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("duplicate tracker field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_esp_now_field() {
+        let s = with_base(r#","esp_now":{"enabled":true,"enabled":false}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("duplicate esp_now field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_behavior_field() {
+        let s = with_base(r#","behavior":{"soliloquy_enabled":true,"soliloquy_enabled":false}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("duplicate behavior field"), "got {msg}");
+    }
+
+    // ============================================================
+    // Scanner error paths exercised through the top-level parser.
+    // ============================================================
+
+    #[test]
+    fn rejects_non_boolean_for_bool_field() {
+        let s = with_base(r#","audio":{"volume_pct":50,"muted":"yes"}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected boolean literal"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_non_digit_for_unsigned_field() {
+        let s = with_base(r#","audio":{"volume_pct":"oops","muted":false}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected unsigned integer"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unsigned_value_out_of_u8_range() {
+        let s = with_base(r#","audio":{"volume_pct":300,"muted":false}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("u8 literal out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_non_digit_for_signed_field() {
+        let s = with_base(r#","behavior":{"wake_word_threshold":"oops"}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("expected signed integer"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unterminated_string() {
+        // Trailing string never closes — scanner returns
+        // "unterminated string literal".
+        let s = "{\"wifi\":{\"ssid\":\"never closes";
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unterminated string literal"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_dangling_backslash() {
+        let s = "{\"wifi\":{\"ssid\":\"oops\\";
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("dangling backslash"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unsupported_string_escape() {
+        let s = r#"{"wifi":{"ssid":"bad\xescape","psk":"p","country":"US"},"mdns":{"hostname":"h"},"time":{"tz":"UTC","sntp_servers":["a"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("unsupported escape"), "got {msg}");
+    }
+
+    #[test]
+    fn supports_n_t_r_string_escapes() {
+        let s = r#"{"wifi":{"ssid":"a\nb\tc\rd","psk":"p","country":"US"},"mdns":{"hostname":"h"},"time":{"tz":"UTC","sntp_servers":["a"]}}"#;
+        let cfg = parse_settings_json(s).unwrap();
+        assert_eq!(cfg.wifi.ssid, "a\nb\tc\rd");
+    }
+
+    #[test]
+    fn rejects_string_list_missing_separator() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US"},"mdns":{"hostname":"h"},"time":{"tz":"UTC","sntp_servers":["a" "b"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("expected ',' or ']' in list"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_missing_separator_between_top_level_fields() {
+        let s = r#"{"wifi":{"ssid":"n","psk":"p","country":"US"} "mdns":{"hostname":"h"},"time":{"tz":"UTC","sntp_servers":["a"]}}"#;
+        let msg = assert_bare_parse_err(s);
+        assert!(msg.contains("expected ',' or '}'"), "got {msg}");
+    }
+
+    // ============================================================
+    // Renderer: write_string escape arms.
+    // ============================================================
+
+    #[test]
+    fn renderer_emits_escapes_for_special_chars() {
+        // push_field_string runs through every match arm:
+        // \\, \", \n, \t, \r. Build a config whose ssid carries
+        // all five, round-trip through render then re-parse, and
+        // confirm the bytes survive intact.
+        let mut cfg = full_config();
+        cfg.wifi.ssid = "back\\slash and \"quote\"\nnewline\ttab\rreturn".to_string();
+        let rendered = render_settings_json(&cfg, false).unwrap();
+        // Direct byte assertion against the renderer output.
+        assert!(rendered.contains(r#""ssid":"back\\slash and \"quote\"\nnewline\ttab\rreturn""#));
+        let reparsed = parse_settings_json(&rendered).unwrap();
+        assert_eq!(reparsed.wifi.ssid, cfg.wifi.ssid);
+    }
 }
