@@ -93,4 +93,16 @@ mod tests {
         let after = end + 1000;
         assert_eq!(after.as_millis(), u64::MAX);
     }
+
+    #[test]
+    fn instant_sub_returns_saturating_duration() {
+        // The `impl Sub for Instant` delegates to
+        // `saturating_duration_since` — direct subtraction returns
+        // the same non-negative duration.
+        let a = Instant::from_millis(100);
+        let b = Instant::from_millis(40);
+        assert_eq!(a - b, 60);
+        // Reverse order saturates at zero rather than wrapping.
+        assert_eq!(b - a, 0);
+    }
 }
