@@ -127,4 +127,18 @@ mod tests {
             "fresh bubble must survive the next sweep"
         );
     }
+
+    #[test]
+    fn meta_runs_first_in_decoration_phase_with_bubble_write() {
+        // BubbleExpiry must sort before trigger modifiers in
+        // Decoration so they see a clean slate. Pin phase + priority
+        // here so a future re-tune surfaces immediately.
+        let m = BubbleExpiry::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "BubbleExpiry");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, -10);
+        assert_eq!(meta.reads, &[Field::Bubble]);
+        assert_eq!(meta.writes, &[Field::Bubble]);
+    }
 }
