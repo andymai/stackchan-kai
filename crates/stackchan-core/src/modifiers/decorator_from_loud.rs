@@ -190,27 +190,16 @@ mod tests {
 
     #[test]
     fn every_emotion_variant_categorized_for_sweat() {
-        // Pin the sweat allowlist exhaustively. `Emotion` is
-        // `#[non_exhaustive]` but the test lives in the same crate, so
-        // adding a new variant forces this `match` to be updated —
-        // which forces a deliberate categorize-or-deny decision for
-        // the new emotion instead of silently falling into the
-        // `matches!` no-admit bucket in `emotion_admits_sweat`.
-        for variant in [
-            Emotion::Neutral,
-            Emotion::Happy,
-            Emotion::Sad,
-            Emotion::Sleepy,
-            Emotion::Surprised,
-            Emotion::Angry,
-            Emotion::Doubt,
-            Emotion::Boring,
-            Emotion::Hi,
-            Emotion::Loved,
-            Emotion::Curious,
-            Emotion::Confused,
-            Emotion::Mad,
-        ] {
+        // Pin the sweat allowlist exhaustively. Iterates
+        // `Emotion::ALL` (the canonical variant slice, length-pinned
+        // by `all_length_matches_variant_count` in `emotion.rs`) so
+        // adding a new variant flows through both the iteration and
+        // the exhaustive `match` below without a parallel-list to
+        // maintain. The `match` provides compile-time exhaustiveness
+        // (no wildcard) so a new variant forces a deliberate
+        // categorize-or-deny decision instead of silently landing in
+        // `emotion_admits_sweat`'s no-admit `matches!` bucket.
+        for &variant in Emotion::ALL {
             let expected_admit = match variant {
                 Emotion::Sad
                 | Emotion::Surprised
