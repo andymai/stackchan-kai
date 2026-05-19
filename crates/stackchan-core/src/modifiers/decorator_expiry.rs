@@ -150,7 +150,7 @@ mod tests {
         m.update(&mut entity);
         assert!(entity.face.decorator.is_none());
 
-        // Hand-write None and sweep again — must remain None.
+        // Second sweep on an already-cleared slot — must remain None.
         entity.tick.now = Instant::from_millis(1_100);
         m.update(&mut entity);
         assert!(entity.face.decorator.is_none());
