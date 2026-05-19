@@ -880,4 +880,44 @@ mod integration_tests {
             );
         }
     }
+
+    #[test]
+    fn framebuffer_skips_out_of_bounds_pixels() {
+        // The draw_iter guard branches: negative coords (x<0, y<0),
+        // and coords past the framebuffer width/height. None should
+        // panic or write past the buffer; valid pixels still land.
+        use embedded_graphics::Pixel;
+        use embedded_graphics::draw_target::DrawTarget;
+        use embedded_graphics::geometry::Point;
+        let mut fb = Framebuffer::new(2, 2);
+        let pixels = [
+            Pixel(Point::new(-1, 0), Rgb565::WHITE), // x < 0
+            Pixel(Point::new(0, -1), Rgb565::WHITE), // y < 0
+            Pixel(Point::new(2, 0), Rgb565::WHITE),  // x >= width
+            Pixel(Point::new(0, 2), Rgb565::WHITE),  // y >= height
+            Pixel(Point::new(1, 1), Rgb565::WHITE),  // in bounds
+        ];
+        fb.draw_iter(pixels.iter().copied())
+            .expect("Infallible should never fail");
+        // Only (1, 1) should have been written.
+        assert_eq!(fb.pixel(1, 1), Some(Rgb565::WHITE));
+        assert_eq!(fb.pixel(0, 0), Some(Rgb565::BLACK));
+        assert_eq!(fb.pixel(1, 0), Some(Rgb565::BLACK));
+        assert_eq!(fb.pixel(0, 1), Some(Rgb565::BLACK));
+    }
+
+    #[test]
+    fn recording_head_clear_drops_history() {
+        let mut head = RecordingHead::default();
+        let _ = block_on(head.set_pose(Pose::new(5.0, -2.0), Instant::from_millis(33)));
+        assert_eq!(head.records().len(), 1);
+        head.clear();
+        assert!(head.records().is_empty());
+    }
+
+    #[test]
+    fn tracking_scenario_exposes_tick_ms_for_aux_drivers() {
+        let scenario = TrackingScenario::new(33);
+        assert_eq!(scenario.tick_ms(), 33);
+    }
 }
