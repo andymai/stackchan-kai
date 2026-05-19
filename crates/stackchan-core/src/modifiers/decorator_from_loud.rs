@@ -291,6 +291,8 @@ mod tests {
         let from_default = <DecoratorFromLoud as Default>::default();
         let from_new = DecoratorFromLoud::new();
         assert_eq!(from_default.armed_above, from_new.armed_above);
+        assert_eq!(from_default.hold_ms, from_new.hold_ms);
+        assert!((from_default.threshold - from_new.threshold).abs() < f32::EPSILON);
     }
 
     #[test]
