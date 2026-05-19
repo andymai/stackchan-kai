@@ -426,4 +426,46 @@ mod tests {
         // Position with no touch is zero.
         assert_eq!(BodyTouch::default().position(), 0);
     }
+
+    #[test]
+    fn with_mapping_overrides_press_emotions() {
+        // Swap centre press to Loved and check the press path picks up
+        // the override. Confirms with_mapping reaches the gesture
+        // table at runtime.
+        let mapping = GestureMapping {
+            press_centre: Emotion::Loved,
+            ..GestureMapping::DEFAULT
+        };
+        let mut m = IntentFromBodyTouch::new().with_mapping(mapping);
+        let mut entity = Entity::default();
+        entity.perception.body_touch = Some(BodyTouch {
+            centre: 2,
+            ..BodyTouch::default()
+        });
+        m.update(&mut entity);
+        assert_eq!(entity.mind.affect.emotion, Emotion::Loved);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <IntentFromBodyTouch as Default>::default();
+        let from_new = IntentFromBodyTouch::new();
+        assert_eq!(from_default.mapping, from_new.mapping);
+        assert_eq!(from_default.swipe_delta, from_new.swipe_delta);
+        assert_eq!(from_default.hold_ms, from_new.hold_ms);
+    }
+
+    #[test]
+    fn meta_declares_affect_phase_and_gesture_writes() {
+        let m = IntentFromBodyTouch::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "IntentFromBodyTouch");
+        assert_eq!(meta.phase, Phase::Affect);
+        assert_eq!(meta.priority, 0);
+        assert_eq!(meta.reads, &[Field::BodyTouch]);
+        assert_eq!(
+            meta.writes,
+            &[Field::Emotion, Field::Autonomy, Field::Gesture],
+        );
+    }
 }
