@@ -888,4 +888,18 @@ mod tests {
             from_new.face_release_misses,
         );
     }
+
+    #[test]
+    fn meta_declares_cognition_phase_with_attention_writes() {
+        let m = AttentionFromTracking::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "AttentionFromTracking");
+        assert_eq!(meta.phase, Phase::Cognition);
+        assert_eq!(meta.priority, 0);
+        assert_eq!(
+            meta.reads,
+            &[Field::Tracking, Field::Attention, Field::Engagement],
+        );
+        assert_eq!(meta.writes, &[Field::Attention, Field::Engagement]);
+    }
 }
