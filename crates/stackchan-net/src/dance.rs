@@ -366,4 +366,96 @@ mod tests {
         let body = r#"{"keyframes":[{"at_ms":0,"emotion":"furious"}]}"#;
         assert!(matches!(parse_dance(body), Err(JsonError::UnknownEmotion)));
     }
+
+    // ============================================================
+    // Coverage for the duplicate-key + structural error paths.
+    // ============================================================
+
+    #[test]
+    fn parse_rejects_duplicate_keyframes_key() {
+        let body = r#"{"keyframes":[],"keyframes":[]}"#;
+        assert!(matches!(
+            parse_dance(body),
+            Err(JsonError::DuplicateKey("keyframes"))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_missing_comma_between_top_level_fields() {
+        // No comma between keyframes and a second top-level field —
+        // covers the `scanner.expect(b',')?` path on the second
+        // iteration of the loop.
+        let body = r#"{"keyframes":[] "other":1}"#;
+        assert!(parse_dance(body).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_trailing_garbage_after_closing_brace() {
+        // The post-`}` Unterminated check.
+        let body = r#"{"keyframes":[]}garbage"#;
+        assert!(matches!(parse_dance(body), Err(JsonError::Unterminated)));
+    }
+
+    #[test]
+    fn parse_rejects_keyframe_array_missing_separator() {
+        // No comma between keyframes — hits the
+        // `_ => return Err(Unterminated)` arm of parse_keyframe_array.
+        let body = r#"{"keyframes":[{"at_ms":0} {"at_ms":1}]}"#;
+        assert!(matches!(parse_dance(body), Err(JsonError::Unterminated)));
+    }
+
+    #[test]
+    fn parse_rejects_per_field_duplicate_keys() {
+        for (body, key) in [
+            (
+                r#"{"keyframes":[{"at_ms":0,"pan_deg":1.0,"pan_deg":2.0}]}"#,
+                "pan_deg",
+            ),
+            (
+                r#"{"keyframes":[{"at_ms":0,"tilt_deg":1.0,"tilt_deg":2.0}]}"#,
+                "tilt_deg",
+            ),
+            (
+                r#"{"keyframes":[{"at_ms":0,"emotion":"happy","emotion":"sad"}]}"#,
+                "emotion",
+            ),
+            (
+                r#"{"keyframes":[{"at_ms":0,"decorator":"heart","decorator":"sweat"}]}"#,
+                "decorator",
+            ),
+            (
+                r#"{"keyframes":[{"at_ms":0,"r":1,"g":2,"b":3,"r":255}]}"#,
+                "r",
+            ),
+            (
+                r#"{"keyframes":[{"at_ms":0,"r":1,"g":2,"b":3,"g":255}]}"#,
+                "g",
+            ),
+            (
+                r#"{"keyframes":[{"at_ms":0,"r":1,"g":2,"b":3,"b":255}]}"#,
+                "b",
+            ),
+        ] {
+            match parse_dance(body) {
+                Err(JsonError::DuplicateKey(actual)) => assert_eq!(actual, key, "body {body}"),
+                other => panic!("body {body}: expected DuplicateKey({key}), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_rejects_keyframe_array_above_max_size() {
+        // > MAX_KEYFRAMES rejects as BadValue inside the inner array
+        // walker, before validate() sees the script.
+        use core::fmt::Write as _;
+        let mut body = alloc::string::String::from(r#"{"keyframes":["#);
+        for i in 0..=MAX_KEYFRAMES {
+            if i > 0 {
+                body.push(',');
+            }
+            let _ = write!(body, r#"{{"at_ms":{i}}}"#);
+        }
+        body.push_str("]}");
+        assert!(matches!(parse_dance(&body), Err(JsonError::BadValue)));
+    }
 }
