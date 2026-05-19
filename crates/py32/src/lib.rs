@@ -602,4 +602,27 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn error_from_blanket_wraps_i2c_error() {
+        // The From<E> blanket on Error<E> lets driver code use `?` to
+        // promote a bus error into Error::I2c without an explicit
+        // match arm. Pin that conversion path.
+        #[derive(Debug, PartialEq, Eq)]
+        struct DummyBusError;
+        let promoted: Error<DummyBusError> = DummyBusError.into();
+        assert!(matches!(promoted, Error::I2c(DummyBusError)));
+    }
+
+    #[test]
+    fn release_returns_underlying_bus() {
+        // release() consumes the driver and hands the bus back so the
+        // caller can hand it to the next driver in a shared-bus setup.
+        let mock = MockI2c::new();
+        let py32 = Py32::new(mock);
+        let recovered = py32.release();
+        // The recovered bus is the same MockI2c instance — observe via
+        // its empty event log.
+        assert!(recovered.events.borrow().is_empty());
+    }
 }
