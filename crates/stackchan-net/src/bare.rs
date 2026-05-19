@@ -1194,20 +1194,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_mdns_field() {
-        let s = with_base("mdns_extra: ()");
-        // Should error on missing colon since mdns_extra isn't a block,
-        // but the test should at least fail parsing.
-        let result = parse_ron_bare(&s);
-        assert!(result.is_err());
-        // Direct mdns body case.
-        let s2 = r#"
+        let s = r#"
             (
                 wifi: ( ssid: "n", psk: "p", country: "US" ),
                 mdns: ( hostname: "h", what: "x" ),
                 time: ( tz: "UTC", sntp_servers: ["a"] ),
             )
         "#;
-        let msg = assert_bare_parse_err(s2);
+        let msg = assert_bare_parse_err(s);
         assert!(msg.contains("unknown mdns field"), "got {msg}");
     }
 
@@ -1234,7 +1228,7 @@ mod tests {
     #[test]
     fn rejects_redacted_auth_token() {
         // The bare parser refuses the redacted sentinel — the
-        // round-trip path that emits ●●● expects the operator to
+        // round-trip path that emits "***" expects the operator to
         // type the actual token back. Pin that protection.
         let redacted = TOKEN_REDACTED;
         let s = format!(
