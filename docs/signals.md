@@ -74,3 +74,13 @@ counter doesn't advance enough relative to its expected cadence, the
 watchdog logs `WARN watchdog: channel '<name>' silent`. See
 [architecture](architecture) for the full task graph and watchdog
 placement.
+
+## Related
+
+- [Architecture overview](architecture) — boot sequence and task
+  graph that the signal table sits inside.
+- [HTTP control plane](http) — SSE fan-out at `/state/stream` is
+  the deliberate `PubSubChannel` exception to the latest-wins
+  `Signal` pattern.
+- [Modifier authoring guide](modifiers) — how to consume signals
+  through `entity.perception` from a new modifier.

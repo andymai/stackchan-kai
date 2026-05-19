@@ -161,6 +161,18 @@ binary opens an `egui` + `winit` window and runs the modifier stack at
 ~30 s build → flash → boot loop
 (`cargo run -p stackchan-sim --bin viz --features viz`).
 
+## Related
+
+- [Modifier authoring guide](modifiers) — adding a new behavior to the engine.
+- [Naming conventions](naming) — `Intent` / `Modifier` / `Skill` /
+  `ChirpKind` / `OverrideSource` rules with citations.
+- [Signal channels](signals) — the typed `Signal<…, T>` plumbing
+  between peripheral tasks and the render task.
+- [HTTP control plane](http) — what the firmware's task graph
+  exposes to LAN operators.
+- [Typed-error catalog](errors) — every driver crate's `Error<E>`
+  enum surfaced as defmt log lines.
+
 [`Entity`]: https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/entity.rs
 [`Director`]: https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/director.rs
 [`Modifier`]: https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/modifier.rs

@@ -135,4 +135,15 @@ directly; they go through `mind` / `voice` / `events` and modifiers in
 later phases translate that into rendered face and physical motion.
 The current population lives at `crates/stackchan-core/src/skills/`.
 
+## Related
+
+- [Naming conventions](naming) — Rule B for modifier names and Rule C
+  for skill names; apply before opening the PR.
+- [Architecture overview](architecture) — `Director`, `Phase` ordering,
+  and where modifiers sit in the task graph.
+- [Behavior flags](behavior) — operator-visible toggles for shipping
+  modifiers (the `behavior:` block in `STACKCHAN.RON`).
+- [Signal channels](signals) — sensor inputs that perception-reading
+  modifiers consume through `entity.perception`.
+
 [`Director`]: https://github.com/andymai/stackchan-kai/blob/main/crates/stackchan-core/src/director.rs

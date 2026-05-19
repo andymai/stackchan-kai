@@ -479,3 +479,15 @@ caps the concurrent SSE consumers. An SSE connection that arrives
 when no subscriber slot is free gets `503 stream slots exhausted`
 back. The two constants are coupled — bumping concurrency requires
 raising both.
+
+## Related
+
+- [Behavior flags](behavior) — operator-visible fields persisted
+  through `PUT /settings`.
+- [Signal channels](signals) — the typed `Signal<…, T>` plumbing
+  the render task drains before each `/state` snapshot; SSE uses
+  `PubSubChannel` for multi-subscriber `/state/stream` fan-out.
+- [Sidecar agent](sidecar) — the agent that lives outside the
+  firmware and talks to it over HTTP.
+- [Dance choreography](dance) — wire format for the `POST /dance`
+  keyframe stream.
