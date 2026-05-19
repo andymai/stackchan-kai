@@ -543,4 +543,32 @@ mod tests {
         // against the sensor" territory in callers.
         assert_eq!(ps, 0x5FF);
     }
+
+    #[test]
+    fn read_status_returns_status_register_byte() {
+        // The driver reads REG_ALS_PS_STATUS and returns the byte
+        // verbatim — caller decodes bits themselves.
+        let harness = Harness::new();
+        harness.queue_read(vec![0b0001_0101]);
+        let mut bus = MockI2c { harness: &harness };
+        let mut driver = Ltr553::new(&mut bus);
+        let status = block_on(driver.read_status()).unwrap();
+        assert_eq!(status, 0b0001_0101);
+        assert_eq!(
+            harness.events(),
+            vec![Event::WriteRead(ADDRESS, REG_ALS_PS_STATUS, 1)],
+        );
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // routes the bus error through this conversion. Mock uses
+        // Infallible so the runtime path can't fire; exercise directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+            Error::BadPartId(_) => panic!("expected Error::I2c"),
+        }
+    }
 }
