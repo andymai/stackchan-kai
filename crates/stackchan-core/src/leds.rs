@@ -465,4 +465,42 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn led_override_bypasses_emotion_palette_and_brightness() {
+        // The operator/dance-script override path writes the exact
+        // RGB888 pixel into the ring regardless of emotion or
+        // breath phase.
+        let mut entity = Entity::default();
+        entity.mind.affect.emotion = Emotion::Angry;
+        entity.led_override = Some([0x10, 0x20, 0x30]);
+        let mut frame = LedFrame::default();
+        render_leds(&entity, Instant::from_millis(0), &mut frame);
+        let expected = rgb888_to_565(0x10, 0x20, 0x30);
+        assert!(
+            frame.0.iter().all(|&p| p == expected),
+            "led_override should clobber the breath-modulated emotion palette",
+        );
+    }
+
+    #[test]
+    fn every_emotion_variant_has_a_palette_entry() {
+        // Exercises every match arm in `palette()` so a future
+        // Emotion variant addition without a palette entry fails to
+        // compile rather than silently falling through.
+        let now = Instant::from_millis(0);
+        for &emotion in Emotion::ALL {
+            let mut entity = Entity::default();
+            entity.mind.affect.emotion = emotion;
+            let mut frame = LedFrame::default();
+            render_leds(&entity, now, &mut frame);
+            // render_leds writes the same pixel to every slot, so
+            // assert all (not any) to express the contract: every
+            // pixel on the ring is lit, not just one.
+            assert!(
+                frame.0.iter().all(|&p| p != 0),
+                "{emotion:?} produced an all-zero ring",
+            );
+        }
+    }
 }
