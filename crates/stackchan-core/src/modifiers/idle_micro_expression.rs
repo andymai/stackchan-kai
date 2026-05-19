@@ -359,6 +359,11 @@ mod tests {
         assert_eq!(from_default.interval_max_ms, from_new.interval_max_ms);
         assert_eq!(from_default.max_mouth_y_px, from_new.max_mouth_y_px);
         assert_eq!(from_default.rng_state, from_new.rng_state);
+        // Exhaustive — including the scheduler state, so a future
+        // refactor that swaps in #[derive(Default)] with different
+        // initial values can't pass silently.
+        assert_eq!(from_default.next_fire_at, from_new.next_fire_at);
+        assert_eq!(from_default.last_y_offset, from_new.last_y_offset);
     }
 
     #[test]
