@@ -365,4 +365,36 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn default_matches_new_disabled() {
+        let from_default = <Soliloquy as Default>::default();
+        let from_new = Soliloquy::new();
+        assert_eq!(from_default.enabled, from_new.enabled);
+        assert!(
+            !from_default.enabled,
+            "Soliloquy::new() defaults to disabled"
+        );
+    }
+
+    #[test]
+    fn meta_declares_decoration_phase_and_bubble_write() {
+        let m = Soliloquy::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "Soliloquy");
+        assert_eq!(meta.phase, Phase::Decoration);
+        assert_eq!(meta.priority, 0);
+        assert_eq!(meta.writes, &[Field::Bubble]);
+        assert_eq!(meta.reads, &[Field::Bubble]);
+    }
+
+    #[test]
+    fn rand_interval_returns_lo_when_hi_not_greater() {
+        // Degenerate bounds: `hi <= lo` must short-circuit and return
+        // `lo` rather than panic on the unsigned subtraction in the
+        // `span` calculation.
+        let mut m = Soliloquy::with_seed(true, NonZeroU32::new(1).expect("non-zero"));
+        assert_eq!(m.rand_interval(7, 7), 7);
+        assert_eq!(m.rand_interval(100, 50), 100);
+    }
 }
