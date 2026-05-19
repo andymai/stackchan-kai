@@ -1954,7 +1954,9 @@ mod tests {
     // ============================================================
 
     /// Boilerplate base body: just enough of the schema to satisfy
-    /// required top-level fields. Append more inside the closing `}`.
+    /// required top-level fields. `extra` must either be empty or
+    /// start with `","` so that the appended field is properly
+    /// separated from `"time"` (e.g. `with_base(r#","auth":{...}"#)`).
     fn with_base(extra: &str) -> String {
         format!(
             r#"{{
@@ -1966,7 +1968,7 @@ mod tests {
         )
     }
 
-    fn assert_bare_parse_err(input: &str) -> alloc::string::String {
+    fn assert_bare_parse_err(input: &str) -> String {
         match parse_settings_json(input).unwrap_err() {
             ConfigError::BareParse(msg) => msg,
             other => panic!("expected BareParse, got {other:?}"),
