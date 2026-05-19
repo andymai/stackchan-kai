@@ -262,4 +262,42 @@ mod tests {
             "expected 1-2 non-zero mel bins, got {nonzero}: {out:?}"
         );
     }
+
+    #[test]
+    fn default_matches_new() {
+        // Default::default() delegates to new(); this also asserts
+        // new() is deterministic across two calls.
+        let from_default = <MelFilterbank as Default>::default();
+        let from_new = MelFilterbank::new();
+        assert_eq!(from_default.weights().len(), from_new.weights().len());
+        for (row, (d, n)) in from_default
+            .weights()
+            .iter()
+            .zip(from_new.weights().iter())
+            .enumerate()
+        {
+            for (col, (a, b)) in d.iter().zip(n.iter()).enumerate() {
+                assert_eq!(
+                    a.to_bits(),
+                    b.to_bits(),
+                    "weight diverged at row={row} col={col}: default={a} new={b}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn weights_accessor_exposes_matrix_with_full_band_coverage() {
+        let fb = MelFilterbank::new();
+        let w = fb.weights();
+        assert_eq!(w.len(), MEL_BIN_COUNT);
+        // Every filter has at least one non-zero bin — otherwise the
+        // band-edge construction has silently degenerated.
+        for (m, row) in w.iter().enumerate() {
+            assert!(
+                row.iter().any(|&x| x > 0.0),
+                "mel filter {m} has no non-zero weights",
+            );
+        }
+    }
 }
