@@ -657,4 +657,44 @@ mod tests {
             assert_eq!(left.center.y, right.center.y, "{g:?} eyes differ in y");
         }
     }
+
+    fn make_eye(radius_x: u16, radius_y: u16, weight: u8) -> Eye {
+        Eye {
+            center: Point::new(0, 0),
+            radius_x,
+            radius_y,
+            phase: EyePhase::Open,
+            weight,
+            open_weight: 100,
+        }
+    }
+
+    #[test]
+    fn eye_width_doubles_radius_x() {
+        // width() returns radius_x × 2 saturating; pin the math.
+        assert_eq!(make_eye(30, 30, 100).width(), 60);
+        // Saturation at u16::MAX when radius_x × 2 overflows.
+        assert_eq!(make_eye(u16::MAX, 30, 100).width(), u16::MAX);
+    }
+
+    #[test]
+    fn eye_height_scales_with_weight() {
+        // weight = 100 → full diameter (radius_y × 2).
+        assert_eq!(make_eye(20, 40, 100).height(), 80);
+        // weight = 50 → half.
+        assert_eq!(make_eye(20, 40, 50).height(), 40);
+        // weight = 0 → zero.
+        assert_eq!(make_eye(20, 40, 0).height(), 0);
+    }
+
+    #[test]
+    fn eye_height_clamps_at_full_diameter_above_100() {
+        // weight > 100 (out-of-contract) clamps to the full diameter
+        // rather than overshooting — defensive guard.
+        assert_eq!(
+            make_eye(20, 40, 255).height(),
+            80,
+            "weight > 100 must not exceed full diameter",
+        );
+    }
 }
