@@ -95,4 +95,47 @@ mod tests {
         let dyn_ref = ContentRef::new(1).expect("non-zero");
         assert!(!b.can_handle(&SpeechContent::Dynamic(dyn_ref)));
     }
+
+    #[test]
+    fn name_is_stable_diagnostic_string() {
+        // `name` is used in defmt log lines when the router picks a
+        // backend; pin it so log greps stay valid across refactors.
+        let b = StubBackend;
+        assert_eq!(b.name(), "Stub");
+    }
+
+    #[test]
+    fn render_surfaces_typed_errors() {
+        // The StubBackend always returns UnsupportedContent — exercise
+        // the dispatch + the RenderError variant flow. Real backends
+        // return Box<dyn AudioSource> on success; the router only
+        // calls `render` after `can_handle` returned true, so this
+        // path is the standard "I claimed I could but I really
+        // can't" fallthrough that backends use to ask the router
+        // to try the next registered backend.
+        let b = StubBackend;
+        let utt = Utterance::phrase(PhraseId::Greeting);
+        let result = b.render(&utt);
+        assert_eq!(result.err(), Some(RenderError::UnsupportedContent));
+    }
+
+    #[test]
+    fn render_error_variants_are_distinct_and_copy() {
+        // Pin that the three variants are equal only to themselves —
+        // the router compares variants to decide whether to retry
+        // (AssetMissing) vs fall through to the next backend
+        // (UnsupportedContent) vs surface to the caller
+        // (BackendUnavailable). `#[derive(Copy)]` lets a backend
+        // return-by-value without cloning.
+        assert_ne!(RenderError::UnsupportedContent, RenderError::AssetMissing);
+        assert_ne!(RenderError::AssetMissing, RenderError::BackendUnavailable);
+        assert_ne!(
+            RenderError::UnsupportedContent,
+            RenderError::BackendUnavailable
+        );
+        // Copy: assignment must not move.
+        let e = RenderError::AssetMissing;
+        let copied = e;
+        assert_eq!(e, copied);
+    }
 }
