@@ -82,8 +82,11 @@ fields alone unless you actually want to rotate them.
 curl -sS http://stackchan.local/settings | jq .behavior
 ```
 
-`GET /state` also surfaces a few live flags (e.g. wake-word arming)
-under `behavior` for telemetry consumers.
+`GET /settings` is authoritative for the persisted config. Live
+task state (e.g. whether the wake-word task actually loaded the
+model file) shows up in defmt logs over USB-Serial-JTAG; the HTTP
+control plane doesn't currently mirror task health back as
+structured data.
 
 ## Adding a new behavior field
 
