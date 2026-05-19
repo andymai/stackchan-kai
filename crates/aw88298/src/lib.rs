@@ -357,6 +357,9 @@ mod tests {
         chip_id: [u8; 2],
         /// Every `Operation::Write` payload, in emission order.
         writes: RefCell<Vec<Vec<u8>>>,
+        /// I²C address attached to each recorded write, in the same
+        /// order as `writes`. Useful for asserting alt-address routing.
+        addresses: RefCell<Vec<u8>>,
     }
 
     impl MockI2c {
@@ -364,6 +367,7 @@ mod tests {
             Self {
                 chip_id: id.to_be_bytes(),
                 writes: RefCell::new(Vec::new()),
+                addresses: RefCell::new(Vec::new()),
             }
         }
     }
@@ -375,13 +379,14 @@ mod tests {
     impl I2c for MockI2c {
         async fn transaction(
             &mut self,
-            _address: SevenBitAddress,
+            address: SevenBitAddress,
             operations: &mut [Operation<'_>],
         ) -> Result<(), Self::Error> {
             for op in operations {
                 match op {
                     Operation::Write(buf) => {
                         self.writes.borrow_mut().push(buf.to_vec());
+                        self.addresses.borrow_mut().push(address);
                     }
                     Operation::Read(buf) => {
                         let n = buf.len().min(self.chip_id.len());
@@ -523,5 +528,51 @@ mod tests {
         assert_eq!(writes.len(), 2);
         assert_eq!(writes[0], [REG_BSTCTRL2, 0x66, 0x73]);
         assert_eq!(writes[1], [REG_BSTCTRL2, 0x06, 0x73]);
+    }
+
+    #[test]
+    fn db_to_volume_byte_saturates_below_min() {
+        // Inputs below VOLUME_MIN_DB clamp to the min, so the byte is
+        // the max attenuation (i.e. `-VOLUME_MIN_DB << 1 = 254`). Pin
+        // the saturation branch — the existing high-end saturation
+        // case is exercised by the init / set_volume tests but the
+        // low-end branch had no test.
+        assert_eq!(db_to_volume_byte(-128), db_to_volume_byte(VOLUME_MIN_DB));
+        assert_eq!(db_to_volume_byte(VOLUME_MIN_DB), 254);
+    }
+
+    #[test]
+    fn new_uses_default_address() {
+        let amp = Aw88298::new(MockI2c::with_chip_id(0));
+        assert_eq!(amp.address(), ADDRESS);
+    }
+
+    #[test]
+    fn with_address_overrides_default_and_routes_writes() {
+        // Alt-strap constructor: drive set_volume through and confirm
+        // every recorded write went to the configured address, not
+        // the default ADDRESS — guards against hard-coded ADDRESS
+        // calls in any I²C call site.
+        let alt = 0x37_u8;
+        let mut amp = Aw88298::with_address(MockI2c::with_chip_id(CHIP_ID), alt);
+        assert_eq!(amp.address(), alt);
+        block_on(amp.set_volume_db(-30)).unwrap();
+        let addrs = amp.bus.addresses.borrow();
+        assert!(!addrs.is_empty(), "set_volume_db must issue a write");
+        for addr in addrs.iter() {
+            assert_eq!(*addr, alt, "write must route to the configured address");
+        }
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // routes the bus error through this. Mock uses Infallible so
+        // the runtime path can't fire; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+            Error::BadChipId(_) => panic!("expected Error::I2c"),
+        }
     }
 }
