@@ -238,4 +238,30 @@ mod tests {
         remote.update(&mut entity);
         assert_eq!(entity.mind.affect.emotion, Emotion::Happy);
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <EmotionFromRemote as Default>::default();
+        let from_new = EmotionFromRemote::new();
+        // Slice equality, not just length: catches a future Default
+        // that returns a non-empty mapping of matching length.
+        assert_eq!(from_default.mapping, from_new.mapping);
+    }
+
+    #[test]
+    fn meta_declares_affect_phase_and_full_reads_writes() {
+        let m = EmotionFromRemote::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "EmotionFromRemote");
+        assert_eq!(meta.phase, Phase::Affect);
+        assert_eq!(meta.priority, -90);
+        // Full contract pin — including Autonomy in reads (update
+        // checks manual_until) and RemotePending in writes (.take()
+        // clears it on consume).
+        assert_eq!(meta.reads, &[Field::Autonomy, Field::RemotePending]);
+        assert_eq!(
+            meta.writes,
+            &[Field::Emotion, Field::Autonomy, Field::RemotePending],
+        );
+    }
 }
