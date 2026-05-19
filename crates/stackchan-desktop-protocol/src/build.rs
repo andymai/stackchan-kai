@@ -140,3 +140,55 @@ fn push_string(out: &mut String, s: &str) {
     }
     out.push('"');
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test scaffolding: structural pins on the rendered output"
+)]
+mod tests {
+    use super::*;
+    use crate::types::Ack;
+
+    #[test]
+    fn push_string_escapes_backslash_and_returns_and_control_chars() {
+        // Build an Ack with an error string that triggers every
+        // push_string escape arm: backslash, `\n` (already covered),
+        // `\r`, `\t` (already covered), and a control char like
+        // 0x01 routed through `\\u{:04x}`.
+        let ack = Ack {
+            cmd: alloc::string::String::from("file"),
+            ok: false,
+            n: 0,
+            error: Some(alloc::string::String::from(
+                "back\\slash and \r return and \x01 ctrl",
+            )),
+        };
+        let mut out = alloc::string::String::new();
+        render_ack(&mut out, &ack);
+        // backslash escape — one source backslash → two on the wire.
+        assert!(out.contains("back\\\\slash"), "rendered = {out}");
+        // \r → the two-char `\r` JSON escape.
+        assert!(out.contains("\\r"), "rendered = {out}");
+        // 0x01 control char emits the \uXXXX form.
+        assert!(out.contains("\\u0001"), "rendered = {out}");
+    }
+
+    #[test]
+    fn push_string_passes_through_printable_ascii_and_non_ascii() {
+        // Non-special / non-control chars take the `c => out.push(c)`
+        // fall-through. Pin printable ASCII + non-ASCII codepoint
+        // (the latter has u32 ≥ 0x20 so it doesn't hit the control
+        // arm).
+        let ack = Ack {
+            cmd: alloc::string::String::from("name"),
+            ok: true,
+            n: 0,
+            error: Some(alloc::string::String::from("hello 日本")),
+        };
+        let mut out = alloc::string::String::new();
+        render_ack(&mut out, &ack);
+        assert!(out.contains("hello 日本"), "rendered = {out}");
+    }
+}
