@@ -161,7 +161,9 @@ impl Modifier for IdleDrift {
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
-    reason = "test literals are compile-time non-zero; the unwrap can't fire"
+    clippy::similar_names,
+    reason = "test literals are compile-time non-zero; the unwrap can't fire. \
+              Paired left_/right_ delta bindings are the natural names."
 )]
 mod tests {
     use super::*;
@@ -226,5 +228,65 @@ mod tests {
         for _ in 0..100 {
             assert_eq!(a.next_u32(), b.next_u32());
         }
+    }
+
+    /// Both eyes shift by the same delta on every drift — the
+    /// lockstep invariant. Drives 20 drift cycles and asserts each
+    /// time that `right_delta == left_delta` on both axes. A future
+    /// refactor that decoupled per-eye offsets would surface here.
+    #[test]
+    fn both_eyes_shift_in_lockstep() {
+        let mut entity = at(0);
+        let left_baseline = entity.face.left_eye.center;
+        let right_baseline = entity.face.right_eye.center;
+        let mut drift = IdleDrift::with_seed(NonZeroU32::new(42).unwrap());
+
+        for i in 0..20 {
+            entity.tick.now = Instant::from_millis(i * DEFAULT_INTERVAL_MS);
+            drift.update(&mut entity);
+            let left_dx = entity.face.left_eye.center.x - left_baseline.x;
+            let left_dy = entity.face.left_eye.center.y - left_baseline.y;
+            let right_dx = entity.face.right_eye.center.x - right_baseline.x;
+            let right_dy = entity.face.right_eye.center.y - right_baseline.y;
+            assert_eq!(
+                left_dx, right_dx,
+                "tick {i}: eye-x drifts diverged — left={left_dx}, right={right_dx}"
+            );
+            assert_eq!(
+                left_dy, right_dy,
+                "tick {i}: eye-y drifts diverged — left={left_dy}, right={right_dy}"
+            );
+        }
+    }
+
+    /// Two `IdleDrift`s seeded with distinct values must produce
+    /// distinct eye positions within a handful of drift cycles. The
+    /// firmware seeds from `esp_hal::rng::Rng` per boot so multi-unit
+    /// deployments don't drift in unison; this pins the contract.
+    /// Complements `seeded_rng_is_deterministic` (which asserts same
+    /// seed → same sequence) by asserting the inverse.
+    #[test]
+    fn distinct_seeds_produce_divergent_drifts() {
+        let mut entity_a = at(0);
+        let mut entity_b = at(0);
+        let mut drift_a = IdleDrift::with_seed(NonZeroU32::new(0x1234_5678).unwrap());
+        let mut drift_b = IdleDrift::with_seed(NonZeroU32::new(0xCAFE_BABE).unwrap());
+
+        let mut diverged = false;
+        for i in 0..10 {
+            let now = Instant::from_millis(i * DEFAULT_INTERVAL_MS);
+            entity_a.tick.now = now;
+            entity_b.tick.now = now;
+            drift_a.update(&mut entity_a);
+            drift_b.update(&mut entity_b);
+            if entity_a.face.left_eye.center != entity_b.face.left_eye.center {
+                diverged = true;
+                break;
+            }
+        }
+        assert!(
+            diverged,
+            "two distinct seeds produced identical drift sequences over 10 cycles"
+        );
     }
 }
