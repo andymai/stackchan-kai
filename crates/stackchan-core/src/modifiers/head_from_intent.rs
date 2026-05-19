@@ -348,9 +348,12 @@ mod tests {
 
     #[test]
     fn envelope_handles_degenerate_window_widths() {
-        // attack_ms = 0: any elapsed below decay window jumps straight
-        // to peak. decay_ms = 0 after attack completes: clamps to 0
-        // immediately rather than dividing by zero.
+        // attack_ms = 0, elapsed = 0: `elapsed_ms < attack_ms` is
+        // 0 < 0 (false), so the function falls into the decay branch
+        // with `decay_elapsed = 0` — yielding 1.0 from 1 - 0/100.
+        // attack_ms = 50, elapsed = 50, decay_ms = 0: same fall-through
+        // into the decay branch; `decay_elapsed >= decay_ms` is 0 >= 0
+        // (true), short-circuiting to 0.0 before the would-be divide.
         assert!((envelope(0, 0, 100) - 1.0).abs() < f32::EPSILON);
         assert!(envelope(50, 50, 0).abs() < f32::EPSILON);
     }
