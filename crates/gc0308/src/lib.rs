@@ -430,8 +430,9 @@ const fn low_byte(value: u16) -> u8 {
 
 #[cfg(test)]
 #[allow(
+    clippy::panic,
     clippy::unwrap_used,
-    reason = "test-only: panicking on unexpected mock state surfaces failures cleanly"
+    reason = "test-only: panic! / unwrap on unexpected variants surfaces failures cleanly"
 )]
 mod tests {
     use super::*;
@@ -698,5 +699,32 @@ mod tests {
         let value: u16 = 0x12_34;
         assert_eq!(high_byte(value), 0x12);
         assert_eq!(low_byte(value), 0x34);
+    }
+
+    #[test]
+    fn address_accessor_returns_configured_address() {
+        let cam = Gc0308::new(MockI2c::new());
+        assert_eq!(cam.address(), ADDRESS);
+    }
+
+    #[test]
+    fn into_inner_returns_underlying_bus() {
+        // into_inner consumes the driver and yields the bus back —
+        // useful for single-task firmware that wants to reuse the bus
+        // for another peripheral after camera init is done.
+        let cam = Gc0308::new(MockI2c::new());
+        let _bus: MockI2c = cam.into_inner();
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // routes the bus error through this. Mock uses Infallible so
+        // the runtime path can't fire; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+            Error::BadChipId(_) => panic!("expected Error::I2c"),
+        }
     }
 }
