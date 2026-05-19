@@ -607,29 +607,25 @@ pub const INITIALIZE_RESULT_JSON: &str = concat!(
     "}",
 );
 
-/// Static MCP `tools/list` result JSON. Tools map onto the existing
-/// HTTP control plane:
+/// Static MCP `tools/list` result JSON.
 ///
-/// - `set_emotion(emotion: string, hold_ms?: integer)`
-/// - `set_mood(mood: string)`
-/// - `set_face_geometry(geometry: string)`
-/// - `look_at(pan_deg: number, tilt_deg: number, hold_ms?: integer)`
-/// - `speak(phrase: string, locale?: string)`
-/// - `start_listen(duration_ms?: integer)`
-/// - `enter_pairing(duration_ms?: integer)`
-/// - `set_volume(level: integer)`
-/// - `set_mute(muted: bool)`
-/// - `create_reminder(fire_in_secs: integer, phrase: string) -> { id }`
-/// - `list_reminders() -> { reminders: [...] }`
-/// - `cancel_reminder(id: integer)`
-/// - `take_photo() -> { url, format, width, height }`
-/// - `sleep()`
-/// - `wake()`
-/// - `get_state()`
+/// Each tool maps onto an existing control surface — either an HTTP
+/// route on the firmware (`POST /emotion`, `POST /look-at`, …) or a
+/// firmware-internal trigger (`enter_thinking` / `exit_thinking` are
+/// fired by the sidecar-agent task; the MCP twins let an external
+/// orchestrator drive the same state). The catalogue groups by
+/// purpose: avatar style (emotion / mood / face geometry), motion
+/// (look-at, look-at-point, play-motion), voice (speak, push-toast,
+/// start-listen, thinking transitions), peripherals (volume / mute /
+/// take-photo), reminders (create / list / cancel), lifecycle (sleep
+/// / wake / get-state / reset), and pairing.
 ///
 /// Schemas are minimal — no enum constraints on emotion / mood /
 /// phrase strings; the firmware-side tool handler returns
-/// `InvalidParams` when an unknown value is passed.
+/// `InvalidParams` when an unknown value is passed. The constant
+/// body below is the authoritative per-tool name + description +
+/// inputSchema; don't duplicate the inventory in this doc comment
+/// because it drifts.
 pub const TOOLS_LIST_RESULT_JSON: &str = concat!(
     r#"{"tools":["#,
     r#"{"name":"set_emotion","description":"Set the avatar's emotion with an optional hold timer (milliseconds). Vocabulary: neutral, happy, sad, sleepy, surprised, angry, doubt, boring, hi, loved, curious, confused, mad.","inputSchema":{"type":"object","properties":{"emotion":{"type":"string"},"hold_ms":{"type":"integer"}},"required":["emotion"]}},"#,
