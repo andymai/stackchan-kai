@@ -875,4 +875,141 @@ mod tests {
         step(&mut m, &mut entity, 5_100);
         assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
     }
+
+    // ============================================================
+    // LookAtPoint coverage — entirely 0-execution before this PR.
+    // ============================================================
+
+    #[test]
+    fn look_at_point_sets_attention_point_and_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::LookAtPoint {
+            target: (1.0, 0.0, -2.0),
+            hold_ms: 5_000,
+        });
+        step(&mut m, &mut entity, 0);
+        match entity.mind.attention {
+            Attention::Point { target, .. } => {
+                assert_eq!(target, (1.0, 0.0, -2.0));
+            }
+            other => panic!("expected Attention::Point, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn look_at_point_hold_keeps_attention_point_until_expiry() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::LookAtPoint {
+            target: (0.0, 1.0, -2.0),
+            hold_ms: 2_000,
+        });
+        step(&mut m, &mut entity, 0);
+        // Capture the entry-frame `since` — it must stay pinned across
+        // re-asserts so ease-in animations don't restart each tick
+        // (same guarantee the 2D LookAt test verifies).
+        let entry_since = match entity.mind.attention {
+            Attention::Point { since, .. } => since,
+            other => panic!("expected Attention::Point at entry, got {other:?}"),
+        };
+        // Mid-hold: still Point with the same `since`.
+        step(&mut m, &mut entity, 1_500);
+        match entity.mind.attention {
+            Attention::Point { since, target } => {
+                assert_eq!(since, entry_since, "since must pin to entry frame");
+                assert_eq!(target, (0.0, 1.0, -2.0));
+            }
+            other => panic!("expected Attention::Point mid-hold, got {other:?}"),
+        }
+        // After expiry: released to None (still ours).
+        step(&mut m, &mut entity, 2_500);
+        assert!(matches!(entity.mind.attention, Attention::None));
+    }
+
+    #[test]
+    fn look_at_point_expiry_does_not_clobber_attention_set_by_another_modifier() {
+        // If a different modifier has rewritten attention to e.g.
+        // Listening before our point hold expires, releasing the hold
+        // must not stomp the new attention.
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::LookAtPoint {
+            target: (1.0, 0.0, 0.0),
+            hold_ms: 1_000,
+        });
+        step(&mut m, &mut entity, 0);
+        // Another modifier takes over.
+        entity.mind.attention = Attention::Listening {
+            since: Instant::from_millis(500),
+        };
+        step(&mut m, &mut entity, 1_500); // past expiry
+        // Attention stays whatever the other modifier set — not
+        // stomped back to None.
+        assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
+    }
+
+    #[test]
+    fn look_at_point_supersedes_active_2d_lookat_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        // Active 2D look-at hold.
+        entity.input.remote_command = Some(RemoteCommand::LookAt {
+            target: crate::head::Pose {
+                pan_deg: 10.0,
+                tilt_deg: 0.0,
+            },
+            hold_ms: 10_000,
+        });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Tracking { .. }));
+        // New LookAtPoint arrives — should override.
+        entity.input.remote_command = Some(RemoteCommand::LookAtPoint {
+            target: (0.0, 0.0, -1.0),
+            hold_ms: 5_000,
+        });
+        step(&mut m, &mut entity, 1_000);
+        assert!(matches!(entity.mind.attention, Attention::Point { .. }));
+        // The 2D hold's expiry path must no longer fire — 12s later
+        // attention is whatever LookAtPoint's expiry yields, not the
+        // stale Tracking → None handover.
+        step(&mut m, &mut entity, 12_000);
+        // Both holds have expired by now (LookAtPoint at t=6000,
+        // and the 2D one was cleared on LookAtPoint arrival).
+        assert!(matches!(entity.mind.attention, Attention::None));
+    }
+
+    #[test]
+    fn look_at_2d_supersedes_active_3d_point_hold() {
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::LookAtPoint {
+            target: (1.0, 0.0, -1.0),
+            hold_ms: 10_000,
+        });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Point { .. }));
+        entity.input.remote_command = Some(RemoteCommand::LookAt {
+            target: crate::head::Pose {
+                pan_deg: 5.0,
+                tilt_deg: 0.0,
+            },
+            hold_ms: 3_000,
+        });
+        step(&mut m, &mut entity, 500);
+        assert!(matches!(entity.mind.attention, Attention::Tracking { .. }));
+    }
+
+    #[test]
+    fn listen_hold_expiry_clears_listening_when_still_ours() {
+        // Covers the listen_hold expiry branch that clears attention
+        // when it's still our Listening { since } anchor.
+        let mut m = RemoteCommandModifier::new();
+        let mut entity = entity_at(0);
+        entity.input.remote_command = Some(RemoteCommand::StartListen { duration_ms: 1_000 });
+        step(&mut m, &mut entity, 0);
+        assert!(matches!(entity.mind.attention, Attention::Listening { .. }));
+        step(&mut m, &mut entity, 1_500); // past expiry
+        assert!(matches!(entity.mind.attention, Attention::None));
+    }
 }
