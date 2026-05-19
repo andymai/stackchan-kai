@@ -593,4 +593,28 @@ mod tests {
         player.update(&mut entity);
         assert_eq!(entity.motor.head_pose.pan_deg, -10.0);
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <DancePlayer as Default>::default();
+        let from_new = DancePlayer::new();
+        // Both start with no active script.
+        assert!(from_default.active.is_none());
+        assert!(from_new.active.is_none());
+    }
+
+    #[test]
+    fn meta_declares_motion_phase_with_dance_writes() {
+        let m = DancePlayer::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "DancePlayer");
+        assert_eq!(meta.phase, Phase::Motion);
+        assert_eq!(meta.priority, 40);
+        assert!(meta.writes.contains(&Field::HeadPose));
+        assert!(meta.writes.contains(&Field::Emotion));
+        assert!(meta.writes.contains(&Field::Decorator));
+        assert!(meta.writes.contains(&Field::LedOverride));
+        assert!(meta.writes.contains(&Field::DanceScript));
+        assert!(meta.reads.contains(&Field::DanceScript));
+    }
 }
