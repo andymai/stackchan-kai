@@ -36,7 +36,7 @@ enough to warrant its own page (e.g. audio debug, sidecar), the
 | `wake_word_arena_kib` | u32 | `64` | **reboot** | TFLite Micro arena size in KiB. Allocated once at boot from PSRAM. Must be `>= 1`; `0` is rejected by validation. |
 
 Reboot semantics: every field marked **live** takes effect on the
-next render frame (`POST /settings` immediately signals the relevant
+next render frame (`PUT /settings` immediately signals the relevant
 task). Fields marked **reboot** are read once at task spawn and need
 a power-cycle or `POST /restart` to pick up the new value. `PUT /settings`
 echoes `{"reboot_required": <bool>}` so operators don't have to
