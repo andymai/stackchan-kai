@@ -921,8 +921,9 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ProtoError> {
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
+    clippy::panic,
     clippy::unwrap_used,
-    reason = "tests assert structural invariants; .expect / .unwrap are the standard test idiom"
+    reason = "tests assert structural invariants; .expect / .unwrap / panic! are the standard test idiom"
 )]
 mod tests {
     use super::*;
@@ -979,5 +980,655 @@ mod tests {
     #[test]
     fn base64_tolerates_whitespace() {
         assert_eq!(base64_decode("Zm9v\n YmFy").unwrap(), b"foobar");
+    }
+
+    // ============================================================
+    // JSON string escapes — every backslash escape, surrogate pair,
+    // and the lone/short surrogate error paths.
+    // ============================================================
+
+    fn parse_str(input: &str) -> Result<String, ProtoError> {
+        let mut p = JsonParser::new(input);
+        p.parse_string()
+    }
+
+    #[test]
+    fn string_escapes_decode() {
+        // RFC 8259 §7 short escapes. Each one is its own branch in
+        // `parse_string`; cover them together so the table is unbroken.
+        let cases = [
+            (r#""\"""#, "\""),
+            (r#""\\""#, "\\"),
+            (r#""\/""#, "/"),
+            (r#""\n""#, "\n"),
+            (r#""\t""#, "\t"),
+            (r#""\r""#, "\r"),
+            (r#""\b""#, "\u{0008}"),
+            (r#""\f""#, "\u{000c}"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(parse_str(input).unwrap(), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn string_unicode_escapes_decode() {
+        // BMP code point.
+        assert_eq!(parse_str(r#""é""#).unwrap(), "é");
+        // Astral plane code point via UTF-16 surrogate pair (😀 = U+1F600).
+        assert_eq!(parse_str(r#""😀""#).unwrap(), "😀");
+    }
+
+    #[test]
+    fn string_unterminated_rejected() {
+        assert!(matches!(
+            parse_str(r#""no closing quote"#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn string_dangling_backslash_rejected() {
+        assert!(matches!(
+            parse_str("\"\\"),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn string_unsupported_escape_rejected() {
+        // `\x` isn't a JSON-defined escape.
+        assert!(matches!(
+            parse_str(r#""\x41""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_escape_short_hex_rejected() {
+        assert!(matches!(
+            parse_str(r#""\u00""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_escape_bad_hex_rejected() {
+        assert!(matches!(
+            parse_str(r#""\uZZZZ""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_lone_high_surrogate_rejected() {
+        // High surrogate not followed by `\u`.
+        assert!(matches!(
+            parse_str(r#""\ud83dABCD""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_high_surrogate_truncated_low_rejected() {
+        // High surrogate followed by `\u` but fewer than 4 hex chars.
+        assert!(matches!(
+            parse_str(r#""\ud83d\u00""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_bad_low_surrogate_hex_rejected() {
+        assert!(matches!(
+            parse_str(r#""\ud83d\uZZZZ""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_low_surrogate_out_of_range_rejected() {
+        // High surrogate followed by `\u` where the second value
+        // isn't in the low-surrogate range.
+        assert!(matches!(
+            parse_str(r#""\ud83dA""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn unicode_lone_low_surrogate_rejected() {
+        // Low surrogate without a preceding high surrogate.
+        assert!(matches!(
+            parse_str(r#""\udc00""#),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    // ============================================================
+    // Primitive parser branches: bool / null / number.
+    // ============================================================
+
+    #[test]
+    fn bool_typo_rejected() {
+        // `true`/`false` are the only valid starts; `tru` fails
+        // the `starts_with("true")` and `starts_with("false")` arms.
+        assert!(matches!(
+            JsonParser::new("tru").parse_value(),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn null_typo_rejected() {
+        assert!(matches!(
+            JsonParser::new("nul").parse_value(),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn number_lone_minus_rejected() {
+        assert!(matches!(
+            JsonParser::new("-").parse_value(),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn number_negative_parses() {
+        // The `-` branch in `parse_number` is otherwise unexercised.
+        let v = JsonParser::new("-42").parse_value().unwrap();
+        assert_eq!(v, Value::Int(-42));
+    }
+
+    #[test]
+    fn unexpected_top_level_token_rejected() {
+        assert!(matches!(
+            parse_inbound(b"$bogus"),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    // ============================================================
+    // parse_inbound dispatch error paths.
+    // ============================================================
+
+    #[test]
+    fn inbound_invalid_utf8_rejected() {
+        // Lone continuation byte never starts a valid UTF-8 sequence.
+        assert!(matches!(
+            parse_inbound(&[0xff, 0xff, 0xff]),
+            Err(ProtoError::InvalidUtf8)
+        ));
+    }
+
+    #[test]
+    fn inbound_top_level_non_object_rejected() {
+        assert!(matches!(
+            parse_inbound(b"[1, 2, 3]"),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn inbound_unknown_evt_rejected() {
+        let line = br#"{"evt":"mystery"}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::UnknownKind(ref k)) if k == "mystery"
+        ));
+    }
+
+    #[test]
+    fn inbound_unknown_cmd_rejected() {
+        let line = br#"{"cmd":"mystery"}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::UnknownKind(ref k)) if k == "mystery"
+        ));
+    }
+
+    #[test]
+    fn inbound_prompt_null_decodes_to_none() {
+        let line = br#"{"prompt":null}"#;
+        let Inbound::Snapshot(snap) = parse_inbound(line).unwrap() else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snap.prompt, None);
+    }
+
+    #[test]
+    fn inbound_prompt_missing_id_rejected() {
+        // `id` defaults to empty string via `field_str_opt` fallback;
+        // an explicit empty string also trips the empty-id guard.
+        let line = br#"{"prompt":{"id":""}}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::MissingField("prompt.id"))
+        ));
+    }
+
+    #[test]
+    fn inbound_prompt_wrong_shape_rejected() {
+        let line = br#"{"prompt":42}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "prompt",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn inbound_turn_content_must_be_array() {
+        let line = br#"{"evt":"turn","content":42}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "content",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn inbound_turn_content_block_must_be_object() {
+        let line = br#"{"evt":"turn","content":[42]}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "content[]",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn inbound_turn_roundtrip_preserves_raw_json() {
+        // Exercises `render_value` / `write_value` / `write_string`
+        // across every Value variant (null, bool, int, str, array,
+        // object) plus control-char escape in `write_string`.
+        let line = br#"{"evt":"turn","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","input":{"cmd":"ls","args":["-l"],"silent":true,"timeout":null,"sep":"\t","raw":""}}]}"#;
+        let Inbound::Turn(turn) = parse_inbound(line).unwrap() else {
+            panic!("expected turn");
+        };
+        assert_eq!(turn.role, "assistant");
+        assert_eq!(turn.content.len(), 2);
+        assert_eq!(turn.content[0].kind, "text");
+        assert_eq!(turn.content[0].text.as_deref(), Some("hi"));
+        // raw_json for the tool_use block must include every nested
+        // type the serializer can emit.
+        let raw = &turn.content[1].raw_json;
+        assert!(raw.contains(r#""type":"tool_use""#));
+        assert!(raw.contains(r#""silent":true"#));
+        assert!(raw.contains(r#""timeout":null"#));
+        assert!(raw.contains(r#""args":["-l"]"#));
+        assert!(raw.contains(r#""sep":"\t""#));
+        assert!(raw.contains("\"raw\":\"\""));
+    }
+
+    #[test]
+    fn inbound_turn_serializer_escapes_control_chars() {
+        // Hits the `c if (c as u32) < 0x20` branch of `write_string`.
+        // Feed a `SOH` escape (legal JSON); the re-serialized block
+        // must encode the same control char back as `SOH`.
+        let line = b"{\"evt\":\"turn\",\"content\":[{\"type\":\"x\",\"ctrl\":\"\\u0001\"}]}";
+        let Inbound::Turn(turn) = parse_inbound(line).unwrap() else {
+            panic!("expected turn");
+        };
+        assert!(turn.content[0].raw_json.contains("\"ctrl\":\"\\u0001\""));
+    }
+
+    #[test]
+    fn inbound_turn_serializer_emits_false_and_negative_int() {
+        // Hits `Value::Bool(false)` + negative-int branches of
+        // `write_value` that the preceding test doesn't.
+        let line = br#"{"evt":"turn","content":[{"type":"x","flag":false,"n":-3}]}"#;
+        let Inbound::Turn(turn) = parse_inbound(line).unwrap() else {
+            panic!("expected turn");
+        };
+        let raw = &turn.content[0].raw_json;
+        assert!(raw.contains(r#""flag":false"#));
+        assert!(raw.contains(r#""n":-3"#));
+    }
+
+    #[test]
+    fn inbound_time_must_be_array() {
+        let line = br#"{"time":42}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue { field: "time", .. })
+        ));
+    }
+
+    #[test]
+    fn inbound_time_array_wrong_length() {
+        let line = br#"{"time":[123]}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue { field: "time", .. })
+        ));
+    }
+
+    #[test]
+    fn inbound_time_tz_offset_out_of_i32_range() {
+        // `tz_offset_secs` is an `i32`. Pass a value that fits in
+        // i64 but overflows i32.
+        let line = br#"{"time":[100,9999999999]}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "time[1]",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn inbound_time_sync_decodes() {
+        let line = br#"{"time":[1700000000,-28800]}"#;
+        let Inbound::TimeSync {
+            epoch_secs,
+            tz_offset_secs,
+        } = parse_inbound(line).unwrap()
+        else {
+            panic!("expected time sync");
+        };
+        assert_eq!(epoch_secs, 1_700_000_000);
+        assert_eq!(tz_offset_secs, -28_800);
+    }
+
+    #[test]
+    fn inbound_chunk_invalid_base64_rejected() {
+        let line = br#"{"cmd":"chunk","d":"Zg=="X"}"#;
+        // Outer parse fails on the malformed JSON first; isolate the
+        // base64 path with a syntactically valid envelope.
+        assert!(parse_inbound(line).is_err());
+
+        let line = br#"{"cmd":"chunk","d":"Zg*=="}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::InvalidBase64)
+        ));
+    }
+
+    #[test]
+    fn inbound_snapshot_keepalive_decodes_to_default() {
+        let line = br"{}";
+        let Inbound::Snapshot(snap) = parse_inbound(line).unwrap() else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snap, Snapshot::default());
+    }
+
+    #[test]
+    fn inbound_snapshot_msg_null_yields_empty_string() {
+        // Exercises `expect_str_or_null`'s `Null` arm via `msg`.
+        let line = br#"{"msg":null,"entries":["a","b"],"tokens":7,"tokens_today":3,"total":1,"running":0,"waiting":0}"#;
+        let Inbound::Snapshot(snap) = parse_inbound(line).unwrap() else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snap.msg, "");
+        assert_eq!(snap.entries, alloc::vec!["a", "b"]);
+        assert_eq!(snap.tokens, 7);
+        assert_eq!(snap.tokens_today, 3);
+    }
+
+    #[test]
+    fn inbound_snapshot_msg_wrong_type_rejected() {
+        let line = br#"{"msg":42}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue { field: "msg", .. })
+        ));
+    }
+
+    #[test]
+    fn inbound_snapshot_entries_non_array_rejected() {
+        let line = br#"{"entries":"oops"}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "entries",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn inbound_snapshot_entries_non_string_element_rejected() {
+        let line = br#"{"entries":[1,2]}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "entries",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn inbound_snapshot_total_out_of_u32_range_rejected() {
+        // Negative trips `u32::try_from` in `expect_u32`.
+        let line = br#"{"total":-1}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue { field: "total", .. })
+        ));
+    }
+
+    #[test]
+    fn inbound_snapshot_tokens_negative_rejected() {
+        // Negative trips `u64::try_from` in `expect_u64`.
+        let line = br#"{"tokens":-1}"#;
+        assert!(matches!(
+            parse_inbound(line),
+            Err(ProtoError::BadValue {
+                field: "tokens",
+                ..
+            })
+        ));
+    }
+
+    // ============================================================
+    // parse_outbound dispatch — wholly uncovered before this PR.
+    // ============================================================
+
+    #[test]
+    fn outbound_invalid_utf8_rejected() {
+        assert!(matches!(
+            parse_outbound(&[0xff, 0xff]),
+            Err(ProtoError::InvalidUtf8)
+        ));
+    }
+
+    #[test]
+    fn outbound_top_level_non_object_rejected() {
+        assert!(matches!(
+            parse_outbound(b"42"),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn outbound_neither_ack_nor_cmd_rejected() {
+        assert!(matches!(
+            parse_outbound(b"{}"),
+            Err(ProtoError::MalformedJson(_))
+        ));
+    }
+
+    #[test]
+    fn outbound_generic_ack_decodes() {
+        let line = br#"{"ack":"name","ok":true,"n":3,"error":null}"#;
+        let Outbound::Ack(ack) = parse_outbound(line).unwrap() else {
+            panic!("expected ack");
+        };
+        assert_eq!(ack.cmd, "name");
+        assert!(ack.ok);
+        assert_eq!(ack.n, 3);
+        assert_eq!(ack.error, None);
+    }
+
+    #[test]
+    fn outbound_ack_with_error_string_decodes() {
+        let line = br#"{"ack":"file","ok":false,"error":"disk full"}"#;
+        let Outbound::Ack(ack) = parse_outbound(line).unwrap() else {
+            panic!("expected ack");
+        };
+        assert!(!ack.ok);
+        assert_eq!(ack.n, 0); // default when absent
+        assert_eq!(ack.error.as_deref(), Some("disk full"));
+    }
+
+    #[test]
+    fn outbound_status_ack_decodes_all_subobjects() {
+        // Exercises parse_status_data + parse_battery + parse_sys
+        // + parse_user_stats end-to-end.
+        let line = br#"{"ack":"status","data":{"name":"Clawd","sec":true,"bat":{"pct":85,"mV":4100,"mA":-120,"usb":true},"sys":{"up":600,"heap":150000},"stats":{"appr":12,"deny":3,"vel":2,"nap":1,"lvl":5}}}"#;
+        let Outbound::StatusAck(data) = parse_outbound(line).unwrap() else {
+            panic!("expected status ack");
+        };
+        assert_eq!(data.name, "Clawd");
+        assert!(data.sec);
+        let bat = data.battery.expect("battery present");
+        assert_eq!(bat.pct, 85);
+        assert_eq!(bat.mv, 4100);
+        assert_eq!(bat.ma, -120);
+        assert!(bat.usb);
+        let sys = data.sys.expect("sys present");
+        assert_eq!(sys.uptime_secs, 600);
+        assert_eq!(sys.heap_free_bytes, 150_000);
+        let stats = data.stats.expect("stats present");
+        assert_eq!(stats.approvals, 12);
+        assert_eq!(stats.denies, 3);
+        assert_eq!(stats.velocity, 2);
+        assert_eq!(stats.naps, 1);
+        assert_eq!(stats.level, 5);
+    }
+
+    #[test]
+    fn outbound_status_ack_missing_data_rejected() {
+        let line = br#"{"ack":"status"}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::MissingField("data"))
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_data_wrong_shape_rejected() {
+        let line = br#"{"ack":"status","data":42}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue { field: "data", .. })
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_bat_wrong_shape_rejected() {
+        let line = br#"{"ack":"status","data":{"bat":42}}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue { field: "bat", .. })
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_sys_wrong_shape_rejected() {
+        let line = br#"{"ack":"status","data":{"sys":42}}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue { field: "sys", .. })
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_stats_wrong_shape_rejected() {
+        let line = br#"{"ack":"status","data":{"stats":42}}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue { field: "stats", .. })
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_battery_pct_out_of_u8_range_rejected() {
+        let line = br#"{"ack":"status","data":{"bat":{"pct":300,"mV":4100,"mA":0,"usb":false}}}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue {
+                field: "bat.pct",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_battery_mv_out_of_u16_range_rejected() {
+        let line = br#"{"ack":"status","data":{"bat":{"pct":50,"mV":99999,"mA":0,"usb":false}}}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue {
+                field: "bat.mV",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn outbound_status_ack_battery_ma_out_of_i16_range_rejected() {
+        let line =
+            br#"{"ack":"status","data":{"bat":{"pct":50,"mV":4100,"mA":99999,"usb":false}}}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue {
+                field: "bat.mA",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn outbound_permission_decodes_both_decisions() {
+        for (raw, expected) in [
+            (
+                br#"{"cmd":"permission","id":"abc","decision":"once"}"#.as_slice(),
+                Decision::Once,
+            ),
+            (
+                br#"{"cmd":"permission","id":"abc","decision":"deny"}"#.as_slice(),
+                Decision::Deny,
+            ),
+        ] {
+            let Outbound::Permission { id, decision } = parse_outbound(raw).unwrap() else {
+                panic!("expected permission");
+            };
+            assert_eq!(id, "abc");
+            assert_eq!(decision, expected);
+        }
+    }
+
+    #[test]
+    fn outbound_permission_unknown_decision_rejected() {
+        let line = br#"{"cmd":"permission","id":"abc","decision":"maybe"}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::BadValue {
+                field: "decision",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn outbound_unknown_cmd_rejected() {
+        let line = br#"{"cmd":"reboot"}"#;
+        assert!(matches!(
+            parse_outbound(line),
+            Err(ProtoError::UnknownKind(ref k)) if k == "reboot"
+        ));
     }
 }
