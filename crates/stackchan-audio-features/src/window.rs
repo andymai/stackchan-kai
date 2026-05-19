@@ -123,4 +123,25 @@ mod tests {
             "windowed sum {sum} != expected {expected}"
         );
     }
+
+    #[test]
+    fn default_matches_new_constructor() {
+        // Both constructors produce coefficient tables that compare
+        // bit-identically — the periodic Hann is a `const fn` so the
+        // tables themselves are baked into flash, not computed at
+        // construction time. Pin equivalence so a future refactor
+        // that diverges them surfaces here.
+        let from_default = <HannWindow as Default>::default();
+        let from_new = HannWindow::new();
+        let a = from_default.coefficients();
+        let b = from_new.coefficients();
+        for k in 0..WINDOW_SAMPLES {
+            assert!(
+                (a[k] - b[k]).abs() < f32::EPSILON,
+                "coefficient {k} diverged: default={} new={}",
+                a[k],
+                b[k],
+            );
+        }
+    }
 }
