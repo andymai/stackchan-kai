@@ -144,4 +144,74 @@ mod tests {
         }
         assert!(entity.face.decorator.is_none());
     }
+
+    #[test]
+    fn re_arm_after_intent_clears_and_returns_to_shaken() {
+        // Two distinct shake events separated by a non-shaken frame
+        // must each arm Dizzy with a fresh expiry. Otherwise the edge
+        // detector would silently miss the second shake of a
+        // double-shake gesture.
+        let mut entity = Entity::default();
+        let mut m = DecoratorFromShake::with_hold_ms(4_000);
+
+        step(&mut m, &mut entity, Intent::Idle, 0);
+        step(&mut m, &mut entity, Intent::Shaken, 33);
+        let first = entity.face.decorator.expect("first shake arms").expires_at;
+
+        // Intent clears (post-shake settle) so the edge detector
+        // re-arms on the next Shaken frame.
+        step(&mut m, &mut entity, Intent::Idle, 1_000);
+
+        step(&mut m, &mut entity, Intent::Shaken, 5_000);
+        let second = entity
+            .face
+            .decorator
+            .expect("second shake re-arms")
+            .expires_at;
+
+        assert!(
+            second > first,
+            "second arm should produce a later expiry ({second:?} vs {first:?})"
+        );
+        assert_eq!(second, Instant::from_millis(5_000 + 4_000));
+    }
+
+    #[test]
+    fn shake_overwrites_existing_decorator_on_edge() {
+        // The edge handler unconditionally writes `face.decorator` —
+        // a Heart from a recent petting moment is replaced by Dizzy
+        // on a rising shake edge. Cross-modifier priority lives in
+        // `meta.priority`, not in any conditional inside `update`.
+        let mut entity = Entity::default();
+        entity.face.decorator = Some(DecoratorState::hold_for(
+            Decorator::Heart,
+            Instant::from_millis(0),
+            5_000,
+        ));
+        let mut m = DecoratorFromShake::new();
+        step(&mut m, &mut entity, Intent::Idle, 0);
+        step(&mut m, &mut entity, Intent::Shaken, 33);
+        let state = entity.face.decorator.expect("decorator should be present");
+        assert_eq!(
+            state.kind,
+            Decorator::Dizzy,
+            "Dizzy must overwrite the prior Heart on the rising shake edge"
+        );
+    }
+
+    #[test]
+    fn boot_directly_into_shaken_arms_on_first_tick() {
+        // `last_intent` starts as `None`, so the very first frame
+        // observed-as-Shaken is treated as a rising edge. Pins this
+        // behavior: a device powered on while being shaken (e.g. in
+        // a bag mid-transit) lands on Dizzy immediately rather than
+        // waiting for a subsequent non-shaken frame to disambiguate
+        // the edge.
+        let mut entity = Entity::default();
+        let mut m = DecoratorFromShake::new();
+        step(&mut m, &mut entity, Intent::Shaken, 0);
+        let state = entity.face.decorator.expect("boot-into-shaken arms Dizzy");
+        assert_eq!(state.kind, Decorator::Dizzy);
+        assert_eq!(state.expires_at, Instant::from_millis(DIZZY_HOLD_MS));
+    }
 }
