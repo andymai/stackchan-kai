@@ -199,3 +199,10 @@ why in the module-level doc comment, and update this file with the
 new pattern if it recurs.
 
 The convention exists to be useful, not to be bureaucratic.
+
+## Related
+
+- [Modifier authoring guide](modifiers) — where Rule B applies in
+  practice when adding a new modifier.
+- [Architecture overview](architecture) — `Phase` enum + `Director`
+  ordering that the names sit inside.

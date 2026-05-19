@@ -1,3 +1,7 @@
+---
+title: Dance choreography
+---
+
 # Dance choreography
 
 Stackchan-kai accepts a JSON keyframe stream over `POST /dance` and
@@ -78,3 +82,12 @@ script's overrides are released on the same tick the new one anchors.
   treats unset fields as "carry the prior value forward" rather than
   "clear", so a 200 ms emotion-only beat doesn't disturb a 50 ms
   motion sweep running underneath.
+
+## Related
+
+- [HTTP control plane](http) — `POST /dance` route alongside the
+  full LAN-side surface.
+- [Modifier authoring guide](modifiers) — `DancePlayer` is one of
+  the high-priority overrides registered in `Phase::Motion`.
+- [Naming conventions](naming) — `NamedMotion` (`greet` / `nod` /
+  `shake` / `laugh`) follows the same vocabulary as `play_motion`.

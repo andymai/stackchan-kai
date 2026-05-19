@@ -144,3 +144,10 @@ When adding a variant to a driver crate's `Error`:
    debugging. Logs that just say "bad chip ID" without the byte are
    hard to triage.
 3. Update this catalog in the same PR.
+
+## Related
+
+- [Architecture overview](architecture) — where the per-peripheral
+  tasks live and how they wrap errors for `defmt`.
+- [Behavior flags](behavior) — `ConfigError` variants surface through
+  `parse_ron` on the `STACKCHAN.RON` load path.

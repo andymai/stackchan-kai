@@ -54,3 +54,12 @@ stream is ~32 KB/s of UDP traffic.
 The stream is **plaintext UDP** on the LAN; not suitable for a shared
 network. Leave the field empty in any deployment outside a controlled
 bench.
+
+## Related
+
+- [Behavior flags](behavior) — `audio_debug_udp_target` is one of
+  the live-reloadable `behavior:` block fields.
+- [Voice agent onboarding](voice) — the wake-word + sidecar loop
+  uses the same audio capture path tapped here.
+- [Sidecar agent](sidecar) — the agent the wake-word path forwards
+  audio to once `audio_debug_udp_target` confirms capture works.

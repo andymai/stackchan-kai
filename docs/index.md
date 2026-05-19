@@ -17,8 +17,10 @@ driver crates.
 - [Modifier authoring guide](modifiers) — adding a new behavior to the engine.
 - [Naming conventions](naming) — rules for `Intent` / `Modifier` / `Skill` / `ChirpKind` / `OverrideSource` names, with citations.
 - [Signal channels](signals) — the typed `Signal<…, T>` pattern that wires sensors to the render task.
+- [Dance choreography](dance) — JSON keyframe stream over `POST /dance`, channel-wise sampling semantics, and DancePlayer lifecycle.
 - [Voice agent](voice) — wake-word + sidecar onboarding flow. Start here when enabling the voice path.
 - [Sidecar agent](sidecar) — wire protocol for the operator-supplied HTTP agent that handles STT + LLM + emotion-tagging.
+- [UDP audio debug](audio-debug) — tee the microphone capture to a LAN UDP target for `aplay` / `nc` inspection.
 - [Typed-error catalog](errors) — every driver crate's `Error<E>` enum.
 
 ## Source layout
