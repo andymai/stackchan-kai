@@ -271,4 +271,83 @@ mod tests {
         }
         assert_eq!(entity.face.mouth.center.y, baseline_y);
     }
+
+    #[test]
+    fn same_seed_produces_lockstep_mouth_offsets() {
+        // Two instances seeded identically must walk in step over a
+        // long-enough horizon to cover several fires (the schedule
+        // itself is RNG-driven, so the y values land only at firing
+        // ticks — but the cumulative `mouth.center.y` must match at
+        // every shared tick).
+        let seed = NonZeroU32::new(0x1234_5678).unwrap();
+        let mut a_entity = at(0);
+        let mut b_entity = at(0);
+        let mut a = IdleMicroExpression::with_seed(seed);
+        let mut b = IdleMicroExpression::with_seed(seed);
+        for ms in 0..=DEFAULT_INTERVAL_MAX_MS * 6 {
+            a_entity.tick.now = Instant::from_millis(ms);
+            b_entity.tick.now = Instant::from_millis(ms);
+            a.update(&mut a_entity);
+            b.update(&mut b_entity);
+            assert_eq!(
+                a_entity.face.mouth.center.y, b_entity.face.mouth.center.y,
+                "diverged at ms={ms}"
+            );
+        }
+    }
+
+    #[test]
+    fn distinct_seeds_diverge_within_a_few_fires() {
+        // Different seeds must produce different y values at some
+        // point — otherwise the seed parameter is a no-op and the
+        // schedules would synchronise across the avatar family
+        // (Breath / Blink / Soliloquy / IdleDrift / IdleHeadDrift),
+        // which would defeat the whole reason this modifier carries
+        // its own [`DEFAULT_SEED`] distinct from the rest.
+        let mut a_entity = at(0);
+        let mut b_entity = at(0);
+        let mut a = IdleMicroExpression::with_seed(NonZeroU32::new(0xAAAA_AAAA).unwrap());
+        let mut b = IdleMicroExpression::with_seed(NonZeroU32::new(0x5555_5555).unwrap());
+        let mut diverged = false;
+        for ms in 0..=DEFAULT_INTERVAL_MAX_MS * 10 {
+            a_entity.tick.now = Instant::from_millis(ms);
+            b_entity.tick.now = Instant::from_millis(ms);
+            a.update(&mut a_entity);
+            b.update(&mut b_entity);
+            if a_entity.face.mouth.center.y != b_entity.face.mouth.center.y {
+                diverged = true;
+                break;
+            }
+        }
+        assert!(
+            diverged,
+            "distinct seeds produced identical y sequences over a 60s horizon"
+        );
+    }
+
+    #[test]
+    fn rand_offset_returns_zero_for_nonpositive_max() {
+        // The `max <= 0` early-return short-circuits the divide-by-zero
+        // and the asymmetric `[-max, +max]` range that would otherwise
+        // collapse. Pin it directly so a future "support tighter
+        // ranges" tweak can't accidentally drop the guard and start
+        // returning garbage offsets at boot.
+        let mut m = IdleMicroExpression::new();
+        assert_eq!(m.rand_offset(0), 0);
+        assert_eq!(m.rand_offset(-5), 0);
+        assert_eq!(m.rand_offset(i32::MIN), 0);
+    }
+
+    #[test]
+    fn next_delay_collapses_to_min_when_range_is_degenerate() {
+        // If a custom configuration accidentally sets max <= min the
+        // delay degenerates to a single value rather than wrapping
+        // negatively or panicking on the `% (span + 1)` step.
+        let mut m = IdleMicroExpression::new();
+        m.interval_min_ms = 1_000;
+        m.interval_max_ms = 1_000;
+        assert_eq!(m.next_delay_ms(), 1_000);
+        m.interval_max_ms = 500; // pathological: max < min
+        assert_eq!(m.next_delay_ms(), 1_000);
+    }
 }
