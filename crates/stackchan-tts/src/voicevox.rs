@@ -537,6 +537,127 @@ mod tests {
     }
 
     #[test]
+    fn voicevox_backend_name_is_stable() {
+        // The name appears in defmt logs and the diagnostics SSE
+        // stream; pin it so a future rename surfaces here.
+        let backend = VoiceVoxBackend::new(VoiceVoxConfig::default());
+        assert_eq!(backend.name(), "VoiceVox");
+    }
+
+    #[test]
+    fn parse_wav_rejects_truncated_fmt_chunk_as_bad_format() {
+        // A `fmt ` chunk whose declared size runs past EOF must be
+        // reported as BadFormat (the more precise error), not as
+        // NoDataChunk.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&100u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&100u32.to_le_bytes()); // claims 100 bytes
+        bytes.extend_from_slice(&[0u8; 4]); // only 4 supplied
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::BadFormat));
+    }
+
+    #[test]
+    fn parse_wav_rejects_truncated_unknown_chunk_as_no_data() {
+        // An unknown chunk whose declared size runs past EOF must be
+        // reported as NoDataChunk (we never saw a `data` chunk before
+        // running out of bytes).
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&100u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"junk"); // unknown chunk id
+        bytes.extend_from_slice(&100u32.to_le_bytes()); // claims 100 bytes
+        bytes.extend_from_slice(&[0u8; 4]); // only 4 supplied
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::NoDataChunk));
+    }
+
+    #[test]
+    fn parse_wav_skips_unknown_chunk_and_reaches_data() {
+        // A LIST or junk chunk before the data chunk must be skipped,
+        // not abort the parse. Builds a WAV with a 6-byte unknown
+        // chunk (odd size → padding byte) before the real data.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // dummy total size
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+        bytes.extend_from_slice(&16_000u32.to_le_bytes());
+        bytes.extend_from_slice(&32_000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        // Unknown chunk with odd size (forces padding-byte branch).
+        bytes.extend_from_slice(b"JUNK");
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 4]); // 3 body bytes + 1 padding
+        // Real data chunk after.
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 4]);
+        let header = parse_wav(&bytes, 16_000).expect("unknown chunk should be skipped");
+        assert_eq!(header.sample_rate_hz, 16_000);
+    }
+
+    #[test]
+    fn parse_wav_rejects_missing_data_chunk() {
+        // Valid RIFF/WAVE/fmt header followed by EOF — no data chunk.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&16_000u32.to_le_bytes());
+        bytes.extend_from_slice(&32_000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::NoDataChunk));
+    }
+
+    #[test]
+    fn parse_fmt_rejects_short_body() {
+        let mut bytes = build_test_wav(16_000, &[]);
+        // Replace the fmt-chunk size field to claim only 8 bytes.
+        bytes[16] = 8;
+        bytes[17] = 0;
+        bytes[18] = 0;
+        bytes[19] = 0;
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::BadFormat));
+    }
+
+    #[test]
+    fn parse_fmt_rejects_non_pcm_format_tag() {
+        let mut bytes = build_test_wav(16_000, &[]);
+        // Replace format-tag (offset 20) with IEEE_FLOAT (0x0003).
+        bytes[20] = 3;
+        bytes[21] = 0;
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::UnsupportedFormat));
+    }
+
+    #[test]
+    fn parse_fmt_rejects_multi_channel() {
+        let mut bytes = build_test_wav(16_000, &[]);
+        // Channels (offset 22) → 2 (stereo).
+        bytes[22] = 2;
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::UnsupportedFormat));
+    }
+
+    #[test]
+    fn parse_fmt_rejects_non_16_bit_depth() {
+        let mut bytes = build_test_wav(16_000, &[]);
+        // Bits-per-sample (offset 34) → 24.
+        bytes[34] = 24;
+        assert_eq!(parse_wav(&bytes, 16_000), Err(WavError::UnsupportedFormat));
+    }
+
+    #[test]
     fn voicevox_render_returns_unavailable_until_firmware_path_lands() {
         // Skeleton-only — firmware HTTP integration ships separately.
         use stackchan_core::voice::{Locale, Priority, SpeechStyle};
