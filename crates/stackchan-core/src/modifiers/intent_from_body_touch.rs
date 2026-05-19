@@ -437,12 +437,11 @@ mod tests {
             ..GestureMapping::DEFAULT
         };
         let mut m = IntentFromBodyTouch::new().with_mapping(mapping);
-        let mut entity = Entity::default();
-        entity.perception.body_touch = Some(BodyTouch {
+        let mut entity = entity_with_touch(Some(BodyTouch {
             centre: 2,
             ..BodyTouch::default()
-        });
-        m.update(&mut entity);
+        }));
+        run(&mut m, &mut entity, 100);
         assert_eq!(entity.mind.affect.emotion, Emotion::Loved);
     }
 
