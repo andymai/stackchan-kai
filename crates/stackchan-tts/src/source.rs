@@ -116,4 +116,24 @@ mod tests {
         let src = ZeroSource { remaining: 42 };
         assert_eq!(src.len_hint(), Some(42));
     }
+
+    /// Source that only implements the required method, so it inherits
+    /// the default `len_hint` (`None`) and `lip_sync` (`None`).
+    struct MinimalSource;
+
+    impl AudioSource for MinimalSource {
+        fn fill(&mut self, _buf: &mut [i16]) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn len_hint_defaults_to_none_for_streaming_sources() {
+        // The trait's default `len_hint` returns None — pinning the
+        // contract for streaming sources that don't know their length.
+        // ZeroSource overrides this; MinimalSource intentionally
+        // doesn't, so the default arm fires.
+        let src = MinimalSource;
+        assert_eq!(src.len_hint(), None);
+    }
 }
