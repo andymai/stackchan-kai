@@ -1166,6 +1166,15 @@ const fn segment_count(bucket: BatteryBucket) -> u8 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::field_reassign_with_default,
+    clippy::expect_used,
+    reason = "tests build small Face fixtures by mutating Default; \
+              audio_open_height tests intentionally pass f32 values \
+              that fit in u16 after clamp"
+)]
 mod tests {
     use super::*;
 
@@ -1210,5 +1219,209 @@ mod tests {
         );
         let at_max = blend_blush(255, default_palette.background, default_palette.cheek);
         assert_eq!(at_max, default_palette.cheek, "blush=255 stays at cheek");
+    }
+
+    #[test]
+    fn blend_blush_mid_interpolates() {
+        // 50% blush should land between the endpoints — covers the
+        // `base.saturating_add(shifted)` arm where the channel
+        // delta is positive (background → cheek pink raises every
+        // channel) plus the symmetric saturating_sub path.
+        let from = Rgb565::new(0, 0, 0);
+        let to = Rgb565::new(31, 63, 31);
+        let mid = blend_blush(128, from, to);
+        assert!(mid.r() > 0 && mid.r() < 31);
+        assert!(mid.g() > 0 && mid.g() < 63);
+        assert!(mid.b() > 0 && mid.b() < 31);
+        // Symmetric direction (to → from) exercises the
+        // saturating_sub branch.
+        let mid_rev = blend_blush(128, to, from);
+        assert!(mid_rev.r() > 0 && mid_rev.r() < 31);
+        assert!(mid_rev.g() > 0 && mid_rev.g() < 63);
+        assert!(mid_rev.b() > 0 && mid_rev.b() < 31);
+    }
+
+    #[test]
+    fn audio_open_height_clamps_outside_zero_one() {
+        // Inside-range: 0.5 → MOUTH_OPEN_MAX_HEIGHT_PX / 2.
+        assert_eq!(
+            audio_open_height(0.5),
+            (MOUTH_OPEN_MAX_HEIGHT_PX / 2.0) as u16
+        );
+        // Above 1.0 saturates at max.
+        assert_eq!(audio_open_height(2.0), MOUTH_OPEN_MAX_HEIGHT_PX as u16);
+        // Negative clamps to 0.
+        assert_eq!(audio_open_height(-0.5), 0);
+        // NaN → 0 (not panic).
+        assert_eq!(audio_open_height(f32::NAN), 0);
+        // Exact endpoints.
+        assert_eq!(audio_open_height(0.0), 0);
+        assert_eq!(audio_open_height(1.0), MOUTH_OPEN_MAX_HEIGHT_PX as u16);
+    }
+
+    // ============================================================
+    // Whole-face draw coverage via a minimal sink DrawTarget.
+    // ============================================================
+
+    use embedded_graphics::Pixel;
+    use embedded_graphics::geometry::OriginDimensions;
+
+    /// Minimal `DrawTarget` that consumes pixels without storing them —
+    /// fast, no allocation, exercises every Drawable path. Sized at
+    /// 320×240 (the firmware's LCD) so primitives that compute against
+    /// `bounding_box()` see the same dimensions as on-device.
+    struct Sink {
+        /// Tally of pixels actually committed to the target (after
+        /// `embedded-graphics` clipping). Useful sanity check that the
+        /// draw call actually emitted geometry.
+        pixels_drawn: u32,
+    }
+
+    impl Sink {
+        fn new() -> Self {
+            Self { pixels_drawn: 0 }
+        }
+    }
+
+    impl OriginDimensions for Sink {
+        fn size(&self) -> Size {
+            Size::new(320, 240)
+        }
+    }
+
+    impl DrawTarget for Sink {
+        type Color = Rgb565;
+        type Error = core::convert::Infallible;
+
+        fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Self::Color>>,
+        {
+            for _ in pixels {
+                self.pixels_drawn = self.pixels_drawn.saturating_add(1);
+            }
+            Ok(())
+        }
+    }
+
+    fn draw_face(face: &Face) -> Sink {
+        let mut sink = Sink::new();
+        face.draw(&mut sink).expect("Sink is infallible");
+        // Sanity: any draw call emits at least one pixel against a
+        // 320×240 target.
+        assert!(
+            sink.pixels_drawn > 0,
+            "Face::draw should have emitted at least one pixel",
+        );
+        sink
+    }
+
+    #[test]
+    fn face_default_draws_without_panicking() {
+        // Bare face: open eyes, line mouth, no decorator / cheeks /
+        // bubble / battery overlay.
+        let face = Face::default();
+        let _ = draw_face(&face);
+    }
+
+    #[test]
+    fn face_with_cheeks_runs_cheek_path() {
+        // cheek_blush > 0 routes through draw_cheek (both eyes).
+        let mut face = Face::default();
+        face.style.cheek_blush = 200;
+        let _ = draw_face(&face);
+    }
+
+    #[test]
+    fn face_with_each_decorator_routes_correctly() {
+        // Cover the draw_decorator match: every Decorator variant runs
+        // its respective draw_*(target) leaf without panic.
+        for kind in [
+            Decorator::Heart,
+            Decorator::Sweat,
+            Decorator::Dizzy,
+            Decorator::Ear,
+            Decorator::Pairing,
+            Decorator::Angry,
+            Decorator::Shy,
+            Decorator::Thinking,
+        ] {
+            let mut face = Face::default();
+            face.decorator = Some(DecoratorState::hold_for(
+                kind,
+                crate::clock::Instant::from_millis(0),
+                1_000,
+            ));
+            let _ = draw_face(&face);
+        }
+    }
+
+    #[test]
+    fn face_with_bubble_renders_bubble_path() {
+        // BubbleState::hold_for exercises bubble_rect + draw_bubble.
+        let mut face = Face::default();
+        face.bubble = Some(BubbleState::hold_for(
+            "hi",
+            crate::clock::Instant::from_millis(0),
+            1_000,
+        ));
+        let _ = draw_face(&face);
+    }
+
+    #[test]
+    fn face_with_overlong_bubble_truncates_visible_chars() {
+        // Past the max-visible cap routes through the truncation
+        // branch in draw_bubble (the `else { state.text }` path
+        // shortcuts the other arm). Use a `'static` literal so we
+        // don't need to leak — BubbleState wants `&'static str`.
+        let mut face = Face::default();
+        face.bubble = Some(BubbleState::hold_for(
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            crate::clock::Instant::from_millis(0),
+            1_000,
+        ));
+        let _ = draw_face(&face);
+    }
+
+    #[test]
+    fn face_battery_overlay_each_bucket_runs_through() {
+        // Cover every BatteryBucket arm of the segment-count switch
+        // inside draw_battery + the charging branch.
+        for bucket in [
+            BatteryBucket::Critical,
+            BatteryBucket::Low,
+            BatteryBucket::Medium,
+            BatteryBucket::High,
+            BatteryBucket::Full,
+        ] {
+            let mut face = Face::default();
+            face.battery_overlay = Some(BatteryOverlay {
+                bucket,
+                charging: false,
+            });
+            let _ = draw_face(&face);
+        }
+    }
+
+    #[test]
+    fn face_battery_overlay_charging_runs_lightning_path() {
+        // overlay.charging = true exercises the "+ lightning line"
+        // branch at the tail of draw_battery.
+        let mut face = Face::default();
+        face.battery_overlay = Some(BatteryOverlay {
+            bucket: BatteryBucket::Medium,
+            charging: true,
+        });
+        let _ = draw_face(&face);
+    }
+
+    #[test]
+    fn face_with_blink_phase_exercises_closed_eye_path() {
+        // Closed-eye phase routes through draw_horizontal_line
+        // instead of the open-eye rounded-rect.
+        let mut face = Face::default();
+        face.left_eye.phase = EyePhase::Closed;
+        face.right_eye.phase = EyePhase::Closed;
+        let _ = draw_face(&face);
     }
 }
