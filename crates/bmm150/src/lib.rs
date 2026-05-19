@@ -538,6 +538,23 @@ mod tests {
     use core::cell::RefCell;
     use embedded_hal_async::i2c::{Operation, SevenBitAddress};
 
+    /// Plausible trim values lifted from a real BMM150 — kept in one
+    /// place so the compensation + read-measurement tests stay in
+    /// sync if a future port needs to retune them.
+    const TYPICAL_TRIM: Trim = Trim {
+        x1: 0,
+        y1: 0,
+        z4: 0,
+        x2: 26,
+        y2: 26,
+        z2: 6400,
+        z1: 0x9800,
+        xyz1: 0x1D83,
+        z3: 42,
+        xy2: -3,
+        xy1: 0x1D,
+    };
+
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
         use core::pin::pin;
         use core::task::{Context, Poll, Waker};
@@ -786,27 +803,91 @@ mod tests {
     }
 
     #[test]
+    fn read_measurement_returns_finite_microtesla_on_clean_data() {
+        // Non-overflow raw sample with a plausible RHALL — the
+        // compensation path must return finite µT values.
+        let harness = Mock::new();
+        // RHALL = 0x1D83 (mid-range); X/Y/Z raw small but non-zero.
+        // Layout (8 bytes from REG_DATA_START):
+        //   X 13-bit (LSB in bit3..7 of byte0, top bits in byte1)
+        //   Y 13-bit, Z 15-bit, RHALL 14-bit.
+        // Use the same encoding as RawSample::from_bytes (LE i16 with
+        // bit shifts) — easiest path is to pack 500/-500/100/0x1D83.
+        let pack_xy = |v: i16| {
+            // 13-bit value sits in upper 13 bits of a 16-bit word.
+            #[allow(clippy::cast_sign_loss, reason = "wrapping bit-pack to wire layout")]
+            let raw = (v.wrapping_shl(3) as u16).to_le_bytes();
+            [raw[0], raw[1]]
+        };
+        let pack_z = |v: i16| {
+            // 15-bit value sits in upper 15 bits of a 16-bit word.
+            #[allow(clippy::cast_sign_loss, reason = "wrapping bit-pack to wire layout")]
+            let raw = (v.wrapping_shl(1) as u16).to_le_bytes();
+            [raw[0], raw[1]]
+        };
+        let pack_rh = |v: u16| {
+            let raw = (v << 2).to_le_bytes(); // 14-bit
+            [raw[0], raw[1]]
+        };
+        let mut data = [0u8; 8];
+        data[0..2].copy_from_slice(&pack_xy(500));
+        data[2..4].copy_from_slice(&pack_xy(-500));
+        data[4..6].copy_from_slice(&pack_z(100));
+        data[6..8].copy_from_slice(&pack_rh(0x1D83));
+        harness.set_block(REG_DATA_START, &data);
+        // Need plausible trim too — read_measurement compensates with
+        // whatever Trim is on the driver. Default Trim is all zeros,
+        // which compensate_xy treats as "div-by-zero → 0".
+        let mut bus = MockBus { harness: &harness };
+        let mut mag = Bmm150::new(&mut bus, ADDRESS_PRIMARY);
+        mag.trim = TYPICAL_TRIM;
+        let m = block_on(mag.read_measurement()).unwrap();
+        // Earth field is ~25–65 µT; compensated values must be finite,
+        // well under 1 mT, AND non-zero — the lower bound guards against
+        // a future refactor zeroing every compensation arm at once
+        // (e.g. an overflowed temp3 that silently passes is_finite +
+        // abs() < 1_000.0).
+        for (name, v) in [("x", m.mag_ut.0), ("y", m.mag_ut.1), ("z", m.mag_ut.2)] {
+            assert!(v.is_finite(), "{name} = {v} not finite");
+            assert!(v.abs() < 1_000.0, "{name} = {v} µT out of plausible range");
+            assert!(
+                v.abs() > 0.0,
+                "{name} = {v} suggests compensation collapsed to zero",
+            );
+        }
+    }
+
+    #[test]
+    fn release_returns_underlying_bus() {
+        let harness = Mock::new();
+        let bus = MockBus { harness: &harness };
+        let mag = Bmm150::new(bus, ADDRESS_PRIMARY);
+        let _bus_back: MockBus<'_> = mag.release();
+        // Type-level assertion: release returns the same B. Compiles
+        // iff the inferred type is MockBus.
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` in the
+        // driver routes through it. Mock uses Infallible so the
+        // runtime path can't fire; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+            other => panic!("expected Error::I2c, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn compensation_produces_finite_values_with_typical_trim() {
         // Plausible trim (real chip) + non-overflow raw readings + a
         // mid-range RHALL. We don't have a canonical "expected µT"
         // vector, but compensation must produce finite, non-silly
         // values — regression guard against arithmetic mistakes.
-        let trim = Trim {
-            x1: 0,
-            y1: 0,
-            z4: 0,
-            x2: 26,
-            y2: 26,
-            z2: 6400,
-            z1: 0x9800,
-            xyz1: 0x1D83,
-            z3: 42,
-            xy2: -3,
-            xy1: 0x1D,
-        };
-        let x = compensate_xy(&trim, 500, 0x1D83, Axis::X);
-        let y = compensate_xy(&trim, -500, 0x1D83, Axis::Y);
-        let z = compensate_z(&trim, 100, 0x1D83);
+        let x = compensate_xy(&TYPICAL_TRIM, 500, 0x1D83, Axis::X);
+        let y = compensate_xy(&TYPICAL_TRIM, -500, 0x1D83, Axis::Y);
+        let z = compensate_z(&TYPICAL_TRIM, 100, 0x1D83);
         for (name, v) in [("x", x), ("y", y), ("z", z)] {
             // earth field is ~25-65 µT; compensated LSB is 1/16 µT,
             // so legal range is roughly ±1000 LSBs. Anything bigger
