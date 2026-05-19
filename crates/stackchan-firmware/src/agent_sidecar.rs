@@ -304,11 +304,13 @@ pub async fn agent_sidecar_task(
 
         // Swap the face from Listening (Ear) to Thinking
         // (thought-bubble) for the network round-trip. Hold is sized
-        // to the request timeout so the bubble has an upper bound on
-        // pathological reply latency. A successful reply fires
-        // `RemoteCommand::SetEmotion` below, which clears the
-        // thinking hold via the modifier's SetEmotion side effect.
-        // On timeout or POST failure the hold expires naturally.
+        // to the request timeout as an upper bound on pathological
+        // reply latency. Every exit path clears the hold actively:
+        // a successful reply with an emotion tag fires `SetEmotion`
+        // (whose modifier side effect clears the hold); success
+        // without an emotion fires `ExitThinking`; and the failure /
+        // timeout paths fire `signal_failure_emotion()`, whose
+        // `SetEmotion(Sad)` clears the hold the same way.
         REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::EnterThinking {
             #[allow(
                 clippy::cast_possible_truncation,
