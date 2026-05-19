@@ -593,4 +593,43 @@ mod tests {
         player.update(&mut entity);
         assert_eq!(entity.motor.head_pose.pan_deg, -10.0);
     }
+
+    #[test]
+    fn default_matches_new() {
+        let from_default = <DancePlayer as Default>::default();
+        let from_new = DancePlayer::new();
+        // Pin every field — covers the diff-and-undo state too, not
+        // just the script slot. A future #[derive(Default)] swap with
+        // different field defaults would surface here.
+        assert!(from_default.active.is_none());
+        assert!(from_new.active.is_none());
+        assert!((from_default.last_pan_deg - from_new.last_pan_deg).abs() < f32::EPSILON);
+        assert!((from_default.last_tilt_deg - from_new.last_tilt_deg).abs() < f32::EPSILON);
+        assert_eq!(from_default.held_emotion, from_new.held_emotion);
+        assert_eq!(from_default.held_decorator, from_new.held_decorator);
+        assert_eq!(from_default.held_led, from_new.held_led);
+    }
+
+    #[test]
+    fn meta_declares_motion_phase_with_dance_writes() {
+        let m = DancePlayer::new();
+        let meta = m.meta();
+        assert_eq!(meta.name, "DancePlayer");
+        assert_eq!(meta.phase, Phase::Motion);
+        assert_eq!(meta.priority, 40);
+        // Full slice equality on both reads and writes — catches any
+        // future drop or reorder.
+        assert_eq!(meta.reads, &[Field::HeadPose, Field::DanceScript],);
+        assert_eq!(
+            meta.writes,
+            &[
+                Field::HeadPose,
+                Field::Emotion,
+                Field::Autonomy,
+                Field::Decorator,
+                Field::LedOverride,
+                Field::DanceScript,
+            ],
+        );
+    }
 }
