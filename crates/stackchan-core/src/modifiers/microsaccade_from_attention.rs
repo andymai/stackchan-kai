@@ -215,6 +215,12 @@ impl Modifier for MicrosaccadeFromAttention {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::similar_names,
+    reason = "test-only: NonZeroU32::new(literal).unwrap() is the standard sim/test pattern \
+              (mirrors stackchan-sim); paired left_/right_ delta bindings are the natural names"
+)]
 mod tests {
     use super::*;
     use crate::Pose;
@@ -280,5 +286,162 @@ mod tests {
         entity.tick.now = Instant::from_millis(5_100);
         m.update(&mut entity);
         assert_eq!(entity.face.left_eye.center.x, baseline_x);
+    }
+
+    /// Drive Tracking for 30 simulated seconds; every observed eye
+    /// offset must stay within `±MICROSACCADE_AMPLITUDE_PX` on both
+    /// axes. The bound is the physiological clamp called out in the
+    /// module doc; a regression that widened `rand_offset`'s span
+    /// would surface here.
+    #[test]
+    fn offsets_stay_within_amplitude_clamp() {
+        let mut m = MicrosaccadeFromAttention::new();
+        let mut entity = Entity::default();
+        entity.mind.attention = tracking();
+        let left_baseline = entity.face.left_eye.center;
+        let right_baseline = entity.face.right_eye.center;
+
+        for ms in (0..30_000).step_by(33) {
+            entity.tick.now = Instant::from_millis(ms);
+            m.update(&mut entity);
+            let left_dx = entity.face.left_eye.center.x - left_baseline.x;
+            let left_dy = entity.face.left_eye.center.y - left_baseline.y;
+            let right_dx = entity.face.right_eye.center.x - right_baseline.x;
+            let right_dy = entity.face.right_eye.center.y - right_baseline.y;
+            assert!(
+                left_dx.abs() <= MICROSACCADE_AMPLITUDE_PX,
+                "left eye x drift {left_dx} exceeds ±{MICROSACCADE_AMPLITUDE_PX} at t={ms}"
+            );
+            assert!(
+                left_dy.abs() <= MICROSACCADE_AMPLITUDE_PX,
+                "left eye y drift {left_dy} exceeds ±{MICROSACCADE_AMPLITUDE_PX} at t={ms}"
+            );
+            // Both eyes shift by the same delta (one offset applied to both).
+            assert_eq!(
+                left_dx, right_dx,
+                "eye-x drifts diverged at t={ms}: left={left_dx} right={right_dx}"
+            );
+            assert_eq!(
+                left_dy, right_dy,
+                "eye-y drifts diverged at t={ms}: left={left_dy} right={right_dy}"
+            );
+        }
+    }
+
+    /// Run two interpreters with the same seed in lockstep — every
+    /// tick must produce identical eye centres. Without this, a
+    /// regression that introduced wall-clock or address-derived
+    /// entropy would silently break the firmware's determinism guarantee
+    /// (same seed across boots → reproducible saccade sequence).
+    #[test]
+    fn same_seed_produces_identical_sequence() {
+        let seed = NonZeroU32::new(0xC0FF_EE42).unwrap();
+        let mut m_a = MicrosaccadeFromAttention::with_seed(seed);
+        let mut m_b = MicrosaccadeFromAttention::with_seed(seed);
+        let mut e_a = Entity::default();
+        let mut e_b = Entity::default();
+        e_a.mind.attention = tracking();
+        e_b.mind.attention = tracking();
+
+        for ms in (0..10_000).step_by(33) {
+            let now = Instant::from_millis(ms);
+            e_a.tick.now = now;
+            e_b.tick.now = now;
+            m_a.update(&mut e_a);
+            m_b.update(&mut e_b);
+            assert_eq!(
+                e_a.face.left_eye.center, e_b.face.left_eye.center,
+                "same-seed left eyes diverged at t={ms}"
+            );
+            assert_eq!(
+                e_a.face.right_eye.center, e_b.face.right_eye.center,
+                "same-seed right eyes diverged at t={ms}"
+            );
+        }
+    }
+
+    /// Two interpreters with distinct seeds must produce divergent
+    /// sequences. Firmware mints a fresh seed per device (via
+    /// `esp_hal::rng::Rng`) to prevent multi-unit deployments from
+    /// twitching in unison; this pins the contract on
+    /// `with_seed`.
+    #[test]
+    fn distinct_seeds_produce_distinct_sequences() {
+        let seed_a = NonZeroU32::new(0x1234_5678).unwrap();
+        let seed_b = NonZeroU32::new(0xCAFE_BABE).unwrap();
+        let mut m_a = MicrosaccadeFromAttention::with_seed(seed_a);
+        let mut m_b = MicrosaccadeFromAttention::with_seed(seed_b);
+        let mut e_a = Entity::default();
+        let mut e_b = Entity::default();
+        e_a.mind.attention = tracking();
+        e_b.mind.attention = tracking();
+
+        let mut diverged = false;
+        for ms in (0..10_000).step_by(33) {
+            let now = Instant::from_millis(ms);
+            e_a.tick.now = now;
+            e_b.tick.now = now;
+            m_a.update(&mut e_a);
+            m_b.update(&mut e_b);
+            if e_a.face.left_eye.center != e_b.face.left_eye.center {
+                diverged = true;
+                break;
+            }
+        }
+        assert!(
+            diverged,
+            "two distinct seeds produced identical microsaccade sequences over 10 s"
+        );
+    }
+
+    /// Microsaccades hold for `MICROSACCADE_DURATION_MS` (~66 ms),
+    /// then return to zero offset before the next event. Over a 30 s
+    /// Tracking window the eye must spend more time at the baseline
+    /// than offset — interval ≥ 500 ms, duration ≤ 66 ms gives a
+    /// rough lower-bound active-duty cycle of 66 / 566 ≈ 12 %.
+    #[test]
+    fn eye_spends_majority_of_time_at_baseline() {
+        let mut m = MicrosaccadeFromAttention::new();
+        let mut entity = Entity::default();
+        entity.mind.attention = tracking();
+        let baseline_x = entity.face.left_eye.center.x;
+        let baseline_y = entity.face.left_eye.center.y;
+
+        let mut at_baseline = 0_u32;
+        let mut total = 0_u32;
+        for ms in (0..30_000).step_by(33) {
+            entity.tick.now = Instant::from_millis(ms);
+            m.update(&mut entity);
+            total += 1;
+            if entity.face.left_eye.center.x == baseline_x
+                && entity.face.left_eye.center.y == baseline_y
+            {
+                at_baseline += 1;
+            }
+        }
+        // Generous lower bound: at least half the frames should sit at
+        // the baseline given the duty cycle. Tightens what's defensible
+        // without coupling to RNG ordering.
+        assert!(
+            at_baseline * 2 > total,
+            "eye spent {at_baseline}/{total} frames at baseline — \
+             saccade duty cycle looks wrong"
+        );
+    }
+
+    /// `rand_offset(0)` must return 0 — boundary guard for any future
+    /// caller that passes a zero or negative amplitude cap. The current
+    /// implementation already handles this via `saturating_add(1)` on
+    /// the span, but pinning the contract here keeps a future
+    /// algorithmic refactor honest.
+    #[test]
+    fn rand_offset_zero_max_yields_zero() {
+        let mut m = MicrosaccadeFromAttention::new();
+        // Burn a few PRNG draws to exercise different internal state.
+        let _ = m.rand_offset(MICROSACCADE_AMPLITUDE_PX);
+        let _ = m.rand_offset(MICROSACCADE_AMPLITUDE_PX);
+        assert_eq!(m.rand_offset(0), 0);
+        // And negative caps clamp to 0 too.
+        assert_eq!(m.rand_offset(-5), 0);
     }
 }
