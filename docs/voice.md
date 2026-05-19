@@ -33,10 +33,11 @@ underlying audio capture path, see [UDP audio debug](audio-debug.md).
    the tag, and the reply text scrolls in the toast band beneath
    the face.
 
-If the sidecar fails or times out, the thought-bubble fades and a
-warn-class toast (`sidecar: post failed`, `sidecar: timed out`,
-`sidecar: link down`) explains what happened. The avatar returns
-to autonomous behavior on the next tick.
+If the sidecar fails or times out, the thought-bubble fades, the
+face flips to Sad for ~2.5 s, and a warn-class toast (`sidecar:
+post failed`, `sidecar: timed out`, `sidecar: link down`) explains
+what happened. The avatar returns to autonomous behavior after the
+hold expires.
 
 ## Prerequisites
 

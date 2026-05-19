@@ -31,6 +31,12 @@
 //!    the in-flight thinking hold as a side effect, so the
 //!    thought-bubble fades out at the same instant the emotion +
 //!    speech-bubble carry the reply.
+//! 5. Every failure path (link down, POST failed, timeout) fires
+//!    [`RemoteCommand::SetEmotion`] with [`Emotion::Sad`] for a
+//!    2.5 s hold so the face visibly registers the failure
+//!    instead of just printing a toast. The same `SetEmotion`
+//!    side effect clears any in-flight thinking hold on the
+//!    paths where one was opened.
 //!
 //! Empty `agent_sidecar_url` (the default) parks the task — no
 //! socket, no pubsub slot, no PTT consumer.
@@ -292,16 +298,19 @@ pub async fn agent_sidecar_task(
         if !matches!(link.get().await, WifiLinkState::Connected) {
             defmt::warn!("agent-sidecar: link not Connected after capture; skipping POST");
             toast_warn("sidecar: link down");
+            signal_failure_emotion();
             continue;
         }
 
         // Swap the face from Listening (Ear) to Thinking
         // (thought-bubble) for the network round-trip. Hold is sized
-        // to the request timeout so the bubble has an upper bound on
-        // pathological reply latency. A successful reply fires
-        // `RemoteCommand::SetEmotion` below, which clears the
-        // thinking hold via the modifier's SetEmotion side effect.
-        // On timeout or POST failure the hold expires naturally.
+        // to the request timeout as an upper bound on pathological
+        // reply latency. Every exit path clears the hold actively:
+        // a successful reply with an emotion tag fires `SetEmotion`
+        // (whose modifier side effect clears the hold); success
+        // without an emotion fires `ExitThinking`; and the failure /
+        // timeout paths fire `signal_failure_emotion()`, whose
+        // `SetEmotion(Sad)` clears the hold the same way.
         REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::EnterThinking {
             #[allow(
                 clippy::cast_possible_truncation,
@@ -391,9 +400,13 @@ async fn capture_window(
     pcm
 }
 
-/// Apply the [`post_pcm`] result: surface a toast in every branch
-/// and fire [`RemoteCommand::SetEmotion`] on success when the reply
-/// carries an emotion tag.
+/// Apply the [`post_pcm`] result: surface a toast in every branch,
+/// fire [`RemoteCommand::SetEmotion`] with the tagged emotion on a
+/// successful reply, and fall back to either [`ExitThinking`] (success
+/// with no emotion tag) or a brief Sad face (POST failed, timeout) so
+/// the avatar's visible state always matches what just happened.
+///
+/// [`ExitThinking`]: stackchan_core::input::RemoteCommand::ExitThinking
 fn apply_outcome(
     outcome: Result<
         Result<(heapless::String<256>, Option<Emotion>), PostError>,
@@ -425,7 +438,7 @@ fn apply_outcome(
         Ok(Err(e)) => {
             defmt::warn!("agent-sidecar: POST failed ({:?})", e);
             toast_warn("sidecar: post failed");
-            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
+            signal_failure_emotion();
         }
         Err(_) => {
             defmt::warn!(
@@ -433,9 +446,29 @@ fn apply_outcome(
                 REQUEST_TIMEOUT_MS
             );
             toast_warn("sidecar: timed out");
-            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
+            signal_failure_emotion();
         }
     }
+}
+
+/// Brief face-level reaction to a sidecar failure path. Fires a
+/// short-hold [`Emotion::Sad`] so the avatar visibly registers the
+/// "I tried and couldn't" beat, complementing the warn-class toast
+/// the operator sees in the band beneath the face.
+///
+/// Doubles as the thinking-hold clear on every code path where a
+/// thinking window was opened (post-failed, timeout): the
+/// `RemoteCommandModifier` clears `Attention::Thinking` as a side
+/// effect of any `SetEmotion`, so the thought-bubble fades on the
+/// same tick the Sad face takes over. The link-down path also fires
+/// this even though no thinking window opened — the clear side effect
+/// is a no-op there, and the Sad face still reads as the failure
+/// signal.
+fn signal_failure_emotion() {
+    REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::SetEmotion {
+        emotion: Emotion::Sad,
+        hold_ms: 2_500,
+    });
 }
 
 /// Sample count per body-write chunk. 512 i16 samples → 1 KiB of
