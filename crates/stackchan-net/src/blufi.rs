@@ -755,4 +755,123 @@ mod tests {
         };
         assert_eq!(f.control_subtype(), None);
     }
+
+    #[test]
+    fn control_subtype_decodes_every_known_value() {
+        // Iterate every byte the spec assigns to a control subtype.
+        // Catches a future re-numbering or accidental gap.
+        let mapping: &[(u8, ControlSubtype)] = &[
+            (0x00, ControlSubtype::Ack),
+            (0x01, ControlSubtype::SetSecMode),
+            (0x02, ControlSubtype::SetWifiOpMode),
+            (0x03, ControlSubtype::ConnectToAp),
+            (0x04, ControlSubtype::DisconnectFromAp),
+            (0x05, ControlSubtype::GetWifiStatus),
+            (0x06, ControlSubtype::DeauthSta),
+            (0x07, ControlSubtype::GetVersion),
+            (0x08, ControlSubtype::Disconnect),
+            (0x09, ControlSubtype::GetWifiList),
+        ];
+        for (byte, expected) in mapping {
+            let f = Frame {
+                frame_type: Type::Control,
+                subtype: *byte,
+                sequence: 0,
+                frame_control: 0,
+                data: Vec::new(),
+                fragmented: false,
+                encrypted: false,
+            };
+            assert_eq!(
+                f.control_subtype(),
+                Some(*expected),
+                "byte {byte:#x} should decode to {expected:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn control_subtype_returns_none_on_data_frame() {
+        // Even with a valid control byte, a frame whose type isn't
+        // Control must surface None — the type-class check happens
+        // before the byte switch.
+        let f = Frame {
+            frame_type: Type::Data,
+            subtype: 0x00, // would be Ack on a Control frame
+            sequence: 0,
+            frame_control: 0,
+            data: Vec::new(),
+            fragmented: false,
+            encrypted: false,
+        };
+        assert_eq!(f.control_subtype(), None);
+    }
+
+    #[test]
+    fn data_subtype_decodes_every_known_value() {
+        let mapping: &[(u8, DataSubtype)] = &[
+            (0x00, DataSubtype::NegotiationData),
+            (0x01, DataSubtype::SendStaBssid),
+            (0x02, DataSubtype::SendStaSsid),
+            (0x03, DataSubtype::SendStaPassword),
+            (0x04, DataSubtype::SendSoftApSsid),
+            (0x05, DataSubtype::SendSoftApPassword),
+            (0x06, DataSubtype::SendSoftApMaxConn),
+            (0x07, DataSubtype::SendSoftApAuthMode),
+            (0x08, DataSubtype::SendSoftApChannel),
+            (0x09, DataSubtype::SendUsername),
+            (0x0A, DataSubtype::SendCaCert),
+            (0x0B, DataSubtype::SendClientCert),
+            (0x0C, DataSubtype::SendServerCert),
+            (0x0D, DataSubtype::SendClientPrivateKey),
+            (0x0E, DataSubtype::SendServerPrivateKey),
+            (0x0F, DataSubtype::ReportWifiStatus),
+            (0x10, DataSubtype::ReportWifiList),
+            (0x11, DataSubtype::Error),
+            (0x12, DataSubtype::CustomData),
+            (0x13, DataSubtype::SetMaxFragment),
+        ];
+        for (byte, expected) in mapping {
+            let f = Frame {
+                frame_type: Type::Data,
+                subtype: *byte,
+                sequence: 0,
+                frame_control: 0,
+                data: Vec::new(),
+                fragmented: false,
+                encrypted: false,
+            };
+            assert_eq!(
+                f.data_subtype(),
+                Some(*expected),
+                "byte {byte:#x} should decode to {expected:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn data_subtype_returns_none_for_unknown_byte_and_non_data_frame() {
+        // Unknown byte: 0x7F isn't assigned.
+        let f = Frame {
+            frame_type: Type::Data,
+            subtype: 0x7F,
+            sequence: 0,
+            frame_control: 0,
+            data: Vec::new(),
+            fragmented: false,
+            encrypted: false,
+        };
+        assert_eq!(f.data_subtype(), None);
+        // Non-data frame: even a valid byte returns None.
+        let f = Frame {
+            frame_type: Type::Control,
+            subtype: 0x00,
+            sequence: 0,
+            frame_control: 0,
+            data: Vec::new(),
+            fragmented: false,
+            encrypted: false,
+        };
+        assert_eq!(f.data_subtype(), None);
+    }
 }
