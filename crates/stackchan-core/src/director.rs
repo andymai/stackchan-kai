@@ -278,9 +278,12 @@ impl Field {
         Self::ChirpRequest,
         Self::UtteranceRequest,
         Self::IsSpeaking,
+        Self::Gesture,
         Self::TapPending,
         Self::RemotePending,
         Self::RemoteCommand,
+        Self::DanceScript,
+        Self::LedOverride,
     ];
 
     /// Coarse grouping for human-readable reports.
@@ -862,7 +865,7 @@ mod tests {
         }
         assert_eq!(
             Field::ALL.len(),
-            44,
+            47,
             "update Field::ALL when adding variants"
         );
     }
@@ -931,5 +934,137 @@ mod tests {
         let mut bad = OutOfLaneSkill;
         let mut director = Director::new();
         let _ = director.add_skill(&mut bad);
+    }
+
+    // ============================================================
+    // Field accessors + Display + small leaf coverage.
+    // ============================================================
+
+    #[test]
+    fn field_group_for_gesture_and_led_override() {
+        // Two arms of `Field::group` that no other test exercises:
+        // Gesture lives in Mind, LedOverride in Output.
+        assert_eq!(Field::Gesture.group(), FieldGroup::Mind);
+        assert_eq!(Field::LedOverride.group(), FieldGroup::Output);
+    }
+
+    #[test]
+    fn field_changed_one_some_one_none_arms() {
+        // `(Some, None)` / `(None, Some)` collapse into the `_ => true`
+        // arm of every Option-of-f32 field. Exercise it for the three
+        // such fields: AmbientLux, AudioRms, TxLipSync.
+        use crate::lipsync::LipSync;
+        let mut before = Entity::default();
+        let mut after = Entity::default();
+        // AmbientLux: Some → None should report changed.
+        before.perception.ambient_lux = Some(100.0);
+        after.perception.ambient_lux = None;
+        assert!(Field::AmbientLux.changed(&before, &after));
+        // None → None reports unchanged (covers the other branch).
+        before.perception.ambient_lux = None;
+        after.perception.ambient_lux = None;
+        assert!(!Field::AmbientLux.changed(&before, &after));
+
+        // AudioRms: same shape.
+        before.perception.audio_rms = Some(0.5);
+        after.perception.audio_rms = None;
+        assert!(Field::AudioRms.changed(&before, &after));
+        before.perception.audio_rms = None;
+        after.perception.audio_rms = None;
+        assert!(!Field::AudioRms.changed(&before, &after));
+
+        // TxLipSync: Some → None.
+        before.perception.tx_lip_sync = Some(LipSync::envelope(0.5));
+        after.perception.tx_lip_sync = None;
+        assert!(Field::TxLipSync.changed(&before, &after));
+        // Equal Somes report unchanged (covers the inner Some+Some arm).
+        let frame = LipSync::envelope(0.5);
+        before.perception.tx_lip_sync = Some(frame);
+        after.perception.tx_lip_sync = Some(frame);
+        assert!(!Field::TxLipSync.changed(&before, &after));
+        // Different viseme alone trips the second `||` operand.
+        after.perception.tx_lip_sync = Some(LipSync {
+            envelope: 0.5,
+            viseme: Some(crate::lipsync::Viseme::Aa),
+        });
+        assert!(Field::TxLipSync.changed(&before, &after));
+    }
+
+    #[test]
+    fn field_changed_gesture_and_led_override_arms() {
+        use crate::clock::Instant;
+        use crate::mind::BodyGesture;
+        let mut before = Entity::default();
+        let mut after = Entity::default();
+        // Gesture: None → Some shows changed.
+        after.mind.last_gesture = Some((BodyGesture::Release, Instant::from_millis(0)));
+        assert!(Field::Gesture.changed(&before, &after));
+
+        // LedOverride: a None → Some toggle is "changed".
+        before = Entity::default();
+        after = Entity::default();
+        after.led_override = Some([255, 0, 0]);
+        assert!(Field::LedOverride.changed(&before, &after));
+    }
+
+    #[test]
+    fn registry_full_display_emits_capacity_message() {
+        use core::fmt::Write as _;
+        let mut buf = alloc::string::String::new();
+        write!(buf, "{}", RegistryFull::Modifiers).unwrap();
+        assert!(buf.contains("modifier registry full"));
+        assert!(buf.contains(&alloc::format!("{MODIFIER_CAP}")));
+        buf.clear();
+        write!(buf, "{}", RegistryFull::Skills).unwrap();
+        assert!(buf.contains("skill registry full"));
+        assert!(buf.contains(&alloc::format!("{SKILL_CAP}")));
+    }
+
+    #[test]
+    fn director_default_is_empty() {
+        let d = <Director<'_> as Default>::default();
+        assert_eq!(d.modifier_count(), 0);
+        assert_eq!(d.skill_count(), 0);
+    }
+
+    /// In-lane skill for the registration counter test — declares
+    /// only a `mind.intent` write, which `assert_skill_lane` accepts.
+    struct InLaneSkill;
+    static SKILL_META: SkillMeta = SkillMeta {
+        name: "InLaneSkill",
+        description: "test fixture: declares a Mind write",
+        priority: 0,
+        writes: &[Field::Intent],
+    };
+    impl Skill for InLaneSkill {
+        fn meta(&self) -> &'static SkillMeta {
+            &SKILL_META
+        }
+        fn should_fire(&self, _entity: &Entity) -> bool {
+            false
+        }
+        fn invoke(&mut self, _entity: &mut Entity) -> SkillStatus {
+            SkillStatus::Done
+        }
+    }
+
+    #[test]
+    fn director_modifier_and_skill_counts_track_registrations() {
+        // Both `m` and `s` must outlive `director` because the registry
+        // holds `&'a mut dyn` borrows.
+        let mut m = OrderRecorder {
+            meta: &M_AFFECT_HIGH,
+            log_value: 1,
+        };
+        let mut s = InLaneSkill;
+        let mut director = Director::new();
+        assert_eq!(director.modifier_count(), 0);
+        assert_eq!(director.skill_count(), 0);
+        director.add_modifier(&mut m).unwrap();
+        assert_eq!(director.modifier_count(), 1);
+        assert_eq!(director.skill_count(), 0);
+        director.add_skill(&mut s).unwrap();
+        assert_eq!(director.modifier_count(), 1);
+        assert_eq!(director.skill_count(), 1);
     }
 }
