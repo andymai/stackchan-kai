@@ -536,9 +536,11 @@ mod tests {
         let mut bus = MockI2c { harness: &harness };
         let mut driver = Ltr553::new(&mut bus);
         let ps = block_on(driver.read_proximity()).unwrap();
-        // Expected: (5 << 8) | 0xFF = 0x5FF. NOT 0xFDFF (which would
-        // include saturation flag) or 0x7FF (which would include all
-        // reserved + low bits).
+        // Expected: (5 << 8) | 0xFF = 0x5FF. The realistic regression
+        // to guard against is dropping the `& 0x07` mask entirely:
+        // (0xFD << 8) | 0xFF = 0xFDFF, a 64× overstatement that
+        // would push every saturation event into "object jammed
+        // against the sensor" territory in callers.
         assert_eq!(ps, 0x5FF);
     }
 }
