@@ -305,7 +305,9 @@ mod tests {
 
     #[test]
     fn lux_at_ratio_0_45_boundary_uses_second_formula() {
-        // ratio = 9/(11+9) = 0.45 exactly (representable in f32).
+        // ratio = 9/(11+9) = 0.45 (rounds to the same nearest f32 as
+        // the literal `0.45`; 0.45 itself is a repeating binary
+        // fraction so neither side is bit-exact, they just agree).
         // Branch comparators use `<`, so ratio == 0.45 falls out of
         // formula 1 (`ratio < 0.45` is false) and into formula 2.
         // Pinning this so a future "<=" tweak surfaces the boundary
@@ -314,8 +316,9 @@ mod tests {
         let ch0: u16 = 11;
         let ch1: u16 = 9;
         let ratio = f32::from(ch1) / f32::from(ch0 + ch1);
-        assert!(
-            (ratio - 0.45).abs() < f32::EPSILON,
+        assert_eq!(
+            ratio.to_bits(),
+            0.45_f32.to_bits(),
             "fixture didn't land at the boundary: ratio={ratio}"
         );
         let expected = 4.2785 * f32::from(ch0) - 1.9548 * f32::from(ch1);
