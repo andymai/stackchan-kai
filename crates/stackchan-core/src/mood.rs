@@ -219,6 +219,13 @@ mod tests {
             (Mood::Focus, 0.6, 0.85, 0.5),
             (Mood::Sleepy, 0.4, 1.4, 0.4),
         ];
+        // Trip-wire: extending Mood::ALL must extend this table too,
+        // otherwise the new arm's multipliers go unpinned.
+        assert_eq!(
+            table.len(),
+            Mood::ALL.len(),
+            "extend the multiplier table when adding a Mood variant",
+        );
         for (m, blink, breath, drift) in table {
             assert!(near(m.blink_multiplier(), blink), "blink for {m:?}");
             assert!(near(m.breath_multiplier(), breath), "breath for {m:?}");
