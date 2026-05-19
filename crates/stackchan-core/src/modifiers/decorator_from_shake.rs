@@ -197,6 +197,11 @@ mod tests {
             Decorator::Dizzy,
             "Dizzy must overwrite the prior Heart on the rising shake edge"
         );
+        assert_eq!(
+            state.expires_at,
+            Instant::from_millis(33 + DIZZY_HOLD_MS),
+            "expiry must be anchored to the shake edge, not inherited from the Heart it replaced"
+        );
     }
 
     #[test]
