@@ -511,13 +511,34 @@ mod tests {
     }
 
     #[test]
-    fn with_address_overrides_default() {
-        // Alt-address constructor for boards that strap the chip to
-        // a non-default I²C address.
+    fn with_address_overrides_default_and_routes_writes() {
+        // Alt-address constructor for boards that strap the chip to a
+        // non-default I²C address. Beyond pinning the getter, drive
+        // the full init() through the mock and confirm every recorded
+        // Event::Write went to 0x42, not the default ADDRESS — guards
+        // against a regression where any I²C call hard-codes ADDRESS.
         let harness = Harness::new();
-        let bus = MockI2c { harness: &harness };
-        let chip = Si12t::with_address(bus, 0x42);
-        assert_eq!(chip.address(), 0x42);
+        let mut bus = MockI2c { harness: &harness };
+        let mut delay = MockDelay { harness: &harness };
+        let alt_address = 0x42_u8;
+        let mut chip = Si12t::with_address(&mut bus, alt_address);
+        assert_eq!(chip.address(), alt_address);
+        block_on(chip.init(&mut delay)).unwrap();
+        let writes: Vec<u8> = harness
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Write(addr, _) => Some(addr),
+                _ => None,
+            })
+            .collect();
+        assert!(!writes.is_empty(), "init must issue at least one write");
+        for addr in &writes {
+            assert_eq!(
+                *addr, alt_address,
+                "every init write must route to the configured address, not the default",
+            );
+        }
     }
 
     #[test]
