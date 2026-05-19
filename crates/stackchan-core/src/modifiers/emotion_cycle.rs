@@ -266,7 +266,7 @@ mod tests {
         let from_default = <EmotionCycle as Default>::default();
         assert_eq!(
             from_default.current(),
-            Some(EmotionCycle::DEFAULT_SEQUENCE[0]),
+            EmotionCycle::DEFAULT_SEQUENCE.first().copied(),
         );
     }
 }
