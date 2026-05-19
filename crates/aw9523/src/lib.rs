@@ -285,4 +285,16 @@ mod tests {
         // Datasheet requires ≥10 µs on RESX; we use 20 ms to match M5Stack.
         assert!(RESET_PULSE_MS >= 1);
     }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?` operator
+        // in the driver routes the bus error through this conversion.
+        // The mock uses `Infallible`, so the runtime path can't be
+        // reached during tests; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+        }
+    }
 }
