@@ -422,4 +422,103 @@ mod tests {
         assert_eq!(writes[0], (REG_MIC1_GAIN, 0x1F));
         assert_eq!(writes[1], (REG_MIC2_GAIN, 0x1F));
     }
+
+    #[test]
+    fn set_gain_writes_step_directly_when_in_range() {
+        // step within 0..=0x0F should pass through unmodified —
+        // pins that the clamp is a `& 0x0F`, not a `min(0x0A)`.
+        let mut adc = Es7210::new(MockI2c::with_chip_id(CHIP_ID1, CHIP_ID2));
+        block_on(adc.set_gain(0x05)).unwrap();
+        let writes = adc.bus.writes.borrow();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0], (REG_MIC1_GAIN, MIC_GAIN_ENABLE | 0x05));
+        assert_eq!(writes[1], (REG_MIC2_GAIN, MIC_GAIN_ENABLE | 0x05));
+    }
+
+    #[test]
+    fn new_uses_default_address() {
+        let adc = Es7210::new(MockI2c::with_chip_id(0, 0));
+        assert_eq!(adc.address(), ADDRESS);
+    }
+
+    #[test]
+    fn with_address_overrides_default() {
+        // ES7210 has an AD0/AD1 strap; with_address covers the
+        // non-default-strap board variant.
+        let adc = Es7210::with_address(MockI2c::with_chip_id(0, 0), 0x41);
+        assert_eq!(adc.address(), 0x41);
+    }
+
+    #[test]
+    fn read_chip_id_returns_canned_bytes() {
+        let mut adc = Es7210::new(MockI2c::with_chip_id(CHIP_ID1, CHIP_ID2));
+        let (lo, hi) = block_on(adc.read_chip_id()).unwrap();
+        assert_eq!((lo, hi), (CHIP_ID1, CHIP_ID2));
+    }
+
+    #[test]
+    fn read_chip_id_returns_bus_bytes_even_when_wrong() {
+        // Driver returns raw bytes; the caller decides what to do
+        // about a mismatch. Mock answers with 0xFF on every
+        // unconfigured register — pin that the driver doesn't
+        // silently normalise.
+        let mut adc = Es7210::new(MockI2c::with_chip_id(0xAA, 0xBB));
+        let (lo, hi) = block_on(adc.read_chip_id()).unwrap();
+        assert_eq!((lo, hi), (0xAA, 0xBB));
+    }
+
+    #[test]
+    fn init_full_sequence_matches_esp_adf_reference() {
+        // Pins the entire write order. This is the contract with the
+        // esp-adf reference port: 4 reset writes, 4 clock-tree writes,
+        // 8 power-up writes, 2 gain writes, 1 analog re-assert,
+        // 2 closing-reset writes = 21 register writes total.
+        let mut adc = Es7210::new(MockI2c::with_chip_id(CHIP_ID1, CHIP_ID2));
+        block_on(adc.init(&mut NoopDelay)).unwrap();
+        let writes = adc.bus.writes.borrow().clone();
+        let expected: Vec<(u8, u8)> = vec![
+            // Reset pulse #1 (open).
+            (REG_RESET, RESET_ASSERT),
+            (REG_RESET, RESET_RELEASE),
+            // Clock tree.
+            (REG_MAINCLK, MAINCLK_VALUE),
+            (REG_OSR, OSR_VALUE),
+            (REG_LRCK_DIVH, LRCK_DIVH_VALUE),
+            (REG_LRCK_DIVL, LRCK_DIVL_VALUE),
+            // Power-up sequence.
+            (REG_CLOCK_OFF, CLOCK_OFF_MIC12_ON),
+            (REG_POWER_DOWN, 0x00),
+            (REG_ANALOG, ANALOG_ACTIVE),
+            (REG_MIC1_POWER, MIC_POWER_ON),
+            (REG_MIC2_POWER, MIC_POWER_ON),
+            (REG_MIC3_POWER, MIC_POWER_ON),
+            (REG_MIC4_POWER, MIC_POWER_ON),
+            // Mic select + gain.
+            (REG_MIC12_POWER, MIC12_POWER_ON),
+            (REG_MIC34_POWER, MIC34_POWER_OFF),
+            (REG_MIC1_GAIN, MIC_GAIN_ENABLE | MIC_GAIN_DEFAULT),
+            (REG_MIC2_GAIN, MIC_GAIN_ENABLE | MIC_GAIN_DEFAULT),
+            // Analog re-assert + closing reset pulse.
+            (REG_ANALOG, ANALOG_ACTIVE),
+            (REG_RESET, RESET_ASSERT),
+            (REG_RESET, RESET_RELEASE),
+        ];
+        assert_eq!(
+            writes, expected,
+            "init sequence diverged from esp-adf reference"
+        );
+    }
+
+    #[test]
+    fn error_from_blanket_wraps_in_i2c_variant() {
+        // The `impl From<E> for Error<E>` blanket — every `?`
+        // operator in the driver routes the bus error through this
+        // conversion. Mock uses `Infallible` so the runtime path
+        // can't be reached; exercise the impl directly.
+        let err: Error<&'static str> = "bus go boom".into();
+        match err {
+            Error::I2c(s) => assert_eq!(s, "bus go boom"),
+            Error::BadChipId(..) => panic!("expected Error::I2c"),
+        }
+    }
 }
