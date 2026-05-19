@@ -278,6 +278,9 @@ export function Calibration() {
         <button type="button" onClick={() => void loadSettings()}>
           Reload
         </button>
+        <button type="button" onClick={() => setTracker(TRACKER_DEFAULT)} title="Revert local edits to firmware defaults (does not persist; click Save to apply).">
+          Reset to defaults
+        </button>
       </div>
 
       <h3>Head offsets</h3>
@@ -315,6 +318,9 @@ export function Calibration() {
         </button>
         <button type="button" onClick={() => void loadOffsets()}>
           Reload
+        </button>
+        <button type="button" onClick={() => setOffsets(HEAD_OFFSETS_DEFAULT)} title="Revert local edits to zero (does not persist; click Save to apply).">
+          Reset to zero
         </button>
       </div>
 
