@@ -584,6 +584,13 @@ async fn post_pcm(
     //    that latency tax.
     let mut resp = [0_u8; RESPONSE_MAX_BYTES];
     let (header_end, after_headers_filled) = read_headers(&mut socket, &mut resp).await?;
+    // `parse_content_length` returns `Ok(0)` for both an absent
+    // header and an explicit `Content-Length: 0`. The two have
+    // different terminate semantics: explicit-0 means "no body,
+    // stop now"; absent means "read until peer closes" (which is
+    // HTTP/1.0 / HTTP/1.1 with `Connection: close` legacy). Probe
+    // the raw header block to disambiguate.
+    let header_present = header_has_content_length(&resp[..header_end]);
     let content_length = parse_content_length(&resp[..header_end]).map_err(|_| PostError::Read)?;
     let body_end = read_body(
         &mut socket,
@@ -591,6 +598,7 @@ async fn post_pcm(
         header_end,
         after_headers_filled,
         content_length,
+        header_present,
     )
     .await?;
     socket.close();
@@ -655,21 +663,26 @@ async fn read_headers(
 /// either the `content_length`-sized body lands or the peer closes.
 /// Returns the new `filled` count.
 ///
-/// `content_length == 0` is the "read until close" fallback —
-/// covers sidecars that omit the header or explicitly send an
-/// empty body. Capped at `buf.len()` so a hostile peer can't loop
-/// us forever.
+/// `header_present` distinguishes the two `content_length == 0`
+/// shapes: when the header is absent we fall through to the
+/// read-until-close fallback (HTTP/1.0 / explicit
+/// `Connection: close` legacy); when the header is explicitly
+/// `Content-Length: 0` we stop immediately at `header_end`.
+/// Without this distinction, an explicit empty-body reply from a
+/// peer that holds the socket open would still burn the 15 s
+/// task-level timeout.
 async fn read_body(
     socket: &mut TcpSocket<'_>,
     buf: &mut [u8],
     header_end: usize,
     start_filled: usize,
     content_length: usize,
+    header_present: bool,
 ) -> Result<usize, PostError> {
-    let target = if content_length == 0 {
-        buf.len()
-    } else {
+    let target = if header_present {
         header_end.saturating_add(content_length).min(buf.len())
+    } else {
+        buf.len()
     };
     let mut filled = start_filled.max(header_end);
     while filled < target {
@@ -686,6 +699,26 @@ async fn read_body(
         }
     }
     Ok(filled)
+}
+
+/// Case-insensitive search for a `Content-Length:` header in a
+/// raw header block. Used to distinguish "header absent" from
+/// "header explicitly `Content-Length: 0`" — the two have
+/// different termination semantics that
+/// [`stackchan_net::http_parse::parse_content_length`] collapses
+/// to `Ok(0)`.
+fn header_has_content_length(headers: &[u8]) -> bool {
+    for line in headers.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
+        let (name, _) = line.split_at(colon);
+        if name.eq_ignore_ascii_case(b"content-length") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Locate the response body. Status must be `2xx`; anything else is
@@ -910,6 +943,30 @@ mod tests {
         assert!(matches!(
             parse_http_response(raw),
             Err(PostError::BadStatus)
+        ));
+    }
+
+    #[test]
+    fn header_has_content_length_distinguishes_absent_from_explicit_zero() {
+        // Pin the `Content-Length: 0` vs absent disambiguation
+        // `read_body` needs to avoid waiting on a peer that
+        // legitimately signalled an empty-body response.
+        assert!(header_has_content_length(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+        ));
+        assert!(header_has_content_length(
+            b"HTTP/1.1 200 OK\r\ncontent-length: 42\r\n\r\n"
+        ));
+        assert!(header_has_content_length(
+            b"HTTP/1.1 200 OK\r\nCONTENT-LENGTH:   42  \r\n\r\n"
+        ));
+        // Header absent.
+        assert!(!header_has_content_length(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"
+        ));
+        // Substring match doesn't fool it (`Content-Lengthful` is bogus).
+        assert!(!header_has_content_length(
+            b"HTTP/1.1 200 OK\r\nContent-Lengthful: 42\r\n\r\n"
         ));
     }
 

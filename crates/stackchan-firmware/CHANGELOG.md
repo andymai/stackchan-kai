@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.97.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.0...stackchan-firmware-v0.97.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* **firmware:** toast_info uses ToastLevel::Info, not Warn ([#491](https://github.com/andymai/stackchan-kai/issues/491)) ([9334ec3](https://github.com/andymai/stackchan-kai/commit/9334ec3f24517ca56d253795b1f1bf588da40559))
+
 ## [0.97.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.96.0...stackchan-firmware-v0.97.0) (2026-05-19)
 
 
