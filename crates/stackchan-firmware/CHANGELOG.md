@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.102.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.101.0...stackchan-firmware-v0.102.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose set_behavior_flag — single-field BehaviorConfig mutate ([#521](https://github.com/andymai/stackchan-kai/issues/521)) ([1767aeb](https://github.com/andymai/stackchan-kai/commit/1767aebc27c19cc209635fc2ff24b42485116ccc))
+
 ## [0.101.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.100.0...stackchan-firmware-v0.101.0) (2026-05-20)
 
 

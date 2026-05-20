@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.7.0...stackchan-net-v0.8.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose set_behavior_flag — single-field BehaviorConfig mutate ([#521](https://github.com/andymai/stackchan-kai/issues/521)) ([1767aeb](https://github.com/andymai/stackchan-kai/commit/1767aebc27c19cc209635fc2ff24b42485116ccc))
+
 ## [0.7.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.6.0...stackchan-net-v0.7.0) (2026-05-20)
 
 
