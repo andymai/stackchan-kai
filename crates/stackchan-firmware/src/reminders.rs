@@ -1,11 +1,11 @@
 //! In-memory reminder/timer scheduler.
 //!
-//! Holds a small fixed-capacity list of pending reminders. Each entry
-//! pairs a fire deadline (monotonic [`Instant`]) with a phrase to play
-//! when the deadline arrives. A 1 Hz embassy task drains due entries
-//! and dispatches them through the same
-//! [`REMOTE_COMMAND_QUEUE`]
-//! that HTTP / MCP / ESP-NOW use, so the audio path stays uniform.
+//! Holds a small fixed-capacity list of pending entries. Each entry
+//! pairs a fire deadline (monotonic [`Instant`]) with a
+//! [`ScheduledAction`] — either a baked phrase to play or a named
+//! motion to run. A 1 Hz embassy task drains due entries and
+//! dispatches each through the same control-plane signals that HTTP,
+//! MCP, and ESP-NOW use, so the audio + motion paths stay uniform.
 //!
 //! ## Why monotonic, not wall-clock
 //!
@@ -23,6 +23,7 @@
 //! short-horizon by definition (5-day cap); the operator-tooling
 //! cost of re-arming after a reboot is acceptable.
 
+use alloc::sync::Arc;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -31,9 +32,10 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Duration, Instant, Ticker};
 use heapless::Vec;
 use stackchan_core::RemoteCommand;
+use stackchan_core::motion::NamedMotion;
 use stackchan_core::voice::{Locale, PhraseId, Priority};
 
-use crate::net::http::enqueue_remote_command;
+use crate::net::http::{DANCE_SCRIPT_SIGNAL, enqueue_remote_command};
 
 /// Maximum simultaneous reminders. 16 is well beyond plausible
 /// operator use (a desk-toy isn't a calendar) and bounded enough to
@@ -65,16 +67,32 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static REMINDERS: Mutex<CriticalSectionRawMutex, RefCell<Vec<Reminder, MAX_REMINDERS>>> =
     Mutex::new(RefCell::new(Vec::new()));
 
+/// What happens when a [`Reminder`] fires.
+///
+/// Adding a new variant requires updating
+/// [`render_reminders_json`][crate::net::http] so the operator-facing
+/// JSON surfaces a recognisable discriminator field, plus the
+/// dispatcher's match arm in [`reminders_task`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScheduledAction {
+    /// Play a baked phrase through the speech path on fire.
+    Speak(PhraseId),
+    /// Play a canonical one-shot motion (greet / nod / shake / laugh)
+    /// through the dance-player path on fire.
+    PlayMotion(NamedMotion),
+}
+
 /// One scheduled reminder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reminder {
-    /// Stable identifier returned by `create_reminder` and consumed
-    /// by `cancel_reminder`.
+    /// Stable identifier returned by `create_reminder` /
+    /// `schedule_motion` and consumed by `cancel_reminder`.
     pub id: u32,
     /// Monotonic deadline at which the reminder fires.
     pub deadline: Instant,
-    /// Baked phrase to play when the deadline passes.
-    pub phrase: PhraseId,
+    /// What to do when the deadline passes.
+    pub action: ScheduledAction,
 }
 
 /// Operator-supplied creation request. Validated into a [`Reminder`]
@@ -84,8 +102,8 @@ pub struct CreateRequest {
     /// Seconds from `now` until the reminder should fire. Must be
     /// `> 0` and `<= MAX_REMINDER_HORIZON_SECS`.
     pub fire_in_secs: u64,
-    /// Phrase the speak path will play on fire.
-    pub phrase: PhraseId,
+    /// What the dispatcher does when the reminder fires.
+    pub action: ScheduledAction,
 }
 
 /// Validation errors surfaced to the HTTP / MCP edge.
@@ -118,7 +136,7 @@ pub fn add_reminder(now: Instant, req: CreateRequest) -> Result<u32, ReminderErr
     let reminder = Reminder {
         id,
         deadline: now + Duration::from_secs(req.fire_in_secs),
-        phrase: req.phrase,
+        action: req.action,
     };
     REMINDERS.lock(|cell| {
         let mut list = cell.borrow_mut();
@@ -166,12 +184,13 @@ fn drain_due(now: Instant) -> Vec<Reminder, MAX_REMINDERS> {
 }
 
 /// Embassy task — drains due reminders at `REMINDER_TICK` cadence
-/// and dispatches each through `REMOTE_COMMAND_QUEUE` as a
-/// [`RemoteCommand::Speak`]. The queue absorbs short bursts, so
-/// simultaneously-due reminders are all preserved; the per-tick
-/// spacing is conservative pacing for the audio dispatcher
-/// downstream, not a correctness requirement of the control-plane
-/// queue itself.
+/// and dispatches each through its action-appropriate channel.
+/// `Speak` rides the same `REMOTE_COMMAND_QUEUE` that HTTP / MCP /
+/// ESP-NOW speak paths use; `PlayMotion` signals the dance player
+/// directly. The queue absorbs short bursts, so simultaneously-due
+/// reminders are all preserved; the per-tick spacing is conservative
+/// pacing for the consumers downstream, not a correctness requirement
+/// of the control-plane signals themselves.
 #[embassy_executor::task]
 pub async fn reminders_task() {
     defmt::info!(
@@ -184,22 +203,36 @@ pub async fn reminders_task() {
         ticker.next().await;
         let due = drain_due(Instant::now());
         for r in due {
-            defmt::info!(
-                "reminders: firing id={=u32} phrase={:?}",
-                r.id,
-                defmt::Debug2Format(&r.phrase),
-            );
-            enqueue_remote_command(RemoteCommand::Speak {
-                phrase: r.phrase,
-                locale: Locale::En,
-                priority: Priority::Normal,
-            });
+            match r.action {
+                ScheduledAction::Speak(phrase) => {
+                    defmt::info!(
+                        "reminders: firing id={=u32} speak={:?}",
+                        r.id,
+                        defmt::Debug2Format(&phrase),
+                    );
+                    enqueue_remote_command(RemoteCommand::Speak {
+                        phrase,
+                        locale: Locale::En,
+                        priority: Priority::Normal,
+                    });
+                }
+                ScheduledAction::PlayMotion(motion) => {
+                    defmt::info!(
+                        "reminders: firing id={=u32} motion={:?}",
+                        r.id,
+                        defmt::Debug2Format(&motion),
+                    );
+                    DANCE_SCRIPT_SIGNAL.signal(Arc::new(motion.script()));
+                }
+            }
             // The render task drains REMOTE_COMMAND_QUEUE once per
             // ~33 ms render frame; signalling a second reminder
             // before that drain runs would silently overwrite the
             // first (Signal is single-waker, latest-wins). Pace
             // bursts so each signalled command is consumed before
-            // the next replaces it.
+            // the next replaces it. The same spacing applies to
+            // motion fires that hit DANCE_SCRIPT_SIGNAL (also a
+            // single-waker signal).
             embassy_time::Timer::after(embassy_time::Duration::from_millis(
                 REMINDER_BURST_SPACING_MS,
             ))
@@ -210,8 +243,12 @@ pub async fn reminders_task() {
 
 /// Spacing between back-to-back reminder fires when several land
 /// due in the same tick. Sized comfortably above the 33 ms render
-/// cadence so the consumer drains `REMOTE_COMMAND_QUEUE` between
-/// each push.
+/// cadence so each consumer drains its signal between pushes:
+/// `Speak` actions push to `REMOTE_COMMAND_QUEUE` (drained by the
+/// render task per frame), `PlayMotion` actions push to
+/// `DANCE_SCRIPT_SIGNAL` (drained by the same render-task tick that
+/// also runs the `DancePlayer` modifier). Both signals are
+/// single-waker / latest-wins, so pacing matters for both.
 const REMINDER_BURST_SPACING_MS: u64 = 100;
 
 #[cfg(test)]
@@ -231,7 +268,7 @@ mod tests {
             t0,
             CreateRequest {
                 fire_in_secs: 1,
-                phrase: PhraseId::WakeChirp,
+                action: ScheduledAction::Speak(PhraseId::WakeChirp),
             },
         )
         .unwrap();
@@ -239,7 +276,7 @@ mod tests {
             t0,
             CreateRequest {
                 fire_in_secs: 60,
-                phrase: PhraseId::WakeChirp,
+                action: ScheduledAction::Speak(PhraseId::WakeChirp),
             },
         )
         .unwrap();
@@ -258,7 +295,7 @@ mod tests {
             Instant::from_ticks(0),
             CreateRequest {
                 fire_in_secs: 0,
-                phrase: PhraseId::WakeChirp,
+                action: ScheduledAction::Speak(PhraseId::WakeChirp),
             },
         );
         assert_eq!(err, Err(ReminderError::NotInTheFuture));
@@ -271,7 +308,7 @@ mod tests {
             Instant::from_ticks(0),
             CreateRequest {
                 fire_in_secs: MAX_REMINDER_HORIZON_SECS + 1,
-                phrase: PhraseId::WakeChirp,
+                action: ScheduledAction::Speak(PhraseId::WakeChirp),
             },
         );
         assert_eq!(err, Err(ReminderError::HorizonExceeded));
@@ -290,7 +327,7 @@ mod tests {
             Instant::from_ticks(0),
             CreateRequest {
                 fire_in_secs: 30,
-                phrase: PhraseId::WakeChirp,
+                action: ScheduledAction::Speak(PhraseId::WakeChirp),
             },
         )
         .unwrap();
@@ -308,7 +345,7 @@ mod tests {
                 Instant::from_ticks(0),
                 CreateRequest {
                     fire_in_secs: 30,
-                    phrase: PhraseId::WakeChirp,
+                    action: ScheduledAction::Speak(PhraseId::WakeChirp),
                 },
             )
             .unwrap();
@@ -317,7 +354,7 @@ mod tests {
             Instant::from_ticks(0),
             CreateRequest {
                 fire_in_secs: 30,
-                phrase: PhraseId::WakeChirp,
+                action: ScheduledAction::Speak(PhraseId::WakeChirp),
             },
         );
         assert_eq!(err, Err(ReminderError::QueueFull));
