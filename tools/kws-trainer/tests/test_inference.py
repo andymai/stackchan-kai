@@ -99,6 +99,18 @@ def test_input_quant_params_reads_from_interpreter() -> None:
     assert q.zero_point == 10
 
 
+def test_input_quant_params_respects_zero_point_of_zero() -> None:
+    # Greptile P1 regression: a Python `or` fallback on the numpy
+    # quant arrays silently turned `zero_point=0` (a legitimate
+    # symmetric-quant value) into the firmware default `-25`, because
+    # `bool(np.array([0]))` is `False`. The fix uses explicit
+    # `if len(arr) > 0` guards — verified here.
+    interp = _FakeInterpreter(input_scale=0.25, input_zero_point=0)
+    q = input_quant_params(interp)
+    assert q.scale == pytest.approx(0.25)
+    assert q.zero_point == 0
+
+
 def test_input_quant_params_falls_back_when_empty() -> None:
     class _NoQuantInterpreter(_FakeInterpreter):
         def get_input_details(self) -> list[dict[str, Any]]:

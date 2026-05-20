@@ -137,7 +137,7 @@ Set `tts_provider` in the sidecar's `.env`:
 
 | Provider | Setup cost | Voice quality | Per-call cost |
 |---|---|---|---|
-| `espeak_ng` *(default)* | Install `espeak-ng` binary (`apt install espeak-ng` / `brew install espeak`). No model file, no API key. | Robotic — intentionally so. The desk-toy aesthetic. | Free, local. |
+| `espeak_ng` *(default)* | Install `espeak-ng` binary (`apt install espeak-ng` / `brew install espeak-ng`). No model file, no API key. | Robotic — intentionally so. The desk-toy aesthetic. | Free, local. |
 | `piper` | Install `piper` binary + download an ONNX voice model + JSON metadata. ~50 MB per voice. | Competent neural. The middle option — much clearer than espeak-ng without an API bill. | Free, local. |
 | `elevenlabs` | Set `ELEVENLABS_API_KEY` + (optionally) `elevenlabs_voice_id`. **Requires the Starter tier ($5/mo) or higher** — the free tier returns MP3 only, and the sidecar asks for raw PCM at 16 kHz so the firmware skips an MP3 decoder. | Human-grade. Indistinguishable from a recording. | Cloud API; per-character billing. |
 
@@ -218,7 +218,15 @@ behavior: (
 - `wake_word_threshold` — int8 score above which the firmware treats
   the model output as a positive detection. Lower values (≈80)
   increase sensitivity at the cost of false positives; higher values
-  (≈115) tighten it. Tune per model.
+  (≈115) tighten it. Tune per model. `kws-eval` reports the model's
+  *dequantized* output (float in `[0.0, 1.0]`) while the firmware
+  compares against the *raw* int8. Convert by inverting the model's
+  output quantization: `wake_word_threshold = round(float_score /
+  output_scale) + output_zero_point`. For the canonical microWakeWord
+  output quant (`scale=1/255, zero_point=-128`), a `kws-eval` peak of
+  `0.89` maps to `~99`; `0.95` maps to `~114`. Check your model's
+  exact quant via the TFLite Python API if the canonical values
+  don't apply.
 - `wake_word_arena_kib` — size of the TFLM tensor arena in KiB.
   The microWakeWord v2 family declares 17–26 KiB nominal; `64` leaves
   headroom for the TFLM planner's scratch space. Bump if a custom

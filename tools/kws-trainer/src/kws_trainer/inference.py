@@ -17,14 +17,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
 from .features import MEL_BIN_COUNT, MelFrontend, QuantParams
-
-if TYPE_CHECKING:
-    pass
 
 _LOG = logging.getLogger("kws_trainer.inference")
 
@@ -71,6 +68,44 @@ def load_interpreter(model_path: Path) -> Any:
     return interpreter
 
 
+@dataclass(frozen=True)
+class ModelIO:
+    """Snapshot of the interpreter's input/output tensor details.
+
+    Reading these from the TFLite C API is cheap individually but
+    adds up when called once per 10 ms frame on a multi-minute clip.
+    Hoist out of the hot loop and pass through to [`run_frame`].
+    """
+
+    input_index: int
+    input_shape: tuple[int, ...]
+    input_dtype: Any
+    output_index: int
+    output_dtype: Any
+    output_scale: float
+    output_zero_point: int
+
+
+def read_model_io(interpreter: Any) -> ModelIO:
+    """Pull tensor metadata + output quantization from the
+    interpreter once so the per-frame loop can pass it through
+    without re-crossing the TFLite boundary."""
+    inp = interpreter.get_input_details()[0]
+    out = interpreter.get_output_details()[0]
+    out_quant = out.get("quantization_parameters", {})
+    out_scales = out_quant.get("scales", [])
+    out_zps = out_quant.get("zero_points", [])
+    return ModelIO(
+        input_index=int(inp["index"]),
+        input_shape=tuple(int(d) for d in inp["shape"]),
+        input_dtype=inp["dtype"],
+        output_index=int(out["index"]),
+        output_dtype=out["dtype"],
+        output_scale=float(out_scales[0]) if len(out_scales) > 0 else 1.0,
+        output_zero_point=int(out_zps[0]) if len(out_zps) > 0 else 0,
+    )
+
+
 def input_quant_params(interpreter: Any) -> QuantParams:
     """Read the model's input-tensor quantization parameters.
 
@@ -81,40 +116,36 @@ def input_quant_params(interpreter: Any) -> QuantParams:
     """
     details = interpreter.get_input_details()[0]
     quant = details.get("quantization_parameters", {})
-    scales = quant.get("scales", []) or [0.5]
-    zero_points = quant.get("zero_points", []) or [-25]
-    scale = float(scales[0]) if len(scales) else 0.5
-    zero_point = int(zero_points[0]) if len(zero_points) else -25
+    scales = quant.get("scales", [])
+    zero_points = quant.get("zero_points", [])
+    # `if len(...) > 0` rather than `or [default]`: a numpy array
+    # containing a single 0 (legitimate `zero_point=0` from a model
+    # with symmetric quantization) is falsy under Python's `or`
+    # truthiness, which silently shifts every feature by the
+    # firmware-default 25 quantization steps and corrupts scores.
+    scale = float(scales[0]) if len(scales) > 0 else 0.5
+    zero_point = int(zero_points[0]) if len(zero_points) > 0 else -25
     return QuantParams(scale=scale, zero_point=zero_point)
 
 
-def run_frame(interpreter: Any, frame: np.ndarray) -> float:
+def run_frame(interpreter: Any, frame: np.ndarray, io: ModelIO | None = None) -> float:
     """Feed one ``(MEL_BIN_COUNT,)`` ``int8`` frame to the model and
     return the scalar score (float in ``[0, 1]``).
 
-    The input tensor's shape is taken from the model — typically
-    ``(1, 40, 1)`` for streaming MixConv models. Dequantization
-    of the output uses the output tensor's own scale/zero_point.
+    ``io`` is the cached tensor metadata from [`read_model_io`]. The
+    optional default makes single-frame ad-hoc usage work without a
+    pre-call setup step; batch loops should hoist [`read_model_io`]
+    out and pass the result in to avoid per-frame TFLite-boundary
+    crossings.
     """
-    input_details = interpreter.get_input_details()[0]
-    output_details = interpreter.get_output_details()[0]
-    target_shape = tuple(int(d) for d in input_details["shape"])
-    # Most microWakeWord streaming models expect shape (1, 40, 1).
-    # Reshape via broadcasting so the function works for any
-    # consistent leading singleton.
-    reshaped = frame.reshape(target_shape).astype(input_details["dtype"])
-    interpreter.set_tensor(input_details["index"], reshaped)
+    if io is None:
+        io = read_model_io(interpreter)
+    reshaped = frame.reshape(io.input_shape).astype(io.input_dtype)
+    interpreter.set_tensor(io.input_index, reshaped)
     interpreter.invoke()
-    raw = interpreter.get_tensor(output_details["index"])
-    # Dequantize int8 outputs to float using the output tensor's
-    # quantization parameters; float outputs pass through unchanged.
-    if output_details["dtype"] == np.int8:
-        out_quant = output_details.get("quantization_parameters", {})
-        scales = out_quant.get("scales", [1.0])
-        zps = out_quant.get("zero_points", [0])
-        scale = float(scales[0])
-        zp = int(zps[0])
-        score = float(scale * (int(raw.flatten()[0]) - zp))
+    raw = interpreter.get_tensor(io.output_index)
+    if io.output_dtype == np.int8:
+        score = float(io.output_scale * (int(raw.flatten()[0]) - io.output_zero_point))
     else:
         score = float(raw.flatten()[0])
     return score
@@ -134,6 +165,7 @@ def evaluate_pcm(
     with a non-default ``scale`` doesn't see misaligned features.
     """
     quant = input_quant_params(interpreter)
+    io = read_model_io(interpreter)
     frontend = MelFrontend(quant=quant)
     feature_matrix = frontend.process_pcm(pcm)
     scores: list[float] = []
@@ -142,7 +174,7 @@ def evaluate_pcm(
     for i, frame in enumerate(feature_matrix):
         if frame.shape != (MEL_BIN_COUNT,):
             raise ValueError(f"frame {i}: expected shape ({MEL_BIN_COUNT},), got {frame.shape}")
-        score = run_frame(interpreter, frame)
+        score = run_frame(interpreter, frame, io)
         scores.append(score)
         if score > peak_score:
             peak_score = score
@@ -166,8 +198,10 @@ def evaluate_pcm(
 
 __all__ = [
     "InferenceResult",
+    "ModelIO",
     "evaluate_pcm",
     "input_quant_params",
     "load_interpreter",
+    "read_model_io",
     "run_frame",
 ]
