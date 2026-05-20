@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     stt_provider: Literal["faster_whisper", "openai", "deepgram"] = "faster_whisper"
     llm_provider: Literal["anthropic", "openai", "ollama"] = "anthropic"
+    # `espeak_ng` is the zero-config default — ships in every Linux/
+    # macOS distro and produces audible (if synthetic) output without
+    # an API key or model file. `piper` and `elevenlabs` are quality
+    # opt-ins; see docs/sidecar.md for the setup steps each needs.
+    tts_provider: Literal["espeak_ng", "piper", "elevenlabs"] = "espeak_ng"
     ollama_host: str = "http://localhost:11434"
 
     stt_timeout_seconds: float = Field(default=10.0, gt=0.0)
@@ -30,6 +35,16 @@ class Settings(BaseSettings):
     stt_max_attempts: int = Field(default=2, ge=1)
     llm_max_attempts: int = Field(default=2, ge=1)
     retry_initial_backoff_seconds: float = Field(default=0.5, ge=0.0)
+
+    # TTS knobs. Audio is cached in memory and the firmware fetches it
+    # within seconds; 60 s TTL gives generous headroom for a slow
+    # firmware roundtrip without holding bytes forever. Cache capacity
+    # bounds the worst-case memory footprint (~256 KB * 32 ~= 8 MB).
+    tts_audio_ttl_seconds: float = Field(default=60.0, gt=0.0)
+    tts_audio_cache_capacity: int = Field(default=32, ge=1)
+    # eSpeak-NG voice + speech rate; both ignored for other providers.
+    espeak_voice: str = "en"
+    espeak_wpm: int = Field(default=175, ge=80, le=450)
 
     bearer_token: str = Field(default="", alias="SIDECAR_BEARER_TOKEN")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")

@@ -6,6 +6,7 @@ from .llm import LLMProvider
 from .logging import setup_logging
 from .session_store import SessionStore
 from .stt import STTProvider
+from .tts import TTSProvider
 
 
 def _build_stt(settings: Settings) -> STTProvider:
@@ -36,14 +37,36 @@ def _build_llm(settings: Settings) -> LLMProvider:
     return AnthropicLLM(api_key=settings.anthropic_api_key, model=settings.llm_model)
 
 
+def _build_tts(settings: Settings) -> TTSProvider:
+    # `piper` and `elevenlabs` providers land in follow-up slices —
+    # they're declared in the config Literal up front so a future
+    # operator's STACKCHAN.RON / .env files don't need updating when
+    # the providers ship. For now the espeak_ng provider is the only
+    # implementation; the others fall through to it with a startup log
+    # so the operator sees the substitution.
+    if settings.tts_provider != "espeak_ng":
+        import logging
+
+        logging.getLogger("stackchan_sidecar").warning(
+            "tts_provider=%s requested but not implemented yet; "
+            "falling back to espeak_ng. Track Arc A slice 2/3 for "
+            "Piper and ElevenLabs providers.",
+            settings.tts_provider,
+        )
+    from .tts import EspeakProvider
+
+    return EspeakProvider(voice=settings.espeak_voice, wpm=settings.espeak_wpm)
+
+
 def main() -> None:
     settings = load_settings()
     setup_logging(settings.log_level)
 
     stt = _build_stt(settings)
     llm = _build_llm(settings)
+    tts = _build_tts(settings)
     session_store = SessionStore()
-    app = create_app(settings, stt, llm, session_store)
+    app = create_app(settings, stt, llm, session_store, tts=tts)
 
     uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
 
