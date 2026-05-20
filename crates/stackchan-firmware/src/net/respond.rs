@@ -165,6 +165,56 @@ pub(super) fn sensors_body(s: snapshot::SensorsSnapshot) -> String {
     )
 }
 
+/// Serialise the rolling sensor-history window as
+/// `{"history":[{ age_secs, imu, ambient_lux, audio_rms, body_touch }, ...]}`.
+/// Each entry's field shape matches [`sensors_body`] so an LLM that
+/// understands one understands the other. `age_secs` is the
+/// monotonic delta from `now_ms` to the entry's sample time,
+/// saturated at 0 if the sample landed in the same millisecond.
+pub(super) fn sensor_history_body(
+    history: &[crate::sensor_history::HistoryEntry],
+    now_ms: u64,
+) -> String {
+    use core::fmt::Write as _;
+    let mut out = String::from(r#"{"history":["#);
+    for (idx, entry) in history.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        let age_secs = now_ms.saturating_sub(entry.uptime_ms) / 1000;
+        let imu = entry.snapshot.imu.map_or_else(
+            || String::from("null"),
+            |i| {
+                let (ax, ay, az) = i.accel_g;
+                let (gx, gy, gz) = i.gyro_dps;
+                format!(
+                    "{{\"accel_g\":[{ax:.3},{ay:.3},{az:.3}],\"gyro_dps\":[{gx:.2},{gy:.2},{gz:.2}]}}"
+                )
+            },
+        );
+        let lux = entry
+            .snapshot
+            .ambient_lux
+            .map_or_else(|| String::from("null"), |l| format!("{l:.2}"));
+        let body_touch = entry.snapshot.body_touch.map_or_else(
+            || String::from("null"),
+            |b| {
+                format!(
+                    "{{\"left\":{},\"centre\":{},\"right\":{}}}",
+                    b.left, b.centre, b.right
+                )
+            },
+        );
+        let _ = write!(
+            out,
+            "{{\"age_secs\":{age_secs},\"imu\":{imu},\"ambient_lux\":{lux},\"audio_rms\":{rms:.4},\"body_touch\":{body_touch}}}",
+            rms = entry.snapshot.audio_rms,
+        );
+    }
+    out.push_str("]}\n");
+    out
+}
+
 /// Serialise the `/tasks` body — per-channel watchdog health.
 pub(super) fn tasks_body(s: crate::watchdog::TasksSnapshot) -> String {
     use core::fmt::Write as _;

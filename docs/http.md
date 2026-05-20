@@ -25,6 +25,7 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/health`        | Uptime, firmware version, free heap                  |
 | GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio |
 | GET    | `/sensors`       | Live IMU / ambient / audio-RMS / body-touch sample   |
+| GET    | `/sensor-history` | Rolling 60-second window of one-per-second sensor snapshots, oldest first |
 | GET    | `/camera/snapshot` | Most recent `/sd/CAPTURE.565` frame as raw QVGA RGB565 BE |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
 | GET    | `/state/ws`      | WebSocket stream of state changes (RFC 6455)        |
@@ -40,6 +41,7 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/pair`          | Open ESP-NOW pairing window with hold timer         |
 | POST   | `/mood`          | Set the operator-selected energy baseline (runtime-only) |
 | POST   | `/palette`       | Pick the avatar's colour palette (skin / eye / mouth) |
+| POST   | `/behavior`      | Toggle one boolean flag in `behavior` (soliloquy / hourly chime / battery icon / toast overlay); persisted, reboot to apply |
 | POST   | `/dance`         | Play a JSON keyframe script (head + emotion + decorator + LED) |
 | POST   | `/motion`        | Play a named one-shot motion preset (greet/nod/shake/laugh)   |
 | POST   | `/face-geometry` | Pick a face-geometry preset (eye + mouth baseline silhouette) |

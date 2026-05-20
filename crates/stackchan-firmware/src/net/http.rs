@@ -18,6 +18,9 @@
 //!   ambient lux, audio RMS, body-touch zones. Mirrored from each
 //!   producer task into a snapshot static so the HTTP read never
 //!   touches the source `Signal` channels (single-consumer/race).
+//! - `GET /sensor-history` — rolling 60 s window of one-per-second
+//!   sensor snapshots, oldest first. Same field shape as `/sensors`
+//!   per entry, plus an `age_secs` for each.
 //! - `GET /tasks` — watchdog channel health: per-task heartbeat
 //!   delta in the last window + a `stale` flag.
 //! - `GET /events` — recent operator-visible events (lifecycle,
@@ -144,8 +147,8 @@ use stackchan_net::http_parse::{
 };
 
 use super::respond::{
-    HttpError, events_body, health_body, sensors_body, state_body, tasks_body, write_dashboard,
-    write_json, write_no_content, write_status_for_error, write_text,
+    HttpError, events_body, health_body, sensor_history_body, sensors_body, state_body, tasks_body,
+    write_dashboard, write_json, write_no_content, write_status_for_error, write_text,
 };
 use super::snapshot::{self, AvatarSnapshot};
 use super::wifi::{LINK_READY, WIFI_RECONFIG, WifiCreds};
@@ -454,6 +457,11 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         }
         ("GET", "/sensors") => {
             write_json(socket, 200, &sensors_body(snapshot::read_sensors())).await
+        }
+        ("GET", "/sensor-history") => {
+            let history = crate::sensor_history::read_history();
+            let now_ms = embassy_time::Instant::now().as_millis();
+            write_json(socket, 200, &sensor_history_body(&history, now_ms)).await
         }
         ("GET", "/tasks") => {
             write_json(
@@ -1730,6 +1738,14 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
             id,
             &render_tool_text_result(&sensors_body(snapshot::read_sensors())),
         ),
+        "get_sensor_history" => {
+            let history = crate::sensor_history::read_history();
+            let now_ms = embassy_time::Instant::now().as_millis();
+            render_success(
+                id,
+                &render_tool_text_result(&sensor_history_body(&history, now_ms)),
+            )
+        }
         "get_tasks" => render_success(
             id,
             &render_tool_text_result(&tasks_body(crate::watchdog::read_tasks_snapshot())),
