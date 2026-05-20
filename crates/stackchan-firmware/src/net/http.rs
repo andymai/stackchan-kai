@@ -41,10 +41,13 @@
 //!   `/sd/RUNTIME.RON` so a reboot restores the selection. Vocabulary
 //!   matches `Palette::wire_str` (default / dark / cute / dog).
 //! - `POST /behavior` — JSON `{"field": "<name>", "value": <bool>}`.
-//!   Toggles one runtime-mutable behaviour flag in
-//!   `behavior` (soliloquy / hourly chime / battery icon / toast
-//!   overlay) and persists to `/sd/STACKCHAN.RON`. The reboot-only
-//!   flags (`wake_word_*`) stay behind `PUT /settings`.
+//!   Toggles one boolean flag in `behavior` (soliloquy / hourly
+//!   chime / battery icon / toast overlay) and persists to
+//!   `/sd/STACKCHAN.RON`. Each of these is captured at boot by its
+//!   consuming task or modifier, so the change takes effect on the
+//!   next reboot — the response carries `{"reboot_required": true}`
+//!   to make that explicit. The reboot-only `wake_word_*` integers
+//!   stay behind `PUT /settings`.
 //! - `POST /sleep` — empty body. Drops eyes shut, head limp, LED
 //!   ring dark, audio TX paused. Wake via `POST /wake`, MCP `wake`,
 //!   any touch (`FT6336U` screen or `Si12T` body pads), or the
@@ -731,14 +734,35 @@ async fn handle_get_settings_backup(socket: &mut TcpSocket<'_>) -> Result<(), Ht
 
 /// Decide whether the new config requires a reboot to fully apply.
 ///
-/// Wi-Fi creds and audio (volume + mute) are signalled through to the
-/// running tasks and apply immediately. mDNS hostname, SNTP servers,
-/// and tracker tuning take effect on the next boot — those tasks read
-/// their config once at start-up. Auth-token changes apply
-/// immediately to the next request via the lock-free read in the
-/// auth gate. The `behavior.wake_word_*` fields are also boot-only:
-/// the detector reads them once at task spawn (enabled / threshold /
-/// arena size).
+/// **Live-applicable** fields, signalled through to the running task on
+/// change:
+/// - `wifi.ssid` / `wifi.psk` (via `WIFI_RECONFIG`)
+/// - `audio.volume_pct` / `audio.muted` (via the audio task's signal
+///   pair, mutated through `POST /volume` / `POST /mute`)
+/// - `auth.token` (lock-free read on the next request)
+///
+/// **Reboot-only** fields — captured once at task spawn or modifier
+/// instantiation, so a change requires a reboot to take effect:
+/// - `mdns.hostname` (mdns task arg at spawn)
+/// - `time.tz` / `time.sntp_servers` (SNTP task args at spawn)
+/// - `tracker.*` (tracker overlay reads once at boot)
+/// - `behavior.wake_word_enabled` / `wake_word_threshold` /
+///   `wake_word_arena_kib` (wake-word task reads once + allocates
+///   the tensor arena at spawn)
+/// - `behavior.soliloquy_enabled` / `battery_icon_enabled` /
+///   `toast_overlay_enabled` (each modifier instance captures the
+///   flag at boot — see `main.rs` render-task setup)
+/// - `behavior.hourly_chime_enabled` (chime task arg at spawn)
+/// - `behavior.auto_torque_release_ms` (head task reads once at boot)
+/// - `behavior.audio_debug_udp_target` (`audio_debug` task arg at spawn)
+/// - `behavior.agent_sidecar_url` / `agent_sidecar_token` (agent
+///   sidecar task args at spawn)
+/// - `behavior.follower_leader_hostname` (follower task arg at spawn)
+///
+/// Future work that wants any of these to apply live needs both a
+/// signal channel from this handler AND a snapshot re-read in the
+/// consuming task; today it's simpler to surface the reboot
+/// requirement honestly.
 fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) -> bool {
     if prev.mdns.hostname != new.mdns.hostname {
         return true;
@@ -749,9 +773,20 @@ fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) ->
     if prev.tracker != new.tracker {
         return true;
     }
-    if prev.behavior.wake_word_enabled != new.behavior.wake_word_enabled
-        || prev.behavior.wake_word_threshold != new.behavior.wake_word_threshold
-        || prev.behavior.wake_word_arena_kib != new.behavior.wake_word_arena_kib
+    let b_prev = &prev.behavior;
+    let b_new = &new.behavior;
+    if b_prev.wake_word_enabled != b_new.wake_word_enabled
+        || b_prev.wake_word_threshold != b_new.wake_word_threshold
+        || b_prev.wake_word_arena_kib != b_new.wake_word_arena_kib
+        || b_prev.soliloquy_enabled != b_new.soliloquy_enabled
+        || b_prev.hourly_chime_enabled != b_new.hourly_chime_enabled
+        || b_prev.battery_icon_enabled != b_new.battery_icon_enabled
+        || b_prev.toast_overlay_enabled != b_new.toast_overlay_enabled
+        || b_prev.auto_torque_release_ms != b_new.auto_torque_release_ms
+        || b_prev.audio_debug_udp_target != b_new.audio_debug_udp_target
+        || b_prev.agent_sidecar_url != b_new.agent_sidecar_url
+        || b_prev.agent_sidecar_token != b_new.agent_sidecar_token
+        || b_prev.follower_leader_hostname != b_new.follower_leader_hostname
     {
         return true;
     }
@@ -915,9 +950,11 @@ async fn audio_persist_to_http(
 /// surfaces stay symmetric across `POST /behavior` and `POST /volume`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 enum BehaviorPersistOutcome {
-    /// Config was written and `CONFIG_SNAPSHOT` updated. Modifier-graph
-    /// consumers (toast / soliloquy / hourly chime / battery overlay)
-    /// re-read on the next render tick — no per-task signal.
+    /// Config was written and `CONFIG_SNAPSHOT` updated. The change is
+    /// on disk but the running consumers (soliloquy / hourly chime /
+    /// battery overlay / toast overlay) each captured the flag at boot
+    /// — see [`requires_reboot`] for the full list — so a reboot is
+    /// needed before the change takes effect.
     Persisted,
     /// `CONFIG_SNAPSHOT` was empty — boot hadn't loaded any config
     /// yet, so synthesising a default-everything-else config to write
@@ -936,6 +973,11 @@ enum BehaviorPersistOutcome {
 /// Shared by `POST /behavior` and the MCP `set_behavior_flag` tool so
 /// operator-driven curl and LLM-driven tool calls take identical
 /// code paths. Mirrors the volume / mute persist shape.
+///
+/// Callers ask the update itself whether to surface `reboot_required`
+/// via [`stackchan_net::http_command::BehaviorFlagUpdate::requires_reboot`]
+/// — a future enum variant that's live-applicable opts out there
+/// rather than forcing edits in two routes.
 async fn persist_behavior_flag(
     update: stackchan_net::http_command::BehaviorFlagUpdate,
 ) -> BehaviorPersistOutcome {
@@ -968,9 +1010,18 @@ async fn persist_behavior_flag(
 async fn behavior_persist_to_http(
     socket: &mut TcpSocket<'_>,
     outcome: BehaviorPersistOutcome,
+    reboot_required: bool,
 ) -> Result<(), HttpError> {
     match outcome {
-        BehaviorPersistOutcome::Persisted => write_no_content(socket).await,
+        // Response shape mirrors `PUT /settings` so a dashboard can
+        // show the same reboot nag. The bool came in from the
+        // `BehaviorFlagUpdate::requires_reboot` method, so a future
+        // live-applicable variant correctly reports `false` here
+        // without editing this function.
+        BehaviorPersistOutcome::Persisted => {
+            let body = format!("{{\"reboot_required\":{reboot_required}}}\n");
+            write_json(socket, 200, &body).await
+        }
         BehaviorPersistOutcome::NoSnapshot => {
             write_text(socket, 503, "config snapshot unavailable\n").await
         }
@@ -992,11 +1043,17 @@ const fn behavior_persist_detail(outcome: BehaviorPersistOutcome) -> &'static st
     }
 }
 
-/// `POST /behavior` — toggle one runtime-mutable boolean flag in
-/// `behavior` by name. Body shape per
-/// [`stackchan_net::http_command::parse_behavior_flag`]:
+/// `POST /behavior` — toggle one boolean flag in `behavior` by name.
+/// Body shape per [`stackchan_net::http_command::parse_behavior_flag`]:
 /// `{"field": "<name>", "value": <bool>}`. Field vocabulary is the
 /// variants of [`stackchan_net::http_command::BehaviorFlagUpdate`].
+///
+/// On success returns `{"reboot_required": <bool>}`. The bool comes
+/// from the [`BehaviorFlagUpdate::requires_reboot`] method on the
+/// update itself, so a future variant that's live-applicable gets
+/// the right answer without editing this handler.
+///
+/// [`BehaviorFlagUpdate::requires_reboot`]: stackchan_net::http_command::BehaviorFlagUpdate::requires_reboot
 async fn handle_post_behavior(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let update = match json::parse_behavior_flag(body) {
         Ok(u) => u,
@@ -1009,7 +1066,8 @@ async fn handle_post_behavior(socket: &mut TcpSocket<'_>, body: &str) -> Result<
             return write_text(socket, 400, &body).await;
         }
     };
-    behavior_persist_to_http(socket, persist_behavior_flag(update).await).await
+    let reboot_required = update.requires_reboot();
+    behavior_persist_to_http(socket, persist_behavior_flag(update).await, reboot_required).await
 }
 
 /// `POST /dance` — parse the keyframe stream, hand the script off
@@ -1770,9 +1828,17 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "set_behavior_flag" => match json::parse_behavior_flag(arguments) {
             Ok(update) => {
+                let reboot_required = update.requires_reboot();
                 let outcome = persist_behavior_flag(update).await;
                 if outcome == BehaviorPersistOutcome::Persisted {
-                    render_success(id, &render_tool_text_result("behavior flag persisted"))
+                    let detail = if reboot_required {
+                        "behavior flag persisted; reboot to apply"
+                    } else {
+                        "behavior flag persisted; applied"
+                    };
+                    let body =
+                        format!(r#"{{"reboot_required":{reboot_required},"detail":"{detail}"}}"#);
+                    render_success(id, &render_tool_text_result(&body))
                 } else {
                     render_error(
                         Some(id),
