@@ -1632,7 +1632,31 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
             Ok(req) => {
                 let create_req = crate::reminders::CreateRequest {
                     fire_in_secs: u64::from(req.fire_in_secs),
-                    phrase: req.phrase,
+                    action: crate::reminders::ScheduledAction::Speak(req.phrase),
+                };
+                match crate::reminders::add_reminder(embassy_time::Instant::now(), create_req) {
+                    Ok(reminder_id) => {
+                        let body = format!(r#"{{"id":{reminder_id}}}"#);
+                        render_success(id, &render_tool_text_result(&body))
+                    }
+                    Err(e) => render_error(
+                        Some(id),
+                        JsonRpcErrorCode::InvalidParams,
+                        reminder_error_detail(e),
+                    ),
+                }
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "schedule_motion" => match json::parse_schedule_motion(arguments) {
+            Ok(req) => {
+                let create_req = crate::reminders::CreateRequest {
+                    fire_in_secs: u64::from(req.fire_in_secs),
+                    action: crate::reminders::ScheduledAction::PlayMotion(req.motion),
                 };
                 match crate::reminders::add_reminder(embassy_time::Instant::now(), create_req) {
                     Ok(reminder_id) => {
@@ -1873,6 +1897,7 @@ const fn reminder_error_detail(e: crate::reminders::ReminderError) -> &'static s
 fn render_reminders_json(
     list: &heapless::Vec<crate::reminders::Reminder, { crate::reminders::MAX_REMINDERS }>,
 ) -> String {
+    use crate::reminders::ScheduledAction;
     use core::fmt::Write as _;
     let mut out = String::new();
     out.push_str(r#"{"reminders":["#);
@@ -1886,14 +1911,31 @@ fn render_reminders_json(
         // shielded from boot-relative ticks. Saturating subtraction
         // keeps already-due reminders at 0 instead of underflowing.
         let remaining_secs = r.deadline.saturating_duration_since(now).as_secs();
-        let phrase = r.phrase;
-        let _ = write!(
-            out,
-            r#"{{"id":{},"fire_in_secs":{},"phrase":"{}"}}"#,
-            r.id,
-            remaining_secs,
-            json::phrase_wire_str(phrase),
-        );
+        // Discriminate by which field is present: `phrase` for the
+        // Speak action (current `create_reminder` shape, preserved for
+        // backward compatibility with existing dashboard JS), `motion`
+        // for the PlayMotion action introduced with `schedule_motion`.
+        // A consumer can switch on whichever key it finds.
+        match r.action {
+            ScheduledAction::Speak(phrase) => {
+                let _ = write!(
+                    out,
+                    r#"{{"id":{},"fire_in_secs":{},"phrase":"{}"}}"#,
+                    r.id,
+                    remaining_secs,
+                    json::phrase_wire_str(phrase),
+                );
+            }
+            ScheduledAction::PlayMotion(motion) => {
+                let _ = write!(
+                    out,
+                    r#"{{"id":{},"fire_in_secs":{},"motion":"{}"}}"#,
+                    r.id,
+                    remaining_secs,
+                    motion.wire_str(),
+                );
+            }
+        }
     }
     out.push_str("]}");
     out

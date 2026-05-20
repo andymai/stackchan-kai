@@ -667,6 +667,53 @@ pub fn parse_create_reminder(body: &str) -> Result<CreateReminderRequest, JsonEr
     })
 }
 
+/// Operator-supplied `schedule_motion` request before range checks.
+/// Validated into the firmware-side scheduler's request shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScheduleMotionRequest {
+    /// Seconds from request reception until the motion fires.
+    /// Range-checked at the firmware-side dispatcher.
+    pub fire_in_secs: u32,
+    /// Canonical one-shot motion to play on fire. Vocabulary mirrors
+    /// `parse_motion` (greet / nod / shake / laugh).
+    pub motion: NamedMotion,
+}
+
+/// Parse a `POST /schedule-motion` (or MCP `schedule_motion`) body.
+/// Both fields required.
+///
+/// # Errors
+///
+/// [`JsonError`] for missing/duplicate/unknown keys, malformed JSON
+/// shape, or unrecognised motion strings.
+pub fn parse_schedule_motion(body: &str) -> Result<ScheduleMotionRequest, JsonError> {
+    let mut fire_in_secs: Option<u32> = None;
+    let mut motion: Option<NamedMotion> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "fire_in_secs" => {
+                if fire_in_secs.is_some() {
+                    return Err(JsonError::DuplicateKey("fire_in_secs"));
+                }
+                fire_in_secs = Some(parse_u32(scanner)?);
+            }
+            "motion" => {
+                if motion.is_some() {
+                    return Err(JsonError::DuplicateKey("motion"));
+                }
+                let raw = scanner.read_string()?;
+                motion = Some(NamedMotion::from_wire_str(raw).ok_or(JsonError::UnknownMotion)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    Ok(ScheduleMotionRequest {
+        fire_in_secs: fire_in_secs.ok_or(JsonError::MissingKey("fire_in_secs"))?,
+        motion: motion.ok_or(JsonError::MissingKey("motion"))?,
+    })
+}
+
 /// Parse a `cancel_reminder` body — `{"id": <integer>}`.
 ///
 /// # Errors
@@ -2282,6 +2329,72 @@ mod tests {
         assert!(matches!(
             parse_create_reminder(body),
             Err(JsonError::DuplicateKey("fire_in_secs"))
+        ));
+    }
+
+    #[test]
+    fn schedule_motion_parses_required_fields() {
+        let body = r#"{"fire_in_secs":30,"motion":"greet"}"#;
+        let req = parse_schedule_motion(body).unwrap();
+        assert_eq!(req.fire_in_secs, 30);
+        assert_eq!(req.motion, NamedMotion::Greet);
+    }
+
+    #[test]
+    fn schedule_motion_accepts_each_known_motion() {
+        for (wire, motion) in [
+            ("greet", NamedMotion::Greet),
+            ("nod", NamedMotion::Nod),
+            ("shake", NamedMotion::Shake),
+            ("laugh", NamedMotion::Laugh),
+        ] {
+            let body = alloc::format!(r#"{{"fire_in_secs":1,"motion":"{wire}"}}"#);
+            assert_eq!(parse_schedule_motion(&body).unwrap().motion, motion);
+        }
+    }
+
+    #[test]
+    fn schedule_motion_rejects_missing_fire_in_secs() {
+        let body = r#"{"motion":"greet"}"#;
+        assert!(matches!(
+            parse_schedule_motion(body),
+            Err(JsonError::MissingKey("fire_in_secs"))
+        ));
+    }
+
+    #[test]
+    fn schedule_motion_rejects_missing_motion() {
+        let body = r#"{"fire_in_secs":30}"#;
+        assert!(matches!(
+            parse_schedule_motion(body),
+            Err(JsonError::MissingKey("motion"))
+        ));
+    }
+
+    #[test]
+    fn schedule_motion_rejects_unknown_motion() {
+        let body = r#"{"fire_in_secs":30,"motion":"jump"}"#;
+        assert!(matches!(
+            parse_schedule_motion(body),
+            Err(JsonError::UnknownMotion)
+        ));
+    }
+
+    #[test]
+    fn schedule_motion_rejects_unknown_key() {
+        let body = r#"{"fire_in_secs":30,"motion":"greet","extra":1}"#;
+        assert!(matches!(
+            parse_schedule_motion(body),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn schedule_motion_rejects_duplicate_key() {
+        let body = r#"{"fire_in_secs":30,"motion":"greet","motion":"nod"}"#;
+        assert!(matches!(
+            parse_schedule_motion(body),
+            Err(JsonError::DuplicateKey("motion"))
         ));
     }
 
