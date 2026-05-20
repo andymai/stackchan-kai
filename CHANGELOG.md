@@ -37,9 +37,14 @@ section summarises the milestone work in human terms.
   per-modifier offset tracking.
 - Toast overlay (firmware-only): opt-in via
   `behavior.toast_overlay_enabled`, with a `crate::toast::push` API
-  any task can call to surface a 3-second warn / error band at the
-  bottom of the LCD. Operator-driven verification path exposed at
-  `POST /toast` (`{level, message}`).
+  any task can call to surface a 3-second info / warn / error band
+  at the bottom of the LCD. Operator-driven verification path
+  exposed at `POST /toast` (`{level, message}`) and MCP
+  `push_toast`. The `Info` tier (teal band) is now the home for
+  success surfaces — sidecar replies route here so a successful
+  agent response is visually distinct from a warning or error.
+  Previously the agent-sidecar code wrote `Warn` for both success
+  and failure paths, conflating the two in the band colour.
 - Named one-shot motions: `POST /motion` + MCP `play_motion` route
   the four canonical gestures (`greet` / `nod` / `shake` / `laugh`)
   through the existing dance-player path. Each returns the head to

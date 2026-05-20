@@ -845,6 +845,7 @@ fn draw_toast_overlay(fb: &mut Framebuffer, toast: &toast::ToastDisplay) {
     let band = Rectangle::new(EgPoint::new(0, top_y), Size::new(FB_WIDTH, height));
     let bg = PrimitiveStyleBuilder::new()
         .fill_color(match toast.level {
+            toast::ToastLevel::Info => Rgb565::new(0, 40, 16),
             toast::ToastLevel::Warn => Rgb565::new(31, 40, 0),
             toast::ToastLevel::Error => Rgb565::new(31, 8, 4),
         })

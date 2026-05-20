@@ -45,6 +45,10 @@ pub const MAX_TOAST_LEN: usize = 32;
 /// Severity tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
+    /// Teal band — informational confirmation (e.g. a successful
+    /// sidecar reply lands on the toast band so the operator can see
+    /// the text even when audio is muted).
+    Info,
     /// Yellow band — non-fatal warning.
     Warn,
     /// Red band — error worth the operator's attention.

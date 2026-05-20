@@ -1108,7 +1108,12 @@ async fn handle_post_toast(socket: &mut TcpSocket<'_>, body: &str) -> Result<(),
             "http: POST /toast unknown level={=str}",
             request.level.as_str()
         );
-        return write_text(socket, 400, "level must be \"warn\" or \"error\"\n").await;
+        return write_text(
+            socket,
+            400,
+            "level must be \"info\", \"warn\", or \"error\"\n",
+        )
+        .await;
     };
     crate::toast::push(level, &request.message, crate::clock::HalClock.now());
     defmt::info!(
@@ -1126,6 +1131,7 @@ const fn toast_level_from_wire(s: &str) -> Option<crate::toast::ToastLevel> {
     // `str` doesn't `match` ergonomically in a const fn; fall back
     // to byte-equality for the known short labels.
     match s.as_bytes() {
+        b"info" => Some(crate::toast::ToastLevel::Info),
         b"warn" => Some(crate::toast::ToastLevel::Warn),
         b"error" => Some(crate::toast::ToastLevel::Error),
         _ => None,
@@ -1310,7 +1316,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 None => render_error(
                     Some(id),
                     JsonRpcErrorCode::InvalidParams,
-                    "level must be \"warn\" or \"error\"",
+                    "level must be \"info\", \"warn\", or \"error\"",
                 ),
             },
             Err(e) => render_error(
