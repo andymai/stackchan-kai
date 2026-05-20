@@ -33,7 +33,7 @@ use esp_radio::wifi::{ClientConfig, ModeConfig, WifiController, WifiEvent};
 /// through the `WIFI_LINK_WATCH.receiver()` `None` branch and
 /// disable itself with no diagnostic. Each slot is one generation
 /// counter, so the cost of over-provisioning is bytes, not
-/// behaviour. Bump again if the active count ever crosses six.
+/// behaviour. Bump again if the active count ever crosses eight.
 pub const WIFI_LINK_WATCH_RECEIVERS: usize = 8;
 
 /// Public link-state watch — downstream tasks (SNTP, mDNS, …) take a
