@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.100.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.99.0...stackchan-firmware-v0.100.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose clear_crash + play_dance — last HTTP-twin gap closed ([#517](https://github.com/andymai/stackchan-kai/issues/517)) ([e3d94d4](https://github.com/andymai/stackchan-kai/commit/e3d94d42821f27aba0fd5a68be42e4f8f9006862))
+
 ## [0.99.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.98.0...stackchan-firmware-v0.99.0) (2026-05-20)
 
 
