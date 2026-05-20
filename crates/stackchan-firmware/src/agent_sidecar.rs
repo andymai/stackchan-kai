@@ -178,6 +178,35 @@ fn parse_sidecar_url(s: &str) -> Option<SidecarEndpoint> {
     })
 }
 
+/// Max byte length for the cached `audio_url` from a sidecar reply.
+///
+/// The sidecar returns relative paths like `/v1/audio/<32-hex-token>`
+/// (≈ 42 bytes); 128 bytes leaves headroom for absolute-URL variants
+/// without an alloc on the hot reply-parse path.
+const AUDIO_URL_MAX_BYTES: usize = 128;
+
+/// Parsed `/v1/listen` reply body — text + emotion + optional
+/// playback URL.
+///
+/// `audio_url` is `Some(...)` only when the sidecar synthesised TTS
+/// successfully; a JSON `"audio_url": null` (graceful-degrade path
+/// where text + emotion still ship) or an absent field both parse
+/// as `None`. The follow-up firmware fetch slice consumes this
+/// field; today it's logged and otherwise unused.
+#[derive(Debug, Clone)]
+struct SidecarReply {
+    /// Operator-visible reply text. Bounded at 256 chars because the
+    /// toast band can only render that much anyway.
+    text: heapless::String<256>,
+    /// Optional emotion tag — drives `SetEmotion` on the avatar.
+    emotion: Option<Emotion>,
+    /// Optional playback URL — `None` when synthesis failed or the
+    /// sidecar didn't include the field. Stored as the literal
+    /// returned string (relative or absolute) so the fetcher can
+    /// decide how to join it with the sidecar base URL.
+    audio_url: Option<heapless::String<AUDIO_URL_MAX_BYTES>>,
+}
+
 /// Reasons one POST round-trip can fail. Surfaced as a toast +
 /// defmt log so the operator sees the failure path without an
 /// attached monitor.
@@ -427,21 +456,17 @@ async fn capture_window(
 /// the avatar's visible state always matches what just happened.
 ///
 /// [`ExitThinking`]: stackchan_core::input::RemoteCommand::ExitThinking
-fn apply_outcome(
-    outcome: Result<
-        Result<(heapless::String<256>, Option<Emotion>), PostError>,
-        embassy_time::TimeoutError,
-    >,
-) {
+fn apply_outcome(outcome: Result<Result<SidecarReply, PostError>, embassy_time::TimeoutError>) {
     match outcome {
-        Ok(Ok((text, emotion))) => {
+        Ok(Ok(reply)) => {
             defmt::info!(
-                "agent-sidecar: reply '{=str}' emotion {:?}",
-                text.as_str(),
-                defmt::Debug2Format(&emotion),
+                "agent-sidecar: reply '{=str}' emotion {:?} audio_url {:?}",
+                reply.text.as_str(),
+                defmt::Debug2Format(&reply.emotion),
+                reply.audio_url.as_deref().unwrap_or("<none>"),
             );
-            toast_info(text.as_str());
-            if let Some(e) = emotion {
+            toast_info(reply.text.as_str());
+            if let Some(e) = reply.emotion {
                 enqueue_remote_command(RemoteCommand::SetEmotion {
                     emotion: e,
                     hold_ms: 2_500,
@@ -512,7 +537,7 @@ async fn post_pcm(
     persona_name: &str,
     rx_buf: &mut [u8; TCP_RX_BYTES],
     tx_buf: &mut [u8; TCP_TX_BYTES],
-) -> Result<(heapless::String<256>, Option<Emotion>), PostError> {
+) -> Result<SidecarReply, PostError> {
     use embedded_io_async::Write as _;
 
     let mut socket = TcpSocket::new(stack, rx_buf, tx_buf);
@@ -620,18 +645,46 @@ async fn post_pcm(
     socket.close();
 
     let body = parse_http_response(&resp[..body_end])?;
+    parse_reply_body(body)
+}
+
+/// Extract the [`SidecarReply`] from a `/v1/listen` JSON body. Pulled
+/// out of [`post_pcm`] so the parse can be unit-tested without an
+/// embassy executor or TCP socket.
+///
+/// Returns [`PostError::MissingText`] when `"text"` is absent or
+/// empty — the firmware can't surface a reply with no body, so we
+/// bail rather than fire a vacuous toast.
+fn parse_reply_body(body: &str) -> Result<SidecarReply, PostError> {
     let text = extract_string(body, "\"text\"").ok_or(PostError::MissingText)?;
     if text.is_empty() {
         return Err(PostError::MissingText);
     }
-    let mut out: heapless::String<256> = heapless::String::new();
+    let mut text_out: heapless::String<256> = heapless::String::new();
     for ch in text.chars() {
-        if out.push(ch).is_err() {
+        if text_out.push(ch).is_err() {
             break;
         }
     }
     let emotion = extract_string(body, "\"emotion\"").and_then(parse_emotion);
-    Ok((out, emotion))
+    let audio_url = extract_string(body, "\"audio_url\"").and_then(|raw| {
+        let mut s: heapless::String<AUDIO_URL_MAX_BYTES> = heapless::String::new();
+        for ch in raw.chars() {
+            if s.push(ch).is_err() {
+                // Reply contains an `audio_url` longer than we want
+                // to ferry around — drop it to None rather than
+                // truncate to a URL the firmware can't actually
+                // fetch.
+                return None;
+            }
+        }
+        if s.is_empty() { None } else { Some(s) }
+    });
+    Ok(SidecarReply {
+        text: text_out,
+        emotion,
+        audio_url,
+    })
 }
 
 /// Drain bytes from `socket` into `buf` until the `\r\n\r\n` header
@@ -944,6 +997,56 @@ mod tests {
     fn parse_emotion_rejects_unknown() {
         assert_eq!(parse_emotion("ecstatic"), None);
         assert_eq!(parse_emotion(""), None);
+    }
+
+    #[test]
+    fn parse_reply_body_pulls_text_emotion_and_audio_url() {
+        let body = r#"{"text":"hello","emotion":"happy","audio_url":"/v1/audio/abc123"}"#;
+        let reply = parse_reply_body(body).unwrap();
+        assert_eq!(reply.text.as_str(), "hello");
+        assert_eq!(reply.emotion, Some(Emotion::Happy));
+        assert_eq!(reply.audio_url.as_deref(), Some("/v1/audio/abc123"));
+    }
+
+    #[test]
+    fn parse_reply_body_treats_missing_audio_url_as_none() {
+        let body = r#"{"text":"hi","emotion":"neutral"}"#;
+        let reply = parse_reply_body(body).unwrap();
+        assert!(reply.audio_url.is_none());
+    }
+
+    #[test]
+    fn parse_reply_body_treats_null_audio_url_as_none() {
+        // Sidecar emits `"audio_url": null` on the graceful-degrade
+        // path (synthesis failed but text + emotion still ship). The
+        // string-extract helper only matches `"..."` literals, so
+        // null parses as `None` for free — pin that contract.
+        let body = r#"{"text":"hi","audio_url":null}"#;
+        let reply = parse_reply_body(body).unwrap();
+        assert!(reply.audio_url.is_none());
+    }
+
+    #[test]
+    fn parse_reply_body_drops_audio_url_over_capacity() {
+        // A URL longer than AUDIO_URL_MAX_BYTES (128) can't be ferried
+        // to the fetcher, so we drop it to `None` rather than carry a
+        // truncated value the fetch couldn't actually use.
+        let long = "a".repeat(200);
+        let body = alloc::format!(r#"{{"text":"hi","audio_url":"{long}"}}"#);
+        let reply = parse_reply_body(&body).unwrap();
+        assert!(reply.audio_url.is_none());
+    }
+
+    #[test]
+    fn parse_reply_body_rejects_missing_or_empty_text() {
+        assert!(matches!(
+            parse_reply_body(r#"{"emotion":"happy"}"#),
+            Err(PostError::MissingText)
+        ));
+        assert!(matches!(
+            parse_reply_body(r#"{"text":""}"#),
+            Err(PostError::MissingText)
+        ));
     }
 
     #[test]
