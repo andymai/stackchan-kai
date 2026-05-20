@@ -55,7 +55,10 @@ use stackchan_core::Emotion;
 use stackchan_core::input::RemoteCommand;
 use stackchan_net::http_parse::{find_subsequence, parse_content_length};
 
-use crate::audio::{AUDIO_FRAME_PUBSUB, AUDIO_FRAME_SAMPLES};
+use stackchan_core::voice::Priority;
+use stackchan_tts::BufferedSource;
+
+use crate::audio::{AUDIO_FRAME_PUBSUB, AUDIO_FRAME_SAMPLES, AUDIO_TX_QUEUE, SpeechSlot};
 use crate::net::http::enqueue_remote_command;
 use crate::net::wifi::{WIFI_LINK_WATCH, WifiLinkState};
 use crate::toast::{ToastLevel, push as toast_push};
@@ -126,6 +129,17 @@ const CAPTURE_DURATION_CAP_MS: u32 = 30_000;
 /// when the sidecar is sluggish or vanished — we'd rather surface a
 /// toast and free the task to handle the next PTT than block here.
 const REQUEST_TIMEOUT_MS: u64 = 15_000;
+
+/// Total `/v1/audio/<token>` fetch timeout. Sized larger than the
+/// POST window because cloud TTS providers (`ElevenLabs` in
+/// particular) can take several seconds to synthesise long replies.
+const AUDIO_FETCH_TIMEOUT_MS: u64 = 30_000;
+
+/// Cap on the audio payload we'll buffer in PSRAM. 1 MiB ≈ 32 s at
+/// 16 kHz s16 mono — well past anything the desk toy will say in
+/// one reply. Larger bodies get truncated with a warn log so a
+/// hostile or runaway sidecar can't OOM the heap.
+const AUDIO_BODY_MAX_BYTES: usize = 1_048_576;
 
 /// One sidecar endpoint parsed from `behavior.agent_sidecar_url`.
 ///
@@ -248,6 +262,45 @@ impl defmt::Format for PostError {
             Self::Read => defmt::write!(f, "Read"),
             Self::BadStatus => defmt::write!(f, "BadStatus"),
             Self::MissingText => defmt::write!(f, "MissingText"),
+        }
+    }
+}
+
+/// Reasons one `/v1/audio/<token>` fetch can fail. Surfaced as a
+/// warn-class log but *not* as a face-level failure: the sidecar
+/// reply (text + emotion) already shipped, so missing audio is a
+/// graceful-degrade, not a "request failed" event.
+#[derive(Debug, Clone, Copy)]
+enum FetchError {
+    /// `TcpSocket::connect` returned an error or timed out.
+    Connect,
+    /// Request header didn't fit in the heapless string.
+    HeaderTooLong,
+    /// `socket.write_all` returned an error before the request
+    /// flushed.
+    Write,
+    /// `socket.read` returned 0 / Err before headers + body landed.
+    Read,
+    /// Status line wasn't `HTTP/1.1 2xx`.
+    BadStatus,
+    /// Audio body byte length wasn't a multiple of 2 (s16 frame
+    /// alignment), or the queue was full when we tried to enqueue.
+    Malformed,
+}
+
+impl defmt::Format for FetchError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        #[allow(
+            clippy::match_same_arms,
+            reason = "labels are distinct strings even though clippy reads the macro arms as identical"
+        )]
+        match self {
+            Self::Connect => defmt::write!(f, "Connect"),
+            Self::HeaderTooLong => defmt::write!(f, "HeaderTooLong"),
+            Self::Write => defmt::write!(f, "Write"),
+            Self::Read => defmt::write!(f, "Read"),
+            Self::BadStatus => defmt::write!(f, "BadStatus"),
+            Self::Malformed => defmt::write!(f, "Malformed"),
         }
     }
 }
@@ -381,7 +434,54 @@ pub async fn agent_sidecar_task(
             ),
         )
         .await;
+
+        // Snag the audio URL before handing the outcome off — the
+        // text + emotion side effects surface immediately so the
+        // operator sees the reply while the (potentially slow) TTS
+        // payload is still being fetched. `audio_url` is `None` on
+        // any failure path or when synthesis was skipped.
+        let audio_url = match &outcome {
+            Ok(Ok(reply)) => reply.audio_url.clone(),
+            _ => None,
+        };
         apply_outcome(outcome);
+
+        if let Some(path) = audio_url {
+            dispatch_sidecar_audio(stack, &endpoint, &path, &bearer_token).await;
+        }
+    }
+}
+
+/// Fetch the audio referenced by `path` from the sidecar and
+/// enqueue it for playback. Logs and ignores every failure path —
+/// the operator already saw the reply (text + emotion); a silent
+/// audio drop is the right outcome for a desk toy.
+async fn dispatch_sidecar_audio(
+    stack: Stack<'static>,
+    endpoint: &SidecarEndpoint,
+    path: &str,
+    bearer_token: &str,
+) {
+    let fetch_outcome = embassy_time::with_timeout(
+        Duration::from_millis(AUDIO_FETCH_TIMEOUT_MS),
+        fetch_audio_pcm(stack, endpoint, path, bearer_token),
+    )
+    .await;
+    match fetch_outcome {
+        Ok(Ok(samples)) => {
+            if let Err(e) = enqueue_sidecar_audio(samples) {
+                defmt::warn!("agent-sidecar: audio enqueue failed: {:?}", e);
+            }
+        }
+        Ok(Err(e)) => {
+            defmt::warn!("agent-sidecar: audio fetch failed: {:?}", e);
+        }
+        Err(_) => {
+            defmt::warn!(
+                "agent-sidecar: audio fetch timed out after {=u64}ms",
+                AUDIO_FETCH_TIMEOUT_MS
+            );
+        }
     }
 }
 
@@ -646,6 +746,212 @@ async fn post_pcm(
 
     let body = parse_http_response(&resp[..body_end])?;
     parse_reply_body(body)
+}
+
+/// Fetch the cached audio payload referenced by `audio_path` (the
+/// `audio_url` field returned by `/v1/listen`) and return the
+/// decoded s16 LE PCM samples.
+///
+/// Opens a fresh TCP socket against the same sidecar endpoint as
+/// the listen call, sends an HTTP GET with the operator's bearer
+/// token, reads headers into a fixed scratch, then drains the body
+/// into a PSRAM-allocated `Vec<u8>` sized to `Content-Length`
+/// (capped at [`AUDIO_BODY_MAX_BYTES`] so a runaway payload can't
+/// exhaust the heap). The byte stream is decoded as little-endian
+/// `i16` into the returned `Vec<i16>`.
+async fn fetch_audio_pcm(
+    stack: Stack<'static>,
+    endpoint: &SidecarEndpoint,
+    audio_path: &str,
+    bearer_token: &str,
+) -> Result<Vec<i16>, FetchError> {
+    use embedded_io_async::Write as _;
+
+    let mut rx_buf = [0_u8; TCP_RX_BYTES];
+    let mut tx_buf = [0_u8; TCP_TX_BYTES];
+    let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
+    socket.set_timeout(Some(Duration::from_millis(AUDIO_FETCH_TIMEOUT_MS / 2)));
+
+    let ip = embassy_net::IpAddress::Ipv4(embassy_net::Ipv4Address::new(
+        endpoint.ip[0],
+        endpoint.ip[1],
+        endpoint.ip[2],
+        endpoint.ip[3],
+    ));
+    let dest = embassy_net::IpEndpoint::new(ip, endpoint.port);
+    socket.connect(dest).await.map_err(|e| {
+        defmt::warn!(
+            "agent-sidecar: audio-fetch connect failed: {:?}",
+            defmt::Debug2Format(&e)
+        );
+        FetchError::Connect
+    })?;
+
+    let mut header: heapless::String<HEADER_CAPACITY> = heapless::String::new();
+    write!(
+        &mut header,
+        "GET {} HTTP/1.1\r\n\
+         Host: {}\r\n\
+         Accept: audio/L16;rate=16000;channels=1\r\n\
+         Connection: close\r\n",
+        audio_path,
+        endpoint.host_header.as_str(),
+    )
+    .map_err(|_| FetchError::HeaderTooLong)?;
+    if !bearer_token.is_empty() {
+        write!(&mut header, "Authorization: Bearer {bearer_token}\r\n")
+            .map_err(|_| FetchError::HeaderTooLong)?;
+    }
+    header
+        .push_str("\r\n")
+        .map_err(|()| FetchError::HeaderTooLong)?;
+
+    socket
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|_| FetchError::Write)?;
+    socket.flush().await.map_err(|_| FetchError::Write)?;
+
+    // Drain headers into a small scratch — same shape as
+    // `read_headers` but with FetchError mapping. 2 KiB covers the
+    // status line + a handful of standard headers (Content-Type,
+    // Content-Length, Connection) with room for an X-Provider tag
+    // and similar.
+    let mut hdr_scratch = [0_u8; RESPONSE_MAX_BYTES];
+    let mut filled = 0;
+    let header_end = loop {
+        if filled >= hdr_scratch.len() {
+            defmt::warn!(
+                "agent-sidecar: audio-fetch headers exceeded {=usize} bytes",
+                hdr_scratch.len()
+            );
+            return Err(FetchError::Read);
+        }
+        match socket.read(&mut hdr_scratch[filled..]).await {
+            Ok(0) => {
+                defmt::warn!("agent-sidecar: audio-fetch peer closed before headers");
+                return Err(FetchError::Read);
+            }
+            Ok(n) => {
+                filled += n;
+                if let Some(idx) = find_subsequence(&hdr_scratch[..filled], b"\r\n\r\n") {
+                    break idx + 4;
+                }
+            }
+            Err(e) => {
+                defmt::warn!(
+                    "agent-sidecar: audio-fetch header read failed: {:?}",
+                    defmt::Debug2Format(&e)
+                );
+                return Err(FetchError::Read);
+            }
+        }
+    };
+
+    // Status line check — same `HTTP/1.1 2xx` predicate the POST
+    // path uses.
+    if parse_http_response(&hdr_scratch[..header_end]).is_err() {
+        return Err(FetchError::BadStatus);
+    }
+
+    let body = drain_audio_body(&mut socket, &hdr_scratch[..filled], header_end).await?;
+    socket.close();
+    decode_s16_le(&body)
+}
+
+/// Drain the audio body from `socket` into a PSRAM-allocated
+/// `Vec<u8>`. Initial bytes already in `hdr_scratch[header_end..]`
+/// (peer flushed the body alongside headers) are copied first so
+/// no socket bytes are lost.
+async fn drain_audio_body(
+    socket: &mut TcpSocket<'_>,
+    hdr_scratch: &[u8],
+    header_end: usize,
+) -> Result<Vec<u8>, FetchError> {
+    let content_length =
+        parse_content_length(&hdr_scratch[..header_end]).map_err(|_| FetchError::Read)?;
+    let header_present = header_has_content_length(&hdr_scratch[..header_end]);
+    if header_present && content_length > AUDIO_BODY_MAX_BYTES {
+        defmt::warn!(
+            "agent-sidecar: audio body {=usize}B exceeds {=usize}B cap; truncating",
+            content_length,
+            AUDIO_BODY_MAX_BYTES,
+        );
+    }
+    let target_len = if header_present {
+        content_length.min(AUDIO_BODY_MAX_BYTES)
+    } else {
+        // Header absent: read until the peer closes; size the
+        // pre-alloc generously enough to hold a typical TTS reply
+        // (16 kHz s16 × ~5 s) without reallocating mid-drain.
+        AUDIO_BODY_MAX_BYTES.min(64 * 1024)
+    };
+    let mut body: Vec<u8> = Vec::with_capacity(target_len);
+    let leftover_end = hdr_scratch.len().min(header_end + target_len);
+    body.extend_from_slice(&hdr_scratch[header_end..leftover_end]);
+    // Read remaining bytes in 4 KiB chunks. Smaller chunk = more
+    // syscalls; larger = more memory pressure during transcode.
+    let mut chunk = [0_u8; 4096];
+    while body.len() < target_len {
+        let want = (target_len - body.len()).min(chunk.len());
+        match socket.read(&mut chunk[..want]).await {
+            Ok(0) => break,
+            Ok(n) => body.extend_from_slice(&chunk[..n]),
+            Err(e) => {
+                defmt::warn!(
+                    "agent-sidecar: audio-fetch body read failed: {:?}",
+                    defmt::Debug2Format(&e),
+                );
+                return Err(FetchError::Read);
+            }
+        }
+    }
+    Ok(body)
+}
+
+/// Decode a little-endian s16 byte buffer into `Vec<i16>`. Returns
+/// [`FetchError::Malformed`] if the byte count isn't aligned to a
+/// 2-byte frame or the buffer is empty.
+fn decode_s16_le(body: &[u8]) -> Result<Vec<i16>, FetchError> {
+    if body.is_empty() {
+        return Err(FetchError::Malformed);
+    }
+    if !body.len().is_multiple_of(2) {
+        defmt::warn!(
+            "agent-sidecar: audio body byte count {=usize} not aligned to s16",
+            body.len()
+        );
+        return Err(FetchError::Malformed);
+    }
+    let mut samples: Vec<i16> = Vec::with_capacity(body.len() / 2);
+    for chunk in body.chunks_exact(2) {
+        samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    defmt::info!(
+        "agent-sidecar: audio-fetch {=usize} samples ({=usize} bytes)",
+        samples.len(),
+        body.len(),
+    );
+    Ok(samples)
+}
+
+/// Enqueue an in-memory PCM buffer for TX playback.
+///
+/// Boxes a [`BufferedSource`] over the supplied samples, builds a
+/// [`SpeechSlot`] at [`Priority::Normal`] (sidecar replies sit at
+/// the same rank as emotion chirps — preempts background but yields
+/// to status / safety speech), and tries to enqueue it. Returns
+/// [`FetchError::Malformed`] if the queue is full so the caller
+/// surfaces the drop rather than silently losing audio.
+fn enqueue_sidecar_audio(samples: Vec<i16>) -> Result<(), FetchError> {
+    let slot = SpeechSlot {
+        source: alloc::boxed::Box::new(BufferedSource::new(samples)),
+        priority: Priority::Normal,
+    };
+    AUDIO_TX_QUEUE.try_send(slot).map_err(|_| {
+        defmt::warn!("agent-sidecar: AUDIO_TX_QUEUE full; dropping sidecar audio");
+        FetchError::Malformed
+    })
 }
 
 /// Extract the [`SidecarReply`] from a `/v1/listen` JSON body. Pulled
@@ -997,6 +1303,28 @@ mod tests {
     fn parse_emotion_rejects_unknown() {
         assert_eq!(parse_emotion("ecstatic"), None);
         assert_eq!(parse_emotion(""), None);
+    }
+
+    #[test]
+    fn decode_s16_le_round_trips_a_short_buffer() {
+        // Little-endian i16: 0x0100 -> 1, 0xff7f -> 32767, 0x0080 -> -32768.
+        let bytes: &[u8] = &[0x01, 0x00, 0xff, 0x7f, 0x00, 0x80];
+        let samples = decode_s16_le(bytes).unwrap();
+        assert_eq!(samples, alloc::vec![1, 32767, -32768]);
+    }
+
+    #[test]
+    fn decode_s16_le_rejects_empty() {
+        assert!(matches!(decode_s16_le(&[]), Err(FetchError::Malformed)));
+    }
+
+    #[test]
+    fn decode_s16_le_rejects_odd_length() {
+        // 3 bytes can't be a complete s16 stream.
+        assert!(matches!(
+            decode_s16_le(&[0x01, 0x02, 0x03]),
+            Err(FetchError::Malformed)
+        ));
     }
 
     #[test]
