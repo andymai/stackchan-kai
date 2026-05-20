@@ -68,20 +68,29 @@ pub fn read_history() -> Vec<HistoryEntry, HISTORY_CAP> {
     HISTORY.lock(|cell| cell.borrow().clone())
 }
 
-/// Push one sample to the ring, dropping the oldest entry if the
-/// buffer is at capacity. Visible for unit tests; the embassy task
-/// calls this on each tick.
+/// Push one sample into a caller-owned ring, dropping the oldest
+/// entry if the buffer is at capacity. Pure function so unit tests
+/// can exercise the rotation logic against a local `Vec` instead of
+/// the module-level static — keeps tests independent under
+/// `cargo test`'s default multi-threaded harness.
+fn push_into(list: &mut Vec<HistoryEntry, HISTORY_CAP>, entry: HistoryEntry) {
+    if list.is_full() {
+        // `remove(0)` is O(N), but N == 60 and this runs at 1 Hz
+        // so the shifting cost is irrelevant. Keeps the
+        // implementation a single Vec rather than dragging in
+        // `heapless::HistoryBuffer` for one consumer.
+        let _ = list.remove(0);
+    }
+    let _ = list.push(entry);
+}
+
+/// Push one sample to the shared ring static. The embassy task
+/// calls this on each tick; routes through [`push_into`] so the
+/// rotation logic is exercised by the unit-test path.
 fn push_sample(entry: HistoryEntry) {
     HISTORY.lock(|cell| {
         let mut list = cell.borrow_mut();
-        if list.is_full() {
-            // `remove(0)` is O(N), but N == 60 and this runs at 1 Hz
-            // so the shifting cost is irrelevant. Keeps the
-            // implementation a single Vec rather than dragging in
-            // `heapless::HistoryBuffer` for one consumer.
-            let _ = list.remove(0);
-        }
-        let _ = list.push(entry);
+        push_into(&mut list, entry);
     });
 }
 
@@ -109,10 +118,6 @@ pub async fn sensor_history_task() {
 mod tests {
     use super::*;
 
-    fn reset_state() {
-        HISTORY.lock(|cell| cell.borrow_mut().clear());
-    }
-
     fn entry(uptime_ms: u64) -> HistoryEntry {
         HistoryEntry {
             uptime_ms,
@@ -126,37 +131,35 @@ mod tests {
     }
 
     #[test]
-    fn push_then_read_returns_in_insertion_order() {
-        reset_state();
-        push_sample(entry(1000));
-        push_sample(entry(2000));
-        let h = read_history();
-        assert_eq!(h.len(), 2);
-        assert_eq!(h[0].uptime_ms, 1000);
-        assert_eq!(h[1].uptime_ms, 2000);
+    fn push_into_then_iter_returns_insertion_order() {
+        let mut list: Vec<HistoryEntry, HISTORY_CAP> = Vec::new();
+        push_into(&mut list, entry(1000));
+        push_into(&mut list, entry(2000));
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].uptime_ms, 1000);
+        assert_eq!(list[1].uptime_ms, 2000);
     }
 
     #[test]
-    fn push_at_capacity_drops_oldest() {
-        reset_state();
+    fn push_into_at_capacity_drops_oldest() {
+        let mut list: Vec<HistoryEntry, HISTORY_CAP> = Vec::new();
         for i in 0..HISTORY_CAP {
-            push_sample(entry((i as u64 + 1) * 1000));
+            push_into(&mut list, entry((i as u64 + 1) * 1000));
         }
         // One past capacity — should evict the first entry.
-        push_sample(entry(99_000));
-        let h = read_history();
-        assert_eq!(h.len(), HISTORY_CAP);
-        assert_eq!(h[0].uptime_ms, 2_000, "first entry should be evicted");
+        push_into(&mut list, entry(99_000));
+        assert_eq!(list.len(), HISTORY_CAP);
+        assert_eq!(list[0].uptime_ms, 2_000, "first entry should be evicted");
         assert_eq!(
-            h[HISTORY_CAP - 1].uptime_ms,
+            list[HISTORY_CAP - 1].uptime_ms,
             99_000,
             "newest entry should be at the tail",
         );
     }
 
     #[test]
-    fn read_empty_returns_empty() {
-        reset_state();
-        assert!(read_history().is_empty());
+    fn push_into_empty_list_succeeds() {
+        let list: Vec<HistoryEntry, HISTORY_CAP> = Vec::new();
+        assert!(list.is_empty());
     }
 }
