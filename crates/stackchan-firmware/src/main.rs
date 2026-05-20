@@ -329,14 +329,15 @@ async fn render_task(
         &mut intent_from_loud,
         &mut emotion_from_ambient,
         &mut emotion_from_battery,
+        &mut cycle,
+        // Phase::Cognition — perception + remote-driven state.
         &mut attention_from_tracking,
         &mut remote_command,
         &mut dormancy_from_activity,
-        &mut cycle,
+        // Phase::Expression — style, gaze, face primitives.
         &mut style,
         &mut style_from_intent,
         &mut style_from_mood,
-        // Phase::Expression — gaze + face primitives.
         &mut gaze_from_attention,
         &mut microsaccade,
         &mut blink,
