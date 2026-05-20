@@ -132,6 +132,99 @@ def test_listen_strips_embedded_quotes(
     assert '"' not in r.json()["text"]
 
 
+def test_listen_uses_x_persona_name_header_when_set(
+    personas_dir: Path,
+    settings: Settings,
+    fake_stt: FakeSTT,
+    fake_llm: FakeLLM,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    # `personas_dir` fixture seeds `stack-chan.md`; add a second
+    # persona the firmware can opt into via header.
+    (personas_dir / "desk-buddy.md").write_text(
+        "---\nname: desk-buddy\n---\nYou are a quiet desk companion.\n",
+        encoding="utf-8",
+    )
+    app = create_app(settings, fake_stt, fake_llm)
+    with TestClient(app) as c:
+        r = c.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={
+                **auth_headers,
+                "Content-Type": _AUDIO_CT,
+                "X-Persona-Name": "desk-buddy",
+            },
+        )
+    assert r.status_code == 200
+    # The LLM saw the desk-buddy persona text, not the default
+    # stack-chan one — confirms the header took priority.
+    _, persona, _, _ = fake_llm.calls[0]
+    assert "quiet desk companion" in persona
+
+
+def test_listen_empty_x_persona_name_falls_back_to_default(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+    fake_llm: FakeLLM,
+) -> None:
+    r = client.post(
+        "/v1/listen",
+        content=pcm_payload,
+        headers={
+            **auth_headers,
+            "Content-Type": _AUDIO_CT,
+            "X-Persona-Name": "",
+        },
+    )
+    assert r.status_code == 200
+    _, persona, _, _ = fake_llm.calls[0]
+    # Default `stack-chan.md` was loaded.
+    assert "helpful robot" in persona
+
+
+def test_listen_unknown_x_persona_name_returns_404(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    r = client.post(
+        "/v1/listen",
+        content=pcm_payload,
+        headers={
+            **auth_headers,
+            "Content-Type": _AUDIO_CT,
+            "X-Persona-Name": "no-such-persona",
+        },
+    )
+    # Distinct from the sidecar-default-misconfig case (500): the
+    # caller asked for a specific persona that doesn't exist here.
+    assert r.status_code == 404
+    body = r.json()
+    assert body["error"]["code"] == "persona_missing"
+
+
+def test_listen_invalid_x_persona_name_returns_400(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    for bad in ["../etc/passwd", "foo/bar", "foo\\bar"]:
+        r = client.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={
+                **auth_headers,
+                "Content-Type": _AUDIO_CT,
+                "X-Persona-Name": bad,
+            },
+        )
+        assert r.status_code == 400, f"expected 400 for {bad!r}, got {r.status_code}"
+        assert r.json()["error"]["code"] == "persona_name_invalid"
+
+
 def test_listen_persona_missing_returns_500(
     tmp_path: Path,
     fake_stt: FakeSTT,

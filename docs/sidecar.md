@@ -73,6 +73,7 @@ Content-Length: <n>
 Connection: close
 Authorization: Bearer sk-sidecar-shared-secret
 X-Session-Id: 7f3c2a1d-9b40-4e8a-93f1-2bc6d4e1a7f0
+X-Persona-Name: desk-buddy
 
 <n bytes of raw little-endian s16 PCM @ 16 kHz mono>
 ```
@@ -92,6 +93,15 @@ care about multi-turn context key memory off this value; sidecars
 that don't can ignore it. Deleting the file rotates the identifier;
 copying it across SD cards preserves it. SD-less boots get a fresh
 ephemeral ID per cold start.
+
+`X-Persona-Name` is sent only when `behavior.persona_name` is set in
+`STACKCHAN.RON`. Empty (the default) omits the header so the sidecar
+applies its baked-in default persona; non-empty asks the sidecar to
+load `personas/{name}.md`. The firmware validates the slug at config
+time (≤ 64 bytes, ASCII control-free, no path separators or `..`)
+and the sidecar re-validates per-request — a `400` is returned if
+the slug is malformed, `404` if it's well-formed but the persona
+file isn't on the sidecar.
 
 ### Response (sidecar → firmware)
 

@@ -163,25 +163,56 @@ def create_app(
         t0 = time.perf_counter()
         deadline = time.monotonic() + settings.total_timeout_seconds
 
+        # `X-Persona-Name` lets a per-device firmware pick which
+        # persona file to load. Empty / missing header falls back to
+        # the sidecar's baked-in `settings.persona` so installs that
+        # don't multiplex personas keep working unchanged.
+        requested_persona = request.headers.get("x-persona-name", "").strip()
+        persona_name = requested_persona or settings.persona
         try:
-            persona = load_persona(settings.persona, settings.personas_dir)
+            persona = load_persona(persona_name, settings.personas_dir)
+        except ValueError as exc:
+            _LOG.warning(
+                "persona name rejected",
+                extra={
+                    "request_id": request_id,
+                    "session_id": session_id,
+                    "requested_persona": requested_persona,
+                    "reason": str(exc),
+                    "status": 400,
+                },
+            )
+            return _failure(
+                ErrorCode.PERSONA_NAME_INVALID,
+                request_id=request_id,
+                session_id=session_id,
+                status=400,
+                session_status=session_status,
+                extra={"requested_persona": requested_persona},
+            )
         except FileNotFoundError:
+            # Distinguish per-request misses (header set, file absent —
+            # the operator-provisioned firmware names a persona the
+            # sidecar hasn't been deployed with) from misconfig of the
+            # sidecar's default. 404 vs 500 lets a caller tell.
+            status = 404 if requested_persona else 500
             _LOG.exception(
                 "persona load failed",
                 extra={
                     "request_id": request_id,
                     "session_id": session_id,
-                    "persona": settings.persona,
-                    "status": 500,
+                    "persona": persona_name,
+                    "requested_persona": requested_persona,
+                    "status": status,
                 },
             )
             return _failure(
                 ErrorCode.PERSONA_MISSING,
                 request_id=request_id,
                 session_id=session_id,
-                status=500,
+                status=status,
                 session_status=session_status,
-                extra={"persona": settings.persona},
+                extra={"persona": persona_name},
             )
 
         t_stt0 = time.perf_counter()

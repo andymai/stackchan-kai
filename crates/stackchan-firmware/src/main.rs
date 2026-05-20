@@ -1470,6 +1470,7 @@ async fn main(spawner: Spawner) -> ! {
         net_config.behavior.agent_sidecar_url.clone(),
         net_config.behavior.agent_sidecar_token.clone(),
         session_uuid.clone(),
+        net_config.behavior.persona_name.clone(),
     )) {
         defmt::panic!(
             "spawn(agent_sidecar_task) failed: {}",

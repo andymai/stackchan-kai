@@ -150,6 +150,25 @@ pub enum ConfigError {
     #[error("behavior.agent_sidecar_token contains an ASCII control character")]
     AgentSidecarTokenInvalidChars,
 
+    /// `behavior.persona_name` exceeded the documented 64-byte slug
+    /// cap. The firmware sends this as `X-Persona-Name` on every
+    /// `POST /v1/listen`, so an oversize value would either trip the
+    /// per-request header buffer or surface as a 4xx from the
+    /// sidecar's persona-load step.
+    #[error("behavior.persona_name must be <= 64 bytes; got {0}")]
+    PersonaNameTooLong(usize),
+
+    /// `behavior.persona_name` contained an ASCII control char or a
+    /// path-traversal token (`/`, `\`, `..`). The sidecar uses the
+    /// slug as a filename component under its `personas/` directory,
+    /// so any of those would either inject extra HTTP headers via
+    /// embedded `\r\n` or pivot the lookup outside the persona dir.
+    /// The sidecar revalidates per-request; this gate stops the bad
+    /// value at the firmware boundary so operators see the failure
+    /// on `PUT /settings` instead of after the next push-to-talk.
+    #[error("behavior.persona_name contains an invalid character")]
+    PersonaNameInvalidChars,
+
     /// A disk-loaded `Config` had the redaction sentinel (`"***"`)
     /// in a secret field. The sentinel is meaningful only on the
     /// HTTP `PUT /settings` merge path — on disk there's nothing to
