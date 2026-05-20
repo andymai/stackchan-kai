@@ -1535,6 +1535,17 @@ async fn main(spawner: Spawner) -> ! {
         defmt::panic!("spawn(reminders_task) failed: {}", defmt::Debug2Format(&e));
     }
 
+    // Sensor history sampler — snapshots the live sensors readings
+    // at 1 Hz into a 60-entry ring. Read via MCP `get_sensor_history`
+    // for LLM grounding ("what was the IMU doing 10 seconds ago?"); a
+    // dormant buffer otherwise.
+    if let Err(e) = spawner.spawn(stackchan_firmware::sensor_history::sensor_history_task()) {
+        defmt::panic!(
+            "spawn(sensor_history_task) failed: {}",
+            defmt::Debug2Format(&e)
+        );
+    }
+
     // BLE peripheral. Shares the same `&'static esp_radio::Controller`
     // as Wi-Fi — coex (enabled via the `coex` feature on `esp-radio`)
     // schedules airtime between the two stacks. The BLE address +
