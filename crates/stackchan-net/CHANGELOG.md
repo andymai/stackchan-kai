@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.8.1...stackchan-net-v0.9.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** schedule_motion — schedule a canonical motion to fire in N seconds ([#525](https://github.com/andymai/stackchan-kai/issues/525)) ([59e22c4](https://github.com/andymai/stackchan-kai/commit/59e22c426b3b1fe21e416ff4d3bb41d680d6a56d))
+
 ## [0.8.1](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.8.0...stackchan-net-v0.8.1) (2026-05-20)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.103.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.102.1...stackchan-firmware-v0.103.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** schedule_motion — schedule a canonical motion to fire in N seconds ([#525](https://github.com/andymai/stackchan-kai/issues/525)) ([59e22c4](https://github.com/andymai/stackchan-kai/commit/59e22c426b3b1fe21e416ff4d3bb41d680d6a56d))
+
 ## [0.102.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.102.0...stackchan-firmware-v0.102.1) (2026-05-20)
 
 
