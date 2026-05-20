@@ -32,9 +32,12 @@ Cargo workspace, organized by purpose:
 **Networking + voice** (`no_std`)
 - `crates/stackchan-net` — Shared wire formats: RON config schema for `STACKCHAN.RON`, HTTP request/body parsers, validators. Used by both the firmware HTTP plane and SD config bring-up.
 - `crates/stackchan-tts` — Speech surface: `SpeechBackend` trait + a `BakedBackend` of compile-time PCM phrases. `no_std` + `alloc`.
+- `crates/stackchan-audio-features` — Streaming log-mel frontend (Hann-windowed STFT → mel filterbank → log → int8 quantize) for on-device keyword spotting. Host-testable in isolation.
+- `crates/stackchan-desktop-protocol` — Newline-delimited JSON over Nordic UART Service for the Claude Desktop Hardware Buddy bridge. `no_std` + `alloc`.
 
 **Firmware**
 - `crates/stackchan-firmware` — Binary crate. `no_std` + `alloc`. Embassy executor on CoreS3.
+- `crates/esp-tflite-micro-sys` — FFI bindings to esp-tflite-micro + esp-nn (vendored C/C++) for the on-device KWS inference path. `publish = false`; firmware-only.
 
 ## Build
 
