@@ -27,7 +27,7 @@ use stackchan_desktop_protocol::{Cmd, Inbound, Snapshot};
 
 use crate::ble::desktop::DESKTOP_INBOUND;
 use crate::clock::HalClock;
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 use crate::toast::{self, ToastLevel};
 
 /// Hold each derived emotion for two heartbeat keepalive intervals.
@@ -98,7 +98,7 @@ fn apply_snapshot(snap: &Snapshot, last_emotion: &mut Option<Emotion>) {
                 defmt::info!("desktop_render: emotion → {=str}", emotion.wire_str(),);
                 *last_emotion = Some(emotion);
             }
-            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::SetEmotion {
+            enqueue_remote_command(RemoteCommand::SetEmotion {
                 emotion,
                 hold_ms: EMOTION_HOLD_MS,
             });
@@ -106,7 +106,7 @@ fn apply_snapshot(snap: &Snapshot, last_emotion: &mut Option<Emotion>) {
         None => {
             if last_emotion.is_some() {
                 defmt::info!("desktop_render: idle (total=0); releasing autonomy");
-                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::Reset);
+                enqueue_remote_command(RemoteCommand::Reset);
                 *last_emotion = None;
             }
         }

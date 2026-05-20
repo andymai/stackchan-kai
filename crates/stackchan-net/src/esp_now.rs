@@ -137,7 +137,7 @@ impl From<JsonError> for DecodeError {
 /// `Heartbeat` carries no payload; `Pose` carries an advisory mirror
 /// of another device's head pose (the receiver decides whether to
 /// follow it); the rest map onto a [`RemoteCommand`] ready to enqueue
-/// on the firmware-side `REMOTE_COMMAND_SIGNAL`.
+/// on the firmware-side `REMOTE_COMMAND_QUEUE`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InboundFrame {
     /// Liveness only — caller may use as proof-of-life for the peer.

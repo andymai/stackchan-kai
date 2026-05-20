@@ -8,7 +8,7 @@
 //! ## Pipeline
 //!
 //! ```text
-//! AUDIO_FRAME_PUBSUB  ─►  MelFrontend  ─►  Interpreter  ─►  REMOTE_COMMAND_SIGNAL
+//! AUDIO_FRAME_PUBSUB  ─►  MelFrontend  ─►  Interpreter  ─►  REMOTE_COMMAND_QUEUE
 //!   (320 i16 samples       (480 / 160      (1 × 40 i8        (StartListen, drained
 //!    every 20 ms)           window/hop)     per timestep)     by the render loop)
 //! ```
@@ -23,7 +23,7 @@
 //!
 //! When the output score crosses the operator-supplied threshold
 //! (`behavior.wake_word_threshold`, default `100`), the task
-//! signals [`crate::net::http::REMOTE_COMMAND_SIGNAL`] with
+//! signals [`crate::net::http::REMOTE_COMMAND_QUEUE`] with
 //! [`RemoteCommand::StartListen`] for `POST_WAKE_CAPTURE_MS`. The
 //! render loop drains the signal and applies the same effects as
 //! an operator-initiated `POST /listen`: trigger the sidecar PCM
@@ -47,7 +47,7 @@ use stackchan_audio_features::{MEL_BIN_COUNT, MelFrontend};
 use stackchan_core::RemoteCommand;
 
 use crate::audio::AUDIO_FRAME_PUBSUB;
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 
 /// Listen-window duration emitted on each wake fire. Matches the
 /// operator-initiated `POST /listen` default so the two paths
@@ -55,7 +55,7 @@ use crate::net::http::REMOTE_COMMAND_SIGNAL;
 /// `Attention::Listening` hold.
 const POST_WAKE_CAPTURE_MS: u32 = 4_000;
 
-/// Minimum gap between consecutive `REMOTE_COMMAND_SIGNAL.signal()`
+/// Minimum gap between consecutive `enqueue_remote_command()`
 /// calls. Without this, a real wake utterance — which spans dozens
 /// of mel frames above threshold — would call `signal()` on every
 /// frame. Since `Signal` is one-shot consume-and-clear with
@@ -199,7 +199,7 @@ pub async fn wake_word_task(
 }
 
 /// Feed one mel frame through the interpreter and signal
-/// [`REMOTE_COMMAND_SIGNAL`] with [`RemoteCommand::StartListen`] on
+/// [`REMOTE_COMMAND_QUEUE`] with [`RemoteCommand::StartListen`] on
 /// detection. Logs and continues on transient errors so a single
 /// bad invoke doesn't kill the task.
 ///
@@ -270,7 +270,7 @@ fn run_inference(
         return;
     }
     defmt::info!("wake-word: fired (score={=i8})", score);
-    REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::StartListen {
+    enqueue_remote_command(RemoteCommand::StartListen {
         duration_ms: POST_WAKE_CAPTURE_MS,
     });
     *next_fire_after = Some(now + embassy_time::Duration::from_millis(POST_WAKE_COOLDOWN_MS));

@@ -5,7 +5,7 @@
 //!
 //! 1. `POST /listen` (or MCP `start_listen`) lands a
 //!    [`RemoteCommand::StartListen`] on
-//!    [`crate::net::http::REMOTE_COMMAND_SIGNAL`]; the render-loop
+//!    [`crate::net::http::REMOTE_COMMAND_QUEUE`]; the render-loop
 //!    intercept fires [`PTT_TRIGGER`] with the requested
 //!    `duration_ms` *and* forwards the variant to the
 //!    `RemoteCommandModifier` so the cosmetic listen state still
@@ -56,13 +56,13 @@ use stackchan_core::input::RemoteCommand;
 use stackchan_net::http_parse::{find_subsequence, parse_content_length};
 
 use crate::audio::{AUDIO_FRAME_PUBSUB, AUDIO_FRAME_SAMPLES};
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 use crate::net::wifi::{WIFI_LINK_WATCH, WifiLinkState};
 use crate::toast::{ToastLevel, push as toast_push};
 
 /// Push-to-talk capture trigger.
 ///
-/// Signalled from the `REMOTE_COMMAND_SIGNAL` intercept in
+/// Signalled from the `REMOTE_COMMAND_QUEUE` intercept in
 /// `main.rs` whenever a [`RemoteCommand::StartListen`] lands.
 /// Payload is the requested listen window in ms; the task captures
 /// audio for that many ms before posting it to the sidecar.
@@ -324,7 +324,7 @@ pub async fn agent_sidecar_task(
         // without an emotion fires `ExitThinking`; and the failure /
         // timeout paths fire `signal_failure_emotion()`, whose
         // `SetEmotion(Sad)` clears the hold the same way.
-        REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::EnterThinking {
+        enqueue_remote_command(RemoteCommand::EnterThinking {
             #[allow(
                 clippy::cast_possible_truncation,
                 reason = "REQUEST_TIMEOUT_MS is a 5-digit const; truncation is impossible at the source"
@@ -435,7 +435,7 @@ fn apply_outcome(
             );
             toast_info(text.as_str());
             if let Some(e) = emotion {
-                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::SetEmotion {
+                enqueue_remote_command(RemoteCommand::SetEmotion {
                     emotion: e,
                     hold_ms: 2_500,
                 });
@@ -445,7 +445,7 @@ fn apply_outcome(
                 // would have run otherwise. Fall back to an explicit
                 // clear so the thought-bubble fades with the toast
                 // instead of lingering for the full request timeout.
-                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
+                enqueue_remote_command(RemoteCommand::ExitThinking);
             }
         }
         Ok(Err(e)) => {
@@ -478,7 +478,7 @@ fn apply_outcome(
 /// is a no-op there, and the Sad face still reads as the failure
 /// signal.
 fn signal_failure_emotion() {
-    REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::SetEmotion {
+    enqueue_remote_command(RemoteCommand::SetEmotion {
         emotion: Emotion::Sad,
         hold_ms: 2_500,
     });

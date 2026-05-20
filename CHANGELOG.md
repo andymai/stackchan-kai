@@ -313,6 +313,20 @@ section summarises the milestone work in human terms.
   paste from a redacted `GET /settings` body that forgot to put
   the real secret back. Fail fast at load with a clear error
   instead of silently trying to associate Wi-Fi with PSK = `"***"`.
+- `REMOTE_COMMAND_QUEUE` replaces the prior
+  `REMOTE_COMMAND_SIGNAL`. The single-slot `Signal<_, RemoteCommand>`
+  was last-write-wins, so two MCP tools fired within the ~33 ms
+  render-loop drain interval (e.g. `set_emotion` followed
+  immediately by `look_at`) silently dropped the first. ~14
+  producer sites — every operator route, the wake-word task,
+  sidecar `EnterThinking`, mDNS follower, BluFi GATT, ESP-NOW
+  peer-frame consumer, desktop-protocol bridge — funnel through a
+  single shared channel; the rapid-MCP-burst footgun was real.
+  The control-plane queue is now a bounded `Channel<_, RemoteCommand,
+  8>`. The render loop drains all pending entries per tick; on
+  saturation `enqueue_remote_command` logs and drops (drop-newest
+  matches Signal's prior behaviour, producers still never block).
+  No wire-format change.
 - Firmware-side network and audio hardening pass. WebSocket
   handshake now validates `Connection: Upgrade` (RFC 6455 §4.2.1)
   and rejects empty `Sec-WebSocket-Key` values at the header
