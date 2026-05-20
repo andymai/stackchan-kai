@@ -63,6 +63,10 @@ pub enum JsonError {
     /// range. Carries the offending value so the firmware's `400`
     /// response body is self-describing.
     VolumeOutOfRange(u16),
+    /// `set_behavior_flag` `field` string didn't match any
+    /// runtime-mutable behavior flag. Vocabulary is the variants of
+    /// [`BehaviorFlagUpdate`].
+    UnknownBehaviorField,
 }
 
 /// Parse a `POST /emotion` body into a [`RemoteCommand::SetEmotion`].
@@ -770,6 +774,126 @@ pub fn parse_camera_mode(body: &str) -> Result<bool, JsonError> {
         Ok(())
     })?;
     enabled.ok_or(JsonError::MissingKey("enabled"))
+}
+
+/// One runtime-mutable boolean flag in [`crate::config::BehaviorConfig`].
+///
+/// Used by `POST /behavior` and the MCP `set_behavior_flag` tool to
+/// describe a single-field mutation without a full settings PUT.
+/// Restricted to the live-applicable booleans — flags that take
+/// effect on the next render tick without a reboot. Reboot-only
+/// fields (`wake_word_*`) stay behind `PUT /settings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BehaviorFlagUpdate {
+    /// `behavior.soliloquy_enabled`.
+    Soliloquy(bool),
+    /// `behavior.hourly_chime_enabled`.
+    HourlyChime(bool),
+    /// `behavior.battery_icon_enabled`.
+    BatteryIcon(bool),
+    /// `behavior.toast_overlay_enabled`.
+    ToastOverlay(bool),
+}
+
+impl BehaviorFlagUpdate {
+    /// Apply the update to a mutable [`crate::config::BehaviorConfig`].
+    pub const fn apply(self, b: &mut crate::config::BehaviorConfig) {
+        match self {
+            Self::Soliloquy(v) => b.soliloquy_enabled = v,
+            Self::HourlyChime(v) => b.hourly_chime_enabled = v,
+            Self::BatteryIcon(v) => b.battery_icon_enabled = v,
+            Self::ToastOverlay(v) => b.toast_overlay_enabled = v,
+        }
+    }
+
+    /// Wire-format field name. Stable identifier the operator dashboard
+    /// and the MCP schema both reference.
+    #[must_use]
+    pub const fn field_name(self) -> &'static str {
+        match self {
+            Self::Soliloquy(_) => "soliloquy_enabled",
+            Self::HourlyChime(_) => "hourly_chime_enabled",
+            Self::BatteryIcon(_) => "battery_icon_enabled",
+            Self::ToastOverlay(_) => "toast_overlay_enabled",
+        }
+    }
+
+    /// Boolean value being applied. Doesn't reveal which flag.
+    #[must_use]
+    pub const fn value(self) -> bool {
+        match self {
+            Self::Soliloquy(v)
+            | Self::HourlyChime(v)
+            | Self::BatteryIcon(v)
+            | Self::ToastOverlay(v) => v,
+        }
+    }
+}
+
+/// Parse a `POST /behavior` / `set_behavior_flag` body into a
+/// [`BehaviorFlagUpdate`].
+///
+/// Body shape: `{"field": "<name>", "value": <bool>}`. Both required;
+/// `field` must match one of the runtime-mutable boolean flags. The
+/// closed enum is the source of truth — extending it adds a parser
+/// arm here and an MCP-schema entry in lockstep.
+///
+/// # Errors
+///
+/// - [`JsonError::MissingKey`] when `field` or `value` is absent.
+/// - [`JsonError::UnknownBehaviorField`] when `field` isn't one of
+///   the runtime-mutable flags. Reboot-only fields like
+///   `wake_word_enabled` return this rather than silently routing
+///   through a path that never takes effect.
+/// - [`JsonError::BadValue`] on a non-boolean `value` or non-string
+///   `field`.
+pub fn parse_behavior_flag(body: &str) -> Result<BehaviorFlagUpdate, JsonError> {
+    // The `field` string borrows from `body` through the scanner;
+    // it can't escape the closure where the scanner is in scope.
+    // Reduce it to a small enum tag inside the closure instead.
+    #[derive(Clone, Copy)]
+    enum FieldTag {
+        Soliloquy,
+        HourlyChime,
+        BatteryIcon,
+        ToastOverlay,
+    }
+    let mut field: Option<FieldTag> = None;
+    let mut value: Option<bool> = None;
+    visit_object(body, |key, scanner| {
+        match key {
+            "field" => {
+                if field.is_some() {
+                    return Err(JsonError::DuplicateKey("field"));
+                }
+                let raw = scanner.read_string()?;
+                field = Some(match raw {
+                    "soliloquy_enabled" => FieldTag::Soliloquy,
+                    "hourly_chime_enabled" => FieldTag::HourlyChime,
+                    "battery_icon_enabled" => FieldTag::BatteryIcon,
+                    "toast_overlay_enabled" => FieldTag::ToastOverlay,
+                    _ => return Err(JsonError::UnknownBehaviorField),
+                });
+            }
+            "value" => {
+                if value.is_some() {
+                    return Err(JsonError::DuplicateKey("value"));
+                }
+                value = Some(parse_bool(scanner)?);
+            }
+            _ => return Err(JsonError::UnknownKey),
+        }
+        Ok(())
+    })?;
+    let field = field.ok_or(JsonError::MissingKey("field"))?;
+    let value = value.ok_or(JsonError::MissingKey("value"))?;
+    Ok(match field {
+        FieldTag::Soliloquy => BehaviorFlagUpdate::Soliloquy(value),
+        FieldTag::HourlyChime => BehaviorFlagUpdate::HourlyChime(value),
+        FieldTag::BatteryIcon => BehaviorFlagUpdate::BatteryIcon(value),
+        FieldTag::ToastOverlay => BehaviorFlagUpdate::ToastOverlay(value),
+    })
 }
 
 /// Default ESP-NOW pairing window. 30 seconds is the rough span needed
@@ -1633,6 +1757,114 @@ mod tests {
         assert!(matches!(
             parse_camera_mode(r#"{"enabled":true,"hold_ms":1000}"#),
             Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn behavior_flag_accepts_each_known_field() {
+        let cases = [
+            (
+                r#"{"field":"soliloquy_enabled","value":true}"#,
+                BehaviorFlagUpdate::Soliloquy(true),
+            ),
+            (
+                r#"{"field":"hourly_chime_enabled","value":false}"#,
+                BehaviorFlagUpdate::HourlyChime(false),
+            ),
+            (
+                r#"{"field":"battery_icon_enabled","value":true}"#,
+                BehaviorFlagUpdate::BatteryIcon(true),
+            ),
+            (
+                r#"{"field":"toast_overlay_enabled","value":false}"#,
+                BehaviorFlagUpdate::ToastOverlay(false),
+            ),
+        ];
+        for (body, expected) in cases {
+            assert_eq!(parse_behavior_flag(body).unwrap(), expected, "body={body}");
+        }
+    }
+
+    #[test]
+    fn behavior_flag_apply_writes_through_to_config() {
+        let mut b = crate::config::BehaviorConfig::default();
+        BehaviorFlagUpdate::Soliloquy(true).apply(&mut b);
+        assert!(b.soliloquy_enabled);
+        BehaviorFlagUpdate::HourlyChime(true).apply(&mut b);
+        assert!(b.hourly_chime_enabled);
+        // Subsequent writes don't disturb previous ones.
+        BehaviorFlagUpdate::Soliloquy(false).apply(&mut b);
+        assert!(!b.soliloquy_enabled);
+        assert!(b.hourly_chime_enabled);
+    }
+
+    #[test]
+    fn behavior_flag_field_name_matches_parser_vocabulary() {
+        // The parser dispatches on the same strings field_name() emits;
+        // round-trip locks them together so a future rename can't drift.
+        for update in [
+            BehaviorFlagUpdate::Soliloquy(true),
+            BehaviorFlagUpdate::HourlyChime(true),
+            BehaviorFlagUpdate::BatteryIcon(true),
+            BehaviorFlagUpdate::ToastOverlay(true),
+        ] {
+            let name = update.field_name();
+            let body = alloc::format!(r#"{{"field":"{name}","value":true}}"#);
+            assert_eq!(parse_behavior_flag(&body).unwrap(), update);
+        }
+    }
+
+    #[test]
+    fn behavior_flag_rejects_unknown_field() {
+        assert!(matches!(
+            parse_behavior_flag(r#"{"field":"wake_word_enabled","value":true}"#),
+            Err(JsonError::UnknownBehaviorField)
+        ));
+        assert!(matches!(
+            parse_behavior_flag(r#"{"field":"made_up","value":true}"#),
+            Err(JsonError::UnknownBehaviorField)
+        ));
+    }
+
+    #[test]
+    fn behavior_flag_rejects_missing_keys() {
+        assert!(matches!(
+            parse_behavior_flag(r#"{"field":"soliloquy_enabled"}"#),
+            Err(JsonError::MissingKey("value"))
+        ));
+        assert!(matches!(
+            parse_behavior_flag(r#"{"value":true}"#),
+            Err(JsonError::MissingKey("field"))
+        ));
+    }
+
+    #[test]
+    fn behavior_flag_rejects_non_boolean_value() {
+        assert!(matches!(
+            parse_behavior_flag(r#"{"field":"soliloquy_enabled","value":1}"#),
+            Err(JsonError::BadValue)
+        ));
+    }
+
+    #[test]
+    fn behavior_flag_rejects_unknown_key() {
+        assert!(matches!(
+            parse_behavior_flag(r#"{"field":"soliloquy_enabled","value":true,"extra":1}"#),
+            Err(JsonError::UnknownKey)
+        ));
+    }
+
+    #[test]
+    fn behavior_flag_rejects_duplicate_keys() {
+        assert!(matches!(
+            parse_behavior_flag(
+                r#"{"field":"soliloquy_enabled","field":"hourly_chime_enabled","value":true}"#
+            ),
+            Err(JsonError::DuplicateKey("field"))
+        ));
+        assert!(matches!(
+            parse_behavior_flag(r#"{"field":"soliloquy_enabled","value":true,"value":false}"#),
+            Err(JsonError::DuplicateKey("value"))
         ));
     }
 
