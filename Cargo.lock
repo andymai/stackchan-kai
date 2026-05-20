@@ -4828,7 +4828,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stackchan-audio-features"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libm",
  "microfft",
@@ -4852,7 +4852,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.97.2"
+version = "0.97.3"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4907,7 +4907,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-net"
-version = "0.2.22"
+version = "0.3.0"
 dependencies = [
  "ed25519-compact",
  "heapless 0.8.0",
@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "eframe",
  "embedded-graphics",
@@ -4930,7 +4930,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-tts"
-version = "0.1.25"
+version = "0.2.0"
 dependencies = [
  "stackchan-core",
 ]
