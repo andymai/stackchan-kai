@@ -40,6 +40,11 @@
 //!   avatar's colour palette at runtime; persisted to
 //!   `/sd/RUNTIME.RON` so a reboot restores the selection. Vocabulary
 //!   matches `Palette::wire_str` (default / dark / cute / dog).
+//! - `POST /behavior` — JSON `{"field": "<name>", "value": <bool>}`.
+//!   Toggles one runtime-mutable behaviour flag in
+//!   `behavior` (soliloquy / hourly chime / battery icon / toast
+//!   overlay) and persists to `/sd/STACKCHAN.RON`. The reboot-only
+//!   flags (`wake_word_*`) stay behind `PUT /settings`.
 //! - `POST /sleep` — empty body. Drops eyes shut, head limp, LED
 //!   ring dark, audio TX paused. Wake via `POST /wake`, MCP `wake`,
 //!   any touch (`FT6336U` screen or `Si12T` body pads), or the
@@ -473,6 +478,7 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
         ("POST", "/mute") => handle_post_mute(socket, body).await,
         ("POST", "/mood") => handle_post_mood(socket, body).await,
         ("POST", "/palette") => handle_post_palette(socket, body).await,
+        ("POST", "/behavior") => handle_post_behavior(socket, body).await,
         ("POST", "/face-geometry") => handle_post_face_geometry(socket, body).await,
         ("GET", "/crash") => handle_get_crash(socket).await,
         ("POST", "/crash/clear") => handle_post_crash_clear(socket).await,
@@ -902,6 +908,108 @@ async fn audio_persist_to_http(
         AudioPersistOutcome::NoStorage => write_text(socket, 503, "no SD card mounted\n").await,
         AudioPersistOutcome::WriteFailed => write_text(socket, 500, "config write failed\n").await,
     }
+}
+
+/// Outcome of a single-field behavior-flag persist. Mirrors the
+/// [`crate::audio::AudioPersistOutcome`] shape so HTTP / MCP error
+/// surfaces stay symmetric across `POST /behavior` and `POST /volume`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+enum BehaviorPersistOutcome {
+    /// Config was written and `CONFIG_SNAPSHOT` updated. Modifier-graph
+    /// consumers (toast / soliloquy / hourly chime / battery overlay)
+    /// re-read on the next render tick — no per-task signal.
+    Persisted,
+    /// `CONFIG_SNAPSHOT` was empty — boot hadn't loaded any config
+    /// yet, so synthesising a default-everything-else config to write
+    /// would clobber whatever is on disk.
+    NoSnapshot,
+    /// SD card isn't mounted — there's nowhere to persist.
+    NoStorage,
+    /// SD write failed mid-transaction. Cache stays at the previous
+    /// value rather than partially applying.
+    WriteFailed,
+}
+
+/// Apply one [`stackchan_net::http_command::BehaviorFlagUpdate`] to
+/// the live `CONFIG_SNAPSHOT` + SD-backed `STACKCHAN.RON`.
+///
+/// Shared by `POST /behavior` and the MCP `set_behavior_flag` tool so
+/// operator-driven curl and LLM-driven tool calls take identical
+/// code paths. Mirrors the volume / mute persist shape.
+async fn persist_behavior_flag(
+    update: stackchan_net::http_command::BehaviorFlagUpdate,
+) -> BehaviorPersistOutcome {
+    let Some(current) = crate::storage::CONFIG_SNAPSHOT.lock().await.clone() else {
+        return BehaviorPersistOutcome::NoSnapshot;
+    };
+    let mut new_config = current;
+    update.apply(&mut new_config.behavior);
+    let write_result =
+        crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
+    match write_result {
+        Some(Ok(())) => {
+            defmt::info!(
+                "behavior: {=str} persisted (value={=bool})",
+                update.field_name(),
+                update.value(),
+            );
+            *crate::storage::CONFIG_SNAPSHOT.lock().await = Some(new_config);
+            BehaviorPersistOutcome::Persisted
+        }
+        Some(Err(e)) => {
+            defmt::warn!("behavior: write failed ({})", e);
+            BehaviorPersistOutcome::WriteFailed
+        }
+        None => BehaviorPersistOutcome::NoStorage,
+    }
+}
+
+/// Map a [`BehaviorPersistOutcome`] to its HTTP response.
+async fn behavior_persist_to_http(
+    socket: &mut TcpSocket<'_>,
+    outcome: BehaviorPersistOutcome,
+) -> Result<(), HttpError> {
+    match outcome {
+        BehaviorPersistOutcome::Persisted => write_no_content(socket).await,
+        BehaviorPersistOutcome::NoSnapshot => {
+            write_text(socket, 503, "config snapshot unavailable\n").await
+        }
+        BehaviorPersistOutcome::NoStorage => write_text(socket, 503, "no SD card mounted\n").await,
+        BehaviorPersistOutcome::WriteFailed => {
+            write_text(socket, 500, "config write failed\n").await
+        }
+    }
+}
+
+/// Map a [`BehaviorPersistOutcome`] to a `&'static str` MCP error
+/// detail. Mirrors [`audio_persist_detail`] in shape.
+const fn behavior_persist_detail(outcome: BehaviorPersistOutcome) -> &'static str {
+    match outcome {
+        BehaviorPersistOutcome::Persisted => "behavior persisted (unexpected for error path)",
+        BehaviorPersistOutcome::NoSnapshot => "config snapshot unavailable",
+        BehaviorPersistOutcome::NoStorage => "no SD card mounted",
+        BehaviorPersistOutcome::WriteFailed => "config write failed",
+    }
+}
+
+/// `POST /behavior` — toggle one runtime-mutable boolean flag in
+/// `behavior` by name. Body shape per
+/// [`stackchan_net::http_command::parse_behavior_flag`]:
+/// `{"field": "<name>", "value": <bool>}`. Field vocabulary is the
+/// variants of [`stackchan_net::http_command::BehaviorFlagUpdate`].
+async fn handle_post_behavior(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
+    let update = match json::parse_behavior_flag(body) {
+        Ok(u) => u,
+        Err(e) => {
+            defmt::warn!(
+                "http: POST /behavior parse failed ({})",
+                defmt::Debug2Format(&e)
+            );
+            let body = format!("invalid request body: {e:?}\n");
+            return write_text(socket, 400, &body).await;
+        }
+    };
+    behavior_persist_to_http(socket, persist_behavior_flag(update).await).await
 }
 
 /// `POST /dance` — parse the keyframe stream, hand the script off
@@ -1660,6 +1768,25 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "set_behavior_flag" => match json::parse_behavior_flag(arguments) {
+            Ok(update) => {
+                let outcome = persist_behavior_flag(update).await;
+                if outcome == BehaviorPersistOutcome::Persisted {
+                    render_success(id, &render_tool_text_result("behavior flag persisted"))
+                } else {
+                    render_error(
+                        Some(id),
+                        JsonRpcErrorCode::InternalError,
+                        behavior_persist_detail(outcome),
+                    )
+                }
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
     }
 }
@@ -1744,6 +1871,7 @@ const fn tool_parse_detail(e: &JsonError) -> &'static str {
         E::UnknownFaceGeometry => "unknown face geometry",
         E::UnknownMotion => "unknown motion",
         E::VolumeOutOfRange(_) => "volume out of range",
+        E::UnknownBehaviorField => "unknown behavior field",
     }
 }
 
