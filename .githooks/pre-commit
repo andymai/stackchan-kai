@@ -13,9 +13,15 @@ set -euo pipefail
 
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
-# Only run when Rust files (or Cargo.toml / Cargo.lock) are staged.
+# Only run when Rust source or build-affecting config is staged.
+# Matches: any .rs, Cargo.toml/lock at any path depth, clippy.toml at
+# the repo root. Deliberately excludes deny.toml (supply chain only),
+# pyproject.toml (Python), sidecar/config.example.toml, and per-crate
+# rust-toolchain.toml / .cargo/config.toml — none of those affect the
+# host clippy / test outcome, and edits to them used to drag a full
+# host build through the hook for no reason.
 has_rust=false
-if echo "$staged" | grep -qE '(^Cargo\.(toml|lock)$|\.rs$|\.toml$)'; then
+if echo "$staged" | grep -qE '(\.rs$|(^|/)Cargo\.(toml|lock)$|^clippy\.toml$)'; then
     has_rust=true
 fi
 
