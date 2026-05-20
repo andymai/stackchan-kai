@@ -45,7 +45,13 @@ class SessionStore:
         self._entries: dict[tuple[str, str], SessionEntry] = {}
 
     def get_history(self, session_id: str, persona: str) -> list[Turn]:
-        if not session_id:
+        # Both halves of the key must be non-empty for the partition
+        # to be meaningful. Today's app.py callers can't produce an
+        # empty `persona` (load_persona rejects the empty slug before
+        # we get here), but a future internal caller bypassing app.py
+        # would silently merge everything into one bucket; the
+        # explicit guard makes that fail closed.
+        if not session_id or not persona:
             return []
         entry = self._entries.get((session_id, persona))
         if entry is None:
@@ -54,7 +60,7 @@ class SessionStore:
         return list(entry.turns)
 
     def record(self, session_id: str, persona: str, turn: Turn) -> None:
-        if not session_id:
+        if not session_id or not persona:
             return
         key = (session_id, persona)
         entry = self._entries.get(key)

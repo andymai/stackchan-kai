@@ -103,6 +103,17 @@ def test_empty_session_id_is_noop() -> None:
     assert store.get_history("", _P) == []
 
 
+def test_empty_persona_is_noop() -> None:
+    # Defence in depth: if an internal caller bypasses app.py's
+    # load_persona validation and passes empty persona, the store
+    # must not collapse it into a partition that mixes voices.
+    store = SessionStore()
+    store.record("sid", "", _turn())
+    assert store.get_history("sid", "") == []
+    # And the empty-persona record didn't pollute any real bucket.
+    assert store.get_history("sid", "stack-chan") == []
+
+
 def test_history_partitioned_per_persona() -> None:
     # Same session_id, two personas: the second voice doesn't inherit
     # the first voice's turns. This is the core invariant of the
