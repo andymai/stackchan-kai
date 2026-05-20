@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.102.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.102.0...stackchan-firmware-v0.102.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* **net:** requires_reboot covers all behavior fields captured at task spawn ([#523](https://github.com/andymai/stackchan-kai/issues/523)) ([4a6d83d](https://github.com/andymai/stackchan-kai/commit/4a6d83d22e2dcfce1a4621db129b0518bb0a279f))
+
 ## [0.102.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.101.0...stackchan-firmware-v0.102.0) (2026-05-20)
 
 
