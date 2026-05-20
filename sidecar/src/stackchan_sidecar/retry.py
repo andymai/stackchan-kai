@@ -36,12 +36,14 @@ def is_transient(exc: BaseException) -> bool:
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in _RETRYABLE_STATUS
-    # Narrow to actual transport faults; previously the
-    # `httpx.HTTPError` catch-all also covered `InvalidURL`,
-    # `UnsupportedProtocol`, `LocalProtocolError`, etc., which
-    # are configuration bugs that no retry will fix — burning
-    # `max_attempts` + the deadline budget before surfacing.
-    if isinstance(exc, httpx.TransportError):
+    # Only `NetworkError` (Connect/Read/Write/Close) is genuinely
+    # transient. `httpx.TransportError` would seem to fit but also
+    # covers `UnsupportedProtocol` and `ProtocolError`
+    # (Local/Remote) which are configuration bugs that no retry
+    # will fix — those burned `max_attempts` + the deadline budget
+    # before this narrowing. `InvalidURL` sits outside the
+    # `HTTPError` tree entirely and is intentionally not retried.
+    if isinstance(exc, httpx.NetworkError):
         return True
     if isinstance(exc, anthropic.APIConnectionError | anthropic.APITimeoutError):
         return True

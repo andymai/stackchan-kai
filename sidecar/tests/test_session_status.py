@@ -208,3 +208,23 @@ def test_all_returns_every_session_snapshot() -> None:
     s.mark_thinking(request_id="rB", session_id="unit-b")
     snapshots = s.all()
     assert set(snapshots.keys()) == {"unit-a", "unit-b"}
+
+
+def test_snapshots_dict_evicts_lru_past_cap() -> None:
+    # Importing the private cap is intentional: this test pins the
+    # eviction shape, not the cap value.
+    from stackchan_sidecar.session_status import _MAX_TRACKED_SESSIONS
+
+    s = SessionStatus()
+    # Fill exactly to the cap.
+    for i in range(_MAX_TRACKED_SESSIONS):
+        s.mark_thinking(request_id=f"r{i}", session_id=f"unit-{i}")
+    assert len(s.all()) == _MAX_TRACKED_SESSIONS
+
+    # One more push evicts the oldest. The very first session-id
+    # is the LRU victim; the new one lands.
+    s.mark_thinking(request_id="r-new", session_id="unit-new")
+    snapshots = s.all()
+    assert len(snapshots) == _MAX_TRACKED_SESSIONS
+    assert "unit-0" not in snapshots
+    assert "unit-new" in snapshots

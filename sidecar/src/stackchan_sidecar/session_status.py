@@ -11,10 +11,21 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
 State = Literal["idle", "thinking"]
+
+# Cap on the number of distinct sessions tracked simultaneously.
+# In a deployment where firmware units rotate through unique
+# session IDs (re-flash → new MAC-derived ID) the dict would
+# otherwise grow without bound. LRU eviction past this cap drops
+# the snapshot least-recently *updated* — which usually means a
+# session that hasn't `mark_thinking`'d or `mark_done`'d in
+# however long it took the cap to fill. 64 covers any reasonable
+# fleet size with margin.
+_MAX_TRACKED_SESSIONS = 64
 
 
 @dataclass(frozen=True)
@@ -54,7 +65,12 @@ class SessionStatus:
     """
 
     def __init__(self) -> None:
-        self._snapshots: dict[str, Snapshot] = {}
+        # `OrderedDict` gives us LRU eviction in O(1) on each
+        # update — `move_to_end` after every write keeps the most
+        # recently updated session at the right end; `popitem(last
+        # =False)` drops the least-recently updated when the cap
+        # is exceeded.
+        self._snapshots: OrderedDict[str, Snapshot] = OrderedDict()
         self._latest_session_id: str | None = None
         self._idle = Snapshot(state="idle")
         self._event = asyncio.Event()
@@ -88,6 +104,9 @@ class SessionStatus:
 
     def _put(self, session_id: str, snapshot: Snapshot) -> None:
         self._snapshots[session_id] = snapshot
+        self._snapshots.move_to_end(session_id)
+        while len(self._snapshots) > _MAX_TRACKED_SESSIONS:
+            self._snapshots.popitem(last=False)
         self._latest_session_id = session_id
         self._broadcast()
 
