@@ -225,6 +225,38 @@ def test_listen_invalid_x_persona_name_returns_400(
         assert r.json()["error"]["code"] == "persona_name_invalid"
 
 
+def test_listen_empty_default_persona_returns_500_not_400(
+    tmp_path: Path,
+    fake_stt: FakeSTT,
+    fake_llm: FakeLLM,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    # Misconfigured sidecar: settings.persona is empty AND the caller
+    # didn't send X-Persona-Name. The client did nothing wrong, so
+    # this must be 500 (server misconfig), not 400 (client error).
+    # The old catch-all `except ValueError` would have collapsed this
+    # into 400; the header-vs-fallback split keeps the two cases
+    # distinct.
+    empty_personas = tmp_path / "no-personas"
+    empty_personas.mkdir()
+    settings = Settings(
+        SIDECAR_BEARER_TOKEN=TEST_TOKEN,
+        ANTHROPIC_API_KEY="sk-ant-test",
+        personas_dir=empty_personas,
+        persona="",
+    )
+    app = create_app(settings, fake_stt, fake_llm)
+    with TestClient(app) as c:
+        r = c.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={**auth_headers, "Content-Type": _AUDIO_CT},
+        )
+    assert r.status_code == 500
+    assert r.json()["error"]["code"] == "persona_missing"
+
+
 def test_listen_persona_missing_returns_500(
     tmp_path: Path,
     fake_stt: FakeSTT,
