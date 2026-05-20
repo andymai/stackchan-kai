@@ -9,6 +9,7 @@ dependencies = []
 
 [project.scripts]
 kws-record = "kws_trainer.cli.record:main"
+kws-build-dataset = "kws_trainer.cli.build_dataset:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -5,9 +5,13 @@ stackchan-kai device. Eventually closes the loop: record samples →
 build dataset → train a `microWakeWord` model → drop the `.tflite`
 on the device's SD card → reboot.
 
-This package starts that loop. Slice 1 ships only the recorder
-(`kws-record`); dataset builder and training wrapper land in
-follow-ups.
+This package walks the loop one step at a time:
+
+- `kws-record` — capture a fixed-duration WAV from a running device.
+- `kws-build-dataset` — turn a directory of labelled WAVs into a
+  deterministic train/val/test manifest the trainer can consume.
+
+The training wrapper (`kws-train`) and eval tool land in follow-ups.
 
 ## Setup
 
@@ -49,10 +53,33 @@ run `kws-record` to capture WAVs:
 The WAV format is 16 kHz mono s16 LE — the same shape
 `microwakeword`'s training pipeline ingests directly.
 
+## Building a dataset manifest
+
+After collecting recordings (the recorder names files
+`positive-001.wav`, `negative-042.wav`, etc.), turn them into a
+deterministic train/val/test split:
+
+```bash
+uv run kws-build-dataset --input samples/ --output manifest.json
+```
+
+The output manifest is a JSON file with each split's recordings
+listed as `(path, label, duration_seconds)` triples, plus a
+per-split label-count summary. Same `--seed` + same input directory
+gives a bit-stable manifest — re-run after adding more samples and
+the previously-classified files stay in their original split.
+
+Operator-facing knobs:
+
+- `--val-fraction` / `--test-fraction` (defaults 0.15 each) —
+  per-label stratified hold-out, so a small `silence` bucket isn't
+  crowded out of validation by a much larger `negative` bucket.
+- `--strict` — exit non-zero if any WAV is rejected (wrong sample
+  rate, stereo, < 0.5 s). Useful in CI; default behaviour logs and
+  continues so a single bad file doesn't stop manifest generation.
+
 ## What's next
 
-- `kws-build-dataset` — directory of WAVs → microWakeWord training
-  dataset shape (positive / negative / silence buckets).
 - `kws-train` — wrap `microwakeword`'s training pipeline, emit a
   ready-to-flash `.tflite`.
 - `kws-eval` — run a `.tflite` against a WAV, report detection
