@@ -148,7 +148,7 @@ pub async fn wake_word_task(
     }
 
     defmt::info!(
-        "wake-word: interpreter ready ({=usize} inputs, {=usize} outputs, arena={=usize} B, threshold={=i8})",
+        "wake-word: interpreter ready ({=usize} inputs, {=usize} outputs, arena={=usize} B, threshold={=i8} — output assumed int8-quantised)",
         interp.inputs_len(),
         interp.outputs_len(),
         arena_bytes,
@@ -173,9 +173,18 @@ pub async fn wake_word_task(
                 // same expression; collecting first is clearer and
                 // keeps inference cost out of the frontend hot path.
                 mel_buf.clear();
+                // Log the first overflow per audio frame only —
+                // each mel push that exceeds the cap fires the
+                // closure again, and a sustained underrun
+                // upstream would otherwise spam the log at the
+                // mel-frame rate (~50 Hz).
+                let mut overflow_logged = false;
                 frontend.push_samples(&frame.samples, |mel_frame| {
-                    if mel_buf.push(mel_frame.features).is_err() {
-                        defmt::warn!("wake-word: mel_buf overflow; frame dropped");
+                    if mel_buf.push(mel_frame.features).is_err() && !overflow_logged {
+                        defmt::warn!(
+                            "wake-word: mel_buf overflow; dropping further frames in this audio block"
+                        );
+                        overflow_logged = true;
                     }
                 });
                 for features in &mel_buf {
@@ -236,6 +245,17 @@ fn run_inference(
     let Some(&score_u8) = output.get(WAKE_CLASS_INDEX) else {
         return;
     };
+    // The microWakeWord operator set we register assumes int8
+    // output quantisation (Microsoft / ESPHome reference shape).
+    // A uint8-quantised `.tflite` would still parse, allocate, and
+    // invoke, but `cast_signed()` would flip the half-line: a
+    // strong-positive uint8 score (~229 for 0.9 confidence) reads
+    // as i8 `-27` and never crosses any reasonable threshold,
+    // silently disabling the detector. Operators dropping a model
+    // at `/sd/WAKE_WORD.tflite` need to verify int8 quantisation
+    // upstream (e.g. `tflite-runtime` output_details `dtype` =
+    // `np.int8`) — there's no embedded-side tensor-type check
+    // until the FFI shim exposes one.
     let score = score_u8.cast_signed();
     if score < threshold {
         return;
