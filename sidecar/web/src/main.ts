@@ -58,7 +58,9 @@ for (const { id, label } of EMOTION_CHIPS) {
   btn.setAttribute("aria-label", `Set emotion ${label}`);
   btn.setAttribute("aria-pressed", "false");
   btn.addEventListener("click", () => {
-    void setEmotion(id);
+    setEmotion(id).catch((err: unknown) => {
+      console.error("setEmotion failed", err);
+    });
   });
   chipsEl.appendChild(btn);
   chipButtons.set(id, btn);
@@ -73,6 +75,8 @@ pttEl.addEventListener("click", async () => {
   pttEl.disabled = true;
   try {
     await startListen();
+  } catch (err) {
+    console.error("startListen failed", err);
   } finally {
     pttBusy = false;
     pttEl.classList.remove("is-loading");
