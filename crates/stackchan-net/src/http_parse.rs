@@ -93,6 +93,13 @@ pub fn parse_bearer_token(headers: &[u8]) -> Option<&str> {
             continue;
         }
         let token = trim_ascii(rest);
+        if token.is_empty() {
+            // `Authorization: Bearer   ` (no token after scheme).
+            // Returning `Some("")` here would let a server configured
+            // with `auth.token = ""` (auth disabled) match on the
+            // empty string. Skip to the next header line instead.
+            continue;
+        }
         return core::str::from_utf8(token).ok();
     }
     None
@@ -328,5 +335,19 @@ mod tests {
         assert_eq!(trim_ascii(b"\t\rkey\n "), b"key");
         assert_eq!(trim_ascii(b"   "), b"");
         assert_eq!(trim_ascii(b"clean"), b"clean");
+    }
+
+    #[test]
+    fn parse_bearer_token_skips_empty_token_after_scheme() {
+        // `Authorization: Bearer   ` (no token) used to return
+        // `Some("")`. With `auth.token = ""` (auth disabled) the
+        // empty-string match would pass. Skip the malformed line
+        // and see if a later header carries a real Bearer.
+        let headers = b"Authorization: Bearer   \r\nAuthorization: Bearer real-token\r\n";
+        assert_eq!(parse_bearer_token(headers), Some("real-token"));
+
+        // No follow-up header — nothing else to fall back to.
+        let headers = b"Authorization: Bearer   \r\n";
+        assert_eq!(parse_bearer_token(headers), None);
     }
 }
