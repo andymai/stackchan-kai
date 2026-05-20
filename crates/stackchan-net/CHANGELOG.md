@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.6.0...stackchan-net-v0.7.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose get_health — MCP twin of GET /health ([#519](https://github.com/andymai/stackchan-kai/issues/519)) ([f8aeb96](https://github.com/andymai/stackchan-kai/commit/f8aeb96712398e7b4ed825907d328ae3ea69f4c0))
+
 ## [0.6.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.5.0...stackchan-net-v0.6.0) (2026-05-20)
 
 
