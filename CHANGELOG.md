@@ -299,6 +299,15 @@ section summarises the milestone work in human terms.
   duplicate key, so a hand-edited file with `psk: "real", psk:
   "***"` would associate with the second value; the JSON twin
   already rejected, and the two paths are now in lockstep.
+- `STACKCHAN.RON` parser rejects the redaction sentinel `"***"` on
+  disk for `wifi.psk`, `auth.token`, `esp_now.pmk_hex`,
+  `esp_now.lmk_hex`, and `behavior.agent_sidecar_token`. The
+  sentinel is a "preserve current value" wire marker for the
+  `PUT /settings` merge path — on disk there's nothing to merge
+  against, so a literal `"***"` is almost always operator copy-
+  paste from a redacted `GET /settings` body that forgot to put
+  the real secret back. Fail fast at load with a clear error
+  instead of silently trying to associate Wi-Fi with PSK = `"***"`.
 
 ### Documentation
 

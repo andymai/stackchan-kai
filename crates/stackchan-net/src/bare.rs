@@ -23,7 +23,7 @@ use core::fmt::Write as _;
 use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{
     AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, MdnsConfig, TimeConfig,
-    TrackerSettings, WifiConfig, validate,
+    TrackerSettings, WifiConfig, validate_for_disk,
 };
 use crate::error::ConfigError;
 
@@ -37,12 +37,14 @@ use crate::error::ConfigError;
 ///
 /// Returns [`ConfigError::BareParse`] on any structural mismatch
 /// (missing field, unexpected token, runaway string), then runs the
-/// shared [`validate`] gate so out-of-range values surface the same
-/// `Invalid*` variants as the host parser.
+/// strict [`validate_for_disk`] gate so out-of-range values surface
+/// the same `Invalid*` variants as the host parser, and any literal
+/// redaction sentinel (`"***"`) on a secret field surfaces as
+/// [`ConfigError::RedactionSentinelOnDisk`].
 pub fn parse_ron_bare(input: &str) -> Result<Config, ConfigError> {
     let mut p = Parser::new(input);
     let config = p.parse_config()?;
-    validate(&config)?;
+    validate_for_disk(&config)?;
     Ok(config)
 }
 
@@ -1805,6 +1807,72 @@ mod tests {
             msg.contains("duplicate esp_now field") && msg.contains("enabled"),
             "got {msg}"
         );
+    }
+
+    // ============================================================
+    // Disk-load redaction-sentinel rejection (validate_for_disk).
+    // The "***" sentinel exists as a "preserve current value" marker
+    // on the HTTP `PUT /settings` merge path. On disk it means
+    // operator copy-paste from a redacted GET; rejecting fast beats
+    // a Wi-Fi auth-fail buried deep in the boot log.
+    // ============================================================
+
+    fn assert_redaction_sentinel(input: &str) -> &'static str {
+        match parse_ron_bare(input).unwrap_err() {
+            ConfigError::RedactionSentinelOnDisk(field) => field,
+            other => panic!("expected RedactionSentinelOnDisk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_redacted_psk_on_disk() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "***", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+            )
+        "#;
+        assert_eq!(assert_redaction_sentinel(s), "wifi.psk");
+    }
+
+    #[test]
+    fn rejects_redacted_pmk_hex_on_disk() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                esp_now: ( enabled: false, pmk_hex: "***" ),
+            )
+        "#;
+        assert_eq!(assert_redaction_sentinel(s), "esp_now.pmk_hex");
+    }
+
+    #[test]
+    fn rejects_redacted_lmk_hex_on_disk() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                esp_now: ( enabled: false, lmk_hex: "***" ),
+            )
+        "#;
+        assert_eq!(assert_redaction_sentinel(s), "esp_now.lmk_hex");
+    }
+
+    #[test]
+    fn rejects_redacted_agent_sidecar_token_on_disk() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                behavior: ( agent_sidecar_token: "***" ),
+            )
+        "#;
+        assert_eq!(assert_redaction_sentinel(s), "behavior.agent_sidecar_token");
     }
 
     #[test]

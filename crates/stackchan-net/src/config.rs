@@ -519,16 +519,22 @@ pub fn tz_offset_minutes(tz: &str) -> Option<i32> {
 
 /// Parse + validate a RON document into a [`Config`].
 ///
+/// Disk-load entry point — runs the strict [`validate_for_disk`]
+/// gate, which is [`validate`] plus rejection of the redaction
+/// sentinel (`"***"`) in any secret field.
+///
 /// # Errors
 ///
-/// Returns [`ConfigError::Parse`] on malformed RON, or one of the
+/// Returns [`ConfigError::Parse`] on malformed RON, one of the
 /// validation variants ([`ConfigError::EmptySsid`],
 /// [`ConfigError::InvalidCountry`], [`ConfigError::InvalidHostname`],
-/// [`ConfigError::NoSntpServers`]) on out-of-range values.
+/// [`ConfigError::NoSntpServers`]) on out-of-range values, or
+/// [`ConfigError::RedactionSentinelOnDisk`] on a literal `"***"`
+/// in a secret field.
 #[cfg(feature = "parse")]
 pub fn parse_ron(input: &str) -> Result<Config, ConfigError> {
     let config: Config = ron::from_str(input)?;
-    validate(&config)?;
+    validate_for_disk(&config)?;
     Ok(config)
 }
 
@@ -611,6 +617,52 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
         return Err(ConfigError::InvalidWakeWordArenaKib);
     }
     validate_agent_sidecar_token(&config.behavior.agent_sidecar_token)?;
+    Ok(())
+}
+
+/// Strict validator for disk-loaded configs.
+///
+/// Runs [`validate`] first, then rejects the redaction sentinel
+/// `"***"` in any secret field. The sentinel exists only as a
+/// "preserve current value" wire marker on the HTTP `PUT /settings`
+/// merge path — see [`crate::bare_json::merge_settings_with_current`].
+/// A literal `"***"` on disk is operator error: typically a copy of
+/// the body returned by `GET /settings?redact=true` dumped to SD
+/// without filling in the real secret. Without this gate the
+/// firmware would try to associate Wi-Fi with PSK = `"***"` and the
+/// only signal would be `WPA: wrong-password` deep in the auth log.
+///
+/// Use this from any disk-loading path; the HTTP-PUT pipeline must
+/// keep using [`validate`] (lenient) so a dashboard form that
+/// re-submits the redacted body still works.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::RedactionSentinelOnDisk`] with the
+/// offending field name on a sentinel match. Otherwise propagates
+/// whatever [`validate`] returns.
+pub fn validate_for_disk(config: &Config) -> Result<(), ConfigError> {
+    use crate::bare_json::{
+        ESP_NOW_KEY_REDACTED, PSK_REDACTED, SIDECAR_TOKEN_REDACTED, TOKEN_REDACTED,
+    };
+    validate(config)?;
+    if config.wifi.psk == PSK_REDACTED {
+        return Err(ConfigError::RedactionSentinelOnDisk("wifi.psk"));
+    }
+    if config.auth.token == TOKEN_REDACTED {
+        return Err(ConfigError::RedactionSentinelOnDisk("auth.token"));
+    }
+    if config.esp_now.pmk_hex == ESP_NOW_KEY_REDACTED {
+        return Err(ConfigError::RedactionSentinelOnDisk("esp_now.pmk_hex"));
+    }
+    if config.esp_now.lmk_hex == ESP_NOW_KEY_REDACTED {
+        return Err(ConfigError::RedactionSentinelOnDisk("esp_now.lmk_hex"));
+    }
+    if config.behavior.agent_sidecar_token == SIDECAR_TOKEN_REDACTED {
+        return Err(ConfigError::RedactionSentinelOnDisk(
+            "behavior.agent_sidecar_token",
+        ));
+    }
     Ok(())
 }
 
