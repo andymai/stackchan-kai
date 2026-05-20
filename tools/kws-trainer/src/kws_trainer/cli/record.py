@@ -18,7 +18,7 @@ import sys
 from collections.abc import Sequence
 
 from kws_trainer.recorder import (
-    FRAME_BYTES,
+    FRAME_SAMPLES,
     SAMPLE_RATE_HZ,
     record,
     write_wav,
@@ -105,7 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # nominal 50 frames/sec cadence. Surfaced as a warn so the
     # operator sees obvious drops; not an error since one or two
     # missing frames on a busy LAN is normal.
-    expected_frames = int(args.duration * SAMPLE_RATE_HZ / (FRAME_BYTES // 2))
+    expected_frames = int(args.duration * SAMPLE_RATE_HZ / FRAME_SAMPLES)
     if stats.frames_received < expected_frames * 0.95:
         _LOG.warning(
             "received %d/%d expected frames (%.0f%%) — UDP loss?",

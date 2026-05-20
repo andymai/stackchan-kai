@@ -87,16 +87,14 @@ def write_wav(pcm: bytes, path: str) -> None:
 
     Refuses to write an empty buffer — that's a sign the recorder
     didn't receive anything (firmware off, wrong port, firewall) and
-    silently emitting a zero-byte WAV would mask the failure.
+    silently emitting a zero-byte WAV would mask the failure. The
+    empty guard runs *after* the odd-length truncation so a 1-byte
+    input (which becomes empty after truncation) raises the same
+    error a 0-byte input does.
     """
+    pcm = _trim_to_whole_samples(pcm)
     if not pcm:
         raise ValueError("refusing to write empty WAV — no audio captured")
-    if len(pcm) % SAMPLE_WIDTH_BYTES != 0:
-        # Truncate to the last whole sample. A partial trailing byte
-        # could only show up if a frame arrived torn (theoretically
-        # impossible over UDP since each datagram is atomic, but the
-        # guard makes the invariant explicit for future readers).
-        pcm = pcm[: len(pcm) - (len(pcm) % SAMPLE_WIDTH_BYTES)]
     with wave.open(path, "wb") as out:
         out.setnchannels(CHANNELS)
         out.setsampwidth(SAMPLE_WIDTH_BYTES)
@@ -107,6 +105,7 @@ def write_wav(pcm: bytes, path: str) -> None:
 def write_wav_to_bytes(pcm: bytes) -> bytes:
     """In-memory counterpart of [`write_wav`] for tests that want to
     inspect the produced header without touching the filesystem."""
+    pcm = _trim_to_whole_samples(pcm)
     if not pcm:
         raise ValueError("refusing to write empty WAV — no audio captured")
     buf = io.BytesIO()
@@ -116,6 +115,16 @@ def write_wav_to_bytes(pcm: bytes) -> bytes:
         out.setframerate(SAMPLE_RATE_HZ)
         out.writeframes(pcm)
     return buf.getvalue()
+
+
+def _trim_to_whole_samples(pcm: bytes) -> bytes:
+    """Drop a trailing partial-sample byte if one slipped in. UDP
+    datagrams are atomic so a torn frame is impossible in practice,
+    but the explicit truncation here lets callers (or tests with
+    hand-crafted inputs) get a clean error instead of a corrupt WAV.
+    """
+    extra = len(pcm) % SAMPLE_WIDTH_BYTES
+    return pcm if extra == 0 else pcm[: len(pcm) - extra]
 
 
 def silence_pcm(seconds: float) -> bytes:
@@ -155,7 +164,12 @@ def record(
         start = time.monotonic()
         while time.monotonic() < deadline:
             try:
-                payload, _addr = sock.recvfrom(4096)
+                # 65535 = max UDP payload. A smaller buffer would
+                # silently truncate any stray oversized datagram to
+                # exactly the buffer size, which would mislead
+                # diagnostics (stats.unexpected_sizes would all read
+                # the buffer size instead of the real payload).
+                payload, _addr = sock.recvfrom(65535)
             except TimeoutError:
                 continue
             accumulate_frame(pcm, payload, stats)

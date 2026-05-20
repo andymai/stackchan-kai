@@ -133,6 +133,13 @@ class TestWavWriter:
         with wave.open(str(path), "rb") as r:
             assert r.getnframes() == 1
 
+    def test_single_partial_byte_refuses(self, tmp_path: Path) -> None:
+        # 1 byte = no whole samples after truncation. The empty-after-
+        # truncation case should raise the same error a 0-byte input
+        # does, not silently emit a zero-frame WAV.
+        with pytest.raises(ValueError, match="empty"):
+            write_wav(b"\x7f", str(tmp_path / "out.wav"))
+
 
 class TestSilenceHelper:
     def test_zero_duration_returns_empty(self) -> None:
