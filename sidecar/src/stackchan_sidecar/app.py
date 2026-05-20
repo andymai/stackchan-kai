@@ -123,9 +123,17 @@ def create_app(
         # which one a request will use when no X-Persona-Name header is
         # set. Operator-facing — lets a curl-based introspector see
         # what's deployed without grepping the filesystem.
+        #
+        # `default_deployed` distinguishes a healthy install from a
+        # misconfig where `settings.persona` names a slug that isn't
+        # on disk: in that case the next no-header request would 500.
+        # A caller can check this flag to fail fast rather than wait
+        # for the first /v1/listen to surface the problem.
+        deployed = list_personas(settings.personas_dir)
         return {
             "default": settings.persona,
-            "personas": list_personas(settings.personas_dir),
+            "default_deployed": settings.persona in deployed,
+            "personas": deployed,
         }
 
     @app.post("/v1/listen", dependencies=[Depends(verify_bearer)])

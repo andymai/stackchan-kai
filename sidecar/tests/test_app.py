@@ -40,8 +40,37 @@ def test_list_personas_returns_default_plus_catalogue(
     body = r.json()
     assert body == {
         "default": "stack-chan",
+        "default_deployed": True,
         "personas": ["desk-buddy", "stack-chan"],
     }
+
+
+def test_list_personas_flags_undeployed_default(
+    tmp_path: Path,
+    fake_stt: FakeSTT,
+    fake_llm: FakeLLM,
+) -> None:
+    # Misconfigured sidecar: settings.persona names a slug that isn't
+    # on disk. The next no-header /v1/listen would 500, but a caller
+    # polling /v1/personas can detect the problem upfront via the
+    # default_deployed flag.
+    misconfigured = tmp_path / "misconfigured"
+    misconfigured.mkdir()
+    (misconfigured / "desk-buddy.md").write_text("Quiet.", encoding="utf-8")
+    settings = Settings(
+        SIDECAR_BEARER_TOKEN=TEST_TOKEN,
+        ANTHROPIC_API_KEY="sk-ant-test",
+        personas_dir=misconfigured,
+        persona="missing-default",
+    )
+    app = create_app(settings, fake_stt, fake_llm)
+    with TestClient(app) as c:
+        r = c.get("/v1/personas")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["default"] == "missing-default"
+    assert body["default_deployed"] is False
+    assert body["personas"] == ["desk-buddy"]
 
 
 def test_list_personas_no_auth_required(
