@@ -67,15 +67,11 @@ def _validate_slug(name: str) -> None:
     if not name:
         raise ValueError("persona name must be non-empty")
     if len(name.encode("utf-8")) > _PERSONA_NAME_MAX_BYTES:
-        raise ValueError(
-            f"persona name exceeds {_PERSONA_NAME_MAX_BYTES} bytes"
-        )
+        raise ValueError(f"persona name exceeds {_PERSONA_NAME_MAX_BYTES} bytes")
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in name):
         raise ValueError("persona name contains a control character")
     if "/" in name or "\\" in name or ".." in name:
-        raise ValueError(
-            "persona name contains a path separator or traversal token"
-        )
+        raise ValueError("persona name contains a path separator or traversal token")
 
 
 def _strip_frontmatter(text: str) -> str:

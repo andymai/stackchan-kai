@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
+from .audio_cache import AudioCache
 from .auth import make_verifier
 from .companion import register_companion
 from .config import Settings
@@ -23,6 +24,7 @@ from .retry import StageDeadlineError, retry_with_timeout
 from .session_status import SessionStatus
 from .session_store import SessionStore, Turn, session_store_lifespan
 from .stt import STTProvider
+from .tts import TTSError, TTSProvider
 
 _LOG = logging.getLogger("stackchan_sidecar")
 _MAX_BODY_BYTES = 30 * 16000 * 2 + 1024
@@ -96,8 +98,22 @@ def create_app(
     stt: STTProvider,
     llm: LLMProvider,
     session_store: SessionStore | None = None,
+    tts: TTSProvider | None = None,
+    audio_cache: AudioCache | None = None,
 ) -> FastAPI:
     store = session_store if session_store is not None else SessionStore()
+    # `tts is None` → no synthesis; the listen path returns
+    # `audio_url: null` and the firmware silently skips the audio
+    # fetch. Lets a deployment that just wants STT + LLM (existing
+    # behaviour) skip pulling the TTS subpackage at all.
+    cache = (
+        audio_cache
+        if audio_cache is not None
+        else AudioCache(
+            ttl_seconds=settings.tts_audio_ttl_seconds,
+            capacity=settings.tts_audio_cache_capacity,
+        )
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -116,6 +132,34 @@ def create_app(
             "status": "ok",
             "providers": {"stt": "ready", "llm": "ready"},
         }
+
+    @app.get("/v1/audio/{token}")
+    async def audio_endpoint(token: str) -> Response:
+        # Streams the cached PCM the firmware fetches after a /v1/listen
+        # reply. Tokens are opaque per-request handles minted in the
+        # listen path; the cache holds entries for `tts_audio_ttl_seconds`
+        # (default 60 s). A miss could mean unknown token (operator
+        # error) or expired entry (firmware took too long to fetch);
+        # both surface as 404 since the firmware's recovery is identical
+        # in either case.
+        entry = await cache.get(token)
+        if entry is None:
+            return Response(
+                content="audio token unknown or expired\n",
+                status_code=404,
+                media_type="text/plain",
+            )
+        # PCM is binary; Content-Type matches what the firmware sends
+        # *to* the sidecar so the two halves of the audio link
+        # symmetrically advertise their format.
+        return Response(
+            content=entry.pcm,
+            media_type="audio/L16;rate=16000;channels=1",
+            headers={
+                "X-Audio-Provider": entry.provider,
+                "X-Audio-Voice": entry.voice,
+            },
+        )
 
     @app.get("/v1/personas")
     async def personas_endpoint() -> dict[str, object]:
@@ -355,6 +399,59 @@ def create_app(
             Turn(user=transcript, assistant=reply.full, emotion=emotion),
         )
 
+        # Synthesise the *short* reply (toast-band-sized) rather than
+        # the longer `reply.full`. The firmware plays what the avatar
+        # would "say" — `full` is more like an internal monologue
+        # carried for session memory only.
+        #
+        # On any TTS failure we degrade gracefully: text + emotion
+        # still ship, `audio_url` is null, the firmware skips the
+        # audio fetch and the toast band shows the reply as it does
+        # today. The TTSError is logged with stage so an operator
+        # can diagnose without taking down the reply path.
+        audio_url: str | None = None
+        if tts is not None:
+            t_tts0 = time.perf_counter()
+            try:
+                result = await tts.synthesize(short)
+                token = await cache.put(
+                    result.pcm,
+                    provider=result.provider,
+                    voice=result.voice,
+                )
+                audio_url = f"/v1/audio/{token}"
+                tts_ms = int((time.perf_counter() - t_tts0) * 1000)
+                _LOG.info(
+                    "listen.tts.ok",
+                    extra={
+                        "request_id": request_id,
+                        "session_id": session_id,
+                        "tts_provider": result.provider,
+                        "tts_voice": result.voice,
+                        "tts_ms": tts_ms,
+                        "audio_duration_s": result.duration_seconds,
+                    },
+                )
+            except TTSError as exc:
+                _LOG.warning(
+                    "listen.tts.fail",
+                    extra={
+                        "request_id": request_id,
+                        "session_id": session_id,
+                        "tts_stage": exc.stage,
+                        "tts_detail": exc.detail,
+                    },
+                )
+            except Exception:
+                # Catch-all for unexpected provider blowups (httpx
+                # client errors, dependency import failures, etc.).
+                # Logged with stack but still degrades to no-audio
+                # so a buggy provider doesn't take down /v1/listen.
+                _LOG.exception(
+                    "listen.tts.unexpected",
+                    extra={"request_id": request_id, "session_id": session_id},
+                )
+
         session_status.mark_done(
             request_id=request_id,
             session_id=session_id,
@@ -374,10 +471,11 @@ def create_app(
                 "emotion": emotion.value,
                 "text_len": len(short),
                 "text_short": short,
+                "audio_url": audio_url,
                 "status": 200,
             },
         )
 
-        return JSONResponse({"text": short, "emotion": emotion.value})
+        return JSONResponse({"text": short, "emotion": emotion.value, "audio_url": audio_url})
 
     return app

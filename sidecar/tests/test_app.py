@@ -101,7 +101,9 @@ def test_listen_happy_path(
     )
     assert r.status_code == 200
     body = r.json()
-    assert body == {"text": "hi friend!", "emotion": "happy"}
+    # `audio_url: None` because no TTS provider is wired into the
+    # default `client` fixture. Per-TTS coverage in test_tts_app.
+    assert body == {"text": "hi friend!", "emotion": "happy", "audio_url": None}
     assert len(fake_stt.calls) == 1
     assert fake_stt.calls[0][1] == 16000
     assert len(fake_llm.calls) == 1
