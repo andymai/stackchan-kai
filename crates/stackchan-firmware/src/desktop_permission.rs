@@ -39,7 +39,7 @@ use stackchan_desktop_protocol::{Decision, Inbound, Outbound, Snapshot};
 
 use crate::ble::desktop::{DESKTOP_INBOUND, DESKTOP_OUTBOUND};
 use crate::clock::HalClock;
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 use crate::net::snapshot;
 use crate::sleep;
 use crate::toast::{self, ToastLevel};
@@ -336,7 +336,7 @@ fn expire_stale(state: &mut State) {
 /// Enqueue a non-verbal SFX through the same path the rest of the
 /// firmware uses for confirmation tones.
 fn queue_phrase(phrase: PhraseId) {
-    REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::Speak {
+    enqueue_remote_command(RemoteCommand::Speak {
         phrase,
         locale: Locale::En,
         priority: Priority::Normal,

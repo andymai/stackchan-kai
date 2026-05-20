@@ -33,7 +33,7 @@
 //!    characteristics for emotion, look-at, reset, and speak. Each
 //!    write decodes a fixed-length payload via
 //!    [`stackchan_net::ble_command`] and signals
-//!    [`crate::net::http::REMOTE_COMMAND_SIGNAL`], the same channel
+//!    [`crate::net::http::REMOTE_COMMAND_QUEUE`], the same channel
 //!    the HTTP control plane drives.
 //! 7. **View service** (`8a1c0040-…`) — display + capture
 //!    triggers. Camera-mode flag (`8a1c0041-…`, `read + write +
@@ -106,7 +106,7 @@ use super::desktop::{DESKTOP_OUTBOUND, DesktopSession};
 
 use crate::audio::AudioPersistOutcome;
 use crate::camera::CAMERA_MODE_SIGNAL;
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 use crate::net::snapshot;
 use crate::net::wifi::{WIFI_LINK_WATCH, WIFI_RECONFIG, WifiCreds, WifiLinkState};
 use crate::storage::{CONFIG_SNAPSHOT, with_storage};
@@ -693,9 +693,9 @@ enum WriteAction {
     /// Apply a new mute flag via [`crate::audio::persist_mute`].
     Mute(bool),
     /// Forward a parsed [`stackchan_core::RemoteCommand`] onto
-    /// [`REMOTE_COMMAND_SIGNAL`] — handles emotion / look-at / reset / speak.
+    /// [`REMOTE_COMMAND_QUEUE`] — handles emotion / look-at / reset / speak.
     Remote(stackchan_core::RemoteCommand),
-    /// Forward a synthesised reset onto [`REMOTE_COMMAND_SIGNAL`].
+    /// Forward a synthesised reset onto [`REMOTE_COMMAND_QUEUE`].
     /// Reset has no decoded payload but needs the same dispatch shape.
     RemoteReset,
     /// Apply a new camera-mode flag via
@@ -1053,11 +1053,11 @@ async fn apply_write_action<P: PacketPool>(
         }
         WriteAction::Remote(cmd) => {
             defmt::info!("ble: remote command {}", defmt::Debug2Format(&cmd));
-            REMOTE_COMMAND_SIGNAL.signal(cmd);
+            enqueue_remote_command(cmd);
         }
         WriteAction::RemoteReset => {
             defmt::info!("ble: remote reset");
-            REMOTE_COMMAND_SIGNAL.signal(stackchan_core::RemoteCommand::Reset);
+            enqueue_remote_command(stackchan_core::RemoteCommand::Reset);
         }
         WriteAction::CameraMode(active) => {
             defmt::info!("ble: camera_mode → {=bool}", active);

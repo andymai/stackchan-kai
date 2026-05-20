@@ -441,7 +441,11 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, ParseError> {
 /// — the Data Length field is a single byte and longer
 /// payloads need fragmentation, which the caller is responsible
 /// for splitting into multiple `build_frame` calls with the
-/// Fragment-follows bit set.
+/// Fragment-follows bit set. Returns
+/// [`BuildError::SubtypeOutOfRange`] when `subtype > 0x3F` —
+/// only six bits are available on the wire, so a higher value
+/// indicates a caller logic bug rather than data the wire could
+/// silently truncate to a different subtype.
 pub fn build_frame(
     frame_type: Type,
     subtype: u8,
@@ -451,7 +455,10 @@ pub fn build_frame(
     if data.len() > u8::MAX as usize {
         return Err(BuildError::DataTooLong);
     }
-    let type_byte = ((subtype & 0b0011_1111) << 2)
+    if subtype > 0x3F {
+        return Err(BuildError::SubtypeOutOfRange);
+    }
+    let type_byte = (subtype << 2)
         | match frame_type {
             Type::Control => 0b00,
             Type::Data => 0b01,
@@ -484,6 +491,9 @@ pub fn build_frame(
 pub enum BuildError {
     /// Data payload exceeds 255 bytes; needs fragmentation.
     DataTooLong,
+    /// `subtype` exceeded the six-bit on-wire range
+    /// (`> 0x3F`). Only the low 6 bits are encodable.
+    SubtypeOutOfRange,
 }
 
 /// CRC16-CCITT over the given bytes.
@@ -660,6 +670,25 @@ mod tests {
         // 255 still fits.
         let edge = [0u8; 255];
         assert!(build_frame(Type::Data, DataSubtype::SendStaPassword as u8, 0, &edge).is_ok());
+    }
+
+    #[test]
+    fn build_frame_rejects_subtype_above_6_bit_range() {
+        // Only 6 bits of the type byte carry the subtype; a caller
+        // passing `0x40` would have its low 6 bits (`0`) silently
+        // emitted as subtype 0 (== Ack/NegotiationData) without
+        // any error. Reject explicitly so the bug surfaces at the
+        // call site, not on the wire.
+        assert_eq!(
+            build_frame(Type::Control, 0x40, 0, &[]),
+            Err(BuildError::SubtypeOutOfRange)
+        );
+        assert_eq!(
+            build_frame(Type::Data, 0xFF, 0, &[]),
+            Err(BuildError::SubtypeOutOfRange)
+        );
+        // The largest legal subtype (`0x3F`) still encodes.
+        assert!(build_frame(Type::Control, 0x3F, 0, &[]).is_ok());
     }
 
     #[test]

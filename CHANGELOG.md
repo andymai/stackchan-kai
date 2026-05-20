@@ -37,9 +37,14 @@ section summarises the milestone work in human terms.
   per-modifier offset tracking.
 - Toast overlay (firmware-only): opt-in via
   `behavior.toast_overlay_enabled`, with a `crate::toast::push` API
-  any task can call to surface a 3-second warn / error band at the
-  bottom of the LCD. Operator-driven verification path exposed at
-  `POST /toast` (`{level, message}`).
+  any task can call to surface a 3-second info / warn / error band
+  at the bottom of the LCD. Operator-driven verification path
+  exposed at `POST /toast` (`{level, message}`) and MCP
+  `push_toast`. The `Info` tier (teal band) is now the home for
+  success surfaces — sidecar replies route here so a successful
+  agent response is visually distinct from a warning or error.
+  Previously the agent-sidecar code wrote `Warn` for both success
+  and failure paths, conflating the two in the band colour.
 - Named one-shot motions: `POST /motion` + MCP `play_motion` route
   the four canonical gestures (`greet` / `nod` / `shake` / `laugh`)
   through the existing dance-player path. Each returns the head to
@@ -307,8 +312,11 @@ section summarises the milestone work in human terms.
   gate is the right place to catch operator-supplied test bodies
   too). New `audio_channels_unsupported` error code. The retry
   classifier narrows from `httpx.HTTPError` to
-  `httpx.TransportError` so URL / protocol misconfiguration
-  surfaces immediately instead of burning the attempt budget.
+  `httpx.NetworkError` so URL / protocol misconfiguration
+  surfaces immediately instead of burning the attempt budget;
+  `SessionStatus` also gains LRU eviction past 64 distinct
+  session_ids so long-running sidecars with rotating session IDs
+  don't accumulate stale snapshots indefinitely.
   Dashboard `StatusBar` collapses its 5 polite `aria-live`
   regions to one wrapper region (concurrent announcers were
   fighting for the screen-reader queue every SSE tick), the
@@ -318,6 +326,68 @@ section summarises the milestone work in human terms.
   jitter (1.5 s → 30 s, ±25%) so N tabs reconnecting after a
   firmware restart fan out instead of synchronising on the
   boundary.
+- `STACKCHAN.RON` parser rejects shadowed fields at every level.
+  Previously the bare RON parser silently last-wins'd on a
+  duplicate key, so a hand-edited file with `psk: "real", psk:
+  "***"` would associate with the second value; the JSON twin
+  already rejected, and the two paths are now in lockstep.
+- `STACKCHAN.RON` parser rejects the redaction sentinel `"***"` on
+  disk for `wifi.psk`, `auth.token`, `esp_now.pmk_hex`,
+  `esp_now.lmk_hex`, and `behavior.agent_sidecar_token`. The
+  sentinel is a "preserve current value" wire marker for the
+  `PUT /settings` merge path — on disk there's nothing to merge
+  against, so a literal `"***"` is almost always operator copy-
+  paste from a redacted `GET /settings` body that forgot to put
+  the real secret back. Fail fast at load with a clear error
+  instead of silently trying to associate Wi-Fi with PSK = `"***"`.
+- `REMOTE_COMMAND_QUEUE` replaces the prior
+  `REMOTE_COMMAND_SIGNAL`. The single-slot `Signal<_, RemoteCommand>`
+  was last-write-wins, so two MCP tools fired within the ~33 ms
+  render-loop drain interval (e.g. `set_emotion` followed
+  immediately by `look_at`) silently dropped the first. ~14
+  producer sites — every operator route, the wake-word task,
+  sidecar `EnterThinking`, mDNS follower, BluFi GATT, ESP-NOW
+  peer-frame consumer, desktop-protocol bridge — funnel through a
+  single shared channel; the rapid-MCP-burst footgun was real.
+  The control-plane queue is now a bounded `Channel<_, RemoteCommand,
+  8>`. The render loop drains all pending entries per tick; on
+  saturation `enqueue_remote_command` logs and drops (drop-newest
+  matches Signal's prior behaviour, producers still never block).
+  No wire-format change.
+- Firmware-side network and audio hardening pass. WebSocket
+  handshake now validates `Connection: Upgrade` (RFC 6455 §4.2.1)
+  and rejects empty `Sec-WebSocket-Key` values at the header
+  layer so the handshake never SHA-1's zero bytes into a
+  deterministic accept. `WIFI_LINK_WATCH` receiver pool gains
+  three slots of headroom (5 → 8) so a sixth consumer doesn't
+  silently disable itself on a `None` receiver branch. Sidecar
+  task gates the first PTT trigger on Wi-Fi being up (instead
+  of capturing a window then bailing post-capture); sidecar
+  HTTP read loop honours `Content-Length` and terminates at the
+  body end — previously every reply paid the 15 s task timeout
+  from any peer that didn't honour `Connection: close`. The
+  reply JSON scanner walks past `\"` and `\\` escapes so a
+  sidecar that quotes a citation in `text` no longer truncates
+  silently at the inner quote, and emotion tagging later in the
+  body no longer goes missing. Wake-word task suppresses repeat
+  mel-buffer overflow logs within one audio frame, and the
+  score-cast site documents the int8-quantisation assumption
+  (a uint8-quantised `.tflite` would silently never fire).
+  `esp-tflite-micro-sys` free path mirrors the allocator's
+  `checked_add` so a corrupt size header leaks the allocation
+  rather than walking it into UB.
+- Input-validation tightening across `stackchan-net` parsers.
+  `blufi::build_frame` rejects `subtype > 0x3F` instead of silently
+  masking the high bits and emitting a different subtype on the
+  wire. `mcp::parse_request` rejects shadowed top-level keys
+  (`jsonrpc`/`id`/`method`/`params`) — closed-schema, matches the
+  existing `parse_*` family. `parse_f32` rejects `NaN` and
+  infinities at the source so `POST /look-at` / `POST /look-at-
+  point` can't push non-finite values into a `Pose` (a wire body
+  like `"1e400"` parses to `+Inf` and clamping can't recover it).
+  `parse_bearer_token` skips `Authorization: Bearer   ` (empty
+  token after scheme) and falls through to the next header
+  instead of returning `Some("")`.
 
 ### Documentation
 

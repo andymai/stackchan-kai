@@ -27,13 +27,14 @@ use esp_radio::wifi::{ClientConfig, ModeConfig, WifiController, WifiEvent};
 
 /// Number of independent receivers the [`WIFI_LINK_WATCH`] supports.
 ///
-/// One slot per active consumer — currently exactly five: SNTP,
-/// mDNS, `agent_sidecar`, `audio_debug`, `BluFi` GATT. Each slot is
-/// cheap (one generation counter), but the pool is *not* over-
-/// provisioned: a sixth subscriber would silently fall through the
-/// `WIFI_LINK_WATCH.receiver()` `None` branch. Bump this constant
-/// when wiring a new consumer.
-pub const WIFI_LINK_WATCH_RECEIVERS: usize = 5;
+/// Active consumers today: SNTP, mDNS, `agent_sidecar`,
+/// `audio_debug`, `BluFi` GATT — five. The pool carries three slots
+/// of headroom so the next consumer wired in doesn't silently fall
+/// through the `WIFI_LINK_WATCH.receiver()` `None` branch and
+/// disable itself with no diagnostic. Each slot is one generation
+/// counter, so the cost of over-provisioning is bytes, not
+/// behaviour. Bump again if the active count ever crosses eight.
+pub const WIFI_LINK_WATCH_RECEIVERS: usize = 8;
 
 /// Public link-state watch — downstream tasks (SNTP, mDNS, …) take a
 /// receiver each and loop on `.changed()` to gate their own work.

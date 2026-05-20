@@ -142,7 +142,18 @@ mod runtime {
         // SAFETY: header slot was written during alloc. Same
         // alignment story as the matching `write_unaligned`.
         let size = unsafe { core::ptr::read_unaligned(header.cast::<usize>()) };
-        let Ok(layout) = Layout::from_size_align(size + HEADER_SIZE, ALIGN) else {
+        // Symmetric `checked_add` with `etms_runtime_alloc` — if
+        // the size header is ever corrupted (out-of-bounds upstream
+        // write, double-free reading garbage), wrapping into a
+        // tiny `Layout` and passing it to `rust_dealloc` would be
+        // UB. Leak the allocation instead; safer than UB. This
+        // crate has no `defmt` link so the silent leak is the
+        // only signal; the firmware-side allocator will surface
+        // the eventual exhaustion if it happens repeatedly.
+        let Some(total) = size.checked_add(HEADER_SIZE) else {
+            return;
+        };
+        let Ok(layout) = Layout::from_size_align(total, ALIGN) else {
             return;
         };
         // SAFETY: `header` + `layout` matches the original allocation.
