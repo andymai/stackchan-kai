@@ -26,10 +26,12 @@ from __future__ import annotations
 
 from .errors import TTSError
 from .espeak import EspeakProvider
+from .piper import PiperProvider
 from .protocol import TTSProvider, TTSResult
 
 __all__ = [
     "EspeakProvider",
+    "PiperProvider",
     "TTSError",
     "TTSProvider",
     "TTSResult",
