@@ -248,12 +248,18 @@ impl defmt::Format for PostError {
 /// `session_id` is the per-device identifier sent as `X-Session-Id`
 /// so the sidecar can scope conversation memory to this physical
 /// unit across requests. Hydrated at boot from `/sd/SESSION.UUID`.
+///
+/// `persona_name` is the operator-configured
+/// `behavior.persona_name`. Empty omits the `X-Persona-Name` header
+/// so the sidecar applies its baked-in default persona — keeps the
+/// wire surface unchanged for installs that don't multiplex personas.
 #[embassy_executor::task]
 pub async fn agent_sidecar_task(
     stack: Stack<'static>,
     sidecar_url: String,
     bearer_token: String,
     session_id: String,
+    persona_name: String,
 ) -> ! {
     if sidecar_url.is_empty() {
         defmt::info!("agent-sidecar: url empty, idle");
@@ -340,6 +346,7 @@ pub async fn agent_sidecar_task(
                 &pcm,
                 &bearer_token,
                 &session_id,
+                &persona_name,
                 &mut rx_buf,
                 &mut tx_buf,
             ),
@@ -492,12 +499,17 @@ const CHUNK_SAMPLES: usize = 512;
 
 /// Single POST round-trip. Opens a fresh socket per request so a
 /// half-closed sidecar doesn't poison subsequent uploads.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct concern (network, endpoint, PCM payload, auth, identity, scratch buffers) that doesn't compose into a natural sub-struct; bundling them would obscure the dispatch shape"
+)]
 async fn post_pcm(
     stack: Stack<'static>,
     endpoint: &SidecarEndpoint,
     pcm: &[i16],
     bearer_token: &str,
     session_id: &str,
+    persona_name: &str,
     rx_buf: &mut [u8; TCP_RX_BYTES],
     tx_buf: &mut [u8; TCP_TX_BYTES],
 ) -> Result<(heapless::String<256>, Option<Emotion>), PostError> {
@@ -541,6 +553,10 @@ async fn post_pcm(
     }
     if !session_id.is_empty() {
         write!(&mut header, "X-Session-Id: {session_id}\r\n")
+            .map_err(|_| PostError::HeaderTooLong)?;
+    }
+    if !persona_name.is_empty() {
+        write!(&mut header, "X-Persona-Name: {persona_name}\r\n")
             .map_err(|_| PostError::HeaderTooLong)?;
     }
     header

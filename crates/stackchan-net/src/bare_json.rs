@@ -304,6 +304,8 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         ",\"wake_word_arena_kib\":{}",
         config.behavior.wake_word_arena_kib
     );
+    out.push(',');
+    push_string_field(&mut out, "persona_name", &config.behavior.persona_name);
     out.push_str("}}");
     Ok(out)
 }
@@ -814,6 +816,7 @@ impl<'a> Parser<'a> {
         let mut wake_word_enabled: Option<bool> = None;
         let mut wake_word_threshold: Option<i8> = None;
         let mut wake_word_arena_kib: Option<u32> = None;
+        let mut persona_name: Option<String> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -908,6 +911,12 @@ impl<'a> Parser<'a> {
                     }
                     wake_word_arena_kib = Some(self.parse_u32()?);
                 }
+                "persona_name" => {
+                    if persona_name.is_some() {
+                        return Err(bare_err("duplicate behavior field", "persona_name"));
+                    }
+                    persona_name = Some(self.parse_string()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -928,6 +937,7 @@ impl<'a> Parser<'a> {
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
             wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
+            persona_name: persona_name.unwrap_or_default(),
         })
     }
 
@@ -1206,6 +1216,7 @@ mod tests {
                 wake_word_enabled: true,
                 wake_word_threshold: 95,
                 wake_word_arena_kib: 96,
+                persona_name: "desk-buddy".to_string(),
             },
         }
     }
@@ -1753,6 +1764,7 @@ mod tests {
                 wake_word_enabled: true,
                 wake_word_threshold: -32,
                 wake_word_arena_kib: 128,
+                persona_name: "desk-buddy".to_string(),
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

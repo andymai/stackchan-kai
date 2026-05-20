@@ -401,6 +401,18 @@ pub struct BehaviorConfig {
     /// operator gets feedback from the HTTP write rather than
     /// discovering a parked task on next reboot.
     pub wake_word_arena_kib: u32,
+    /// Persona slug the firmware advertises to the sidecar via
+    /// `X-Persona-Name` on every `POST /v1/listen`. Empty (the
+    /// default) leaves the header off so the sidecar applies its
+    /// baked-in default persona — keeps the wire surface unchanged
+    /// for installs that don't multiplex personas.
+    ///
+    /// When set, must be a short slug (≤ 64 bytes, ASCII control-free,
+    /// no path separators) so it can't inject extra HTTP headers via
+    /// `\r\n` or pivot to arbitrary files on the sidecar's filesystem.
+    /// The sidecar still validates per-request — this is defence in
+    /// depth at the firmware boundary.
+    pub persona_name: String,
 }
 
 impl Default for BehaviorConfig {
@@ -418,6 +430,7 @@ impl Default for BehaviorConfig {
             wake_word_enabled: false,
             wake_word_threshold: 100,
             wake_word_arena_kib: 64,
+            persona_name: String::new(),
         }
     }
 }
@@ -617,6 +630,7 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
         return Err(ConfigError::InvalidWakeWordArenaKib);
     }
     validate_agent_sidecar_token(&config.behavior.agent_sidecar_token)?;
+    validate_persona_name(&config.behavior.persona_name)?;
     Ok(())
 }
 
@@ -693,6 +707,41 @@ fn validate_agent_sidecar_token(token: &str) -> Result<(), ConfigError> {
     }
     if token.chars().any(|c| c.is_ascii_control()) {
         return Err(ConfigError::AgentSidecarTokenInvalidChars);
+    }
+    Ok(())
+}
+
+/// Max length of a persona slug. 64 bytes is well above typical
+/// kebab-case names (`stack-chan`, `desk-buddy`, etc.) and small
+/// enough that an `X-Persona-Name` header stays well under the
+/// firmware's `HEADER_CAPACITY` budget.
+const PERSONA_NAME_MAX_BYTES: usize = 64;
+
+/// Reject persona slugs that would corrupt the HTTP request or
+/// pivot the sidecar's filesystem lookup.
+///
+/// Empty short-circuits — that's the documented "let the sidecar pick
+/// its default" marker. Otherwise the slug must be:
+/// - ASCII-control-free (no embedded `\r\n` to inject headers)
+/// - free of `/`, `\`, and `..` (no traversal into the sidecar's
+///   `personas/` parent)
+/// - within [`PERSONA_NAME_MAX_BYTES`]
+///
+/// The sidecar still re-validates per-request — this is defence in
+/// depth at the firmware config boundary.
+fn validate_persona_name(name: &str) -> Result<(), ConfigError> {
+    if name.is_empty() {
+        return Ok(());
+    }
+    if name.len() > PERSONA_NAME_MAX_BYTES {
+        return Err(ConfigError::PersonaNameTooLong(name.len()));
+    }
+    if name
+        .chars()
+        .any(|c| c.is_ascii_control() || c == '/' || c == '\\')
+        || name.contains("..")
+    {
+        return Err(ConfigError::PersonaNameInvalidChars);
     }
     Ok(())
 }

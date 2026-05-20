@@ -39,6 +39,7 @@ class ErrorCode(StrEnum):
     LLM_FAILED = "llm_failed"
     LLM_PARSE_FAILED = "llm_parse_failed"
     PERSONA_MISSING = "persona_missing"
+    PERSONA_NAME_INVALID = "persona_name_invalid"
     INTERNAL = "internal"
 
 
@@ -87,6 +88,12 @@ _FAILURES: dict[ErrorCode, FailureKind] = {
     ),
     ErrorCode.PERSONA_MISSING: FailureKind(
         ErrorCode.PERSONA_MISSING, Stage.SYSTEM, "persona missing", Emotion.NEUTRAL
+    ),
+    ErrorCode.PERSONA_NAME_INVALID: FailureKind(
+        ErrorCode.PERSONA_NAME_INVALID,
+        Stage.SYSTEM,
+        "invalid persona name",
+        Emotion.NEUTRAL,
     ),
     ErrorCode.INTERNAL: FailureKind(
         ErrorCode.INTERNAL, Stage.SYSTEM, "internal error", Emotion.NEUTRAL

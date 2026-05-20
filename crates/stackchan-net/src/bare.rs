@@ -177,6 +177,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        wake_word_arena_kib: {},",
         config.behavior.wake_word_arena_kib
     );
+    push_field(
+        &mut out,
+        "        persona_name",
+        &config.behavior.persona_name,
+    );
     out.push_str("    ),\n");
 
     out.push_str(")\n");
@@ -687,6 +692,7 @@ impl<'a> Parser<'a> {
         let mut wake_word_enabled: Option<bool> = None;
         let mut wake_word_threshold: Option<i8> = None;
         let mut wake_word_arena_kib: Option<u32> = None;
+        let mut persona_name: Option<String> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -781,6 +787,12 @@ impl<'a> Parser<'a> {
                     }
                     wake_word_arena_kib = Some(self.parse_u32()?);
                 }
+                "persona_name" => {
+                    if persona_name.is_some() {
+                        return Err(bare_err("duplicate behavior field", "persona_name"));
+                    }
+                    persona_name = Some(self.parse_string()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -801,6 +813,7 @@ impl<'a> Parser<'a> {
             wake_word_enabled: wake_word_enabled.unwrap_or(false),
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
             wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
+            persona_name: persona_name.unwrap_or_default(),
         })
     }
 

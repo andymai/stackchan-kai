@@ -763,8 +763,8 @@ async fn handle_get_settings_backup(socket: &mut TcpSocket<'_>) -> Result<(), Ht
 /// - `behavior.hourly_chime_enabled` (chime task arg at spawn)
 /// - `behavior.auto_torque_release_ms` (head task reads once at boot)
 /// - `behavior.audio_debug_udp_target` (`audio_debug` task arg at spawn)
-/// - `behavior.agent_sidecar_url` / `agent_sidecar_token` (agent
-///   sidecar task args at spawn)
+/// - `behavior.agent_sidecar_url` / `agent_sidecar_token` /
+///   `persona_name` (agent sidecar task args at spawn)
 /// - `behavior.follower_leader_hostname` (follower task arg at spawn)
 ///
 /// Future work that wants any of these to apply live needs both a
@@ -795,6 +795,7 @@ fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) ->
         || b_prev.agent_sidecar_url != b_new.agent_sidecar_url
         || b_prev.agent_sidecar_token != b_new.agent_sidecar_token
         || b_prev.follower_leader_hostname != b_new.follower_leader_hostname
+        || b_prev.persona_name != b_new.persona_name
     {
         return true;
     }
