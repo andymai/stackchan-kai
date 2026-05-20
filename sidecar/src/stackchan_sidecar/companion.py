@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .session_status import SessionStatus, snapshot_to_dict
+from .session_status import SessionStatus, Snapshot, snapshot_to_dict
 
 _LOG = logging.getLogger("stackchan_sidecar.companion")
 
@@ -114,21 +114,22 @@ def register_companion(app: FastAPI, settings: Settings) -> None:
         status: SessionStatus | None = getattr(request.app.state, "session_status", None)
         if status is None:
             raise HTTPException(status_code=503, detail="session-status not initialised")
+        # Optional `?session_id=<id>` filter: subscribers in a
+        # multi-unit deployment can pin to one device's view. When
+        # absent the stream emits the most-recently-updated session,
+        # matching the single-unit shape the companion app was
+        # built for.
+        session_id = request.query_params.get("session_id")
 
         async def stream() -> AsyncIterator[bytes]:
-            # Initial frame so a fresh subscriber paints the right state
-            # without waiting for the next transition.
-            yield _format_status(status.get())
-            # Short timeout keeps us responsive to client disconnects on
-            # ASGI servers that don't immediately cancel the generator;
-            # also acts as the SSE keepalive heartbeat for proxies.
+            yield _format_status(status.get(session_id))
             while not await request.is_disconnected():
                 try:
                     await asyncio.wait_for(status.changed(), timeout=2.0)
                 except TimeoutError:
                     yield b": keepalive\n\n"
                     continue
-                yield _format_status(status.get())
+                yield _format_status(status.get(session_id))
 
         return StreamingResponse(
             stream(),
@@ -192,9 +193,7 @@ def register_companion(app: FastAPI, settings: Settings) -> None:
 
 
 def _format_status(snapshot: object) -> bytes:
-    # `SessionStatus.get()` returns a frozen dataclass; reuse the helper
-    # so the wire shape stays the test-asserted one.
-    from .session_status import Snapshot
-
+    # `SessionStatus.get()` returns a frozen dataclass; reuse the
+    # helper so the wire shape stays the test-asserted one.
     payload = snapshot_to_dict(snapshot) if isinstance(snapshot, Snapshot) else {}
     return b"data: " + json.dumps(payload, separators=(",", ":")).encode() + b"\n\n"
