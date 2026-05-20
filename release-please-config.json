@@ -11,6 +11,18 @@
     "crates/stackchan-sim": {
       "package-name": "stackchan-sim"
     },
+    "crates/stackchan-audio-features": {
+      "package-name": "stackchan-audio-features"
+    },
+    "crates/stackchan-desktop-protocol": {
+      "package-name": "stackchan-desktop-protocol"
+    },
+    "crates/stackchan-net": {
+      "package-name": "stackchan-net"
+    },
+    "crates/stackchan-tts": {
+      "package-name": "stackchan-tts"
+    },
     "crates/axp2101": {
       "package-name": "axp2101"
     },
@@ -26,6 +38,9 @@
     "crates/bmi270": {
       "package-name": "bmi270"
     },
+    "crates/bmm150": {
+      "package-name": "bmm150"
+    },
     "crates/es7210": {
       "package-name": "es7210"
     },
@@ -40,6 +55,9 @@
     },
     "crates/ltr553": {
       "package-name": "ltr553"
+    },
+    "crates/py32": {
+      "package-name": "py32"
     },
     "crates/scservo": {
       "package-name": "scservo"
