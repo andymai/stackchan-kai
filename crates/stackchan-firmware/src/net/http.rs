@@ -1625,6 +1625,40 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 tool_parse_detail(&e),
             ),
         },
+        "clear_crash" => {
+            let outcome =
+                crate::storage::with_storage(crate::storage::FirmwareStorage::delete_crash).await;
+            match outcome {
+                Some(Ok(())) => render_success(id, &render_tool_text_result("crash log cleared")),
+                Some(Err(e)) => {
+                    defmt::warn!("mcp: clear_crash failed ({})", defmt::Debug2Format(&e));
+                    render_error(
+                        Some(id),
+                        JsonRpcErrorCode::InternalError,
+                        "crash log delete failed",
+                    )
+                }
+                None => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InternalError,
+                    "no SD card mounted",
+                ),
+            }
+        }
+        "play_dance" => match stackchan_net::dance::parse_dance(arguments) {
+            Ok(script) => {
+                use alloc::sync::Arc;
+                let frames = script.keyframes.len();
+                DANCE_SCRIPT_SIGNAL.signal(Arc::new(script));
+                defmt::info!("mcp: play_dance → {=usize} keyframes loaded", frames);
+                render_success(id, &render_tool_text_result("dance script enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
     }
 }
