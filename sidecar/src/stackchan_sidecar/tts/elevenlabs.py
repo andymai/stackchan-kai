@@ -1,25 +1,10 @@
 """ElevenLabs TTS provider.
 
-ElevenLabs is the cloud quality opt-in — a paid API call per
-synthesis, but produces voices indistinguishable from human
-recordings. Setup requires:
-
-1. An ``xi-api-key`` from elevenlabs.io.
-2. A voice id (``settings.elevenlabs_voice_id``) — either a built-in
-   like Rachel (``21m00Tcm4TlvDq8ikWAM``) or one cloned by the
-   operator.
-3. The Starter tier or higher; the free tier only emits MP3, and
-   this provider asks for raw PCM at 16 kHz so the firmware audio
-   pipeline doesn't need an MP3 decoder.
-
-If any of those are missing, [`synthesize`] raises [`TTSError`] with
-stage ``"setup"`` (api-key) or ``"synthesize"`` (HTTP 4xx/5xx) so
-the operator gets a clear log rather than a runtime guess about
-the failure.
-
-The endpoint returns raw 16 kHz mono s16 LE PCM directly — no WAV
-header, no transcode, no resample. That's the same wire shape the
-firmware audio cache stores, so we hand it through unchanged.
+Setup needs an ``xi-api-key``, a ``voice_id``, and a Starter-tier or
+higher account — the free tier only emits MP3, and this provider
+requests raw ``pcm_16000`` so the firmware audio pipeline doesn't
+need an MP3 decoder. The endpoint returns the wire-shape PCM
+unchanged.
 """
 
 from __future__ import annotations
@@ -34,17 +19,14 @@ from .protocol import PCM_SAMPLE_RATE_HZ, TTSResult
 _LOG = logging.getLogger("stackchan_sidecar.tts.elevenlabs")
 
 _ENDPOINT_TEMPLATE = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-# `eleven_turbo_v2_5` is the latency-optimised model — ~70 % cheaper
-# than the multilingual flagship and fast enough for a desk toy.
-# Operators can swap it for `eleven_multilingual_v2` if they need
+# Latency-optimised model. Swap for `eleven_multilingual_v2` for
 # non-English voices.
 _DEFAULT_MODEL = "eleven_turbo_v2_5"
 _DEFAULT_TIMEOUT_S = 30.0
 
 
 class ElevenLabsProvider:
-    """Provider that POSTs to ElevenLabs' text-to-speech REST endpoint
-    and asks for raw 16 kHz mono s16 LE PCM in the response body."""
+    """POSTs to ElevenLabs and asks for raw 16 kHz mono s16 LE PCM."""
 
     name: str = "elevenlabs"
 

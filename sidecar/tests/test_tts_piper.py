@@ -69,7 +69,7 @@ async def test_subprocess_failure_surfaces_as_synthesize_error(
     def fake_run(*_a: Any, **_kw: Any) -> subprocess.CompletedProcess[str]:
         raise subprocess.CalledProcessError(returncode=1, cmd=["piper"], stderr="model load failed")
 
-    monkeypatch.setattr("stackchan_sidecar.tts.piper.subprocess.run", fake_run)
+    monkeypatch.setattr("stackchan_sidecar.tts._audio.subprocess.run", fake_run)
     with pytest.raises(TTSError) as exc_info:
         await PiperProvider(model_path=fake_model).synthesize("hello")
     assert exc_info.value.stage == "synthesize"
@@ -87,7 +87,7 @@ async def test_subprocess_timeout_surfaces_as_synthesize_error(
     def fake_run(*_a: Any, **_kw: Any) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(cmd="piper", timeout=30.0)
 
-    monkeypatch.setattr("stackchan_sidecar.tts.piper.subprocess.run", fake_run)
+    monkeypatch.setattr("stackchan_sidecar.tts._audio.subprocess.run", fake_run)
     with pytest.raises(TTSError) as exc_info:
         await PiperProvider(model_path=fake_model).synthesize("hello")
     assert exc_info.value.stage == "synthesize"
@@ -111,7 +111,7 @@ async def test_speaker_id_passes_through_to_subprocess(
         # to read back).
         raise subprocess.CalledProcessError(returncode=0, cmd=args, stderr="")
 
-    monkeypatch.setattr("stackchan_sidecar.tts.piper.subprocess.run", fake_run)
+    monkeypatch.setattr("stackchan_sidecar.tts._audio.subprocess.run", fake_run)
     with pytest.raises(TTSError):
         await PiperProvider(model_path=fake_model, speaker_id=3).synthesize("hi")
     assert captured_args, "subprocess.run should have been called"

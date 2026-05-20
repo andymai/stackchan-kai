@@ -92,7 +92,7 @@ def test_audio_endpoint_returns_cached_pcm(
         headers={**auth_headers, "Content-Type": _AUDIO_CT},
     )
     audio_url = r.json()["audio_url"]
-    audio_r = tts_client.get(audio_url)
+    audio_r = tts_client.get(audio_url, headers=auth_headers)
     assert audio_r.status_code == 200
     assert audio_r.content == fake_tts.pcm
     # Format header signals the firmware can stream straight in.
@@ -101,9 +101,18 @@ def test_audio_endpoint_returns_cached_pcm(
     assert audio_r.headers["x-audio-voice"] == "fake-voice"
 
 
-def test_audio_endpoint_404s_for_unknown_token(tts_client: TestClient) -> None:
-    r = tts_client.get("/v1/audio/deadbeefdeadbeefdeadbeefdeadbeef")
+def test_audio_endpoint_404s_for_unknown_token(
+    tts_client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = tts_client.get("/v1/audio/deadbeefdeadbeefdeadbeefdeadbeef", headers=auth_headers)
     assert r.status_code == 404
+
+
+def test_audio_endpoint_401s_without_bearer(tts_client: TestClient) -> None:
+    # /v1/audio is a state-bearing endpoint; tokens have 128 bits of
+    # entropy but defense-in-depth still applies on a trusted LAN.
+    r = tts_client.get("/v1/audio/deadbeefdeadbeefdeadbeefdeadbeef")
+    assert r.status_code == 401
 
 
 def test_audio_endpoint_404s_after_ttl_expiry(
@@ -131,10 +140,10 @@ def test_audio_endpoint_404s_after_ttl_expiry(
         )
         audio_url = r.json()["audio_url"]
         # Immediate fetch hits.
-        assert c.get(audio_url).status_code == 200
+        assert c.get(audio_url, headers=auth_headers).status_code == 200
         # Past TTL — eviction on next access returns 404.
         now[0] += 10.0
-        assert c.get(audio_url).status_code == 404
+        assert c.get(audio_url, headers=auth_headers).status_code == 404
 
 
 def test_listen_null_audio_url_when_tts_fails(
