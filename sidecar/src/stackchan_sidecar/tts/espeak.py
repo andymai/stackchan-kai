@@ -123,6 +123,14 @@ class EspeakProvider:
                 f"espeak-ng WAV width {width} != expected {PCM_SAMPLE_WIDTH_BYTES}",
             )
         pcm = self._resample_and_downmix(frames, src_rate, channels)
+        if not pcm:
+            # The resampler returns empty for pathological inputs
+            # (e.g. one source sample at a rate that rounds down to
+            # < 1 destination sample). Catch it here so the audio
+            # cache never holds a zero-byte entry; the firmware
+            # would otherwise receive a 200 + empty body and have to
+            # invent its own "is this really audio?" check.
+            raise TTSError("transcode", "resampled audio is empty")
         _LOG.debug(
             "espeak-ng synthesized %d bytes (src_rate=%d, channels=%d)",
             len(pcm),

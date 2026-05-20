@@ -8,6 +8,7 @@ plus the failure paths.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,7 +18,7 @@ from stackchan_sidecar.audio_cache import AudioCache
 from stackchan_sidecar.config import Settings
 from stackchan_sidecar.tts import TTSError, TTSResult
 
-from .conftest import TEST_TOKEN, FakeLLM, FakeSTT
+from .conftest import FakeLLM, FakeSTT
 
 _AUDIO_CT = "audio/L16;rate=16000;channels=1"
 
@@ -177,42 +178,34 @@ def test_listen_null_audio_url_when_tts_provider_unset(
 
 
 def test_listen_null_audio_url_when_tts_raises_unexpected(
-    tts_client: TestClient,
+    personas_dir: Path,
+    settings: Settings,
+    fake_stt: FakeSTT,
+    fake_llm: FakeLLM,
     auth_headers: dict[str, str],
     pcm_payload: bytes,
-    fake_tts: FakeTTS,
 ) -> None:
     # A bug in the provider (RuntimeError, ImportError, etc.) must
     # not take down the reply path — the catch-all logs but degrades
     # to no-audio.
+    #
+    # `personas_dir` + `settings` fixtures come from conftest and use
+    # tmp_path under the hood, so this test doesn't touch the cwd's
+    # `./personas/` directory or leave artifacts behind.
+    _ = personas_dir  # consumed implicitly via settings.personas_dir
+
     class _Boom:
         name = "boom"
 
         async def synthesize(self, text: str) -> TTSResult:
             raise RuntimeError("unexpected")
 
-    settings = Settings(SIDECAR_BEARER_TOKEN=TEST_TOKEN, ANTHROPIC_API_KEY="sk-ant-test")
-    app = create_app(
-        settings,
-        FakeSTT(),
-        FakeLLM(),
-        tts=_Boom(),
-    )
-    # Drop a persona so the listen path doesn't 500 on missing default.
-    settings.personas_dir.mkdir(exist_ok=True)
-    persona_path = settings.personas_dir / f"{settings.persona}.md"
-    if not persona_path.exists():
-        persona_path.write_text("---\n---\nfallback", encoding="utf-8")
-    try:
-        with TestClient(app) as c:
-            r = c.post(
-                "/v1/listen",
-                content=pcm_payload,
-                headers={**auth_headers, "Content-Type": _AUDIO_CT},
-            )
-        assert r.status_code == 200
-        assert r.json()["audio_url"] is None
-    finally:
-        # Clean up the persona file we maybe just created.
-        if persona_path.exists() and persona_path.read_text(encoding="utf-8").strip() == "fallback":
-            persona_path.unlink()
+    app = create_app(settings, fake_stt, fake_llm, tts=_Boom())
+    with TestClient(app) as c:
+        r = c.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={**auth_headers, "Content-Type": _AUDIO_CT},
+        )
+    assert r.status_code == 200
+    assert r.json()["audio_url"] is None
