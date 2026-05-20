@@ -29,15 +29,23 @@ underlying audio capture path, see [UDP audio debug](audio-debug.md).
    plain HTTP/1.1. The ear fades and a thought-bubble appears at
    the upper-right while the request is in flight.
 4. **Reply** — the sidecar responds with `{"text": "...", "emotion":
-   "..."}`. The thought-bubble fades, the avatar's emotion mirrors
-   the tag, and the reply text scrolls in the toast band beneath
-   the face.
+   "...", "audio_url": "..."}`. The thought-bubble fades, the
+   avatar's emotion mirrors the tag, and the reply text scrolls in
+   the toast band beneath the face.
+5. **Speak (optional)** — if the sidecar synthesised TTS, the
+   firmware fetches the audio URL and plays the reply through the
+   AW88298 amp. Audio is fetched lazily *after* the text + emotion
+   surface, so a slow cloud TTS provider never delays the visible
+   reply.
 
 If the sidecar fails or times out, the thought-bubble fades, the
 face flips to Sad for ~2.5 s, and a warn-class toast (`sidecar:
 post failed`, `sidecar: timed out`, `sidecar: link down`) explains
 what happened. The avatar returns to autonomous behavior after the
-hold expires.
+hold expires. If text + emotion shipped but the audio fetch failed,
+the avatar plays no audio and the failure stays log-only — the
+visible reply is already on screen and "missing voice" doesn't
+warrant a face-level Sad beat.
 
 ## Prerequisites
 
@@ -116,6 +124,53 @@ firmware reflash, or a future mid-runtime swap) gets a clean
 slate for the new voice — the old voice's history stays
 addressable under its own bucket until TTL expires.
 
+## Pick a TTS provider (optional)
+
+Without TTS configured, the sidecar still ships text + emotion and
+the firmware renders them on the toast band. Adding a TTS provider
+makes the avatar actually *speak* the reply over the AW88298. All
+providers emit raw 16 kHz mono s16 LE PCM, cached behind a
+short-lived `/v1/audio/<token>` URL the firmware fetches lazily
+after the reply text surfaces.
+
+Set `tts_provider` in the sidecar's `.env`:
+
+| Provider | Setup cost | Voice quality | Per-call cost |
+|---|---|---|---|
+| `espeak_ng` *(default)* | Install `espeak-ng` binary (`apt install espeak-ng` / `brew install espeak`). No model file, no API key. | Robotic — intentionally so. The desk-toy aesthetic. | Free, local. |
+| `piper` | Install `piper` binary + download an ONNX voice model + JSON metadata. ~50 MB per voice. | Competent neural. The middle option — much clearer than espeak-ng without an API bill. | Free, local. |
+| `elevenlabs` | Set `ELEVENLABS_API_KEY` + (optionally) `elevenlabs_voice_id`. **Requires the Starter tier ($5/mo) or higher** — the free tier returns MP3 only, and the sidecar asks for raw PCM at 16 kHz so the firmware skips an MP3 decoder. | Human-grade. Indistinguishable from a recording. | Cloud API; per-character billing. |
+
+Example `.env`:
+
+```sh
+# espeak-ng (default) — robot voice, zero setup
+SIDECAR_BEARER_TOKEN=...
+ANTHROPIC_API_KEY=...
+tts_provider=espeak_ng
+
+# OR: piper — local neural
+tts_provider=piper
+piper_model_path=/home/operator/piper-voices/en_US-libritts_r-medium.onnx
+piper_speaker_id=0   # optional, for multi-speaker models
+
+# OR: elevenlabs — cloud neural
+tts_provider=elevenlabs
+ELEVENLABS_API_KEY=sk_...
+elevenlabs_voice_id=21m00Tcm4TlvDq8ikWAM   # default: Rachel
+elevenlabs_model_id=eleven_turbo_v2_5      # default: latency-optimised
+```
+
+The sidecar refuses to start on misconfig — e.g. `tts_provider=piper`
+with no `piper_model_path`, or `tts_provider=elevenlabs` with no
+api key — so a typo doesn't silently fall back to text-only.
+
+If TTS fails per request (synthesis exception, ElevenLabs returns
+401, piper binary missing), the sidecar still ships text + emotion
+with `audio_url: null`. The firmware sees the null, skips the fetch
+step, and the reply appears on screen with no audio. Watch the
+sidecar logs for `TTSError(stage="...")` to diagnose.
+
 ## Enable the wake word (optional)
 
 Wake-word detection is local-only — microWakeWord v2 streaming
@@ -134,6 +189,13 @@ library](https://github.com/kahrendt/microWakeWord) — `hey_jarvis`,
 `okay_nabu`, `alexa`, custom-trained, and so on. The 20-operator
 set the firmware registers matches what ESPHome's `streaming_model.cpp`
 exposes, so any model that loads under ESPHome should load here.
+
+To train a model for your own wake phrase, see
+[`tools/kws-trainer/`](../tools/kws-trainer/README.md): `kws-record`
+captures samples over UDP from the firmware, `kws-build-dataset`
+turns a labelled directory into a train/val/test manifest, and
+`kws-eval` runs a trained `.tflite` against a WAV to tune
+`wake_word_threshold` without reflashing.
 
 A unit booted without `/sd/WAKE_WORD.tflite` still works — the wake
 task parks; the sidecar still fires on `POST /listen`. The model is
