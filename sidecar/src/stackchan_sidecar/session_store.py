@@ -29,27 +29,38 @@ class SessionEntry:
 
 
 class SessionStore:
+    """In-memory turn history keyed by ``(session_id, persona)``.
+
+    Persona is part of the key so a device that switches personas
+    mid-deployment doesn't carry context from the old voice into the
+    new one. The same session_id + different persona is treated as
+    two independent conversations; a future tool that swaps persona
+    mid-session gets a clean slate for the new voice while leaving
+    the old voice's history intact for a possible revert.
+    """
+
     def __init__(self, *, max_turns: int = 8, ttl_seconds: float = 600.0) -> None:
         self._max_turns = max_turns
         self._ttl_seconds = ttl_seconds
-        self._entries: dict[str, SessionEntry] = {}
+        self._entries: dict[tuple[str, str], SessionEntry] = {}
 
-    def get_history(self, session_id: str) -> list[Turn]:
+    def get_history(self, session_id: str, persona: str) -> list[Turn]:
         if not session_id:
             return []
-        entry = self._entries.get(session_id)
+        entry = self._entries.get((session_id, persona))
         if entry is None:
             return []
         entry.last_seen = time.monotonic()
         return list(entry.turns)
 
-    def record(self, session_id: str, turn: Turn) -> None:
+    def record(self, session_id: str, persona: str, turn: Turn) -> None:
         if not session_id:
             return
-        entry = self._entries.get(session_id)
+        key = (session_id, persona)
+        entry = self._entries.get(key)
         if entry is None:
             entry = SessionEntry(last_seen=time.monotonic())
-            self._entries[session_id] = entry
+            self._entries[key] = entry
         entry.turns.append(turn)
         while len(entry.turns) > self._max_turns:
             entry.turns.pop(0)
@@ -57,9 +68,9 @@ class SessionStore:
 
     def sweep(self) -> int:
         now = time.monotonic()
-        expired = [sid for sid, e in self._entries.items() if now - e.last_seen > self._ttl_seconds]
-        for sid in expired:
-            del self._entries[sid]
+        expired = [key for key, e in self._entries.items() if now - e.last_seen > self._ttl_seconds]
+        for key in expired:
+            del self._entries[key]
         return len(expired)
 
 

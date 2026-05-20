@@ -178,6 +178,12 @@ def create_app(
         #                    is misconfigured; the client did nothing
         #                    wrong).
         requested_persona = request.headers.get("x-persona-name", "").strip()
+        # `persona_name` is the slug that goes into the SessionStore
+        # key so conversation history is partitioned per-persona.
+        # `persona` (set inside the branches) is the loaded markdown
+        # prompt the LLM sees. Track them both — the slug travels with
+        # the key; the prompt travels with the call.
+        persona_name = requested_persona or settings.persona
         if requested_persona:
             try:
                 persona = load_persona(requested_persona, settings.personas_dir)
@@ -275,7 +281,7 @@ def create_app(
             )
         stt_ms = int((time.perf_counter() - t_stt0) * 1000)
 
-        history = store.get_history(session_id)
+        history = store.get_history(session_id, persona_name)
         t_llm0 = time.perf_counter()
         try:
             reply = await retry_with_timeout(
@@ -326,6 +332,7 @@ def create_app(
 
         store.record(
             session_id,
+            persona_name,
             Turn(user=transcript, assistant=reply.full, emotion=emotion),
         )
 
