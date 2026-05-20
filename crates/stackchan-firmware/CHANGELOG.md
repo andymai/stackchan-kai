@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.97.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.1...stackchan-firmware-v0.97.2) (2026-05-20)
+
+
+### Bug Fixes
+
+* **firmware:** network + audio hardening pass ([#493](https://github.com/andymai/stackchan-kai/issues/493)) ([7d22f79](https://github.com/andymai/stackchan-kai/commit/7d22f79aeb52457245d7a32ce8524e200cc3fe49))
+
 ## [0.97.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.0...stackchan-firmware-v0.97.1) (2026-05-20)
 
 
