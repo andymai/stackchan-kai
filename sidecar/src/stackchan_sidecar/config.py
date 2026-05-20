@@ -53,11 +53,19 @@ class Settings(BaseSettings):
     # Speaker index for multi-speaker piper models; ignored on
     # single-speaker ones.
     piper_speaker_id: int | None = None
+    # ElevenLabs voice + model selectors. Voice id defaults to Rachel
+    # (a public preset); operators with a cloned voice override it.
+    # `eleven_turbo_v2_5` is the latency-optimised model — cheaper and
+    # fast enough for a desk toy; switch to `eleven_multilingual_v2`
+    # for non-English voices.
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    elevenlabs_model_id: str = "eleven_turbo_v2_5"
 
     bearer_token: str = Field(default="", alias="SIDECAR_BEARER_TOKEN")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     deepgram_api_key: str = Field(default="", alias="DEEPGRAM_API_KEY")
+    elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
 
     firmware_url: str = Field(default="http://stackchan.local", alias="STACKCHAN_FIRMWARE_URL")
     firmware_token: str = Field(default="", alias="STACKCHAN_FIRMWARE_TOKEN")
@@ -95,5 +103,10 @@ def load_settings() -> Settings:
         raise RuntimeError(
             "piper_model_path is required when tts_provider=piper. "
             "Point it at a downloaded .onnx voice model (see docs/voice.md)."
+        )
+    if settings.tts_provider == "elevenlabs" and not settings.elevenlabs_api_key:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY is required when tts_provider=elevenlabs. "
+            "Set it in .env or the process environment."
         )
     return settings
