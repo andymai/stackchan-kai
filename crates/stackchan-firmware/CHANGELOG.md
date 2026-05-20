@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.98.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.3...stackchan-firmware-v0.98.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose diagnostic tools — get_sensors / get_tasks / get_events / get_crash ([#513](https://github.com/andymai/stackchan-kai/issues/513)) ([893f526](https://github.com/andymai/stackchan-kai/commit/893f52625c6e5fd27fa82b9a7363023238147b3f))
+
 ## [0.97.3](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.2...stackchan-firmware-v0.97.3) (2026-05-20)
 
 ## [0.97.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.1...stackchan-firmware-v0.97.2) (2026-05-20)

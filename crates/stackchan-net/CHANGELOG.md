@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.3.0...stackchan-net-v0.4.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose diagnostic tools — get_sensors / get_tasks / get_events / get_crash ([#513](https://github.com/andymai/stackchan-kai/issues/513)) ([893f526](https://github.com/andymai/stackchan-kai/commit/893f52625c6e5fd27fa82b9a7363023238147b3f))
+
 ## [0.3.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.2.22...stackchan-net-v0.3.0) (2026-05-20)
 
 
