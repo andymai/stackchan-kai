@@ -829,6 +829,24 @@ impl BehaviorFlagUpdate {
             | Self::ToastOverlay(v) => v,
         }
     }
+
+    /// Whether persisting this field requires a reboot to take effect.
+    ///
+    /// Every current variant returns `true` because each consumer
+    /// captures the flag at task / modifier spawn (see the firmware's
+    /// `requires_reboot` for the full reboot-only set). The match is
+    /// explicit per variant rather than a blanket `true` so a future
+    /// addition that IS live-applicable has to opt out by hand — the
+    /// compiler nudges the author to think about which side they're on.
+    #[must_use]
+    pub const fn requires_reboot(self) -> bool {
+        match self {
+            Self::Soliloquy(_)
+            | Self::HourlyChime(_)
+            | Self::BatteryIcon(_)
+            | Self::ToastOverlay(_) => true,
+        }
+    }
 }
 
 /// Parse a `POST /behavior` / `set_behavior_flag` body into a

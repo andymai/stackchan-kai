@@ -973,6 +973,11 @@ enum BehaviorPersistOutcome {
 /// Shared by `POST /behavior` and the MCP `set_behavior_flag` tool so
 /// operator-driven curl and LLM-driven tool calls take identical
 /// code paths. Mirrors the volume / mute persist shape.
+///
+/// Callers ask the update itself whether to surface `reboot_required`
+/// via [`stackchan_net::http_command::BehaviorFlagUpdate::requires_reboot`]
+/// — a future enum variant that's live-applicable opts out there
+/// rather than forcing edits in two routes.
 async fn persist_behavior_flag(
     update: stackchan_net::http_command::BehaviorFlagUpdate,
 ) -> BehaviorPersistOutcome {
@@ -1005,15 +1010,17 @@ async fn persist_behavior_flag(
 async fn behavior_persist_to_http(
     socket: &mut TcpSocket<'_>,
     outcome: BehaviorPersistOutcome,
+    reboot_required: bool,
 ) -> Result<(), HttpError> {
     match outcome {
-        // Every field this route accepts is captured at task spawn or
-        // modifier instantiation (see `requires_reboot` for the full
-        // list), so a successful persist always demands a reboot. The
-        // explicit `reboot_required: true` mirrors the `PUT /settings`
-        // response shape so a dashboard can show the same nag.
+        // Response shape mirrors `PUT /settings` so a dashboard can
+        // show the same reboot nag. The bool came in from the
+        // `BehaviorFlagUpdate::requires_reboot` method, so a future
+        // live-applicable variant correctly reports `false` here
+        // without editing this function.
         BehaviorPersistOutcome::Persisted => {
-            write_json(socket, 200, "{\"reboot_required\":true}\n").await
+            let body = format!("{{\"reboot_required\":{reboot_required}}}\n");
+            write_json(socket, 200, &body).await
         }
         BehaviorPersistOutcome::NoSnapshot => {
             write_text(socket, 503, "config snapshot unavailable\n").await
@@ -1036,11 +1043,17 @@ const fn behavior_persist_detail(outcome: BehaviorPersistOutcome) -> &'static st
     }
 }
 
-/// `POST /behavior` — toggle one runtime-mutable boolean flag in
-/// `behavior` by name. Body shape per
-/// [`stackchan_net::http_command::parse_behavior_flag`]:
+/// `POST /behavior` — toggle one boolean flag in `behavior` by name.
+/// Body shape per [`stackchan_net::http_command::parse_behavior_flag`]:
 /// `{"field": "<name>", "value": <bool>}`. Field vocabulary is the
 /// variants of [`stackchan_net::http_command::BehaviorFlagUpdate`].
+///
+/// On success returns `{"reboot_required": <bool>}`. The bool comes
+/// from the [`BehaviorFlagUpdate::requires_reboot`] method on the
+/// update itself, so a future variant that's live-applicable gets
+/// the right answer without editing this handler.
+///
+/// [`BehaviorFlagUpdate::requires_reboot`]: stackchan_net::http_command::BehaviorFlagUpdate::requires_reboot
 async fn handle_post_behavior(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
     let update = match json::parse_behavior_flag(body) {
         Ok(u) => u,
@@ -1053,7 +1066,8 @@ async fn handle_post_behavior(socket: &mut TcpSocket<'_>, body: &str) -> Result<
             return write_text(socket, 400, &body).await;
         }
     };
-    behavior_persist_to_http(socket, persist_behavior_flag(update).await).await
+    let reboot_required = update.requires_reboot();
+    behavior_persist_to_http(socket, persist_behavior_flag(update).await, reboot_required).await
 }
 
 /// `POST /dance` — parse the keyframe stream, hand the script off
@@ -1814,14 +1828,17 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "set_behavior_flag" => match json::parse_behavior_flag(arguments) {
             Ok(update) => {
+                let reboot_required = update.requires_reboot();
                 let outcome = persist_behavior_flag(update).await;
                 if outcome == BehaviorPersistOutcome::Persisted {
-                    render_success(
-                        id,
-                        &render_tool_text_result(
-                            r#"{"reboot_required":true,"detail":"behavior flag persisted; reboot to apply"}"#,
-                        ),
-                    )
+                    let detail = if reboot_required {
+                        "behavior flag persisted; reboot to apply"
+                    } else {
+                        "behavior flag persisted; applied"
+                    };
+                    let body =
+                        format!(r#"{{"reboot_required":{reboot_required},"detail":"{detail}"}}"#);
+                    render_success(id, &render_tool_text_result(&body))
                 } else {
                     render_error(
                         Some(id),
