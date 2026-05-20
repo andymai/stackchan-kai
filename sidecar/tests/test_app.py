@@ -323,6 +323,65 @@ def test_listen_no_session_history_for_empty_session_id(
     assert fake_llm.calls[1][3] == []
 
 
+def test_listen_history_does_not_leak_across_personas(
+    personas_dir: Path,
+    settings: Settings,
+    fake_stt: FakeSTT,
+    fake_llm: FakeLLM,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    # End-to-end through the wire: a device that switches personas
+    # under the same session_id must NOT see the prior persona's
+    # turns. Pins the per-persona partition all the way from the
+    # request handler through the SessionStore.
+    (personas_dir / "desk-buddy.md").write_text(
+        "---\nname: desk-buddy\n---\nYou are a quiet desk companion.\n",
+        encoding="utf-8",
+    )
+    sid = "44444444-4444-4444-8444-444444444444"
+    app = create_app(settings, fake_stt, fake_llm)
+    with TestClient(app) as c:
+        # Two turns under stack-chan to build up history.
+        c.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={
+                **auth_headers,
+                "Content-Type": _AUDIO_CT,
+                "X-Session-Id": sid,
+                "X-Persona-Name": "stack-chan",
+            },
+        )
+        c.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={
+                **auth_headers,
+                "Content-Type": _AUDIO_CT,
+                "X-Session-Id": sid,
+                "X-Persona-Name": "stack-chan",
+            },
+        )
+        # Switch to desk-buddy on the SAME session.
+        c.post(
+            "/v1/listen",
+            content=pcm_payload,
+            headers={
+                **auth_headers,
+                "Content-Type": _AUDIO_CT,
+                "X-Session-Id": sid,
+                "X-Persona-Name": "desk-buddy",
+            },
+        )
+
+    # First two LLM calls were stack-chan, third was desk-buddy.
+    histories = [call[3] for call in fake_llm.calls]
+    assert len(histories[0]) == 0, "first call: no prior history"
+    assert len(histories[1]) == 1, "second call: one stack-chan turn"
+    assert len(histories[2]) == 0, "persona switch: no inherited history"
+
+
 def test_listen_logs_session_id(
     client: TestClient,
     auth_headers: dict[str, str],
