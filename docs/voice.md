@@ -83,6 +83,37 @@ stackchan-sidecar` inside `sidecar/` and point the firmware at it.
 The persona prompt is a single editable markdown file at
 `sidecar/personas/stack-chan.md`. Copy it for a different voice.
 
+### Multiple personas on one sidecar
+
+One sidecar can serve several personas — the firmware picks which
+one to use per request via the `X-Persona-Name` header.
+
+1. Drop more persona files into `sidecar/personas/`, one `.md` per
+   voice (`desk-buddy.md`, `wake-only.md`, etc.). Each follows the
+   same frontmatter shape as the bundled `stack-chan.md`.
+2. Set `behavior.persona_name = "desk-buddy"` in the device's
+   `/sd/STACKCHAN.RON` (or via `PUT /settings`). Empty / unset keeps
+   the firmware's wire surface header-free, and the sidecar falls
+   back to its baked-in `settings.persona`.
+3. Confirm with `curl http://sidecar:port/v1/personas` — the
+   response lists every deployed slug plus the configured default
+   and a `default_deployed` flag that tells you upfront whether
+   the install is healthy.
+
+Validation runs at both boundaries: the firmware rejects slugs
+longer than 64 bytes, with control characters, or containing path
+separators / `..`; the sidecar re-checks per request so a curl
+caller bypassing the firmware can't pivot the filesystem lookup.
+Invalid slug → `400`; well-formed but missing file → `404`;
+sidecar's default missing → `500` (operator misconfig, not your
+caller's fault).
+
+Conversation memory is partitioned per `(session_id, persona)`.
+A device that switches personas under the same session_id (a
+firmware reflash, or a future mid-runtime swap) gets a clean
+slate for the new voice — the old voice's history stays
+addressable under its own bucket until TTL expires.
+
 ## Enable the wake word (optional)
 
 Wake-word detection is local-only — microWakeWord v2 streaming
