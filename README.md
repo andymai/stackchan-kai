@@ -71,7 +71,7 @@ carries longer-running, predicate-fired capabilities — skills write
 intent into `mind` and `voice`, modifiers translate that to face and
 motion. Catalogues live in
 [`crates/stackchan-core/src/modifiers/`](./crates/stackchan-core/src/modifiers)
-and [`skills/`](./crates/stackchan-core/src/skills).
+and [`crates/stackchan-core/src/skills/`](./crates/stackchan-core/src/skills).
 
 Because time flows in through a `Clock` trait, the same Director runs
 against a `FakeClock` on the host. `stackchan-sim` drives the modifier
