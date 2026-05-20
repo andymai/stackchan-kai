@@ -11,11 +11,11 @@ status: experimental (v0.x)
 # stackchan-audio-features
 
 `no_std` audio frontend for on-device keyword spotting. Implements
-the streaming feature pipeline `microWakeWord` (and most TFLite-micro
-keyword-spotting models) expect on their input tensor: 16 kHz mono
-`i16` PCM in, quantized log-mel feature frames out, one frame every
-10 ms. Pure Rust, host-testable in isolation against synthetic
-fixtures.
+the streaming feature pipeline that `microWakeWord` (and most
+TFLite-micro keyword-spotting models) expect on their input tensor:
+16 kHz mono `i16` PCM in, quantized log-mel feature frames out, one
+frame every 10 ms. Pure Rust, host-testable in isolation against
+synthetic fixtures.
 
 No inference. The downstream `MixConv` classifier (TFLite-micro via
 [`esp-tflite-micro-sys`](../esp-tflite-micro-sys), or a future

@@ -174,9 +174,12 @@ Services exposed:
 - **Nordic UART Service (NUS)** — newline-delimited JSON for the
   Claude Desktop Hardware Buddy plumbing. The per-connection
   `DesktopSession` line-frames incoming ATT writes and publishes
-  `Inbound` messages on `DESKTOP_INBOUND` (a `PubSubChannel` with up
-  to four subscribers — `desktop_render`, `desktop_control`,
-  `desktop_permission`, `desktop_time`). Outbound replies come back
+  `Inbound` messages on `DESKTOP_INBOUND` (a `PubSubChannel` with
+  three subscribers today — `desktop_render`, `desktop_control`,
+  `desktop_permission`). `desktop_control` parses any `TimeSync`
+  message and forwards the epoch to `desktop_time` via a separate
+  `DESKTOP_RTC_WRITE_REQUEST` signal so the RTC writer holds its
+  own `I2cDevice` handle on the BM8563. Outbound replies come back
   through `DESKTOP_OUTBOUND` and render on the NUS TX
   characteristic.
 
