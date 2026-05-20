@@ -500,11 +500,11 @@ pub fn parse_motion(body: &str) -> Result<NamedMotion, JsonError> {
 /// Both routes write the result to the firmware's toast slot. The
 /// level is kept as a string here so this crate doesn't need to
 /// duplicate the firmware-side `ToastLevel` enum; the call site
-/// matches `"warn"` / `"error"` and surfaces unknown values as a
-/// 400 / `InvalidParams`.
+/// matches `"info"` / `"warn"` / `"error"` and surfaces unknown
+/// values as a 400 / `InvalidParams`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToastRequest {
-    /// Severity tier — `"warn"` or `"error"`.
+    /// Severity tier — `"info"`, `"warn"`, or `"error"`.
     pub level: alloc::string::String,
     /// Display text. The firmware truncates to its own
     /// `MAX_TOAST_LEN`; empty is allowed (and renders as a blank
@@ -512,7 +512,7 @@ pub struct ToastRequest {
     pub message: alloc::string::String,
 }
 
-/// Parse `{"level": "warn"|"error", "message": "..."}` into a
+/// Parse `{"level": "info"|"warn"|"error", "message": "..."}` into a
 /// [`ToastRequest`]. The `message` field is optional and defaults to
 /// empty.
 ///

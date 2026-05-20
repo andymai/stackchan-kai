@@ -669,12 +669,12 @@ fn parse_emotion(name: &str) -> Option<Emotion> {
 /// moment byte 32 landed mid-codepoint — fatal on `no_std` embedded.
 fn toast_info(message: &str) {
     let now = stackchan_core::Instant::from_millis(embassy_time::Instant::now().as_millis());
-    toast_push(ToastLevel::Warn, message, now);
+    toast_push(ToastLevel::Info, message, now);
 }
 
-/// Push a warn-class toast for a sidecar error. Mirrors
-/// [`toast_info`] but is reserved for failure paths so a future
-/// toast `Info` tier can split out the success surface cleanly.
+/// Push a warn-class toast for a sidecar failure path. Mirrors
+/// [`toast_info`] but routes to the warn tier so the band colour
+/// matches the operator-facing severity (yellow vs teal).
 fn toast_warn(message: &str) {
     let now = stackchan_core::Instant::from_millis(embassy_time::Instant::now().as_millis());
     toast_push(ToastLevel::Warn, message, now);
