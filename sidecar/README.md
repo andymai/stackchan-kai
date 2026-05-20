@@ -105,6 +105,41 @@ lines at the start of the file) — the sidecar strips it before sending the
 prompt to the model, so you can keep metadata next to the prompt without
 polluting it.
 
+### Per-request persona dispatch
+
+Multiple personas on one sidecar: the firmware (or any client) can pick which
+one to load per request via the `X-Persona-Name` header. Omitting the header
+falls back to `config.toml`'s `persona`, so single-persona installs work
+without changes.
+
+Failure modes the caller sees on `POST /v1/listen`:
+
+| Caller state | Response |
+|---|---|
+| `X-Persona-Name` is well-formed and the slug is deployed | success |
+| `X-Persona-Name` is well-formed but the slug isn't deployed | `404 persona_missing` |
+| `X-Persona-Name` is malformed (path traversal, controls, > 64 bytes) | `400 persona_name_invalid` |
+| no `X-Persona-Name` and `config.toml`'s `persona` isn't deployed | `500 persona_missing` |
+
+Discover what's available without grepping the filesystem:
+
+```bash
+curl -s http://localhost:8080/v1/personas | jq
+{
+  "default": "stack-chan",
+  "default_deployed": true,
+  "personas": ["desk-buddy", "stack-chan"]
+}
+```
+
+`default_deployed: false` flags a misconfigured install upfront — the next
+no-header request would otherwise 500 on first audio POST.
+
+Conversation memory is partitioned per `(session_id, persona)`. A device
+switching personas under the same session_id gets a clean slate for the
+new voice; the old voice's turns stay addressable under their own bucket
+until the TTL sweep.
+
 ## Provider selection
 
 Pick STT and LLM backends via `config.toml` (or env vars). Each provider has
