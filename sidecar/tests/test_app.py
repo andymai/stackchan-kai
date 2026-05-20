@@ -62,6 +62,28 @@ def test_listen_wrong_content_type(
     assert r.status_code == 415
 
 
+def test_listen_rejects_non_mono_audio(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    pcm_payload: bytes,
+) -> None:
+    # `channels=2` body would otherwise reinterpret interleaved
+    # stereo int16 as mono, producing garbage transcription. Catch
+    # at the content-type gate with a dedicated error code so the
+    # operator gets clear feedback.
+    r = client.post(
+        "/v1/listen",
+        content=pcm_payload,
+        headers={
+            **auth_headers,
+            "Content-Type": "audio/L16;rate=16000;channels=2",
+        },
+    )
+    assert r.status_code == 415
+    body = r.json()
+    assert body["error"]["code"] == "audio_channels_unsupported"
+
+
 def test_listen_empty_body(client: TestClient, auth_headers: dict[str, str]) -> None:
     r = client.post(
         "/v1/listen",

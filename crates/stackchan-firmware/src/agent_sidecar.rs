@@ -5,7 +5,7 @@
 //!
 //! 1. `POST /listen` (or MCP `start_listen`) lands a
 //!    [`RemoteCommand::StartListen`] on
-//!    [`crate::net::http::REMOTE_COMMAND_SIGNAL`]; the render-loop
+//!    [`crate::net::http::REMOTE_COMMAND_QUEUE`]; the render-loop
 //!    intercept fires [`PTT_TRIGGER`] with the requested
 //!    `duration_ms` *and* forwards the variant to the
 //!    `RemoteCommandModifier` so the cosmetic listen state still
@@ -53,15 +53,16 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use stackchan_core::Emotion;
 use stackchan_core::input::RemoteCommand;
+use stackchan_net::http_parse::{find_subsequence, parse_content_length};
 
 use crate::audio::{AUDIO_FRAME_PUBSUB, AUDIO_FRAME_SAMPLES};
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 use crate::net::wifi::{WIFI_LINK_WATCH, WifiLinkState};
 use crate::toast::{ToastLevel, push as toast_push};
 
 /// Push-to-talk capture trigger.
 ///
-/// Signalled from the `REMOTE_COMMAND_SIGNAL` intercept in
+/// Signalled from the `REMOTE_COMMAND_QUEUE` intercept in
 /// `main.rs` whenever a [`RemoteCommand::StartListen`] lands.
 /// Payload is the requested listen window in ms; the task captures
 /// audio for that many ms before posting it to the sidecar.
@@ -284,6 +285,18 @@ pub async fn agent_sidecar_task(
         endpoint.path.as_str(),
     );
 
+    // Gate the very first trigger on Wi-Fi being up. Without this,
+    // a `POST /listen` fired before initial association consumes
+    // the listen window in a capture that then bails on the
+    // post-capture link check — operator sees a "link down" toast
+    // instead of the listen edge being held until the radio is
+    // ready. Subsequent loop iterations keep the post-capture
+    // gate so a Wi-Fi drop mid-conversation still surfaces.
+    while !matches!(link.get().await, WifiLinkState::Connected) {
+        defmt::info!("agent-sidecar: waiting for Wi-Fi link before arming PTT");
+        link.changed().await;
+    }
+
     let mut rx_buf = [0_u8; TCP_RX_BYTES];
     let mut tx_buf = [0_u8; TCP_TX_BYTES];
 
@@ -311,7 +324,7 @@ pub async fn agent_sidecar_task(
         // without an emotion fires `ExitThinking`; and the failure /
         // timeout paths fire `signal_failure_emotion()`, whose
         // `SetEmotion(Sad)` clears the hold the same way.
-        REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::EnterThinking {
+        enqueue_remote_command(RemoteCommand::EnterThinking {
             #[allow(
                 clippy::cast_possible_truncation,
                 reason = "REQUEST_TIMEOUT_MS is a 5-digit const; truncation is impossible at the source"
@@ -422,7 +435,7 @@ fn apply_outcome(
             );
             toast_info(text.as_str());
             if let Some(e) = emotion {
-                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::SetEmotion {
+                enqueue_remote_command(RemoteCommand::SetEmotion {
                     emotion: e,
                     hold_ms: 2_500,
                 });
@@ -432,7 +445,7 @@ fn apply_outcome(
                 // would have run otherwise. Fall back to an explicit
                 // clear so the thought-bubble fades with the toast
                 // instead of lingering for the full request timeout.
-                REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::ExitThinking);
+                enqueue_remote_command(RemoteCommand::ExitThinking);
             }
         }
         Ok(Err(e)) => {
@@ -465,7 +478,7 @@ fn apply_outcome(
 /// is a no-op there, and the Sad face still reads as the failure
 /// signal.
 fn signal_failure_emotion() {
-    REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::SetEmotion {
+    enqueue_remote_command(RemoteCommand::SetEmotion {
         emotion: Emotion::Sad,
         hold_ms: 2_500,
     });
@@ -557,31 +570,40 @@ async fn post_pcm(
     }
     socket.flush().await.map_err(|_| PostError::Write)?;
 
-    // Read until the peer closes (we sent `Connection: close`).
-    // Bounded by RESPONSE_MAX_BYTES so a hostile peer can't make
-    // us read forever.
+    // Read the response in two phases:
+    // 1) Drain bytes until the `\r\n\r\n` header terminator
+    //    appears. Bounded by RESPONSE_MAX_BYTES so a hostile or
+    //    chatty peer can't make us read forever before we even
+    //    have headers.
+    // 2) Once the headers are known, parse `Content-Length` and
+    //    stop at the body end exactly. Without this, a sidecar
+    //    that holds the socket open (e.g., honours keep-alive
+    //    despite our `Connection: close` request, or sits behind
+    //    a reverse proxy that does) would block our `read()`
+    //    until the 15 s task-level timeout — every reply pays
+    //    that latency tax.
     let mut resp = [0_u8; RESPONSE_MAX_BYTES];
-    let mut filled = 0;
-    loop {
-        if filled >= resp.len() {
-            defmt::warn!(
-                "agent-sidecar: response exceeded {=usize} bytes; truncating",
-                resp.len()
-            );
-            break;
-        }
-        match socket.read(&mut resp[filled..]).await {
-            Ok(0) => break,
-            Ok(n) => filled += n,
-            Err(e) => {
-                defmt::warn!("agent-sidecar: read failed: {:?}", defmt::Debug2Format(&e));
-                return Err(PostError::Read);
-            }
-        }
-    }
+    let (header_end, after_headers_filled) = read_headers(&mut socket, &mut resp).await?;
+    // `parse_content_length` returns `Ok(0)` for both an absent
+    // header and an explicit `Content-Length: 0`. The two have
+    // different terminate semantics: explicit-0 means "no body,
+    // stop now"; absent means "read until peer closes" (which is
+    // HTTP/1.0 / HTTP/1.1 with `Connection: close` legacy). Probe
+    // the raw header block to disambiguate.
+    let header_present = header_has_content_length(&resp[..header_end]);
+    let content_length = parse_content_length(&resp[..header_end]).map_err(|_| PostError::Read)?;
+    let body_end = read_body(
+        &mut socket,
+        &mut resp,
+        header_end,
+        after_headers_filled,
+        content_length,
+        header_present,
+    )
+    .await?;
     socket.close();
 
-    let body = parse_http_response(&resp[..filled])?;
+    let body = parse_http_response(&resp[..body_end])?;
     let text = extract_string(body, "\"text\"").ok_or(PostError::MissingText)?;
     if text.is_empty() {
         return Err(PostError::MissingText);
@@ -594,6 +616,109 @@ async fn post_pcm(
     }
     let emotion = extract_string(body, "\"emotion\"").and_then(parse_emotion);
     Ok((out, emotion))
+}
+
+/// Drain bytes from `socket` into `buf` until the `\r\n\r\n` header
+/// terminator appears. Returns `(header_end, filled)` where
+/// `header_end` is the byte index immediately after the terminator
+/// (= start of body) and `filled` is the total bytes read so far
+/// (may exceed `header_end` if the peer flushed headers + body
+/// together). [`PostError::Read`] if the peer closes before the
+/// terminator arrives, the read loop errors, or `buf` fills without
+/// one.
+async fn read_headers(
+    socket: &mut TcpSocket<'_>,
+    buf: &mut [u8],
+) -> Result<(usize, usize), PostError> {
+    let mut filled = 0;
+    loop {
+        if filled >= buf.len() {
+            defmt::warn!(
+                "agent-sidecar: headers exceeded {=usize} bytes; bailing",
+                buf.len()
+            );
+            return Err(PostError::Read);
+        }
+        match socket.read(&mut buf[filled..]).await {
+            Ok(0) => {
+                defmt::warn!("agent-sidecar: peer closed before \\r\\n\\r\\n");
+                return Err(PostError::Read);
+            }
+            Ok(n) => {
+                filled += n;
+                if let Some(idx) = find_subsequence(&buf[..filled], b"\r\n\r\n") {
+                    return Ok((idx + 4, filled));
+                }
+            }
+            Err(e) => {
+                defmt::warn!("agent-sidecar: read failed: {:?}", defmt::Debug2Format(&e));
+                return Err(PostError::Read);
+            }
+        }
+    }
+}
+
+/// Continue reading body bytes into `buf` starting from the
+/// `start_filled` high-water mark left by [`read_headers`] until
+/// either the `content_length`-sized body lands or the peer closes.
+/// Returns the new `filled` count.
+///
+/// `header_present` distinguishes the two `content_length == 0`
+/// shapes: when the header is absent we fall through to the
+/// read-until-close fallback (HTTP/1.0 / explicit
+/// `Connection: close` legacy); when the header is explicitly
+/// `Content-Length: 0` we stop immediately at `header_end`.
+/// Without this distinction, an explicit empty-body reply from a
+/// peer that holds the socket open would still burn the 15 s
+/// task-level timeout.
+async fn read_body(
+    socket: &mut TcpSocket<'_>,
+    buf: &mut [u8],
+    header_end: usize,
+    start_filled: usize,
+    content_length: usize,
+    header_present: bool,
+) -> Result<usize, PostError> {
+    let target = if header_present {
+        header_end.saturating_add(content_length).min(buf.len())
+    } else {
+        buf.len()
+    };
+    let mut filled = start_filled.max(header_end);
+    while filled < target {
+        match socket.read(&mut buf[filled..target]).await {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) => {
+                defmt::warn!(
+                    "agent-sidecar: body read failed: {:?}",
+                    defmt::Debug2Format(&e),
+                );
+                return Err(PostError::Read);
+            }
+        }
+    }
+    Ok(filled)
+}
+
+/// Case-insensitive search for a `Content-Length:` header in a
+/// raw header block. Used to distinguish "header absent" from
+/// "header explicitly `Content-Length: 0`" — the two have
+/// different termination semantics that
+/// [`stackchan_net::http_parse::parse_content_length`] collapses
+/// to `Ok(0)`.
+fn header_has_content_length(headers: &[u8]) -> bool {
+    for line in headers.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
+        let (name, _) = line.split_at(colon);
+        if name.eq_ignore_ascii_case(b"content-length") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Locate the response body. Status must be `2xx`; anything else is
@@ -621,15 +746,20 @@ fn parse_http_response(buf: &[u8]) -> Result<&str, PostError> {
 
 /// Extract a JSON string value for the given quoted key.
 ///
-/// Naïve flat-object scanner: finds `key` (including quotes),
-/// expects `:"value"` immediately after (whitespace tolerated),
-/// returns the substring between the value-side quotes.
+/// Flat-object scanner: finds `key` (including its surrounding
+/// quotes), expects `:"value"` immediately after (whitespace
+/// tolerated), and walks the value character-by-character to
+/// honour `\"` and `\\` escapes so a sidecar reply that contains
+/// a quoted citation (`"He said \"hi\""`) isn't silently
+/// truncated at the inner quote.
 ///
 /// Caveats:
-/// - Does not handle backslash-escaped quotes inside the value.
-///   The sidecar is operator-controlled; a well-behaved sidecar
-///   that needs to emit literal quotes can pre-substitute or
-///   wrap the payload differently.
+/// - Returns the *raw* slice including any backslash escape
+///   characters — no unescaping. Downstream consumers (the toast
+///   path) iterate `chars()` and accept the literal characters,
+///   which matches the existing behaviour for valid plain ASCII
+///   replies. Sidecars that need full-fidelity unescape should
+///   simplify before sending.
 /// - Does not parse nested objects. The protocol is a flat
 ///   `{"text":"...","emotion":"..."}` projection of `OpenAI` Chat
 ///   Completions, intentionally — the sidecar owns the unwrap.
@@ -638,8 +768,16 @@ fn extract_string<'a>(json: &'a str, key_quoted: &str) -> Option<&'a str> {
     let after_key = &json[i + key_quoted.len()..];
     let after_colon = after_key.trim_start().strip_prefix(':')?.trim_start();
     let after_quote = after_colon.strip_prefix('"')?;
-    let end = after_quote.find('"')?;
-    Some(&after_quote[..end])
+    let bytes = after_quote.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\\' if idx + 1 < bytes.len() => idx += 2,
+            b'"' => return Some(&after_quote[..idx]),
+            _ => idx += 1,
+        }
+    }
+    None
 }
 
 /// Map the wire-form emotion string to an [`Emotion`] variant.
@@ -669,12 +807,12 @@ fn parse_emotion(name: &str) -> Option<Emotion> {
 /// moment byte 32 landed mid-codepoint — fatal on `no_std` embedded.
 fn toast_info(message: &str) {
     let now = stackchan_core::Instant::from_millis(embassy_time::Instant::now().as_millis());
-    toast_push(ToastLevel::Warn, message, now);
+    toast_push(ToastLevel::Info, message, now);
 }
 
-/// Push a warn-class toast for a sidecar error. Mirrors
-/// [`toast_info`] but is reserved for failure paths so a future
-/// toast `Info` tier can split out the success surface cleanly.
+/// Push a warn-class toast for a sidecar failure path. Mirrors
+/// [`toast_info`] but routes to the warn tier so the band colour
+/// matches the operator-facing severity (yellow vs teal).
 fn toast_warn(message: &str) {
     let now = stackchan_core::Instant::from_millis(embassy_time::Instant::now().as_millis());
     toast_push(ToastLevel::Warn, message, now);
@@ -747,6 +885,36 @@ mod tests {
     }
 
     #[test]
+    fn extract_string_walks_past_escaped_quotes() {
+        // A sidecar that emits a quoted citation in `text` used
+        // to make the scanner truncate at the first `"`, dropping
+        // everything after — *and* the `emotion` key that lives
+        // later in the body would never be found because the
+        // scanner anchored on the stray quote. Pin the fix.
+        let body = r#"{"text":"He said \"hi\" softly","emotion":"happy"}"#;
+        assert_eq!(
+            extract_string(body, "\"text\""),
+            Some(r#"He said \"hi\" softly"#)
+        );
+        assert_eq!(extract_string(body, "\"emotion\""), Some("happy"));
+    }
+
+    #[test]
+    fn extract_string_handles_escaped_backslash() {
+        // `\\` is a single escaped backslash; the *next* `"` is
+        // the value terminator, not a continuation of the
+        // escape.
+        let body = r#"{"text":"path\\to\\file"}"#;
+        assert_eq!(extract_string(body, "\"text\""), Some(r#"path\\to\\file"#));
+    }
+
+    #[test]
+    fn extract_string_returns_none_on_unterminated_value() {
+        let body = r#"{"text":"oops"#;
+        assert_eq!(extract_string(body, "\"text\""), None);
+    }
+
+    #[test]
     fn parse_emotion_accepts_canonical_names() {
         assert_eq!(parse_emotion("neutral"), Some(Emotion::Neutral));
         assert_eq!(parse_emotion("happy"), Some(Emotion::Happy));
@@ -775,6 +943,30 @@ mod tests {
         assert!(matches!(
             parse_http_response(raw),
             Err(PostError::BadStatus)
+        ));
+    }
+
+    #[test]
+    fn header_has_content_length_distinguishes_absent_from_explicit_zero() {
+        // Pin the `Content-Length: 0` vs absent disambiguation
+        // `read_body` needs to avoid waiting on a peer that
+        // legitimately signalled an empty-body response.
+        assert!(header_has_content_length(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+        ));
+        assert!(header_has_content_length(
+            b"HTTP/1.1 200 OK\r\ncontent-length: 42\r\n\r\n"
+        ));
+        assert!(header_has_content_length(
+            b"HTTP/1.1 200 OK\r\nCONTENT-LENGTH:   42  \r\n\r\n"
+        ));
+        // Header absent.
+        assert!(!header_has_content_length(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"
+        ));
+        // Substring match doesn't fool it (`Content-Lengthful` is bogus).
+        assert!(!header_has_content_length(
+            b"HTTP/1.1 200 OK\r\nContent-Lengthful: 42\r\n\r\n"
         ));
     }
 

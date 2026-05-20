@@ -149,4 +149,16 @@ pub enum ConfigError {
     /// the wire.
     #[error("behavior.agent_sidecar_token contains an ASCII control character")]
     AgentSidecarTokenInvalidChars,
+
+    /// A disk-loaded `Config` had the redaction sentinel (`"***"`)
+    /// in a secret field. The sentinel is meaningful only on the
+    /// HTTP `PUT /settings` merge path — on disk there's nothing to
+    /// merge against, so a literal `"***"` is operator error
+    /// (typically copy-paste from a redacted `GET /settings` body
+    /// dumped to SD without filling in the real value). Reject at
+    /// load so the device fails fast with a clear message instead
+    /// of trying to associate to Wi-Fi with PSK = `"***"`. Carries
+    /// the field name so the operator can fix the right line.
+    #[error("{0} contains the redaction sentinel \"***\" on disk — supply the real value")]
+    RedactionSentinelOnDisk(&'static str),
 }

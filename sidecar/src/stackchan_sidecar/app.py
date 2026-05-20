@@ -29,6 +29,7 @@ _MAX_BODY_BYTES = 30 * 16000 * 2 + 1024
 _MIN_BODY_BYTES = 640  # 20 ms @ 16 kHz mono s16; anything smaller is operator error
 _EXPECTED_SAMPLE_RATE = 16000
 _RATE_RE = re.compile(r"\brate=(\d+)", re.IGNORECASE)
+_CHANNELS_RE = re.compile(r"\bchannels=(\d+)", re.IGNORECASE)
 
 
 def _failure(
@@ -75,11 +76,18 @@ def _audio_failure(code: ErrorCode, *, request_id: str, session_id: str) -> JSON
 def _validate_content_type(content_type: str) -> ErrorCode | None:
     if not content_type.lower().startswith("audio/l16"):
         return ErrorCode.BAD_CONTENT_TYPE
-    match = _RATE_RE.search(content_type)
-    if match is None:
-        return None
-    if int(match.group(1)) != _EXPECTED_SAMPLE_RATE:
+    rate_match = _RATE_RE.search(content_type)
+    if rate_match is not None and int(rate_match.group(1)) != _EXPECTED_SAMPLE_RATE:
         return ErrorCode.AUDIO_RATE_UNSUPPORTED
+    # `channels` defaults to 1 when absent — matches the firmware
+    # `audio/L16;rate=16000;channels=1` Content-Type and the
+    # downstream STT contract. A `channels=2` body would otherwise
+    # be reinterpreted as mono int16 in `_transcribe_sync`'s
+    # `np.frombuffer(pcm, dtype=np.int16)` — interleaved stereo
+    # decoded as mono yields garbage transcription.
+    channels_match = _CHANNELS_RE.search(content_type)
+    if channels_match is not None and int(channels_match.group(1)) != 1:
+        return ErrorCode.AUDIO_CHANNELS_UNSUPPORTED
     return None
 
 

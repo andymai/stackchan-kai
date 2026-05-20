@@ -18,7 +18,7 @@ function Stat(props: {
       }}
     >
       <div class="stat-label">{props.label}</div>
-      <div class="stat-value" aria-live="polite">
+      <div class="stat-value">
         <Show
           when={!props.loading}
           fallback={<span class="skeleton skeleton-row" aria-hidden="true">—</span>}
@@ -44,7 +44,11 @@ export function StatusBar() {
       <div class="status-face">
         <FaceGlyph size={56} />
       </div>
-      <div class="status-stats">
+      {/* Single live region on the wrapper instead of one per stat:
+          five concurrent polite announcers were fighting for the
+          screen-reader queue on every SSE tick and producing
+          continuous read-out on NVDA / VoiceOver. */}
+      <div class="status-stats" aria-live="polite">
         <Stat label="EMOTION" value={snapshot()?.emotion?.toUpperCase() ?? null} loading={loading()} />
         <Stat label="MOOD" value={snapshot()?.mood?.toUpperCase() ?? null} loading={loading()} />
         <Show

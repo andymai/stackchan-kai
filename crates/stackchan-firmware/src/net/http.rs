@@ -105,7 +105,7 @@
 //! returns `401` on mismatch. Read routes stay unauthenticated.
 //!
 //! Avatar-state writes (POST /emotion, /look-at, /reset) funnel
-//! through [`REMOTE_COMMAND_SIGNAL`]; the render task drains it
+//! through [`REMOTE_COMMAND_QUEUE`]; the render task drains it
 //! into `entity.input.remote_command` ahead of `Director::run`,
 //! where [`stackchan_core::modifiers::RemoteCommandModifier`] picks
 //! it up. PUT /settings goes through
@@ -124,6 +124,7 @@ use embassy_futures::select::{Either, select};
 use embassy_net::Stack;
 use embassy_net::tcp::TcpSocket;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
@@ -164,13 +165,49 @@ const REQUEST_BUF_BYTES: usize = 2048;
 /// fields without forcing every operator update through a re-cap.
 const MAX_BODY_BYTES: usize = 2048;
 
-/// Latest control-plane command.
+/// Capacity of [`REMOTE_COMMAND_QUEUE`]. Sized for typical bursts
+/// from ~14 producers; the render loop drains all pending entries
+/// each tick (~33 ms) so the queue rarely sits more than 1–2 deep.
+const REMOTE_COMMAND_QUEUE_CAPACITY: usize = 8;
+
+/// Control-plane command queue.
 ///
-/// Set by the HTTP task on a successful POST; drained by the render
-/// task into `entity.input.remote_command` before `Director::run`.
-/// Latest-wins semantics — a second POST that lands before the
-/// render task drains will overwrite the first.
-pub static REMOTE_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, RemoteCommand> = Signal::new();
+/// HTTP / MCP fan-in routes through here from many producer sites:
+/// every operator command, plus wake-word fire, sidecar
+/// `EnterThinking`, `mDNS` follower, `BluFi` GATT, `ESP-NOW` peer,
+/// and the desktop-protocol bridge. Single consumer is the render
+/// loop, which drains via [`embassy_sync::channel::Channel::try_receive`].
+///
+/// Was a [`Signal<_, RemoteCommand>`][`Signal`] until 2026-05-19;
+/// a single Signal slot is last-write-wins, so two MCP tools fired
+/// back-to-back within the ~33 ms drain interval would silently
+/// drop the first. With a bounded channel the queue absorbs short
+/// bursts. On overflow [`enqueue_remote_command`] logs and drops
+/// the new value (drop-newest matches Signal's pre-existing
+/// saturation behaviour), so producers never block.
+pub static REMOTE_COMMAND_QUEUE: Channel<
+    CriticalSectionRawMutex,
+    RemoteCommand,
+    REMOTE_COMMAND_QUEUE_CAPACITY,
+> = Channel::new();
+
+/// Enqueue one [`RemoteCommand`] onto [`REMOTE_COMMAND_QUEUE`].
+///
+/// Fire-and-forget: producers are called from many task contexts
+/// (interrupt-adjacent BLE callbacks, render-loop adjacent
+/// shortcuts, async HTTP handlers, …) and must never block. On
+/// queue-full the value is dropped and a `defmt::warn!` surfaces
+/// the saturation so the operator can detect a runaway producer
+/// without it crashing the device.
+pub fn enqueue_remote_command(cmd: RemoteCommand) {
+    use embassy_sync::channel::TrySendError;
+    if let Err(TrySendError::Full(_)) = REMOTE_COMMAND_QUEUE.try_send(cmd) {
+        defmt::warn!(
+            "remote-command: queue full (cap={=usize}); dropped command",
+            REMOTE_COMMAND_QUEUE_CAPACITY,
+        );
+    }
+}
 
 /// Latest mood the operator has selected via `POST /mood`.
 ///
@@ -566,15 +603,23 @@ async fn handle_state_websocket(
     use super::websocket;
 
     // RFC 6455 § 4.2.1: the server must validate `Upgrade:
-    // websocket`, `Sec-WebSocket-Version: 13`, and presence of
-    // `Sec-WebSocket-Key` before issuing `101`. Without the
-    // version gate a client on an older draft would receive a
-    // `101` with framing it doesn't understand and silently
-    // break — a clean `400` lets the client fall back.
+    // websocket`, `Connection: Upgrade`, `Sec-WebSocket-Version:
+    // 13`, and presence of `Sec-WebSocket-Key` before issuing
+    // `101`. Without the version gate a client on an older draft
+    // would receive a `101` with framing it doesn't understand
+    // and silently break — a clean `400` lets the client fall
+    // back. The `Connection` header is a comma-separated list per
+    // RFC 9110 § 7.6.1, so a client legitimately sending
+    // `Connection: Upgrade, keep-alive` must still pass.
     let upgrade_ok = websocket::parse_header_value(headers, b"upgrade")
         .is_some_and(|v| v.eq_ignore_ascii_case(b"websocket"));
     if !upgrade_ok {
         return write_text(socket, 400, "Upgrade: websocket required\n").await;
+    }
+    let connection_ok = websocket::parse_header_value(headers, b"connection")
+        .is_some_and(|v| websocket::header_contains_token(v, b"upgrade"));
+    if !connection_ok {
+        return write_text(socket, 400, "Connection: Upgrade required\n").await;
     }
     let version_ok =
         websocket::parse_header_value(headers, b"sec-websocket-version") == Some(b"13" as &[u8]);
@@ -1108,7 +1153,12 @@ async fn handle_post_toast(socket: &mut TcpSocket<'_>, body: &str) -> Result<(),
             "http: POST /toast unknown level={=str}",
             request.level.as_str()
         );
-        return write_text(socket, 400, "level must be \"warn\" or \"error\"\n").await;
+        return write_text(
+            socket,
+            400,
+            "level must be \"info\", \"warn\", or \"error\"\n",
+        )
+        .await;
     };
     crate::toast::push(level, &request.message, crate::clock::HalClock.now());
     defmt::info!(
@@ -1126,6 +1176,7 @@ const fn toast_level_from_wire(s: &str) -> Option<crate::toast::ToastLevel> {
     // `str` doesn't `match` ergonomically in a const fn; fall back
     // to byte-equality for the known short labels.
     match s.as_bytes() {
+        b"info" => Some(crate::toast::ToastLevel::Info),
         b"warn" => Some(crate::toast::ToastLevel::Warn),
         b"error" => Some(crate::toast::ToastLevel::Error),
         _ => None,
@@ -1207,7 +1258,7 @@ async fn handle_post_mcp(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), H
 /// Async because `set_volume` and `set_mute` thread through the audio
 /// task's SD-write persistence path, mirroring `POST /volume` and
 /// `POST /mute`. Other tools resolve synchronously by signalling
-/// `REMOTE_COMMAND_SIGNAL` and rendering a fixed acknowledgement.
+/// `REMOTE_COMMAND_QUEUE` and rendering a fixed acknowledgement.
 #[allow(
     clippy::too_many_lines,
     reason = "single dispatch table that mirrors `TOOLS_LIST_RESULT_JSON`; \
@@ -1221,7 +1272,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
     match tool {
         "set_emotion" => match json::parse_set_emotion(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("emotion enqueued"))
             }
             Err(e) => render_error(
@@ -1256,7 +1307,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "look_at" => match json::parse_look_at(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("look-at enqueued"))
             }
             Err(e) => render_error(
@@ -1267,7 +1318,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "look_at_point" => match json::parse_look_at_point(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("look-at-point enqueued"))
             }
             Err(e) => render_error(
@@ -1278,7 +1329,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "speak" => match json::parse_speak(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("phrase enqueued"))
             }
             Err(e) => render_error(
@@ -1310,7 +1361,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 None => render_error(
                     Some(id),
                     JsonRpcErrorCode::InvalidParams,
-                    "level must be \"warn\" or \"error\"",
+                    "level must be \"info\", \"warn\", or \"error\"",
                 ),
             },
             Err(e) => render_error(
@@ -1321,7 +1372,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "start_listen" => match json::parse_start_listen(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("listen window opened"))
             }
             Err(e) => render_error(
@@ -1335,7 +1386,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 if let RemoteCommand::EnterPairing { duration_ms } = cmd {
                     crate::net::esp_now::open_pair_window(duration_ms);
                 }
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("pairing window opened"))
             }
             Err(e) => render_error(
@@ -1346,7 +1397,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "enter_thinking" => match json::parse_enter_thinking(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("thinking window opened"))
             }
             Err(e) => render_error(
@@ -1357,7 +1408,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "exit_thinking" => match json::parse_exit_thinking(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("thinking hold released"))
             }
             Err(e) => render_error(
@@ -1368,7 +1419,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
         },
         "reset" => match json::parse_reset(arguments) {
             Ok(cmd) => {
-                REMOTE_COMMAND_SIGNAL.signal(cmd);
+                enqueue_remote_command(cmd);
                 render_success(id, &render_tool_text_result("holds released"))
             }
             Err(e) => render_error(
@@ -1944,7 +1995,7 @@ async fn handle_remote(
             if let RemoteCommand::EnterPairing { duration_ms } = cmd {
                 crate::net::esp_now::open_pair_window(duration_ms);
             }
-            REMOTE_COMMAND_SIGNAL.signal(cmd);
+            enqueue_remote_command(cmd);
             write_no_content(socket).await
         }
         Err(e) => {

@@ -753,7 +753,7 @@ mod integration_tests {
         // before DecoratorExpiry sweeps.
         //
         // 3. Sidecar reply lands. SetEmotion arrives via
-        //    REMOTE_COMMAND_SIGNAL; the RemoteCommandModifier's
+        //    REMOTE_COMMAND_QUEUE; the RemoteCommandModifier's
         //    SetEmotion handler clears the in-flight thinking hold
         //    as a side effect, so attention drops to None. The
         //    decorator slot still reads Thinking until the 500ms

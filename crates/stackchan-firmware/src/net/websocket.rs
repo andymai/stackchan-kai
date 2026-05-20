@@ -62,6 +62,13 @@ pub fn parse_websocket_key(headers: &[u8]) -> Option<&[u8]> {
 /// Generic case-insensitive header value lookup. Pulled out so
 /// the `Upgrade` / `Connection` / `Sec-WebSocket-Version` gates
 /// can layer on later without rewriting the scan.
+///
+/// Returns `None` when the header is absent **or** present with
+/// an empty (whitespace-only) value. An empty value is treated
+/// the same as a missing header so a stray `Sec-WebSocket-Key:\r\n`
+/// can't be interpreted as a valid handshake — the SHA-1 of zero
+/// bytes is deterministic and a server that accepted it would
+/// 101-upgrade clients that omitted the key.
 #[must_use]
 pub fn parse_header_value<'a>(headers: &'a [u8], name_lower: &[u8]) -> Option<&'a [u8]> {
     for line in headers.split(|&b| b == b'\n') {
@@ -102,9 +109,44 @@ pub fn parse_header_value<'a>(headers: &'a [u8], name_lower: &[u8]) -> Option<&'
                     .map_or(0, |e| e + 1);
                 &v[..end]
             });
+        if value.is_empty() {
+            // Treat empty as absent — keep scanning in case a later
+            // header line (e.g. duplicate `Authorization`) carries
+            // the real value.
+            continue;
+        }
         return Some(value);
     }
     None
+}
+
+/// Test whether a `Connection`-style comma-separated header value
+/// contains the given token (case-insensitive).
+///
+/// Used to validate RFC 6455 § 4.2.1's `Connection: Upgrade`
+/// requirement when the client legitimately sends
+/// `Connection: Upgrade, keep-alive` or similar.
+#[must_use]
+pub fn header_contains_token(value: &[u8], token_lower: &[u8]) -> bool {
+    value
+        .split(|&b| b == b',')
+        .map(|t| {
+            let start = t
+                .iter()
+                .position(|b| !b.is_ascii_whitespace())
+                .unwrap_or(t.len());
+            let end = t
+                .iter()
+                .rposition(|b| !b.is_ascii_whitespace())
+                .map_or(start, |i| i + 1);
+            &t[start..end]
+        })
+        .any(|t| {
+            t.len() == token_lower.len()
+                && t.iter()
+                    .zip(token_lower.iter())
+                    .all(|(a, b)| a.to_ascii_lowercase() == *b)
+        })
 }
 
 /// Write one unfragmented server-side WebSocket text frame
@@ -263,6 +305,40 @@ mod tests {
         let headers = b"garbage-line-no-colon\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
         let key = parse_websocket_key(headers).unwrap();
         assert_eq!(key, b"dGhlIHNhbXBsZSBub25jZQ==");
+    }
+
+    #[test]
+    fn parse_websocket_key_returns_none_when_value_is_empty() {
+        // A header line with no value (`Key:\r\n`) used to return
+        // `Some(b"")`, which the handshake handler would happily
+        // SHA-1 + base64 to a deterministic accept key. The fix:
+        // treat empty as absent so the missing-key branch fires.
+        let headers = b"Sec-WebSocket-Key:\r\nUpgrade: websocket\r\n";
+        assert!(parse_websocket_key(headers).is_none());
+        // Whitespace-only is also empty after trimming.
+        let headers = b"Sec-WebSocket-Key:   \r\n";
+        assert!(parse_websocket_key(headers).is_none());
+        // If a later duplicate has a real value, fall through to it.
+        let headers = b"Sec-WebSocket-Key:\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+        let key = parse_websocket_key(headers).unwrap();
+        assert_eq!(key, b"dGhlIHNhbXBsZSBub25jZQ==");
+    }
+
+    #[test]
+    fn header_contains_token_matches_comma_separated_lists() {
+        // Connection headers are a comma-separated token list per
+        // RFC 9110 § 7.6.1; the handshake gate must accept any
+        // shape that includes `Upgrade`.
+        assert!(header_contains_token(b"Upgrade", b"upgrade"));
+        assert!(header_contains_token(b"upgrade", b"upgrade"));
+        assert!(header_contains_token(b"Upgrade, keep-alive", b"upgrade"));
+        assert!(header_contains_token(b"keep-alive, Upgrade", b"upgrade"));
+        assert!(header_contains_token(b"keep-alive,Upgrade", b"upgrade"));
+        assert!(header_contains_token(b"keep-alive,  Upgrade  ", b"upgrade"));
+        // Negatives.
+        assert!(!header_contains_token(b"keep-alive", b"upgrade"));
+        assert!(!header_contains_token(b"Upgradez", b"upgrade"));
+        assert!(!header_contains_token(b"", b"upgrade"));
     }
 
     #[test]

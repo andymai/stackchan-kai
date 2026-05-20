@@ -213,6 +213,9 @@ pub fn parse_request(body: &str) -> Result<ParsedRequest<'_>, ParseError> {
 
         match key {
             "jsonrpc" => {
+                if jsonrpc_seen {
+                    return Err(ParseError::invalid_request("duplicate 'jsonrpc' field"));
+                }
                 let (val, after) = read_string(bytes, pos)?;
                 if val != "2.0" {
                     return Err(ParseError::invalid_request(
@@ -223,20 +226,25 @@ pub fn parse_request(body: &str) -> Result<ParsedRequest<'_>, ParseError> {
                 pos = after;
             }
             "id" => {
+                if id.is_some() {
+                    return Err(ParseError::invalid_request("duplicate 'id' field"));
+                }
                 let (val, after) = read_integer(bytes, pos)?;
                 id = Some(val);
                 pos = after;
             }
             "method" => {
+                if method.is_some() {
+                    return Err(ParseError::invalid_request("duplicate 'method' field"));
+                }
                 let (val, after) = read_string(bytes, pos)?;
-                let start = bytes
-                    .get(after.saturating_sub(val.len() + 1))
-                    .map_or(after, |_| after - val.len() - 1);
-                let _ = start; // suppress unused; method slice already produced
                 method = Some(val);
                 pos = after;
             }
             "params" => {
+                if params_raw.is_some() {
+                    return Err(ParseError::invalid_request("duplicate 'params' field"));
+                }
                 // Capture the whole params value (object/array/literal)
                 // as a slice so the dispatcher can re-parse it against
                 // the method-specific schema.
@@ -720,6 +728,36 @@ mod tests {
     fn parse_request_rejects_garbage() {
         let err = parse_request("not json").expect_err("should reject");
         assert_eq!(err.code, JsonRpcErrorCode::ParseError);
+    }
+
+    #[test]
+    fn parse_request_rejects_duplicate_top_level_keys() {
+        // The envelope's four top-level keys each accept one value;
+        // a body that shadows them is a sloppy or hostile client.
+        // Closed-schema rejection is consistent with the rest of
+        // the parser family (parse_set_emotion / parse_toast / ...).
+        for (body, label) in [
+            (
+                r#"{"jsonrpc":"2.0","jsonrpc":"2.0","id":1,"method":"x"}"#,
+                "jsonrpc",
+            ),
+            (r#"{"jsonrpc":"2.0","id":1,"id":2,"method":"x"}"#, "id"),
+            (
+                r#"{"jsonrpc":"2.0","id":1,"method":"x","method":"y"}"#,
+                "method",
+            ),
+            (
+                r#"{"jsonrpc":"2.0","id":1,"method":"x","params":{},"params":{}}"#,
+                "params",
+            ),
+        ] {
+            let err = parse_request(body).expect_err(label);
+            assert_eq!(
+                err.code,
+                JsonRpcErrorCode::InvalidRequest,
+                "{label}: {err:?}"
+            );
+        }
     }
 
     #[test]
