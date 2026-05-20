@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.9.0...stackchan-net-v0.10.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** get_sensor_history — rolling 60s sensor window for LLM grounding ([#527](https://github.com/andymai/stackchan-kai/issues/527)) ([48e6395](https://github.com/andymai/stackchan-kai/commit/48e63950e4b28cc8486f9c11418fff57466b4db7))
+
 ## [0.9.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.8.1...stackchan-net-v0.9.0) (2026-05-20)
 
 

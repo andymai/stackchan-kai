@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.104.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.103.0...stackchan-firmware-v0.104.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** get_sensor_history — rolling 60s sensor window for LLM grounding ([#527](https://github.com/andymai/stackchan-kai/issues/527)) ([48e6395](https://github.com/andymai/stackchan-kai/commit/48e63950e4b28cc8486f9c11418fff57466b4db7))
+
 ## [0.103.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.102.1...stackchan-firmware-v0.103.0) (2026-05-20)
 
 
