@@ -167,9 +167,11 @@ fn drain_due(now: Instant) -> Vec<Reminder, MAX_REMINDERS> {
 
 /// Embassy task — drains due reminders at `REMINDER_TICK` cadence
 /// and dispatches each through `REMOTE_COMMAND_QUEUE` as a
-/// [`RemoteCommand::Speak`]. The signal is single-waker, so a burst
-/// of simultaneously-due reminders fires sequentially with one tick
-/// of spacing — fine for a desk-toy that has at most a few in flight.
+/// [`RemoteCommand::Speak`]. The queue absorbs short bursts, so
+/// simultaneously-due reminders are all preserved; the per-tick
+/// spacing is conservative pacing for the audio dispatcher
+/// downstream, not a correctness requirement of the control-plane
+/// queue itself.
 #[embassy_executor::task]
 pub async fn reminders_task() {
     defmt::info!(
