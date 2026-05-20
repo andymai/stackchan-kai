@@ -19,18 +19,16 @@ ignore = []
 
 [licenses]
 version = 2
+# Only licenses actually present in the resolved host dep graph. Add
+# entries here when a new dep introduces a license, not pre-emptively;
+# cargo-deny warns on unused allowances and CI surfaces those quickly.
 allow = [
     "MIT",
-    "MIT-0",
     "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
     "BSD-2-Clause",
-    "MPL-2.0",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "ISC",
-    "CC0-1.0",
     "Zlib",
     # `smoltcp` and `managed`, pulled in transitively by embassy-net,
     # ship under the BSD Zero Clause licence.
