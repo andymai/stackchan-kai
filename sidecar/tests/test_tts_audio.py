@@ -47,9 +47,7 @@ def test_resample_downmixes_stereo_to_mono() -> None:
     left = np.full(1000, 100, dtype=np.int16)
     right = np.full(1000, 200, dtype=np.int16)
     interleaved = np.stack([left, right], axis=1).reshape(-1).astype(np.int16)
-    out = resample_and_downmix(
-        interleaved.tobytes(), src_rate=PCM_SAMPLE_RATE_HZ, channels=2
-    )
+    out = resample_and_downmix(interleaved.tobytes(), src_rate=PCM_SAMPLE_RATE_HZ, channels=2)
     out_samples = np.frombuffer(out, dtype=np.int16)
     assert len(out_samples) == 1000  # no resample, only downmix
     assert int(out_samples[0]) == 150  # mean(100, 200)

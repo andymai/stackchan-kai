@@ -66,5 +66,3 @@ async def test_duration_property_matches_byte_count(provider: EspeakProvider) ->
     result = await provider.synthesize("Hi.")
     expected = (len(result.pcm) // 2) / PCM_SAMPLE_RATE_HZ
     assert abs(result.duration_seconds - expected) < 1e-9
-
-

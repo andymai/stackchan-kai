@@ -53,8 +53,7 @@ def _build_tts(settings: Settings) -> TTSProvider:
         import logging
 
         logging.getLogger("stackchan_sidecar").warning(
-            "tts_provider=elevenlabs requested but not implemented yet; "
-            "falling back to espeak_ng.",
+            "tts_provider=elevenlabs requested but not implemented yet; falling back to espeak_ng.",
         )
     from .tts import EspeakProvider
 

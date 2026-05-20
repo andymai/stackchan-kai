@@ -19,9 +19,7 @@ from stackchan_sidecar.tts import PiperProvider, TTSError
 
 
 def _patch_piper_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "stackchan_sidecar.tts.piper.shutil.which", lambda _: "/usr/bin/piper"
-    )
+    monkeypatch.setattr("stackchan_sidecar.tts.piper.shutil.which", lambda _: "/usr/bin/piper")
 
 
 @pytest.mark.asyncio
@@ -49,9 +47,7 @@ async def test_setup_error_when_model_missing(
 
 
 @pytest.mark.asyncio
-async def test_rejects_empty_text(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_rejects_empty_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_piper_available(monkeypatch)
     fake_model = tmp_path / "voice.onnx"
     fake_model.write_bytes(b"x")
@@ -71,9 +67,7 @@ async def test_subprocess_failure_surfaces_as_synthesize_error(
     fake_model.write_bytes(b"x")
 
     def fake_run(*_a: Any, **_kw: Any) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(
-            returncode=1, cmd=["piper"], stderr="model load failed"
-        )
+        raise subprocess.CalledProcessError(returncode=1, cmd=["piper"], stderr="model load failed")
 
     monkeypatch.setattr("stackchan_sidecar.tts.piper.subprocess.run", fake_run)
     with pytest.raises(TTSError) as exc_info:
