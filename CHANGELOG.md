@@ -294,6 +294,11 @@ section summarises the milestone work in human terms.
 - Greptile-driven post-merge fix on the ESP-NOW TX path: the
   dispatcher no longer starves under inbound traffic and no longer
   latches a NaN pose into the delta-comparison cache.
+- `STACKCHAN.RON` parser rejects shadowed fields at every level.
+  Previously the bare RON parser silently last-wins'd on a
+  duplicate key, so a hand-edited file with `psk: "real", psk:
+  "***"` would associate with the second value; the JSON twin
+  already rejected, and the two paths are now in lockstep.
 
 ### Documentation
 
