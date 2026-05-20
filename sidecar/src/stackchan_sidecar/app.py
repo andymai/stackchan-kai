@@ -18,7 +18,7 @@ from .errors import (
     failure_kind,
 )
 from .llm import Emotion, LLMProvider, sanitize_short
-from .personas import load_persona
+from .personas import list_personas, load_persona
 from .retry import StageDeadlineError, retry_with_timeout
 from .session_status import SessionStatus
 from .session_store import SessionStore, Turn, session_store_lifespan
@@ -115,6 +115,17 @@ def create_app(
         return {
             "status": "ok",
             "providers": {"stt": "ready", "llm": "ready"},
+        }
+
+    @app.get("/v1/personas")
+    async def personas_endpoint() -> dict[str, object]:
+        # Lists every persona slug under ``settings.personas_dir`` plus
+        # which one a request will use when no X-Persona-Name header is
+        # set. Operator-facing — lets a curl-based introspector see
+        # what's deployed without grepping the filesystem.
+        return {
+            "default": settings.persona,
+            "personas": list_personas(settings.personas_dir),
         }
 
     @app.post("/v1/listen", dependencies=[Depends(verify_bearer)])

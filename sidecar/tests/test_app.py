@@ -22,6 +22,38 @@ def test_healthz(client: TestClient) -> None:
     assert body["providers"]["llm"] == "ready"
 
 
+def test_list_personas_returns_default_plus_catalogue(
+    personas_dir: Path,
+    settings: Settings,
+    fake_stt: FakeSTT,
+    fake_llm: FakeLLM,
+) -> None:
+    # personas_dir fixture seeds `stack-chan.md`; add a second so the
+    # listing has something to sort.
+    (personas_dir / "desk-buddy.md").write_text(
+        "---\nname: desk-buddy\n---\nQuiet companion.\n", encoding="utf-8"
+    )
+    app = create_app(settings, fake_stt, fake_llm)
+    with TestClient(app) as c:
+        r = c.get("/v1/personas")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {
+        "default": "stack-chan",
+        "personas": ["desk-buddy", "stack-chan"],
+    }
+
+
+def test_list_personas_no_auth_required(
+    client: TestClient,
+) -> None:
+    # No bearer token in the headers — `/v1/personas` is operator-
+    # discoverable without auth, like `/healthz`. (The persona file
+    # contents stay private; only the slug catalogue is exposed.)
+    r = client.get("/v1/personas")
+    assert r.status_code == 200
+
+
 def test_listen_happy_path(
     client: TestClient,
     auth_headers: dict[str, str],
