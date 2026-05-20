@@ -1109,12 +1109,22 @@ fn parse_u16(scanner: &mut Scanner<'_>) -> Result<u16, JsonError> {
         .map_err(|_| JsonError::BadValue)
 }
 
-/// Parse a contiguous number-shaped run as an `f32`.
+/// Parse a contiguous number-shaped run as a finite `f32`.
+///
+/// Rejects `NaN` / `+Inf` / `-Inf` at the source so downstream
+/// consumers don't have to thread a finite-check through every
+/// arithmetic site. A wire value like `"1e400"` parses to `+Inf`
+/// and would otherwise flow into a [`stackchan_core::Pose`] field
+/// where the clamp can't make it meaningful.
 pub(crate) fn parse_f32(scanner: &mut Scanner<'_>) -> Result<f32, JsonError> {
-    scanner
+    let v: f32 = scanner
         .read_number()?
-        .parse::<f32>()
-        .map_err(|_| JsonError::BadValue)
+        .parse()
+        .map_err(|_| JsonError::BadValue)?;
+    if !v.is_finite() {
+        return Err(JsonError::BadValue);
+    }
+    Ok(v)
 }
 
 /// Parse a bare JSON `true` / `false` literal at the current scanner
@@ -2258,6 +2268,25 @@ mod tests {
     fn parse_look_at_rejects_unknown_key() {
         let err = parse_look_at(r#"{"pan_deg":0,"tilt_deg":0,"extra":1}"#).unwrap_err();
         assert!(matches!(err, JsonError::UnknownKey), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_f32_rejects_non_finite_values() {
+        // `parse_f32` is the shared f32 helper; tightening it at the
+        // source means parse_look_at, parse_look_at_point, and any
+        // future f32 route can rely on `is_finite()` downstream.
+        // `1e400` overflows to `+Inf` on parse; matches the canonical
+        // hostile-client probe.
+        for body in [
+            r#"{"pan_deg":1e400,"tilt_deg":0}"#,  // pan_deg = +Inf
+            r#"{"pan_deg":-1e400,"tilt_deg":0}"#, // pan_deg = -Inf
+            r#"{"pan_deg":0,"tilt_deg":1e400}"#,  // tilt_deg = +Inf
+        ] {
+            let err = parse_look_at(body).unwrap_err();
+            assert!(matches!(err, JsonError::BadValue), "{body}: {err:?}");
+        }
+        let err = parse_look_at_point(r#"{"x":1e400,"y":0,"z":1}"#).unwrap_err();
+        assert!(matches!(err, JsonError::BadValue), "{err:?}");
     }
 
     #[test]

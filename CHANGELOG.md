@@ -313,6 +313,18 @@ section summarises the milestone work in human terms.
   paste from a redacted `GET /settings` body that forgot to put
   the real secret back. Fail fast at load with a clear error
   instead of silently trying to associate Wi-Fi with PSK = `"***"`.
+- Input-validation tightening across `stackchan-net` parsers.
+  `blufi::build_frame` rejects `subtype > 0x3F` instead of silently
+  masking the high bits and emitting a different subtype on the
+  wire. `mcp::parse_request` rejects shadowed top-level keys
+  (`jsonrpc`/`id`/`method`/`params`) — closed-schema, matches the
+  existing `parse_*` family. `parse_f32` rejects `NaN` and
+  infinities at the source so `POST /look-at` / `POST /look-at-
+  point` can't push non-finite values into a `Pose` (a wire body
+  like `"1e400"` parses to `+Inf` and clamping can't recover it).
+  `parse_bearer_token` skips `Authorization: Bearer   ` (empty
+  token after scheme) and falls through to the next header
+  instead of returning `Some("")`.
 
 ### Documentation
 
