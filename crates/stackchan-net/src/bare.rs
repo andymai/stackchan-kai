@@ -239,14 +239,54 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws_and_comments();
             match key {
-                "wifi" => wifi = Some(self.parse_wifi()?),
-                "mdns" => mdns = Some(self.parse_mdns()?),
-                "time" => time = Some(self.parse_time()?),
-                "auth" => auth = Some(self.parse_auth()?),
-                "audio" => audio = Some(self.parse_audio()?),
-                "tracker" => tracker = Some(self.parse_tracker()?),
-                "esp_now" => esp_now = Some(self.parse_esp_now()?),
-                "behavior" => behavior = Some(self.parse_behavior()?),
+                "wifi" => {
+                    if wifi.is_some() {
+                        return Err(bare_err("duplicate top-level field", "wifi"));
+                    }
+                    wifi = Some(self.parse_wifi()?);
+                }
+                "mdns" => {
+                    if mdns.is_some() {
+                        return Err(bare_err("duplicate top-level field", "mdns"));
+                    }
+                    mdns = Some(self.parse_mdns()?);
+                }
+                "time" => {
+                    if time.is_some() {
+                        return Err(bare_err("duplicate top-level field", "time"));
+                    }
+                    time = Some(self.parse_time()?);
+                }
+                "auth" => {
+                    if auth.is_some() {
+                        return Err(bare_err("duplicate top-level field", "auth"));
+                    }
+                    auth = Some(self.parse_auth()?);
+                }
+                "audio" => {
+                    if audio.is_some() {
+                        return Err(bare_err("duplicate top-level field", "audio"));
+                    }
+                    audio = Some(self.parse_audio()?);
+                }
+                "tracker" => {
+                    if tracker.is_some() {
+                        return Err(bare_err("duplicate top-level field", "tracker"));
+                    }
+                    tracker = Some(self.parse_tracker()?);
+                }
+                "esp_now" => {
+                    if esp_now.is_some() {
+                        return Err(bare_err("duplicate top-level field", "esp_now"));
+                    }
+                    esp_now = Some(self.parse_esp_now()?);
+                }
+                "behavior" => {
+                    if behavior.is_some() {
+                        return Err(bare_err("duplicate top-level field", "behavior"));
+                    }
+                    behavior = Some(self.parse_behavior()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -289,9 +329,24 @@ impl<'a> Parser<'a> {
             self.skip_ws_and_comments();
             let value = self.parse_string()?;
             match key {
-                "ssid" => ssid = Some(value),
-                "psk" => psk = Some(value),
-                "country" => country = Some(value),
+                "ssid" => {
+                    if ssid.is_some() {
+                        return Err(bare_err("duplicate wifi field", "ssid"));
+                    }
+                    ssid = Some(value);
+                }
+                "psk" => {
+                    if psk.is_some() {
+                        return Err(bare_err("duplicate wifi field", "psk"));
+                    }
+                    psk = Some(value);
+                }
+                "country" => {
+                    if country.is_some() {
+                        return Err(bare_err("duplicate wifi field", "country"));
+                    }
+                    country = Some(value);
+                }
                 other => return Err(bare_err("unknown wifi field", other)),
             }
             self.skip_ws_and_comments();
@@ -321,7 +376,12 @@ impl<'a> Parser<'a> {
             self.skip_ws_and_comments();
             let value = self.parse_string()?;
             match key {
-                "hostname" => hostname = Some(value),
+                "hostname" => {
+                    if hostname.is_some() {
+                        return Err(bare_err("duplicate mdns field", "hostname"));
+                    }
+                    hostname = Some(value);
+                }
                 other => return Err(bare_err("unknown mdns field", other)),
             }
             self.skip_ws_and_comments();
@@ -349,8 +409,18 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws_and_comments();
             match key {
-                "tz" => tz = Some(self.parse_string()?),
-                "sntp_servers" => sntp_servers = Some(self.parse_string_list()?),
+                "tz" => {
+                    if tz.is_some() {
+                        return Err(bare_err("duplicate time field", "tz"));
+                    }
+                    tz = Some(self.parse_string()?);
+                }
+                "sntp_servers" => {
+                    if sntp_servers.is_some() {
+                        return Err(bare_err("duplicate time field", "sntp_servers"));
+                    }
+                    sntp_servers = Some(self.parse_string_list()?);
+                }
                 other => return Err(bare_err("unknown time field", other)),
             }
             self.skip_ws_and_comments();
@@ -381,7 +451,12 @@ impl<'a> Parser<'a> {
             self.skip_ws_and_comments();
             let value = self.parse_string()?;
             match key {
-                "token" => token = Some(value),
+                "token" => {
+                    if token.is_some() {
+                        return Err(bare_err("duplicate auth field", "token"));
+                    }
+                    token = Some(value);
+                }
                 other => return Err(bare_err("unknown auth field", other)),
             }
             self.skip_ws_and_comments();
@@ -419,8 +494,18 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws_and_comments();
             match key {
-                "volume_pct" => volume_pct = Some(self.parse_u8()?),
-                "muted" => muted = Some(self.parse_bool()?),
+                "volume_pct" => {
+                    if volume_pct.is_some() {
+                        return Err(bare_err("duplicate audio field", "volume_pct"));
+                    }
+                    volume_pct = Some(self.parse_u8()?);
+                }
+                "muted" => {
+                    if muted.is_some() {
+                        return Err(bare_err("duplicate audio field", "muted"));
+                    }
+                    muted = Some(self.parse_bool()?);
+                }
                 other => return Err(bare_err("unknown audio field", other)),
             }
             self.skip_ws_and_comments();
@@ -459,13 +544,39 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws_and_comments();
             match key {
-                "fov_h_deg" => pan_fov = Some(self.parse_f32()?),
-                "fov_v_deg" => tilt_fov = Some(self.parse_f32()?),
+                "fov_h_deg" => {
+                    if pan_fov.is_some() {
+                        return Err(bare_err("duplicate tracker field", "fov_h_deg"));
+                    }
+                    pan_fov = Some(self.parse_f32()?);
+                }
+                "fov_v_deg" => {
+                    if tilt_fov.is_some() {
+                        return Err(bare_err("duplicate tracker field", "fov_v_deg"));
+                    }
+                    tilt_fov = Some(self.parse_f32()?);
+                }
                 "target_smoothing_alpha" => {
+                    if alpha.is_some() {
+                        return Err(bare_err(
+                            "duplicate tracker field",
+                            "target_smoothing_alpha",
+                        ));
+                    }
                     alpha = Some(self.parse_f32()?);
                 }
-                "flip_x" => flip_x = Some(self.parse_bool()?),
-                "flip_y" => flip_y = Some(self.parse_bool()?),
+                "flip_x" => {
+                    if flip_x.is_some() {
+                        return Err(bare_err("duplicate tracker field", "flip_x"));
+                    }
+                    flip_x = Some(self.parse_bool()?);
+                }
+                "flip_y" => {
+                    if flip_y.is_some() {
+                        return Err(bare_err("duplicate tracker field", "flip_y"));
+                    }
+                    flip_y = Some(self.parse_bool()?);
+                }
                 other => return Err(bare_err("unknown tracker field", other)),
             }
             self.skip_ws_and_comments();
@@ -503,12 +614,42 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws_and_comments();
             match key {
-                "enabled" => enabled = Some(self.parse_bool()?),
-                "pmk_hex" => pmk_hex = Some(self.parse_string()?),
-                "peer_mac" => peer_mac = Some(self.parse_string()?),
-                "lmk_hex" => lmk_hex = Some(self.parse_string()?),
-                "channel" => channel = Some(self.parse_optional_u8()?),
-                "tx_rate_hz" => tx_rate_hz = Some(self.parse_u8()?),
+                "enabled" => {
+                    if enabled.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "enabled"));
+                    }
+                    enabled = Some(self.parse_bool()?);
+                }
+                "pmk_hex" => {
+                    if pmk_hex.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "pmk_hex"));
+                    }
+                    pmk_hex = Some(self.parse_string()?);
+                }
+                "peer_mac" => {
+                    if peer_mac.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "peer_mac"));
+                    }
+                    peer_mac = Some(self.parse_string()?);
+                }
+                "lmk_hex" => {
+                    if lmk_hex.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "lmk_hex"));
+                    }
+                    lmk_hex = Some(self.parse_string()?);
+                }
+                "channel" => {
+                    if channel.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "channel"));
+                    }
+                    channel = Some(self.parse_optional_u8()?);
+                }
+                "tx_rate_hz" => {
+                    if tx_rate_hz.is_some() {
+                        return Err(bare_err("duplicate esp_now field", "tx_rate_hz"));
+                    }
+                    tx_rate_hz = Some(self.parse_u8()?);
+                }
                 other => return Err(bare_err("unknown esp_now field", other)),
             }
             self.skip_ws_and_comments();
@@ -529,6 +670,7 @@ impl<'a> Parser<'a> {
 
     /// Parse the `behavior: (...)` block. All fields default to
     /// `false` if absent.
+    #[allow(clippy::too_many_lines)] // one match arm per flag; splitting helpers wouldn't read clearer
     fn parse_behavior(&mut self) -> Result<BehaviorConfig, ConfigError> {
         self.expect_char('(')?;
         let mut soliloquy_enabled: Option<bool> = None;
@@ -553,20 +695,90 @@ impl<'a> Parser<'a> {
             self.expect_char(':')?;
             self.skip_ws_and_comments();
             match key {
-                "soliloquy_enabled" => soliloquy_enabled = Some(self.parse_bool()?),
-                "hourly_chime_enabled" => hourly_chime_enabled = Some(self.parse_bool()?),
-                "battery_icon_enabled" => battery_icon_enabled = Some(self.parse_bool()?),
-                "toast_overlay_enabled" => toast_overlay_enabled = Some(self.parse_bool()?),
-                "auto_torque_release_ms" => auto_torque_release_ms = Some(self.parse_u32()?),
-                "audio_debug_udp_target" => audio_debug_udp_target = Some(self.parse_string()?),
-                "agent_sidecar_url" => agent_sidecar_url = Some(self.parse_string()?),
-                "agent_sidecar_token" => agent_sidecar_token = Some(self.parse_string()?),
+                "soliloquy_enabled" => {
+                    if soliloquy_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "soliloquy_enabled"));
+                    }
+                    soliloquy_enabled = Some(self.parse_bool()?);
+                }
+                "hourly_chime_enabled" => {
+                    if hourly_chime_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "hourly_chime_enabled"));
+                    }
+                    hourly_chime_enabled = Some(self.parse_bool()?);
+                }
+                "battery_icon_enabled" => {
+                    if battery_icon_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "battery_icon_enabled"));
+                    }
+                    battery_icon_enabled = Some(self.parse_bool()?);
+                }
+                "toast_overlay_enabled" => {
+                    if toast_overlay_enabled.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "toast_overlay_enabled",
+                        ));
+                    }
+                    toast_overlay_enabled = Some(self.parse_bool()?);
+                }
+                "auto_torque_release_ms" => {
+                    if auto_torque_release_ms.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "auto_torque_release_ms",
+                        ));
+                    }
+                    auto_torque_release_ms = Some(self.parse_u32()?);
+                }
+                "audio_debug_udp_target" => {
+                    if audio_debug_udp_target.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "audio_debug_udp_target",
+                        ));
+                    }
+                    audio_debug_udp_target = Some(self.parse_string()?);
+                }
+                "agent_sidecar_url" => {
+                    if agent_sidecar_url.is_some() {
+                        return Err(bare_err("duplicate behavior field", "agent_sidecar_url"));
+                    }
+                    agent_sidecar_url = Some(self.parse_string()?);
+                }
+                "agent_sidecar_token" => {
+                    if agent_sidecar_token.is_some() {
+                        return Err(bare_err("duplicate behavior field", "agent_sidecar_token"));
+                    }
+                    agent_sidecar_token = Some(self.parse_string()?);
+                }
                 "follower_leader_hostname" => {
+                    if follower_leader_hostname.is_some() {
+                        return Err(bare_err(
+                            "duplicate behavior field",
+                            "follower_leader_hostname",
+                        ));
+                    }
                     follower_leader_hostname = Some(self.parse_string()?);
                 }
-                "wake_word_enabled" => wake_word_enabled = Some(self.parse_bool()?),
-                "wake_word_threshold" => wake_word_threshold = Some(self.parse_i8()?),
-                "wake_word_arena_kib" => wake_word_arena_kib = Some(self.parse_u32()?),
+                "wake_word_enabled" => {
+                    if wake_word_enabled.is_some() {
+                        return Err(bare_err("duplicate behavior field", "wake_word_enabled"));
+                    }
+                    wake_word_enabled = Some(self.parse_bool()?);
+                }
+                "wake_word_threshold" => {
+                    if wake_word_threshold.is_some() {
+                        return Err(bare_err("duplicate behavior field", "wake_word_threshold"));
+                    }
+                    wake_word_threshold = Some(self.parse_i8()?);
+                }
+                "wake_word_arena_kib" => {
+                    if wake_word_arena_kib.is_some() {
+                        return Err(bare_err("duplicate behavior field", "wake_word_arena_kib"));
+                    }
+                    wake_word_arena_kib = Some(self.parse_u32()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -1452,5 +1664,163 @@ mod tests {
         assert!(rendered.contains(r#""back\\slash and \"quote\"""#));
         let reparsed = parse_ron_bare(&rendered).unwrap();
         assert_eq!(reparsed.wifi.ssid, "back\\slash and \"quote\"");
+    }
+
+    // ============================================================
+    // Duplicate-key rejection — schema parity with bare_json.rs.
+    // A hand-edited RON with shadowed fields would otherwise last-wins
+    // silently; the canonical hazard is `wifi: ( psk: "real", psk: "x" )`
+    // where the renderer-side redaction string `"***"` ends up
+    // overwriting a real PSK on a round-trip through `GET /settings`.
+    // ============================================================
+
+    #[test]
+    fn rejects_duplicate_top_level_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                wifi: ( ssid: "n2", psk: "p2", country: "JP" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate top-level field") && msg.contains("wifi"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_wifi_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "real", psk: "x", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate wifi field") && msg.contains("psk"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_mdns_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "a", hostname: "b" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate mdns field") && msg.contains("hostname"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_time_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", tz: "JST", sntp_servers: ["pool.ntp.org"] ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate time field") && msg.contains("tz"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_auth_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                auth: ( token: "real-token-aaaaaaaaaaaaaaaa", token: "shadow-aaaaaaaaaaaaaaaaa" ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate auth field") && msg.contains("token"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_audio_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                audio: ( volume_pct: 50, volume_pct: 60, muted: false ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate audio field") && msg.contains("volume_pct"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_tracker_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                tracker: ( fov_h_deg: 60, fov_h_deg: 50 ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate tracker field") && msg.contains("fov_h_deg"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_esp_now_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                esp_now: ( enabled: true, enabled: false ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate esp_now field") && msg.contains("enabled"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_behavior_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                behavior: ( wake_word_enabled: true, wake_word_enabled: false ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate behavior field") && msg.contains("wake_word_enabled"),
+            "got {msg}"
+        );
     }
 }
