@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.105.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.104.0...stackchan-firmware-v0.105.0) (2026-05-20)
+
+
+### Features
+
+* **arc-a:** per-device persona dispatch via X-Persona-Name ([#529](https://github.com/andymai/stackchan-kai/issues/529)) ([50af366](https://github.com/andymai/stackchan-kai/commit/50af366061759899e3bf9b8b40823cddb617f113))
+
 ## [0.104.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.103.0...stackchan-firmware-v0.104.0) (2026-05-20)
 
 
