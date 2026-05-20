@@ -1535,6 +1535,36 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
             let snap = snapshot::read();
             render_success(id, &render_tool_text_result(&state_body(snap)))
         }
+        "get_sensors" => render_success(
+            id,
+            &render_tool_text_result(&sensors_body(snapshot::read_sensors())),
+        ),
+        "get_tasks" => render_success(
+            id,
+            &render_tool_text_result(&tasks_body(crate::watchdog::read_tasks_snapshot())),
+        ),
+        "get_events" => render_success(id, &render_tool_text_result(&events_body())),
+        "get_crash" => {
+            let outcome =
+                crate::storage::with_storage(crate::storage::FirmwareStorage::read_crash).await;
+            match outcome {
+                Some(Ok(Some(text))) => render_success(id, &render_tool_text_result(&text)),
+                Some(Ok(None)) => render_success(id, &render_tool_text_result("")),
+                Some(Err(e)) => {
+                    defmt::warn!("mcp: get_crash read failed ({})", defmt::Debug2Format(&e));
+                    render_error(
+                        Some(id),
+                        JsonRpcErrorCode::InternalError,
+                        "crash log read failed",
+                    )
+                }
+                None => render_error(
+                    Some(id),
+                    JsonRpcErrorCode::InternalError,
+                    "no SD card mounted",
+                ),
+            }
+        }
         _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
     }
 }
