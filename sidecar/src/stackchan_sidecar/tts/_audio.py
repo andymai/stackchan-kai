@@ -1,28 +1,16 @@
 """Shared audio post-processing for subprocess-driven TTS providers.
 
-Both [`EspeakProvider`] and [`PiperProvider`] shell out to a binary
-that writes a WAV file at the model's native sample rate (22050 Hz for
-both, in practice), then read that WAV back as raw bytes and convert
-it to the firmware's wire format: **16 kHz mono s16 little-endian PCM**.
-
-The two paths share three concerns:
-
-1. WAV parse + sanity check (16-bit sample width, non-empty payload).
-2. Multi-channel → mono via per-frame mean (both providers are mono
-   in practice; the guard is cheap and future-proofs us against a
-   provider that defaults to stereo).
-3. Sample-rate resample to 16 kHz via linear interpolation on
-   NumPy arrays.
-
-Linear interpolation is "good enough" for a robot-voice desk toy.
-A more demanding application would reach for polyphase resampling
-(`scipy.signal.resample_poly`, `libsoxr`); for this product, the
-quality gap is invisible next to the model itself.
+WAV-to-PCM transcode (16-bit width check, multi-channel → mono via
+per-frame mean, linear resample to 16 kHz) plus a small subprocess
+helper that runs a binary writing a WAV file and reads it back.
 """
 
 from __future__ import annotations
 
+import subprocess
+import tempfile
 import wave
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -31,17 +19,49 @@ from .errors import TTSError
 from .protocol import PCM_SAMPLE_RATE_HZ, PCM_SAMPLE_WIDTH_BYTES
 
 
-def wav_to_pcm(wav_path: Path, *, provider: str) -> bytes:
-    """Read a WAV file written by a TTS subprocess and return raw
-    16 kHz mono s16 LE bytes.
+def synthesize_via_subprocess(
+    *,
+    provider: str,
+    argv_for_wav: Callable[[Path], Sequence[str]],
+    text: str,
+    timeout_seconds: float,
+) -> bytes:
+    """Run a TTS subprocess that writes a WAV file and return its
+    16 kHz mono s16 LE PCM bytes.
 
-    ``provider`` is folded into [`TTSError`] messages so a failure
-    in the espeak path doesn't blame piper (and vice versa).
-
-    Raises [`TTSError`] with stage ``"synthesize"`` for empty output
-    and ``"transcode"`` for everything else (unreadable WAV, wrong
-    sample width, pathologically short payload after resample).
+    ``argv_for_wav`` is called with the temp WAV path and returns the
+    full ``argv`` for ``subprocess.run`` (binary + flags). ``text`` is
+    piped through stdin so an LLM reply with quotes / backticks can't
+    break shell escaping.
     """
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        wav_path = Path(tmp.name)
+    try:
+        try:
+            subprocess.run(
+                argv_for_wav(wav_path),
+                input=text,
+                text=True,
+                check=True,
+                timeout=timeout_seconds,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise TTSError(
+                "synthesize",
+                f"{provider} exited {e.returncode}: {e.stderr.strip()[:120]}",
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            raise TTSError("synthesize", f"{provider} timed out") from e
+        return wav_to_pcm(wav_path, provider=provider)
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
+def wav_to_pcm(wav_path: Path, *, provider: str) -> bytes:
+    """Read a WAV written by a TTS subprocess and return 16 kHz mono
+    s16 LE bytes. ``provider`` is folded into [`TTSError`] messages
+    so the failing engine is identifiable in logs."""
     try:
         with wave.open(str(wav_path), "rb") as r:
             channels = r.getnchannels()
@@ -71,8 +91,7 @@ def wav_to_pcm(wav_path: Path, *, provider: str) -> bytes:
 def resample_and_downmix(frames: bytes, src_rate: int, channels: int) -> bytes:
     """Convert raw s16 LE frames at ``src_rate`` x ``channels`` to
     16 kHz mono s16 LE bytes. Pure NumPy; no audioop / scipy / libsoxr
-    dependency.
-    """
+    dependency."""
     samples = np.frombuffer(frames, dtype=np.int16)
     if channels > 1:
         samples = samples.reshape(-1, channels).mean(axis=1).astype(np.int16)

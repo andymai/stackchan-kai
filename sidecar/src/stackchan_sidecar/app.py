@@ -133,7 +133,7 @@ def create_app(
             "providers": {"stt": "ready", "llm": "ready"},
         }
 
-    @app.get("/v1/audio/{token}")
+    @app.get("/v1/audio/{token}", dependencies=[Depends(verify_bearer)])
     async def audio_endpoint(token: str) -> Response:
         # Streams the cached PCM the firmware fetches after a /v1/listen
         # reply. Tokens are opaque per-request handles minted in the

@@ -1,20 +1,9 @@
 """Piper TTS provider.
 
-Piper is a fast, local, neural TTS that runs from a model file on
-CPU — no API key, no GPU. Voice quality is "competent neural" rather
-than "indistinguishable from human", which is the right spot for a
-desk toy: clearer than espeak-ng's robot voice, no per-utterance
-network cost or rate limit.
-
-Setup is *not* zero-touch: the operator must install the
-``piper`` binary and download an ONNX voice model + JSON metadata
-(both `.onnx` and `.onnx.json` must sit side-by-side). Without those,
-``PiperProvider`` raises [`TTSError`] with stage ``"setup"`` on the
-first synthesis call.
-
-Wire shape is identical to espeak-ng: subprocess writes a 22050 Hz
-mono s16 WAV, we transcode to 16 kHz mono s16 LE PCM via the shared
-[`wav_to_pcm`] helper.
+Local neural TTS via the ``piper`` binary plus an ONNX voice model
+(``<model>.onnx`` plus the side-car ``<model>.onnx.json``). Subprocess
+writes a 22050 Hz mono s16 WAV; the shared transcoder produces
+16 kHz mono s16 LE PCM.
 """
 
 from __future__ import annotations
@@ -22,11 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
-from ._audio import wav_to_pcm
+from ._audio import synthesize_via_subprocess
 from .errors import TTSError
 from .protocol import TTSResult
 
@@ -34,14 +21,12 @@ _LOG = logging.getLogger("stackchan_sidecar.tts.piper")
 
 
 class PiperProvider:
-    """Provider that shells out to ``piper`` and post-processes the
-    resulting WAV into 16 kHz mono PCM.
+    """Shells out to ``piper`` and transcodes the resulting WAV.
 
-    The model path is supplied at construction; ``piper`` will look
-    for ``<model_path>.json`` automatically (the voice's metadata),
-    so callers only pass the ``.onnx`` path. ``speaker_id`` selects
-    one of the speakers in a multi-speaker model; for single-speaker
-    models it is ignored.
+    ``model_path`` is the ``.onnx`` file; ``piper`` looks for the
+    accompanying ``.onnx.json`` automatically. ``speaker_id`` selects
+    one of the speakers in a multi-speaker model; ignored for
+    single-speaker models.
     """
 
     name: str = "piper"
@@ -55,49 +40,25 @@ class PiperProvider:
         if binary is None:
             raise TTSError("setup", "piper binary not found in PATH")
         if not self._model_path.is_file():
-            raise TTSError(
-                "setup",
-                f"piper model not found at {self._model_path}",
-            )
+            raise TTSError("setup", f"piper model not found at {self._model_path}")
         if not text.strip():
             raise TTSError("synthesize", "empty text")
         return await asyncio.to_thread(self._synthesize_sync, binary, text)
 
     def _synthesize_sync(self, binary: str, text: str) -> TTSResult:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            wav_path = Path(tmp.name)
-        try:
-            args = [
-                binary,
-                "--model",
-                str(self._model_path),
-                "--output_file",
-                str(wav_path),
-            ]
+        def argv(wav: Path) -> list[str]:
+            base = [binary, "--model", str(self._model_path), "--output_file", str(wav)]
             if self._speaker_id is not None:
-                args += ["--speaker", str(self._speaker_id)]
-            try:
-                subprocess.run(
-                    args,
-                    input=text,
-                    text=True,
-                    check=True,
-                    # Neural inference can be slow on cold CPU; give it
-                    # enough runway for a long-ish reply but bound it
-                    # so a hung process doesn't pin the request.
-                    timeout=30.0,
-                    capture_output=True,
-                )
-            except subprocess.CalledProcessError as e:
-                raise TTSError(
-                    "synthesize",
-                    f"piper exited {e.returncode}: {e.stderr.strip()[:120]}",
-                ) from e
-            except subprocess.TimeoutExpired as e:
-                raise TTSError("synthesize", "piper timed out") from e
-            pcm = wav_to_pcm(wav_path, provider="piper")
-            _LOG.debug("piper synthesized %d bytes", len(pcm))
-            voice = self._model_path.stem
-            return TTSResult(pcm=pcm, provider=self.name, voice=voice)
-        finally:
-            wav_path.unlink(missing_ok=True)
+                base += ["--speaker", str(self._speaker_id)]
+            return base
+
+        # Neural inference can be slow on cold CPU; the 30 s ceiling
+        # bounds a hung process without truncating a typical reply.
+        pcm = synthesize_via_subprocess(
+            provider="piper",
+            argv_for_wav=argv,
+            text=text,
+            timeout_seconds=30.0,
+        )
+        _LOG.debug("piper synthesized %d bytes", len(pcm))
+        return TTSResult(pcm=pcm, provider=self.name, voice=self._model_path.stem)
