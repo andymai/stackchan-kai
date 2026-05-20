@@ -27,15 +27,18 @@ driver crates.
 
 ```
 crates/
-├── stackchan-core      # no_std engine (Entity, Director, Modifier, Skill, Phase, Clock)
-├── stackchan-sim       # host simulator (FakeClock, Framebuffer, viz binary)
-├── stackchan-net       # no_std wire formats: RON config, HTTP parsers, validators
-├── stackchan-tts       # no_std + alloc speech surface: SpeechBackend trait + BakedBackend
-├── stackchan-firmware  # CoreS3 firmware binary (embassy + esp-rtos)
-├── tracker             # block-grid motion tracker for the camera path
-└── driver crates       # axp2101, aw9523, aw88298, bm8563, bmi270, bmm150,
-                        # es7210, ft6336u, gc0308, ir-nec, ltr553, py32,
-                        # scservo, si12t
+├── stackchan-core              # no_std engine (Entity, Director, Modifier, Skill, Phase, Clock)
+├── stackchan-sim               # host simulator (FakeClock, Framebuffer, viz binary)
+├── stackchan-net               # no_std wire formats: RON config, HTTP parsers, MCP, BLE codecs, OTA, …
+├── stackchan-tts               # no_std + alloc speech surface: SpeechBackend trait + BakedBackend + VoiceVox
+├── stackchan-audio-features    # no_std streaming log-mel frontend for on-device keyword spotting
+├── stackchan-desktop-protocol  # no_std + alloc Claude Desktop Hardware Buddy NUS protocol
+├── stackchan-firmware          # CoreS3 firmware binary (embassy + esp-rtos)
+├── esp-tflite-micro-sys        # FFI bindings for TFLite-micro + esp-nn (vendored C/C++)
+├── tracker                     # block-grid motion tracker + Viola–Jones face cascade
+└── driver crates               # axp2101, aw9523, aw88298, bm8563, bmi270, bmm150,
+                                # es7210, ft6336u, gc0308, ir-nec, ltr553, py32,
+                                # scservo, si12t
 ```
 
 See [STABILITY.md](https://github.com/andymai/stackchan-kai/blob/main/STABILITY.md)
