@@ -1,8 +1,8 @@
 ---
 crate: stackchan-core
-role: Avatar domain library (no_std, no hardware deps)
+role: Avatar + NPC engine (no_std, no hardware deps)
 bus: none
-transport: "pure data + Modifier trait"
+transport: "pure data + Modifier / Skill traits"
 no_std: true
 unsafe: forbidden
 status: experimental (v0.x)
@@ -10,110 +10,126 @@ status: experimental (v0.x)
 
 # stackchan-core
 
-`no_std` domain library for the Stack-chan avatar. Models the face as
-**data** and drives animation through a `Modifier` trait that mutates
-an `Avatar` in response to the passage of time (supplied by a `Clock`).
-No hardware, OS, or `alloc` dependency — this crate is the
-platform-independent heart of the firmware and the simulator.
+`no_std` engine for the Stack-chan NPC. An [`Entity`] holds the
+per-frame state — face, motor, perception, voice, mind, events, input,
+tick — and a [`Director`] runs registered [`Modifier`]s and [`Skill`]s
+against it each frame. No hardware, OS, or `alloc` dependency beyond
+the workspace `extern crate alloc` for `heapless::String`-adjacent
+use; the firmware and the simulator both consume this crate against
+the same trait surface.
 
-## Key Files
+## What's here
 
-- `src/lib.rs` — crate root, public re-exports
-- `src/avatar.rs` — `Avatar`, `Eye`, `EyePhase`, `Mouth`, `Point`, `SCALE_DEFAULT`
-- `src/clock.rs` — `Clock` trait, `Instant` (millisecond-resolution monotonic)
-- `src/draw.rs` — `Avatar::draw` renders into any `embedded_graphics::DrawTarget<Color = Rgb565>`
-- `src/emotion.rs` — `Emotion` enum + `Emotion::ALL` catalogue. Per-emotion style targets live in `modifiers/style_from_emotion.rs::targets_for`
-- `src/head.rs` — `Pose`, `HeadDriver` trait, pan / tilt range constants
-- `src/leds.rs` — `LedFrame`, `render_leds` — maps avatar state to the 12-pixel ring
-- `src/modifiers/mod.rs` — `Modifier` trait + re-exports
-- `src/modifiers/*.rs` — one file per modifier; names follow the convention in [`docs/naming.md`](../../docs/naming.md) (`<Output>From<Source>` for translators, bare noun for autonomous ones)
-- `src/skills/*.rs` — one file per skill (`listening`, `petting`, `handling`) — long-running NPC capabilities that write `mind.intent` / `mind.attention`
-- `src/perception.rs` — `Perception` struct (sensor inputs feeding modifiers) + `BodyTouch` / `TrackingObservation` / `TrackingMotion` sub-types
+- [`Entity`] — composed NPC state (`face`, `motor`, `perception`,
+  `voice`, `mind`, `events`, `input`, `tick`, `led_override`).
+  Plain data — modifiers and skills mutate it in place.
+- [`Director`] — orders modifiers by `(Phase, priority, registration
+  order)` and ticks them each frame; polls skills and invokes those
+  whose `should_fire` predicate returns `true`. Caller owns the
+  modifier / skill instances; the Director only borrows.
+- [`Modifier`] — per-frame state mutator with `meta()` (phase, priority,
+  declared reads / writes) and `update(&mut Entity)`. The canonical
+  catalogue lives in [`modifiers/`](src/modifiers).
+- [`Skill`] — longer-running NPC capability with `meta()`,
+  `should_fire`, and `invoke`. Skills write `mind` / `voice` /
+  `events`; modifiers translate that intent into face and motion. The
+  catalogue lives in [`skills/`](src/skills).
+- [`Clock`] — single-method trait (`fn now(&self) -> Instant`) used so
+  modifiers stay deterministic for host tests against a `FakeClock`.
 
-## Architecture
+The trait shapes are the public surface; new behaviour ships as a new
+file in `modifiers/` or `skills/` rather than as a Director edit.
+
+## Tick model
 
 ```mermaid
-flowchart TB
-    subgraph Inputs
-        Clock[Clock trait<br/><i>Instant</i>]
-        Hardware[Hardware signals<br/><i>touch, IMU, IR, ambient</i>]
+flowchart LR
+    Tick[Director::run<br/>stamps tick / clears events] --> Mods
+    subgraph Mods [Modifiers — Phase-ordered]
+        Affect[Affect]
+        Expression[Expression]
+        Decoration[Decoration]
+        Motion[Motion]
+        Audio[Audio]
     end
-    subgraph Core
-        Avatar[(Avatar)]
-        Modifiers[Modifier pipeline]
-    end
-    subgraph Outputs
-        Draw[Avatar::draw<br/><i>embedded-graphics DrawTarget</i>]
-        Head[HeadDriver trait<br/><i>Pose → pan/tilt</i>]
-        Leds[render_leds<br/><i>LedFrame</i>]
-    end
-
-    Clock --> Modifiers
-    Hardware --> Modifiers
-    Modifiers -->|update(&mut Avatar, Instant)| Avatar
-    Avatar --> Draw
-    Avatar --> Head
-    Avatar --> Leds
+    Mods --> Skills[Skill::should_fire → invoke]
+    Skills --> Entity[(Entity)]
 ```
 
-## Modifier Pipeline
+[`Phase`](src/director.rs) declares the canonical NPC tick order —
+`Perception → Cognition → Affect → Speech → Expression → Decoration →
+Motion → Audio → Output`. Today the populated phases are `Affect`,
+`Expression`, `Decoration`, `Motion`, `Audio`; the rest are reserved
+slots. Skills are polled after the modifier pass so they observe the
+post-modifier entity state.
 
-Modifiers implement `fn update(&mut self, avatar: &mut Avatar, now: Instant)`.
-Each one composes with the others — the firmware runs the full stack per
-render tick. Listed roughly in application order:
+`entity.tick.now` is stamped by [`Director::run`]; modifiers read it
+instead of taking `now: Instant` as an argument. `tick.dt_ms` carries
+the delta since the previous frame; `tick.frame` is a monotonic
+counter.
 
-| Modifier          | Effect                                                         |
-|-------------------|----------------------------------------------------------------|
-| `EmotionFromRemote`   | IR remote → emotion / pose override                            |
-| `EmotionFromTouch`    | Touch-panel tap → emotion bump                                 |
-| `EmotionFromAmbient`   | Dark room (low lux) → sleepy emotion                           |
-| `EmotionFromIntent`    | `mind.intent` transitions → emotion (PickedUp→Surprised, Shaken→Angry) |
-| `EmotionFromVoice`     | Sustained `audio_rms` above threshold → `Happy` + `Wake` chirp |
-| `IntentFromLoud`   | Rising-edge `audio_rms` across loud threshold → `Surprised` + `Startled` intent + `Startle` chirp |
-| `EmotionCycle`    | Default sequence: Neutral → Happy → Sleepy → Surprised → Sad   |
-| `StyleFromEmotion`    | 300 ms ease on style fields (curves, scale, blush) per emotion |
-| `HeadFromEmotion`     | Per-emotion pose bias (neutral center, surprised up, etc.)     |
-| `HeadFromAttention`      | Upward tilt while `Listening`; snap-to-target while `Tracking`  |
-| `HeadFromIntent`     | Brief asymmetric pan/tilt recoil on entry to `Startled`     |
-| `GazeFromAttention`  | Eye centers shift toward target while `Tracking` (eyes lead head) |
-| `MicrosaccadeFromAttention` | 0.5–1.5 s involuntary eye darts during `Tracking` (Disney IROS realism contributor) |
-| `AttentionFromTracking` | Cognition: latches `mind.attention=Tracking{target}` on sustained camera motion |
-| `RemoteCommandModifier` | Cognition: drains `entity.input.remote_command` (firmware HTTP), holds emotion or look-at target for the requested window |
-| `Blink` / `Breath`   | Engagement-aware: blink rate halves and breath cycle stretches ×1.67 while attention is non-`None` |
-| `IdleDrift`       | Slow randomized gaze drift                                     |
-| `IdleHeadDrift`   | Occasional brief head glances at randomized intervals          |
-| `Blink`           | Lid close / open pulses                                        |
-| `Breath`          | Per-cycle eye + mouth scale oscillation                        |
+## Conflict detection
 
-The full set lives in `src/modifiers/mod.rs` — the table above is
-representative, not exhaustive.
+Modifiers declare their `reads` and `writes` as `&'static [Field]`
+slices on [`ModifierMeta`]. In `cfg(debug_assertions)` builds the
+Director snapshots [`Entity`] before each invocation and panics if a
+modifier mutates a field outside its declared `writes` set. [`Field`]
+is per-leaf (`LeftEyePhase` vs `LeftEyeWeight`) so two modifiers
+writing different sub-fields of the same component don't false-flag
+as conflicts. Release builds skip the check.
 
-`EmotionCycle → StyleFromEmotion → Blink → Breath → IdleDrift` is the
-minimum stack; the firmware adds the others. The `Clock` argument makes
-time a trait so the simulator can advance deterministically while
-firmware advances from `embassy-time`.
+## Storage
 
-## Key Types
-
-- **`Avatar`** — `{ left_eye: Eye, right_eye: Eye, mouth: Mouth, emotion: Emotion }`. Plain data — no hidden state, no runtime invariants beyond "values stay in their documented ranges"
-- **`Eye`** — `{ phase: EyePhase, weight: f32, offset: Point, ... }`. `weight` is the lid openness (0 = closed, 1 = open)
-- **`Mouth`** — `{ rotation: f32, scale: f32, cheek_blush: f32, ... }`
-- **`Clock`** — single method `fn now(&self) -> Instant`. Stable against re-entry, takes `&self`
-- **`Instant`** — `u64` ms since some epoch. Operators for `+ delta_ms: u64` and sequences of differences
-- **`Pose`** — `{ pan_deg: f32, tilt_deg: f32 }`. Bounded by `MAX_PAN_DEG` / `MAX_TILT_DEG`
-- **`HeadDriver`** — `fn drive(&mut self, pose: Pose, now: Instant)`. Implemented by firmware (SCServo) and sim (recorder)
+[`Director`] uses `heapless::Vec` for the modifier and skill
+registries with caps [`MODIFIER_CAP`] and [`SKILL_CAP`]. Modifiers
+own their per-frame state in fixed-size fields. Callers that want N
+copies of a modifier build a wrapper — the crate won't `Box`
+anything.
 
 ## Gotchas
 
-1. **No `alloc`.** Modifiers own their state in fixed-size fields. Callers that want N of a modifier build a wrapper; the crate won't `Box` anything
-2. **Time must be monotonic.** `Clock::now()` is trusted — a backward jump breaks modifiers that cache `last_update`. Wall-clock sources need a wrapper
-3. **Draw is pure.** `Avatar::draw` produces pixels into the provided `DrawTarget`; it doesn't mutate the avatar. Run modifiers first, then draw
-4. **Emotion transitions are 300 ms eased by `StyleFromEmotion`.** Don't snap emotion changes directly on the `Avatar` — go through the modifier so the ease kicks in
-5. **No panic in library code.** Workspace lints deny `unwrap` / `expect` / `panic`. All APIs return values in documented ranges; pathological inputs saturate rather than panic
+1. **No `alloc` in the modifier path.** `alloc` is available
+   crate-wide (`extern crate alloc`) for string-typed types like
+   `Voice::utterance_request`, but per-frame modifier work avoids
+   it. New modifiers should follow suit.
+2. **Time must be monotonic.** `Clock::now()` is trusted; a backward
+   jump breaks modifiers that compare against `last_update`. Wall-clock
+   sources need a wrapper.
+3. **Render is pure.** `Face::draw` (via the [`draw`] module) produces
+   pixels into the caller's `embedded_graphics::DrawTarget<Color =
+   Rgb565>`; it doesn't mutate the entity. Run the Director first,
+   then render.
+4. **Skills don't draw or move.** They write `mind` / `voice` /
+   `events`. Translation to face / motor is the modifiers' job — this
+   keeps the cognitive layer decoupled from the rendering and motion
+   pipelines and is the invariant the field-conflict check protects.
+5. **No `unwrap` / `expect` / `panic` in library code.** Workspace
+   lints deny them. APIs saturate or return typed errors on
+   pathological input.
 
 ## Integration
 
-- **Used by `stackchan-firmware`** for the render loop + head / LED output
-- **Used by `stackchan-sim`** for host-side tests — the same `Avatar::draw` path runs against a `Vec<Rgb565>` framebuffer for pixel-golden snapshots
-- **Unit-tested** with doctests; golden-test behaviour lives in `stackchan-sim`
-- **Stability:** everything is `Experimental` in v0.x. The module structure and modifier set are stable; names and fields may still evolve before anything graduates to `Stable`
+- [`stackchan-firmware`](../stackchan-firmware) registers modifiers
+  and skills, drains hardware signals into `entity.perception` /
+  `entity.input`, then calls `Director::run` per render tick.
+- [`stackchan-sim`](../stackchan-sim) does the same composition
+  against a `FakeClock` and a `Vec<Rgb565>` framebuffer for golden
+  snapshots.
+- Unit-tested via doctests and per-module `#[cfg(test)]` blocks;
+  golden-behaviour tests live in `stackchan-sim`.
+- **Stability:** `Experimental` in v0.x. Trait shapes and the [`Entity`]
+  composition are settled; individual modifier / skill names and
+  field internals continue to evolve.
+
+[`Entity`]: src/entity.rs
+[`Director`]: src/director.rs
+[`Director::run`]: src/director.rs
+[`Modifier`]: src/modifier.rs
+[`ModifierMeta`]: src/director.rs
+[`Skill`]: src/skill.rs
+[`Phase`]: src/director.rs
+[`Field`]: src/director.rs
+[`Clock`]: src/clock.rs
+[`MODIFIER_CAP`]: src/director.rs
+[`SKILL_CAP`]: src/director.rs
+[`draw`]: src/draw.rs
