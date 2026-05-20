@@ -37,7 +37,7 @@ translate that into face / motor.
    modifier (`Phase::Motion` for pose, `Phase::Expression` for
    face) that reads `mind.intent` / `mind.attention`.
 
-### Shape 2: driver work (one of the 14 driver crates)
+### Shape 2: driver work (any of the chip-specific driver crates)
 1. Read the crate's README to understand current scope.
 2. Add registers, driver methods, or init steps; keep `embedded-hal-async` boundary clean.
 3. Unit-test what you can on host (packet construction, register encoding).
