@@ -202,11 +202,9 @@ const AUDIO_URL_MAX_BYTES: usize = 128;
 /// Parsed `/v1/listen` reply body — text + emotion + optional
 /// playback URL.
 ///
-/// `audio_url` is `Some(...)` only when the sidecar synthesised TTS
-/// successfully; a JSON `"audio_url": null` (graceful-degrade path
-/// where text + emotion still ship) or an absent field both parse
-/// as `None`. The follow-up firmware fetch slice consumes this
-/// field; today it's logged and otherwise unused.
+/// `audio_url` is `Some(...)` only when the sidecar synthesised TTS;
+/// `"audio_url": null` (synthesis failed but text + emotion still
+/// shipped) and an absent field both parse as `None`.
 #[derive(Debug, Clone)]
 struct SidecarReply {
     /// Operator-visible reply text. Bounded at 256 chars because the
@@ -224,7 +222,7 @@ struct SidecarReply {
 /// Reasons one POST round-trip can fail. Surfaced as a toast +
 /// defmt log so the operator sees the failure path without an
 /// attached monitor.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, defmt::Format)]
 enum PostError {
     /// `TcpSocket::connect` returned an error or timed out.
     Connect,
@@ -245,32 +243,11 @@ enum PostError {
     MissingText,
 }
 
-impl defmt::Format for PostError {
-    fn format(&self, f: defmt::Formatter<'_>) {
-        // Each arm emits a distinct label; clippy sees structurally
-        // identical macro expansions (only the literal differs)
-        // and false-flags them as duplicates. Mirrors the
-        // `DispatchError` impl in [`crate::audio`].
-        #[allow(
-            clippy::match_same_arms,
-            reason = "labels are distinct strings even though clippy reads the macro arms as identical"
-        )]
-        match self {
-            Self::Connect => defmt::write!(f, "Connect"),
-            Self::HeaderTooLong => defmt::write!(f, "HeaderTooLong"),
-            Self::Write => defmt::write!(f, "Write"),
-            Self::Read => defmt::write!(f, "Read"),
-            Self::BadStatus => defmt::write!(f, "BadStatus"),
-            Self::MissingText => defmt::write!(f, "MissingText"),
-        }
-    }
-}
-
 /// Reasons one `/v1/audio/<token>` fetch can fail. Surfaced as a
 /// warn-class log but *not* as a face-level failure: the sidecar
 /// reply (text + emotion) already shipped, so missing audio is a
 /// graceful-degrade, not a "request failed" event.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, defmt::Format)]
 enum FetchError {
     /// `TcpSocket::connect` returned an error or timed out.
     Connect,
@@ -284,25 +261,12 @@ enum FetchError {
     /// Status line wasn't `HTTP/1.1 2xx`.
     BadStatus,
     /// Audio body byte length wasn't a multiple of 2 (s16 frame
-    /// alignment), or the queue was full when we tried to enqueue.
+    /// alignment), or the response decoded to zero samples.
     Malformed,
-}
-
-impl defmt::Format for FetchError {
-    fn format(&self, f: defmt::Formatter<'_>) {
-        #[allow(
-            clippy::match_same_arms,
-            reason = "labels are distinct strings even though clippy reads the macro arms as identical"
-        )]
-        match self {
-            Self::Connect => defmt::write!(f, "Connect"),
-            Self::HeaderTooLong => defmt::write!(f, "HeaderTooLong"),
-            Self::Write => defmt::write!(f, "Write"),
-            Self::Read => defmt::write!(f, "Read"),
-            Self::BadStatus => defmt::write!(f, "BadStatus"),
-            Self::Malformed => defmt::write!(f, "Malformed"),
-        }
-    }
+    /// `AUDIO_TX_QUEUE` was full at enqueue time. Distinct from
+    /// `Malformed` so the warn log points at "backpressure", not
+    /// "the bytes were wrong".
+    QueueFull,
 }
 
 /// Sidecar agent task entry point.
@@ -878,7 +842,7 @@ async fn drain_audio_body(
             AUDIO_BODY_MAX_BYTES,
         );
     }
-    let target_len = if header_present {
+    let raw_target = if header_present {
         content_length.min(AUDIO_BODY_MAX_BYTES)
     } else {
         // Header absent: read until the peer closes; size the
@@ -886,6 +850,12 @@ async fn drain_audio_body(
         // (16 kHz s16 × ~5 s) without reallocating mid-drain.
         AUDIO_BODY_MAX_BYTES.min(64 * 1024)
     };
+    // Round down to a 2-byte s16 frame boundary. A truncating cap
+    // (header-present with content_length > cap) or an odd-length
+    // Content-Length would otherwise leave a stray byte that
+    // `decode_s16_le` rejects as `Malformed` — discarding the whole
+    // payload over a one-byte mis-alignment.
+    let target_len = raw_target & !1_usize;
     let mut body: Vec<u8> = Vec::with_capacity(target_len);
     let leftover_end = hdr_scratch.len().min(header_end + target_len);
     body.extend_from_slice(&hdr_scratch[header_end..leftover_end]);
@@ -940,9 +910,7 @@ fn decode_s16_le(body: &[u8]) -> Result<Vec<i16>, FetchError> {
 /// Boxes a [`BufferedSource`] over the supplied samples, builds a
 /// [`SpeechSlot`] at [`Priority::Normal`] (sidecar replies sit at
 /// the same rank as emotion chirps — preempts background but yields
-/// to status / safety speech), and tries to enqueue it. Returns
-/// [`FetchError::Malformed`] if the queue is full so the caller
-/// surfaces the drop rather than silently losing audio.
+/// to status / safety speech), and tries to enqueue it.
 fn enqueue_sidecar_audio(samples: Vec<i16>) -> Result<(), FetchError> {
     let slot = SpeechSlot {
         source: alloc::boxed::Box::new(BufferedSource::new(samples)),
@@ -950,7 +918,7 @@ fn enqueue_sidecar_audio(samples: Vec<i16>) -> Result<(), FetchError> {
     };
     AUDIO_TX_QUEUE.try_send(slot).map_err(|_| {
         defmt::warn!("agent-sidecar: AUDIO_TX_QUEUE full; dropping sidecar audio");
-        FetchError::Malformed
+        FetchError::QueueFull
     })
 }
 
