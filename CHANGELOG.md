@@ -313,6 +313,28 @@ section summarises the milestone work in human terms.
   paste from a redacted `GET /settings` body that forgot to put
   the real secret back. Fail fast at load with a clear error
   instead of silently trying to associate Wi-Fi with PSK = `"***"`.
+- Firmware-side network and audio hardening pass. WebSocket
+  handshake now validates `Connection: Upgrade` (RFC 6455 §4.2.1)
+  and rejects empty `Sec-WebSocket-Key` values at the header
+  layer so the handshake never SHA-1's zero bytes into a
+  deterministic accept. `WIFI_LINK_WATCH` receiver pool gains
+  three slots of headroom (5 → 8) so a sixth consumer doesn't
+  silently disable itself on a `None` receiver branch. Sidecar
+  task gates the first PTT trigger on Wi-Fi being up (instead
+  of capturing a window then bailing post-capture); sidecar
+  HTTP read loop honours `Content-Length` and terminates at the
+  body end — previously every reply paid the 15 s task timeout
+  from any peer that didn't honour `Connection: close`. The
+  reply JSON scanner walks past `\"` and `\\` escapes so a
+  sidecar that quotes a citation in `text` no longer truncates
+  silently at the inner quote, and emotion tagging later in the
+  body no longer goes missing. Wake-word task suppresses repeat
+  mel-buffer overflow logs within one audio frame, and the
+  score-cast site documents the int8-quantisation assumption
+  (a uint8-quantised `.tflite` would silently never fire).
+  `esp-tflite-micro-sys` free path mirrors the allocator's
+  `checked_add` so a corrupt size header leaks the allocation
+  rather than walking it into UB.
 - Input-validation tightening across `stackchan-net` parsers.
   `blufi::build_frame` rejects `subtype > 0x3F` instead of silently
   masking the high bits and emitting a different subtype on the
