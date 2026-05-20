@@ -72,7 +72,7 @@ use mipidsi::{
     options::{ColorInversion, ColorOrder},
 };
 use stackchan_core::{
-    Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, RemoteCommand,
+    Attention, Clock, Director, Entity, Face, HeadDriver, LedFrame, Modifier, RemoteCommand, Skill,
     modifiers::{
         AttentionFromTracking, BatteryOverlayFromPerception, Blink, Breath, BubbleExpiry,
         DancePlayer, DecoratorExpiry, DecoratorFromBodyTouch, DecoratorFromEmotion,
@@ -313,125 +313,69 @@ async fn render_task(
     // order modulated by per-modifier `priority`. See AGENTS.md and
     // `crates/stackchan-core/src/director.rs` for the rationale.
     let mut director = Director::new();
-    director
-        .add_modifier(&mut emotion_from_touch)
-        .expect("registry full");
-    director
-        .add_modifier(&mut intent_from_body_touch)
-        .expect("registry full");
-    director.add_modifier(&mut remote).expect("registry full");
-    director
-        .add_modifier(&mut emotion_from_intent)
-        .expect("registry full");
-    director
-        .add_modifier(&mut emotion_from_voice)
-        .expect("registry full");
-    director
-        .add_modifier(&mut intent_from_loud)
-        .expect("registry full");
-    director
-        .add_modifier(&mut emotion_from_ambient)
-        .expect("registry full");
-    director
-        .add_modifier(&mut emotion_from_battery)
-        .expect("registry full");
-    director
-        .add_modifier(&mut attention_from_tracking)
-        .expect("registry full");
-    director
-        .add_modifier(&mut remote_command)
-        .expect("registry full");
-    director
-        .add_modifier(&mut dormancy_from_activity)
-        .expect("registry full");
-    director.add_modifier(&mut cycle).expect("registry full");
-    director.add_modifier(&mut style).expect("registry full");
-    director
-        .add_modifier(&mut style_from_intent)
-        .expect("registry full");
-    director
-        .add_modifier(&mut style_from_mood)
-        .expect("registry full");
-    director
-        .add_modifier(&mut gaze_from_attention)
-        .expect("registry full");
-    director
-        .add_modifier(&mut microsaccade)
-        .expect("registry full");
-    director.add_modifier(&mut blink).expect("registry full");
-    director.add_modifier(&mut breath).expect("registry full");
-    director.add_modifier(&mut drift).expect("registry full");
-    director
-        .add_modifier(&mut idle_micro_expression)
-        .expect("registry full");
-    // Phase::Decoration — expiry first (priority -10), then trigger
-    // modifiers in priority order. Sits between Expression and Motion
-    // so decorators read final emotion / style state but don't influence
-    // pose. Registration order doesn't matter; the Director sorts by
-    // (phase, priority, registration_order).
-    director
-        .add_modifier(&mut decorator_expiry)
-        .expect("registry full");
-    director
-        .add_modifier(&mut bubble_expiry)
-        .expect("registry full");
-    director
-        .add_modifier(&mut soliloquy)
-        .expect("registry full");
-    director
-        .add_modifier(&mut decorator_from_emotion)
-        .expect("registry full");
-    director
-        .add_modifier(&mut decorator_from_body_touch)
-        .expect("registry full");
-    director
-        .add_modifier(&mut decorator_from_loud)
-        .expect("registry full");
-    director
-        .add_modifier(&mut decorator_from_shake)
-        .expect("registry full");
-    director
-        .add_modifier(&mut decorator_from_listening)
-        .expect("registry full");
-    director
-        .add_modifier(&mut decorator_from_thinking)
-        .expect("registry full");
-    director
-        .add_modifier(&mut battery_overlay)
-        .expect("registry full");
-    director
-        .add_modifier(&mut head_drift)
-        .expect("registry full");
-    director
-        .add_modifier(&mut head_from_emotion)
-        .expect("registry full");
-    director
-        .add_modifier(&mut head_from_attention)
-        .expect("registry full");
-    director
-        .add_modifier(&mut lost_target_search)
-        .expect("registry full");
-    director
-        .add_modifier(&mut head_from_intent)
-        .expect("registry full");
-    director
-        .add_modifier(&mut head_from_body_gesture)
-        .expect("registry full");
-    director
-        .add_modifier(&mut dance_player)
-        .expect("registry full");
-    director
-        .add_modifier(&mut mouth_from_audio)
-        .expect("registry full");
-    director
-        .add_skill(&mut listening)
-        .expect("skill registry full");
-    director
-        .add_skill(&mut petting)
-        .expect("skill registry full");
-    director
-        .add_skill(&mut handling)
-        .expect("skill registry full");
+    // Registration order, grouped by phase. Within a phase the Director
+    // sorts by (priority, registration_order), so the grouping is just
+    // for human readers — moving a name between groups doesn't change
+    // tick order. Phase::Decoration intentionally lists `decorator_expiry`
+    // first (priority -10) so the expiry sweep runs before the
+    // decorator-triggering modifiers each frame.
+    let modifiers = [
+        // Phase::Affect — emotion + intent inputs.
+        &mut emotion_from_touch as &mut dyn Modifier,
+        &mut intent_from_body_touch,
+        &mut remote,
+        &mut emotion_from_intent,
+        &mut emotion_from_voice,
+        &mut intent_from_loud,
+        &mut emotion_from_ambient,
+        &mut emotion_from_battery,
+        &mut attention_from_tracking,
+        &mut remote_command,
+        &mut dormancy_from_activity,
+        &mut cycle,
+        &mut style,
+        &mut style_from_intent,
+        &mut style_from_mood,
+        // Phase::Expression — gaze + face primitives.
+        &mut gaze_from_attention,
+        &mut microsaccade,
+        &mut blink,
+        &mut breath,
+        &mut drift,
+        &mut idle_micro_expression,
+        // Phase::Decoration — overlays that read final emotion/style.
+        &mut decorator_expiry,
+        &mut bubble_expiry,
+        &mut soliloquy,
+        &mut decorator_from_emotion,
+        &mut decorator_from_body_touch,
+        &mut decorator_from_loud,
+        &mut decorator_from_shake,
+        &mut decorator_from_listening,
+        &mut decorator_from_thinking,
+        &mut battery_overlay,
+        // Phase::Motion — head pose drivers.
+        &mut head_drift,
+        &mut head_from_emotion,
+        &mut head_from_attention,
+        &mut lost_target_search,
+        &mut head_from_intent,
+        &mut head_from_body_gesture,
+        &mut dance_player,
+        // Phase::Audio — mouth shape from TX RMS.
+        &mut mouth_from_audio,
+    ];
+    for m in modifiers {
+        director.add_modifier(m).expect("modifier registry full");
+    }
+    let skills = [
+        &mut listening as &mut dyn Skill,
+        &mut petting,
+        &mut handling,
+    ];
+    for s in skills {
+        director.add_skill(s).expect("skill registry full");
+    }
     let mut led_frame = LedFrame::default();
     // Camera-mode state. The button task's long-press handler is the
     // sole producer of `CAMERA_MODE_SIGNAL`; we mirror it locally so
