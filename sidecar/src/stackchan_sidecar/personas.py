@@ -6,6 +6,37 @@ from pathlib import Path
 _PERSONA_NAME_MAX_BYTES = 64
 
 
+def list_personas(personas_dir: Path) -> list[str]:
+    """Return the slugs of every persona file under ``personas_dir``,
+    sorted alphabetically.
+
+    A "persona file" is any ``.md`` whose stem passes the same slug
+    rules ``load_persona`` enforces — control-char-free, no path
+    separators, ≤ 64 bytes. Files that don't pass are skipped
+    silently rather than raising, so a stray ``.md`` accidentally
+    dropped in the dir (notes, a README, etc.) doesn't break the
+    listing endpoint.
+
+    Returns an empty list if the directory doesn't exist; the
+    operator can install the sidecar without provisioning personas
+    yet and still hit the endpoint.
+    """
+    if not personas_dir.is_dir():
+        return []
+    out: list[str] = []
+    for entry in personas_dir.iterdir():
+        if not entry.is_file() or entry.suffix != ".md":
+            continue
+        slug = entry.stem
+        try:
+            _validate_slug(slug)
+        except ValueError:
+            continue
+        out.append(slug)
+    out.sort()
+    return out
+
+
 def load_persona(name: str, personas_dir: Path) -> str:
     """Load the persona prompt at ``{personas_dir}/{name}.md``.
 

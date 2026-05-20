@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from stackchan_sidecar.personas import load_persona
+from stackchan_sidecar.personas import list_personas, load_persona
 
 
 def test_load_persona_strips_frontmatter(tmp_path: Path) -> None:
@@ -60,3 +60,43 @@ def test_load_persona_accepts_max_length(tmp_path: Path) -> None:
     name = "a" * 64
     (tmp_path / f"{name}.md").write_text("Hi.", encoding="utf-8")
     assert load_persona(name, tmp_path) == "Hi."
+
+
+def test_list_personas_empty_when_dir_missing(tmp_path: Path) -> None:
+    # Sidecar may run before the operator provisions personas; the
+    # listing must not raise just because the dir isn't there yet.
+    assert list_personas(tmp_path / "missing") == []
+
+
+def test_list_personas_empty_when_dir_empty(tmp_path: Path) -> None:
+    assert list_personas(tmp_path) == []
+
+
+def test_list_personas_returns_slugs_sorted(tmp_path: Path) -> None:
+    for name in ["zeta", "alpha", "beta"]:
+        (tmp_path / f"{name}.md").write_text("Hi.", encoding="utf-8")
+    assert list_personas(tmp_path) == ["alpha", "beta", "zeta"]
+
+
+def test_list_personas_ignores_non_md_files(tmp_path: Path) -> None:
+    (tmp_path / "stack-chan.md").write_text("Hi.", encoding="utf-8")
+    (tmp_path / "README.txt").write_text("notes", encoding="utf-8")
+    (tmp_path / "scratch.json").write_text("{}", encoding="utf-8")
+    assert list_personas(tmp_path) == ["stack-chan"]
+
+
+def test_list_personas_ignores_subdirectories(tmp_path: Path) -> None:
+    (tmp_path / "stack-chan.md").write_text("Hi.", encoding="utf-8")
+    (tmp_path / "archive").mkdir()
+    (tmp_path / "archive" / "old.md").write_text("Old.", encoding="utf-8")
+    assert list_personas(tmp_path) == ["stack-chan"]
+
+
+def test_list_personas_skips_invalid_slugs(tmp_path: Path) -> None:
+    # An operator dropping a `.md` whose stem can't be a slug
+    # shouldn't break the listing — skip silently so the rest
+    # remains discoverable.
+    (tmp_path / "stack-chan.md").write_text("Hi.", encoding="utf-8")
+    (tmp_path / ("x" * 65 + ".md")).write_text("Too long.", encoding="utf-8")
+    (tmp_path / "..bad.md").write_text("Traversal.", encoding="utf-8")
+    assert list_personas(tmp_path) == ["stack-chan"]
