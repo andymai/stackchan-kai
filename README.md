@@ -2,12 +2,14 @@
 
 # stackchan-kai
 
-**Clean-slate Rust firmware for the M5Stack CoreS3 Stack-chan — `no_std`, embassy, no cloud.**
-
 [![CI](https://github.com/andymai/stackchan-kai/actions/workflows/ci.yml/badge.svg)](https://github.com/andymai/stackchan-kai/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/andymai/stackchan-kai)](https://github.com/andymai/stackchan-kai/releases)
+[![Last release](https://img.shields.io/github/release-date/andymai/stackchan-kai?label=last%20release)](https://github.com/andymai/stackchan-kai/releases)
+[![Commit activity](https://img.shields.io/github/commit-activity/m/andymai/stackchan-kai?label=commits%2Fmonth)](https://github.com/andymai/stackchan-kai/commits/main)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
+
+`no_std` Rust firmware for the M5Stack CoreS3 Stack-chan — embassy-based, cloud-free, testable on the host.
 
 [Stability](./STABILITY.md) · [Changelog](./CHANGELOG.md) · [Justfile](./justfile) · [Handbook](https://andymai.github.io/stackchan-kai/)
 
@@ -117,19 +119,22 @@ Without an SD card the firmware boots offline and the desk-toy surface works
 the same. See [HTTP control plane](https://andymai.github.io/stackchan-kai/http)
 for the full reference.
 
+## Scope
+
+To set expectations, this project deliberately does not:
+
+- **Embed LLM, STT, or TTS** — speech intelligence lives in an operator-supplied sidecar; the firmware uploads captured PCM and renders the JSON reply. This keeps the binary `no_std` and under embedded flash budgets regardless of whether a voice path is configured.
+- **Support hardware beyond the CoreS3 Stack-chan kit** — the driver set is written against specific datasheets (BMI270, BMM150, FT6336U, Feetech SCServo, etc.) and tested on one physical unit. Porting to other M5Stack boards or ESP32 variants is out of scope.
+- **Provide a stable public API before v2.x** — all crates are Experimental per [STABILITY.md](./STABILITY.md); minor releases break things. The `stackchan-core` library is usable but its contract is still settling.
+- **Replace general-purpose ESP-IDF or M5Unified firmware** — only the desk-toy surface area (face, motion, sensors, LAN control) is covered. Features outside that surface (e.g., arbitrary GPIO scripting, third-party display drivers) belong in a different project.
+- **Accept unsolicited contributions** — single-maintainer, best-effort response. Bug reports and discussion are welcome; the PR policy is in `AGENTS.md`.
+
 ## Known limitations
 
 - Tested on a single CoreS3 unit. The BMM150 magnetometer on this kit is bench-only — chassis-side interference makes the in-enclosure reading unusable; other sensors are exercised regularly.
 - LAN-only HTTP plane, no TLS. The bearer-token gate is a soft check against accidental drive-by writes — not a hardened auth surface for an untrusted network.
 - All public APIs are Experimental until at least v2.x per [STABILITY.md](./STABILITY.md). Minor releases will break things.
 - Single-maintainer project. Issue and PR response is best-effort; nothing is on a cadence.
-
-## Non-goals
-
-- No LLM, STT, or TTS in the firmware. Point `behavior.agent_sidecar_url` at an operator-supplied agent if you want a reply path; kai uploads captured PCM and renders the JSON response. The firmware stays no_std and local-first regardless of whether a sidecar is configured. kai is not a xiaozhi replacement.
-- No cloud APIs or telemetry of its own. Wi-Fi and the sidecar URL go where the operator points them.
-- C/C++ is scoped to one vendored crate (`esp-tflite-micro-sys`, on-device wake-word inference via TFLite Micro + ESP-NN). Hardware drivers are written directly against datasheets in pure Rust.
-- Not an M5Unified port. Only the desk-toy surface area is covered.
 
 ## License
 
