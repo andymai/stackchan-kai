@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.4.0...stackchan-net-v0.5.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose mutator tools — set_palette / set_face_target / set_camera_mode / get_head_offsets / set_head_offsets ([#514](https://github.com/andymai/stackchan-kai/issues/514)) ([a54809b](https://github.com/andymai/stackchan-kai/commit/a54809b5b2fac78bc495b045e8342a9805ffcd52))
+
 ## [0.4.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.3.0...stackchan-net-v0.4.0) (2026-05-20)
 
 
