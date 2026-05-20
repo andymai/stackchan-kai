@@ -123,3 +123,79 @@ fn rejects_malformed_ron() {
     let err = parse_ron("not valid ron at all").unwrap_err();
     assert!(matches!(err, ConfigError::Parse(_)), "got {err:?}");
 }
+
+// ============================================================
+// `validate_for_disk` reachability through the serde path.
+// `parse_ron_bare` short-circuits some sentinel checks at parse
+// time (notably `auth.token`); `parse_ron` does not, so the
+// `validate_for_disk` gate is the only thing standing between a
+// disk-loaded "***" and downstream consumers. Pin both sides.
+// ============================================================
+
+/// Build a complete RON document that pins one secret field to the
+/// redaction sentinel. The serde derives demand every field of
+/// `EspNowConfig` / `BehaviorConfig`, so round-tripping
+/// `parse_ron` + `render_ron` against the full fixture is the
+/// cleanest way to produce a valid document with only one field
+/// mutated.
+fn ron_with_sentinel(mutate: impl FnOnce(&mut Config)) -> String {
+    let mut cfg = parse_ron(FULL_RON).unwrap();
+    mutate(&mut cfg);
+    render_ron(&cfg).unwrap()
+}
+
+#[test]
+fn parse_ron_rejects_redacted_psk() {
+    let ron = ron_with_sentinel(|c| c.wifi.psk = "***".to_string());
+    let err = parse_ron(&ron).unwrap_err();
+    match err {
+        ConfigError::RedactionSentinelOnDisk(field) => assert_eq!(field, "wifi.psk"),
+        other => panic!("expected RedactionSentinelOnDisk, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_ron_rejects_redacted_auth_token() {
+    // Confirms the `auth.token` arm of `validate_for_disk` is
+    // reachable. `parse_ron_bare` rejects this case earlier via
+    // `BareParse`, so the serde path is the only one that
+    // exercises this branch.
+    let ron = ron_with_sentinel(|c| c.auth.token = "***".to_string());
+    let err = parse_ron(&ron).unwrap_err();
+    match err {
+        ConfigError::RedactionSentinelOnDisk(field) => assert_eq!(field, "auth.token"),
+        other => panic!("expected RedactionSentinelOnDisk, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_ron_rejects_redacted_esp_now_pmk_hex() {
+    let ron = ron_with_sentinel(|c| c.esp_now.pmk_hex = "***".to_string());
+    let err = parse_ron(&ron).unwrap_err();
+    match err {
+        ConfigError::RedactionSentinelOnDisk(field) => assert_eq!(field, "esp_now.pmk_hex"),
+        other => panic!("expected RedactionSentinelOnDisk, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_ron_rejects_redacted_esp_now_lmk_hex() {
+    let ron = ron_with_sentinel(|c| c.esp_now.lmk_hex = "***".to_string());
+    let err = parse_ron(&ron).unwrap_err();
+    match err {
+        ConfigError::RedactionSentinelOnDisk(field) => assert_eq!(field, "esp_now.lmk_hex"),
+        other => panic!("expected RedactionSentinelOnDisk, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_ron_rejects_redacted_agent_sidecar_token() {
+    let ron = ron_with_sentinel(|c| c.behavior.agent_sidecar_token = "***".to_string());
+    let err = parse_ron(&ron).unwrap_err();
+    match err {
+        ConfigError::RedactionSentinelOnDisk(field) => {
+            assert_eq!(field, "behavior.agent_sidecar_token");
+        }
+        other => panic!("expected RedactionSentinelOnDisk, got {other:?}"),
+    }
+}
