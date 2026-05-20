@@ -1535,6 +1535,7 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
             let snap = snapshot::read();
             render_success(id, &render_tool_text_result(&state_body(snap)))
         }
+        "get_health" => render_success(id, &render_tool_text_result(&health_body())),
         "get_sensors" => render_success(
             id,
             &render_tool_text_result(&sensors_body(snapshot::read_sensors())),
