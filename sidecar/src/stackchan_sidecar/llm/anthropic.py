@@ -49,7 +49,7 @@ class AnthropicLLM:
     ) -> None:
         # `max_retries=0` disables the SDK's internal retry loop:
         # our `retry_with_timeout` already owns the retry policy,
-        # and stacking SDK retries on top would produce up to 2×2
+        # and stacking SDK retries on top would produce up to 2x2
         # attempts per call and make the per-attempt timeout
         # math opaque.
         self._client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)
