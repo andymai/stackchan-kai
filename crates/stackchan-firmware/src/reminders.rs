@@ -243,8 +243,12 @@ pub async fn reminders_task() {
 
 /// Spacing between back-to-back reminder fires when several land
 /// due in the same tick. Sized comfortably above the 33 ms render
-/// cadence so the consumer drains `REMOTE_COMMAND_QUEUE` between
-/// each push.
+/// cadence so each consumer drains its signal between pushes:
+/// `Speak` actions push to `REMOTE_COMMAND_QUEUE` (drained by the
+/// render task per frame), `PlayMotion` actions push to
+/// `DANCE_SCRIPT_SIGNAL` (drained by the same render-task tick that
+/// also runs the `DancePlayer` modifier). Both signals are
+/// single-waker / latest-wins, so pacing matters for both.
 const REMINDER_BURST_SPACING_MS: u64 = 100;
 
 #[cfg(test)]

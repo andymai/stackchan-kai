@@ -2390,11 +2390,20 @@ mod tests {
     }
 
     #[test]
-    fn schedule_motion_rejects_duplicate_key() {
+    fn schedule_motion_rejects_duplicate_motion_key() {
         let body = r#"{"fire_in_secs":30,"motion":"greet","motion":"nod"}"#;
         assert!(matches!(
             parse_schedule_motion(body),
             Err(JsonError::DuplicateKey("motion"))
+        ));
+    }
+
+    #[test]
+    fn schedule_motion_rejects_duplicate_fire_in_secs_key() {
+        let body = r#"{"fire_in_secs":30,"fire_in_secs":60,"motion":"greet"}"#;
+        assert!(matches!(
+            parse_schedule_motion(body),
+            Err(JsonError::DuplicateKey("fire_in_secs"))
         ));
     }
 
