@@ -5,11 +5,22 @@ description = "Host tooling for capturing wake-word training samples from a stac
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT OR Apache-2.0" }
-dependencies = []
+dependencies = [
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+# `eval` brings in the TFLite runtime needed for `kws-eval` to
+# invoke a trained model. Pulled in optionally so the recorder +
+# dataset builder stay installable without an ML dep.
+eval = [
+    "ai-edge-litert>=1.0",
+]
 
 [project.scripts]
 kws-record = "kws_trainer.cli.record:main"
 kws-build-dataset = "kws_trainer.cli.build_dataset:main"
+kws-eval = "kws_trainer.cli.eval:main"
 
 [build-system]
 requires = ["hatchling"]
