@@ -60,7 +60,7 @@ translate that into face / motor.
 1. Wire format: parsers + validators in `crates/stackchan-net/src/{config,http_command,http_parse,bare_json}.rs`. Host-testable; unit tests live beside the parser.
 2. Handler: `crates/stackchan-firmware/src/net/http.rs` matches requests by `(method, path)`; each route is a handler function.
 3. Persisted state rides the RON schema (`stackchan_net::config::Config`) through `PUT /settings`'s atomic writeback — no parallel persistence paths.
-4. Operator-driven routes update the dashboard at `crates/stackchan-firmware/src/net/dashboard.html` (embedded via `include_bytes!`).
+4. Operator-driven routes show up in the dashboard: source lives under `web/src/` (Vite + Solid), and the firmware's HTTP responder embeds the built `web/dist/index.html.gz` via `include_bytes!` (see `crates/stackchan-firmware/src/net/respond.rs`). Run `just web-build` after touching `web/src/` — `just check-firmware` chains through it automatically.
 5. `just check-firmware && just clippy-firmware && just build-firmware`, then curl smoke after flashing.
 6. Document the route in `docs/http.md` (the canonical reference).
 
