@@ -394,10 +394,7 @@ async fn render_task(
     let canvas = Rectangle::new(EgPoint::zero(), Size::new(FB_WIDTH, FB_HEIGHT));
 
     let mut ticker = Ticker::every(Duration::from_millis(FRAME_PERIOD_MS));
-    defmt::info!(
-        "render task: {=u64} ms tick, EmotionFromTouch + IntentFromBodyTouch + EmotionFromRemote + EmotionFromIntent + EmotionFromVoice + IntentFromLoud + EmotionFromAmbient + EmotionFromBattery + AttentionFromTracking + DormancyFromActivity + EmotionCycle + StyleFromEmotion + StyleFromIntent + GazeFromAttention + MicrosaccadeFromAttention + Blink + Breath + IdleDrift + IdleMicroExpression + BatteryOverlayFromPerception + IdleHeadDrift + HeadFromEmotion + HeadFromAttention + LostTargetSearch + HeadFromIntent + HeadFromBodyGesture + DancePlayer + MouthFromAudio + Listening[skill] + Petting[skill] + Handling[skill]",
-        FRAME_PERIOD_MS
-    );
+    defmt::info!("render task: {=u64} ms tick", FRAME_PERIOD_MS);
 
     loop {
         let now = clock.now();
