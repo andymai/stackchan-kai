@@ -1565,6 +1565,66 @@ async fn mcp_dispatch_tool(id: i64, tool: &str, arguments: &str) -> String {
                 ),
             }
         }
+        "set_palette" => match json::parse_palette(arguments) {
+            Ok(palette) => {
+                PALETTE_SIGNAL.signal(palette);
+                let _ = crate::runtime_store::update_palette(palette).await;
+                render_success(id, &render_tool_text_result("palette enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "set_face_target" => match json::parse_face_target(arguments) {
+            Ok(cmd) => {
+                enqueue_remote_command(cmd);
+                render_success(id, &render_tool_text_result("face target enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "set_camera_mode" => match json::parse_camera_mode(arguments) {
+            Ok(active) => {
+                snapshot::update_camera_mode(active);
+                crate::camera::CAMERA_MODE_SIGNAL.signal(active);
+                render_success(id, &render_tool_text_result("camera mode enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
+        "get_head_offsets" => {
+            let offsets = crate::head::current_offsets();
+            let body = format!(
+                r#"{{"yaw_offset_deg":{:.3},"tilt_offset_deg":{:.3}}}"#,
+                offsets.yaw_offset_deg, offsets.tilt_offset_deg,
+            );
+            render_success(id, &render_tool_text_result(&body))
+        }
+        "set_head_offsets" => match json::parse_head_offsets(arguments) {
+            Ok(offsets) => {
+                let firmware_offsets = crate::head::HeadOffsets {
+                    yaw_offset_deg: offsets.yaw_offset_deg,
+                    tilt_offset_deg: offsets.tilt_offset_deg,
+                };
+                crate::head::OFFSETS_SIGNAL.signal(firmware_offsets);
+                crate::head::OFFSETS_CACHE.lock(|cell| cell.set(firmware_offsets));
+                let _ = crate::runtime_store::update_head_offsets(firmware_offsets).await;
+                render_success(id, &render_tool_text_result("head offsets enqueued"))
+            }
+            Err(e) => render_error(
+                Some(id),
+                JsonRpcErrorCode::InvalidParams,
+                tool_parse_detail(&e),
+            ),
+        },
         _ => render_error(Some(id), JsonRpcErrorCode::MethodNotFound, "unknown tool"),
     }
 }
