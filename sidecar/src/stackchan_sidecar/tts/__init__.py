@@ -24,12 +24,14 @@ callers catch it and fall back to ``audio_url: null``.
 
 from __future__ import annotations
 
+from .elevenlabs import ElevenLabsProvider
 from .errors import TTSError
 from .espeak import EspeakProvider
 from .piper import PiperProvider
 from .protocol import TTSProvider, TTSResult
 
 __all__ = [
+    "ElevenLabsProvider",
     "EspeakProvider",
     "PiperProvider",
     "TTSError",

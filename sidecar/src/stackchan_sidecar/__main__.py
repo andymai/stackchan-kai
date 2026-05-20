@@ -50,10 +50,12 @@ def _build_tts(settings: Settings) -> TTSProvider:
             speaker_id=settings.piper_speaker_id,
         )
     if settings.tts_provider == "elevenlabs":
-        import logging
+        from .tts import ElevenLabsProvider
 
-        logging.getLogger("stackchan_sidecar").warning(
-            "tts_provider=elevenlabs requested but not implemented yet; falling back to espeak_ng.",
+        return ElevenLabsProvider(
+            api_key=settings.elevenlabs_api_key,
+            voice_id=settings.elevenlabs_voice_id,
+            model_id=settings.elevenlabs_model_id,
         )
     from .tts import EspeakProvider
 
