@@ -278,7 +278,11 @@ export function Calibration() {
         <button type="button" onClick={() => void loadSettings()}>
           Reload
         </button>
-        <button type="button" onClick={() => setTracker(TRACKER_DEFAULT)} title="Revert local edits to firmware defaults (does not persist; click Save to apply).">
+        <button
+          type="button"
+          onClick={() => setTracker(TRACKER_DEFAULT)}
+          title="Reset to host-side fallback values (defined in this dashboard build; may drift from the firmware's actual defaults). Does not persist; click Save to apply."
+        >
           Reset to defaults
         </button>
       </div>

@@ -299,6 +299,33 @@ section summarises the milestone work in human terms.
 - Greptile-driven post-merge fix on the ESP-NOW TX path: the
   dispatcher no longer starves under inbound traffic and no longer
   latches a NaN pose into the delta-comparison cache.
+- Python sidecar + web dashboard hardening. `SessionStatus` is
+  now keyed by `session_id` so two firmware units posting to the
+  same sidecar don't clobber each other's `thinking` / `done`
+  state (unit B's `mark_thinking` no longer overwrites unit A's
+  in-flight snapshot). `GET /v1/session-status` accepts an
+  optional `?session_id=` filter; the default still returns the
+  most-recently-updated session so single-unit setups are
+  unaffected. Content-type validator also rejects non-mono audio
+  (`channels=2` body decoded as mono int16 would produce garbage
+  transcription; the firmware always sends `channels=1` but the
+  gate is the right place to catch operator-supplied test bodies
+  too). New `audio_channels_unsupported` error code. The retry
+  classifier narrows from `httpx.HTTPError` to
+  `httpx.NetworkError` so URL / protocol misconfiguration
+  surfaces immediately instead of burning the attempt budget;
+  `SessionStatus` also gains LRU eviction past 64 distinct
+  session_ids so long-running sidecars with rotating session IDs
+  don't accumulate stale snapshots indefinitely.
+  Dashboard `StatusBar` collapses its 5 polite `aria-live`
+  regions to one wrapper region (concurrent announcers were
+  fighting for the screen-reader queue every SSE tick), the
+  Calibration `Reset to defaults` button now honestly tooltips
+  "host-side fallback values" (previously claimed firmware
+  defaults), and `connectStream` uses exponential backoff with
+  jitter (1.5 s → 30 s, ±25%) so N tabs reconnecting after a
+  firmware restart fan out instead of synchronising on the
+  boundary.
 - `STACKCHAN.RON` parser rejects shadowed fields at every level.
   Previously the bare RON parser silently last-wins'd on a
   duplicate key, so a hand-edited file with `psk: "real", psk:

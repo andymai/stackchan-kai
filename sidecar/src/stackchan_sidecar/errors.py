@@ -29,6 +29,7 @@ class ErrorCode(StrEnum):
     BAD_CONTENT_TYPE = "bad_content_type"
     BAD_CONTENT_LENGTH = "bad_content_length"
     AUDIO_RATE_UNSUPPORTED = "audio_rate_unsupported"
+    AUDIO_CHANNELS_UNSUPPORTED = "audio_channels_unsupported"
     AUDIO_EMPTY = "audio_empty"
     AUDIO_TOO_SMALL = "audio_too_small"
     AUDIO_TOO_LARGE = "audio_too_large"
@@ -58,6 +59,9 @@ _FAILURES: dict[ErrorCode, FailureKind] = {
     ),
     ErrorCode.AUDIO_RATE_UNSUPPORTED: FailureKind(
         ErrorCode.AUDIO_RATE_UNSUPPORTED, Stage.AUDIO, "need 16kHz audio", Emotion.NEUTRAL
+    ),
+    ErrorCode.AUDIO_CHANNELS_UNSUPPORTED: FailureKind(
+        ErrorCode.AUDIO_CHANNELS_UNSUPPORTED, Stage.AUDIO, "need mono audio", Emotion.NEUTRAL
     ),
     ErrorCode.AUDIO_EMPTY: FailureKind(
         ErrorCode.AUDIO_EMPTY, Stage.AUDIO, "no audio received", Emotion.NEUTRAL
@@ -107,6 +111,7 @@ _HTTP_STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.BAD_CONTENT_TYPE: 415,
     ErrorCode.BAD_CONTENT_LENGTH: 400,
     ErrorCode.AUDIO_RATE_UNSUPPORTED: 415,
+    ErrorCode.AUDIO_CHANNELS_UNSUPPORTED: 415,
     ErrorCode.AUDIO_EMPTY: 400,
     ErrorCode.AUDIO_TOO_SMALL: 400,
     ErrorCode.AUDIO_TOO_LARGE: 413,

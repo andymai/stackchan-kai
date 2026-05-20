@@ -69,13 +69,29 @@ export function series<K extends keyof Sample>(key: K): number[] {
 }
 
 export function connectStream(): void {
+  // Exponential backoff with jitter for reconnects. Fixed 1.5 s
+  // before this change meant every open dashboard tab pounded the
+  // firmware at 0.67 Hz whenever it was offline; bursts from N
+  // tabs would amplify under restart. Resets to the floor on
+  // every successful open so a healthy stream re-arms the curve.
+  const BACKOFF_MIN_MS = 1500;
+  const BACKOFF_MAX_MS = 30000;
+  let backoff = BACKOFF_MIN_MS;
   const open = () => {
     const es = new EventSource("/state/stream");
-    es.onopen = () => setConn("ok");
+    es.onopen = () => {
+      setConn("ok");
+      backoff = BACKOFF_MIN_MS;
+    };
     es.onerror = () => {
       setConn("bad");
       es.close();
-      setTimeout(open, 1500);
+      // ±25% jitter so N tabs reconnecting after a firmware
+      // restart fan out across the back-off window instead of
+      // synchronising on the boundary.
+      const jitter = backoff * (0.75 + Math.random() * 0.5);
+      setTimeout(open, jitter);
+      backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
     };
     es.onmessage = (ev) => {
       try {

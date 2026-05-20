@@ -154,3 +154,77 @@ def test_snapshot_to_dict_drops_none_fields() -> None:
     assert isinstance(turn, dict)
     assert turn["transcript"] == "hi"
     assert "error" not in raw
+
+
+def test_concurrent_sessions_do_not_clobber_each_other() -> None:
+    # Two units with distinct session_ids should each have their own
+    # snapshot. Previously SessionStatus held a single slot and the
+    # second unit's mark_thinking would overwrite the first.
+    s = SessionStatus()
+    s.mark_thinking(request_id="rA", session_id="unit-a")
+    s.mark_thinking(request_id="rB", session_id="unit-b")
+    a = s.get("unit-a")
+    b = s.get("unit-b")
+    assert a.session_id == "unit-a"
+    assert a.state == "thinking"
+    assert a.request_id == "rA"
+    assert b.session_id == "unit-b"
+    assert b.state == "thinking"
+    assert b.request_id == "rB"
+
+
+def test_mark_done_only_touches_named_session() -> None:
+    s = SessionStatus()
+    s.mark_thinking(request_id="rA", session_id="unit-a")
+    s.mark_thinking(request_id="rB", session_id="unit-b")
+    s.mark_done(
+        request_id="rA",
+        session_id="unit-a",
+        transcript="hi",
+        reply_short="hello",
+        emotion="happy",
+    )
+    a = s.get("unit-a")
+    b = s.get("unit-b")
+    assert a.state == "idle"
+    assert a.last_turn is not None
+    # Unit B is still thinking — its session was not the target of
+    # unit A's mark_done.
+    assert b.state == "thinking"
+    assert b.last_turn is None
+
+
+def test_get_without_session_id_returns_latest_updated() -> None:
+    s = SessionStatus()
+    s.mark_thinking(request_id="rA", session_id="unit-a")
+    s.mark_thinking(request_id="rB", session_id="unit-b")
+    latest = s.get()
+    assert latest.session_id == "unit-b"
+
+
+def test_all_returns_every_session_snapshot() -> None:
+    s = SessionStatus()
+    s.mark_thinking(request_id="rA", session_id="unit-a")
+    s.mark_thinking(request_id="rB", session_id="unit-b")
+    snapshots = s.all()
+    assert set(snapshots.keys()) == {"unit-a", "unit-b"}
+
+
+def test_snapshots_dict_evicts_lru_past_cap() -> None:
+    # Importing the private cap is intentional: this test pins the
+    # eviction shape, not the cap value.
+    from stackchan_sidecar.session_status import _MAX_TRACKED_SESSIONS
+
+    s = SessionStatus()
+    # Fill exactly to the cap.
+    for i in range(_MAX_TRACKED_SESSIONS):
+        s.mark_thinking(request_id=f"r{i}", session_id=f"unit-{i}")
+    assert len(s.all()) == _MAX_TRACKED_SESSIONS
+
+    # One more push evicts the oldest. The very first session-id
+    # is the LRU victim; the new one lands.
+    s.mark_thinking(request_id="r-new", session_id="unit-new")
+    snapshots = s.all()
+    assert len(snapshots) == _MAX_TRACKED_SESSIONS
+    assert "unit-0" not in snapshots
+    assert "unit-new" in snapshots
