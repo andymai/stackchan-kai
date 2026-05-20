@@ -2,13 +2,15 @@
 // holds the firmware bearer token; the sidecar injects it before the
 // proxied POST.
 
-async function firmwareCmd(name: string, body: unknown): Promise<Response> {
+async function firmwareCmd(name: string, body: unknown): Promise<void> {
   const r = await fetch(`/v1/firmware-cmd/${name}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
-  return r;
+  if (!r.ok) {
+    throw new Error(`firmware-cmd ${name} failed: ${r.status} ${r.statusText}`);
+  }
 }
 
 const DEFAULT_LISTEN_MS = 5000;
