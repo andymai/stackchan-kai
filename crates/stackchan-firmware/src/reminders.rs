@@ -4,7 +4,7 @@
 //! pairs a fire deadline (monotonic [`Instant`]) with a phrase to play
 //! when the deadline arrives. A 1 Hz embassy task drains due entries
 //! and dispatches them through the same
-//! [`REMOTE_COMMAND_SIGNAL`]
+//! [`REMOTE_COMMAND_QUEUE`]
 //! that HTTP / MCP / ESP-NOW use, so the audio path stays uniform.
 //!
 //! ## Why monotonic, not wall-clock
@@ -33,7 +33,7 @@ use heapless::Vec;
 use stackchan_core::RemoteCommand;
 use stackchan_core::voice::{Locale, PhraseId, Priority};
 
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 
 /// Maximum simultaneous reminders. 16 is well beyond plausible
 /// operator use (a desk-toy isn't a calendar) and bounded enough to
@@ -166,10 +166,12 @@ fn drain_due(now: Instant) -> Vec<Reminder, MAX_REMINDERS> {
 }
 
 /// Embassy task — drains due reminders at `REMINDER_TICK` cadence
-/// and dispatches each through `REMOTE_COMMAND_SIGNAL` as a
-/// [`RemoteCommand::Speak`]. The signal is single-waker, so a burst
-/// of simultaneously-due reminders fires sequentially with one tick
-/// of spacing — fine for a desk-toy that has at most a few in flight.
+/// and dispatches each through `REMOTE_COMMAND_QUEUE` as a
+/// [`RemoteCommand::Speak`]. The queue absorbs short bursts, so
+/// simultaneously-due reminders are all preserved; the per-tick
+/// spacing is conservative pacing for the audio dispatcher
+/// downstream, not a correctness requirement of the control-plane
+/// queue itself.
 #[embassy_executor::task]
 pub async fn reminders_task() {
     defmt::info!(
@@ -187,12 +189,12 @@ pub async fn reminders_task() {
                 r.id,
                 defmt::Debug2Format(&r.phrase),
             );
-            REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::Speak {
+            enqueue_remote_command(RemoteCommand::Speak {
                 phrase: r.phrase,
                 locale: Locale::En,
                 priority: Priority::Normal,
             });
-            // The render task drains REMOTE_COMMAND_SIGNAL once per
+            // The render task drains REMOTE_COMMAND_QUEUE once per
             // ~33 ms render frame; signalling a second reminder
             // before that drain runs would silently overwrite the
             // first (Signal is single-waker, latest-wins). Pace
@@ -208,7 +210,7 @@ pub async fn reminders_task() {
 
 /// Spacing between back-to-back reminder fires when several land
 /// due in the same tick. Sized comfortably above the 33 ms render
-/// cadence so the consumer drains `REMOTE_COMMAND_SIGNAL` between
+/// cadence so the consumer drains `REMOTE_COMMAND_QUEUE` between
 /// each push.
 const REMINDER_BURST_SPACING_MS: u64 = 100;
 

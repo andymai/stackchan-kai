@@ -505,15 +505,29 @@ async fn render_task(
         if let Some(cmd) = ir::REMOTE_SIGNAL.try_take() {
             entity.input.remote_pending = Some((cmd.address, cmd.command));
         }
-        // Drain HTTP control-plane commands, if any. RemoteCommandModifier
-        // (Phase::Cognition) consumes the slot, asserts emotion or
-        // attention, and re-asserts each tick until the hold expires.
+        // Drain HTTP control-plane commands queued since the last
+        // tick. `REMOTE_COMMAND_QUEUE` is a bounded channel (was a
+        // single-slot `Signal` until 2026-05-19); rapid MCP
+        // sequencing — `set_emotion` then `look_at` then `speak`
+        // fired in the same ~33 ms render-loop interval — used to
+        // drop all but the last. The channel preserves order so
+        // each command lands.
         //
-        // `Speak` short-circuits the modifier round-trip — audio
-        // dispatch is firmware-only and the modifier graph would
-        // see it only as a no-op. Render the utterance and queue
-        // it directly here.
-        if let Some(cmd) = net::http::REMOTE_COMMAND_SIGNAL.try_take() {
+        // Each variant has its own routing:
+        // - `Speak` short-circuits to `audio::try_dispatch_utterance`
+        //   directly; the modifier graph would see it as a no-op.
+        // - `StartListen` fans out to `PTT_TRIGGER` *and* the
+        //   modifier slot so the sidecar captures while the avatar
+        //   cosmetic state holds (`Attention::Listening`).
+        // - `EnterThinking` and other modifier-bound variants land
+        //   in `entity.input.remote_command`. The slot is a single
+        //   `Option` so two commands of the same variant in one
+        //   tick still latest-wins at the modifier surface (same
+        //   pre-existing behaviour). Different variants land
+        //   sequentially through the tick; the modifier consumes
+        //   the latest and re-asserts each tick until the hold
+        //   expires.
+        while let Ok(cmd) = net::http::REMOTE_COMMAND_QUEUE.try_receive() {
             match cmd {
                 RemoteCommand::Speak {
                     phrase,
@@ -528,24 +542,10 @@ async fn render_task(
                     }
                 }
                 RemoteCommand::StartListen { duration_ms } => {
-                    // Notify the sidecar capture task so the
-                    // operator-configured agent gets the same
-                    // window the modifier holds Attention::Listening
-                    // for. Forward the variant to the modifier so
-                    // the cosmetic state (Ear decorator, ack chirp,
-                    // attention hold) still runs even when no
-                    // sidecar URL is configured.
                     stackchan_firmware::agent_sidecar::PTT_TRIGGER.signal(duration_ms);
                     entity.input.remote_command = Some(RemoteCommand::StartListen { duration_ms });
                 }
                 RemoteCommand::EnterThinking { hold_ms } => {
-                    // Sidecar-internal transition: the agent task
-                    // fires this onto the same signal once the PCM
-                    // capture window closes and the HTTP round-trip
-                    // begins. Forward to the modifier to swap the
-                    // face from Listening (Ear) to Thinking
-                    // (thought-bubble) while the network request is
-                    // in flight.
                     entity.input.remote_command = Some(RemoteCommand::EnterThinking { hold_ms });
                 }
                 other => entity.input.remote_command = Some(other),
@@ -1522,7 +1522,7 @@ async fn main(spawner: Spawner) -> ! {
     // configured URL turns `POST /listen` into a PCM capture +
     // HTTP round-trip to the operator's sidecar. Replies surface
     // on the toast band and (if `emotion` is set) drive a
-    // `SetEmotion` through `REMOTE_COMMAND_SIGNAL`.
+    // `SetEmotion` through `REMOTE_COMMAND_QUEUE`.
     if let Err(e) = spawner.spawn(stackchan_firmware::agent_sidecar::agent_sidecar_task(
         net_stack,
         net_config.behavior.agent_sidecar_url.clone(),
@@ -1541,7 +1541,7 @@ async fn main(spawner: Spawner) -> ! {
     // `AUDIO_FRAME_PUBSUB`, feeds each 20 ms frame through the
     // mel-spectrogram frontend, and runs each mel frame through
     // a TFLite Micro interpreter. A positive detection signals
-    // `REMOTE_COMMAND_SIGNAL` with `RemoteCommand::StartListen`,
+    // `REMOTE_COMMAND_QUEUE` with `RemoteCommand::StartListen`,
     // converging on the same path operator-initiated `POST /listen`
     // takes — sidecar PCM capture plus the cosmetic modifier graph
     // (`Attention::Listening`, ear decorator, ack chirp). Empty
@@ -1586,7 +1586,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // Reminder dispatcher — drains due reminders at 1 Hz and routes
-    // them through `REMOTE_COMMAND_SIGNAL` for the speak path. The
+    // them through `REMOTE_COMMAND_QUEUE` for the speak path. The
     // queue is empty at boot so the task is a low-cost noop until an
     // operator schedules one via MCP `create_reminder`.
     if let Err(e) = spawner.spawn(stackchan_firmware::reminders::reminders_task()) {

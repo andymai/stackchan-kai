@@ -1,4 +1,4 @@
-//! ESP-NOW task — RX (drives [`REMOTE_COMMAND_SIGNAL`] from inbound
+//! ESP-NOW task — RX (drives [`REMOTE_COMMAND_QUEUE`] from inbound
 //! frames) plus TX (broadcasts pose-mirror + heartbeat frames so other
 //! Stack-chan units can choreograph against this device).
 //!
@@ -38,7 +38,7 @@ use stackchan_net::esp_now::{
     InboundFrame, MAX_FRAME_LEN, decode, encode_heartbeat, encode_pose_mirror,
 };
 
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 use crate::net::snapshot::read as read_avatar_snapshot;
 
 /// TX cadence — how often the loop checks the snapshot for a new
@@ -244,7 +244,7 @@ fn handle_inbound_frame(
         // subscribe via a separate signal if that policy changes.
         Ok(InboundFrame::Heartbeat | InboundFrame::Pose { .. }) => {}
         Ok(InboundFrame::Command(cmd)) => {
-            REMOTE_COMMAND_SIGNAL.signal(cmd);
+            enqueue_remote_command(cmd);
         }
         Err(e) => {
             defmt::warn!(

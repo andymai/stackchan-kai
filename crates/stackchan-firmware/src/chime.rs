@@ -9,7 +9,7 @@
 //! 3. Sleep that long.
 //! 4. Re-read the clock to handle skew across the sleep, and emit a
 //!    [`stackchan_core::PhraseId::WakeChirp`] (~100 ms 1 kHz sine)
-//!    via [`crate::net::http::REMOTE_COMMAND_SIGNAL`] if we landed
+//!    via [`crate::net::http::REMOTE_COMMAND_QUEUE`] if we landed
 //!    inside the per-hour acceptance window.
 //!
 //! ## Why poll instead of an absolute timer
@@ -26,7 +26,7 @@ use stackchan_core::RemoteCommand;
 use stackchan_core::voice::{Locale, PhraseId, Priority};
 
 use crate::board::SharedI2cBus;
-use crate::net::http::REMOTE_COMMAND_SIGNAL;
+use crate::net::http::enqueue_remote_command;
 
 /// Acceptance window around the top-of-hour. Sleep math + RTC read
 /// jitter can drift the wakeup by a few hundred milliseconds; if the
@@ -92,7 +92,7 @@ pub async fn chime_task(i2c_bus: &'static SharedI2cBus, enabled: bool) {
         }
 
         defmt::info!("chime: hour {=u8:02}:00 — emitting WakeChirp", post.hours);
-        REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::Speak {
+        enqueue_remote_command(RemoteCommand::Speak {
             phrase: PhraseId::WakeChirp,
             locale: Locale::En,
             priority: Priority::Normal,

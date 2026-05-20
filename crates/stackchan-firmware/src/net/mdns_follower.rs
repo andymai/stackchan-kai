@@ -34,7 +34,7 @@ use embassy_time::{Duration, Timer};
 use stackchan_core::input::RemoteCommand;
 use stackchan_net::mdns_pose::POSE_HEARTBEAT_INTERVAL_MS;
 
-use super::http::REMOTE_COMMAND_SIGNAL;
+use super::http::enqueue_remote_command;
 use super::mdns::LEADER_POSE_SIGNAL;
 
 /// `LookAt` hold per signalled leader update. 1.5 × the leader's
@@ -67,7 +67,7 @@ pub async fn follower_task(leader_hostname: String) -> ! {
     );
     loop {
         let pose = LEADER_POSE_SIGNAL.wait().await;
-        REMOTE_COMMAND_SIGNAL.signal(RemoteCommand::LookAt {
+        enqueue_remote_command(RemoteCommand::LookAt {
             target: pose,
             hold_ms: FOLLOWER_HOLD_MS,
         });
