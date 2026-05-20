@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # eSpeak-NG voice + speech rate; both ignored for other providers.
     espeak_voice: str = "en"
     espeak_wpm: int = Field(default=175, ge=80, le=450)
+    # Piper voice model. Path to the `.onnx` file; the sibling
+    # `.onnx.json` metadata is auto-discovered by piper. `None` means
+    # piper isn't configured — selecting `tts_provider=piper` without
+    # this set fails fast at startup.
+    piper_model_path: Path | None = None
+    # Speaker index for multi-speaker piper models; ignored on
+    # single-speaker ones.
+    piper_speaker_id: int | None = None
 
     bearer_token: str = Field(default="", alias="SIDECAR_BEARER_TOKEN")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
@@ -82,5 +90,10 @@ def load_settings() -> Settings:
         raise RuntimeError(
             "OPENAI_API_KEY is required when llm_provider=openai. "
             "Set it in .env or the process environment."
+        )
+    if settings.tts_provider == "piper" and settings.piper_model_path is None:
+        raise RuntimeError(
+            "piper_model_path is required when tts_provider=piper. "
+            "Point it at a downloaded .onnx voice model (see docs/voice.md)."
         )
     return settings

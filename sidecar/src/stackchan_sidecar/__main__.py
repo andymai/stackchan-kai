@@ -38,20 +38,22 @@ def _build_llm(settings: Settings) -> LLMProvider:
 
 
 def _build_tts(settings: Settings) -> TTSProvider:
-    # `piper` and `elevenlabs` providers land in follow-up slices —
-    # they're declared in the config Literal up front so a future
-    # operator's STACKCHAN.RON / .env files don't need updating when
-    # the providers ship. For now the espeak_ng provider is the only
-    # implementation; the others fall through to it with a startup log
-    # so the operator sees the substitution.
-    if settings.tts_provider != "espeak_ng":
+    if settings.tts_provider == "piper":
+        from .tts import PiperProvider
+
+        # load_settings() already enforces piper_model_path != None
+        # when tts_provider=piper, so the assertion is a type narrow,
+        # not a runtime guard.
+        assert settings.piper_model_path is not None
+        return PiperProvider(
+            model_path=settings.piper_model_path,
+            speaker_id=settings.piper_speaker_id,
+        )
+    if settings.tts_provider == "elevenlabs":
         import logging
 
         logging.getLogger("stackchan_sidecar").warning(
-            "tts_provider=%s requested but not implemented yet; "
-            "falling back to espeak_ng. Track Arc A slice 2/3 for "
-            "Piper and ElevenLabs providers.",
-            settings.tts_provider,
+            "tts_provider=elevenlabs requested but not implemented yet; falling back to espeak_ng.",
         )
     from .tts import EspeakProvider
 
