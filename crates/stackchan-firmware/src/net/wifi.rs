@@ -207,6 +207,11 @@ async fn run_connect_loop(controller: &mut WifiController<'static>, ssid: &str) 
                             "wifi: reconfig while connected (new ssid={=str})",
                             new_creds.ssid.as_str()
                         );
+                        // Best-effort disconnect before returning the
+                        // new creds: connect_async at the top of the
+                        // outer loop will reset the controller state
+                        // even if this fails, so a stuck disconnect
+                        // shouldn't strand the reconfig request.
                         let _ = controller.disconnect_async().await;
                         WIFI_LINK_WATCH.sender().send(WifiLinkState::Disconnected);
                         return new_creds;

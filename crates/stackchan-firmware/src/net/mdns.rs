@@ -175,6 +175,11 @@ pub async fn mdns_task(stack: Stack<'static>, hostname: String, leader_hostname:
         // or anything errors out.
         serve_loop(&socket, &hostname, &leader_hostname, our_ip, &mut announcer).await;
 
+        // Best-effort multicast-group leave: serve_loop returned
+        // because the link dropped or the socket errored, so the
+        // group membership is moot. A failure here just means the
+        // stack will reject the next join with `AlreadyExists` until
+        // the link transition forces a teardown.
         let _ = stack.leave_multicast_group(MDNS_MULTICAST);
         socket.close();
         // serve_loop returned (link dropped or socket failure) —
