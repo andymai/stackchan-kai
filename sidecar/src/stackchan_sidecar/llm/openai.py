@@ -51,7 +51,11 @@ class OpenAILLM:
         model: str = "gpt-4o-mini",
         max_tokens: int = 400,
     ) -> None:
-        self._client = openai.AsyncOpenAI(api_key=api_key)
+        # `max_retries=0`: see `AnthropicLLM.__init__` — our
+        # `retry_with_timeout` owns the retry policy. Stacking SDK
+        # retries on top would burn the per-attempt timeout budget
+        # invisibly.
+        self._client = openai.AsyncOpenAI(api_key=api_key, max_retries=0)
         self._model = model
         self._max_tokens = max_tokens
 
