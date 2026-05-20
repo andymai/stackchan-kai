@@ -91,10 +91,12 @@ one to use per request via the `X-Persona-Name` header.
 1. Drop more persona files into `sidecar/personas/`, one `.md` per
    voice (`desk-buddy.md`, `wake-only.md`, etc.). Each follows the
    same frontmatter shape as the bundled `stack-chan.md`.
-2. Set `behavior.persona_name = "desk-buddy"` in the device's
-   `/sd/STACKCHAN.RON` (or via `PUT /settings`). Empty / unset keeps
-   the firmware's wire surface header-free, and the sidecar falls
-   back to its baked-in `settings.persona`.
+2. Set `persona_name: "desk-buddy"` in the `behavior:` block of the
+   device's `/sd/STACKCHAN.RON` (RON uses `:` between key and value,
+   not `=`). Equivalent JSON for `PUT /settings`:
+   `"persona_name": "desk-buddy"`. Empty / unset keeps the firmware's
+   wire surface header-free, and the sidecar falls back to its
+   baked-in `settings.persona`.
 3. Confirm with `curl http://sidecar:port/v1/personas` — the
    response lists every deployed slug plus the configured default
    and a `default_deployed` flag that tells you upfront whether
