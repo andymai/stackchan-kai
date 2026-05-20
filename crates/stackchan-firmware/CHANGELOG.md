@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.106.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.105.0...stackchan-firmware-v0.106.0) (2026-05-20)
+
+
+### Features
+
+* **arc-a:** firmware fetches + plays sidecar TTS audio ([#538](https://github.com/andymai/stackchan-kai/issues/538)) ([d257af0](https://github.com/andymai/stackchan-kai/commit/d257af0ebc260a854d7a8ceacee656910c578d34))
+
 ## [0.105.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.104.0...stackchan-firmware-v0.105.0) (2026-05-20)
 
 
