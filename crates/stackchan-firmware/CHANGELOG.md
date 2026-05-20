@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.99.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.98.0...stackchan-firmware-v0.99.0) (2026-05-20)
+
+
+### Features
+
+* **mcp:** expose mutator tools — set_palette / set_face_target / set_camera_mode / get_head_offsets / set_head_offsets ([#514](https://github.com/andymai/stackchan-kai/issues/514)) ([a54809b](https://github.com/andymai/stackchan-kai/commit/a54809b5b2fac78bc495b045e8342a9805ffcd52))
+
 ## [0.98.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.97.3...stackchan-firmware-v0.98.0) (2026-05-20)
 
 
