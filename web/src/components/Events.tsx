@@ -20,7 +20,12 @@ function kindClass(k: EventEntry["kind"]): string {
 
 export function Events() {
   const [data, setData] = createSignal<EventsResponse | null>(null);
-  let timer: ReturnType<typeof setInterval> | null = null;
+  // setTimeout self-reschedule instead of setInterval: a slow
+  // `/events` fetch (firmware busy, network lag) would otherwise
+  // queue a second tick on the prior interval boundary while the
+  // first is still in flight, stacking N concurrent requests.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let cancelled = false;
 
   const tick = async () => {
     try {
@@ -29,15 +34,19 @@ export function Events() {
       setData((await res.json()) as EventsResponse);
     } catch (e) {
       showToast(`/events: ${(e as Error).message}`, true);
+    } finally {
+      if (!cancelled) {
+        timer = setTimeout(() => void tick(), POLL_MS);
+      }
     }
   };
 
   onMount(() => {
     void tick();
-    timer = setInterval(tick, POLL_MS);
   });
   onCleanup(() => {
-    if (timer != null) clearInterval(timer);
+    cancelled = true;
+    if (timer != null) clearTimeout(timer);
   });
 
   return (
