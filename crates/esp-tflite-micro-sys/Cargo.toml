@@ -20,4 +20,4 @@ workspace = true
 
 [build-dependencies]
 cc = "1"
-bindgen = { version = "0.71", default-features = false, features = ["runtime"] }
+bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
