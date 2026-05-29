@@ -34,10 +34,12 @@
 //!   Operators relying on link-layer encryption from BLE LE
 //!   Secure Connections get a comparable security posture; full
 //!   BluFi crypto is a follow-up.
-//! - Fragment reassembly. The `Fragment follows` FrameControl bit
-//!   is parsed and surfaced as [`Frame::fragmented`]; the
-//!   higher-level GATT handler is responsible for buffering
-//!   continuations.
+//! - Fragment reassembly *state*. The `Fragment follows`
+//!   FrameControl bit is parsed and surfaced as
+//!   [`Frame::fragmented`]; [`fragment_content`] is the stateless
+//!   helper that strips a fragmented frame's leading
+//!   total-content-length prefix. The accumulation buffer lives in
+//!   the GATT handler, which owns per-chain state.
 //! - GATT integration. The [`SERVICE_UUID`] / [`WRITE_CHAR_UUID`]
 //!   / [`NOTIFY_CHAR_UUID`] `u16` constants are exported for code
 //!   paths that consume UUIDs at runtime — service-discovery filters,
@@ -357,6 +359,11 @@ pub enum ParseError {
     /// them as `Data` would hide a malformed or future-format
     /// frame from the GATT handler.
     UnknownType,
+    /// A frame with `FC_FRAGMENT` set carried fewer than the two
+    /// bytes its leading total-content-length prefix needs. A
+    /// conformant central always prefixes a fragmented frame's data
+    /// with that `u16`, so a sub-2-byte payload is malformed.
+    FragmentTooShort,
 }
 
 /// Parse one BluFi frame from `buf`.
@@ -424,6 +431,49 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, ParseError> {
         data,
         fragmented: frame_control & FC_FRAGMENT != 0,
         encrypted,
+    })
+}
+
+/// A fragmented frame's payload, split into its declared total
+/// content length and the content bytes this frame contributes.
+///
+/// See [`fragment_content`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FragmentContent<'a> {
+    /// Total length of the fully-reassembled content across the
+    /// whole fragment chain, taken from this frame's leading `u16`
+    /// little-endian prefix. The receiver uses it to size its
+    /// staging buffer and to know when the chain is complete.
+    pub total_len: u16,
+    /// This frame's slice of the content, borrowed from
+    /// [`Frame::data`] with the 2-byte prefix removed.
+    pub content: &'a [u8],
+}
+
+/// Strip a fragmented frame's leading total-content-length prefix.
+///
+/// Per the BluFi spec, every frame with `FC_FRAGMENT` set carries
+/// `[total_content_length: u16 little-endian][content…]` in its
+/// Data field; `content` is `Data Length - 2` bytes. The
+/// *terminating* frame in a chain has `FC_FRAGMENT` clear and
+/// carries **no** prefix — its data is the final content slice
+/// verbatim, so this helper must not be called on it.
+///
+/// This is stateless: it reads one frame and returns its prefix +
+/// content. Accumulating slices across the chain until the running
+/// length reaches `total_len` is the GATT handler's job.
+///
+/// # Errors
+///
+/// Returns [`ParseError::FragmentTooShort`] when `frame.data` holds
+/// fewer than the two bytes the prefix needs.
+pub fn fragment_content(frame: &Frame) -> Result<FragmentContent<'_>, ParseError> {
+    let Some((prefix, content)) = frame.data.split_first_chunk::<2>() else {
+        return Err(ParseError::FragmentTooShort);
+    };
+    Ok(FragmentContent {
+        total_len: u16::from_le_bytes(*prefix),
+        content,
     })
 }
 
@@ -641,6 +691,62 @@ mod tests {
         let parsed = parse_frame(&buf).unwrap();
         assert!(parsed.fragmented);
         assert!(parsed.encrypted);
+    }
+
+    #[test]
+    fn fragment_content_splits_le_prefix_from_content() {
+        // A fragmented SendStaSsid frame whose data is
+        // [total_len_lo, total_len_hi, content…]. total_len = 0x0140
+        // (320) — bigger than this frame's slice, as expected mid-chain.
+        let mut buf = build_frame(
+            Type::Data,
+            DataSubtype::SendStaSsid as u8,
+            0,
+            &[0x40, 0x01, b'a', b'b', b'c'],
+        )
+        .unwrap();
+        buf[1] |= FC_FRAGMENT;
+        let frame = parse_frame(&buf).unwrap();
+        let frag = fragment_content(&frame).unwrap();
+        assert_eq!(frag.total_len, 0x0140);
+        assert_eq!(frag.content, b"abc");
+    }
+
+    #[test]
+    fn fragment_content_rejects_data_under_two_bytes() {
+        let mut buf = build_frame(Type::Data, DataSubtype::SendStaSsid as u8, 0, &[0x07]).unwrap();
+        buf[1] |= FC_FRAGMENT;
+        let frame = parse_frame(&buf).unwrap();
+        assert_eq!(fragment_content(&frame), Err(ParseError::FragmentTooShort));
+    }
+
+    #[test]
+    fn fragmented_then_terminating_frame_round_trips() {
+        // Two-frame chain reassembling "hello-world-network" (19 bytes).
+        // Frame A: fragmented, prefix = total_len, carries "hello-world".
+        // Frame B: terminating (FC_FRAGMENT clear, no prefix), carries
+        // "-network".
+        let payload = b"hello-world-network";
+        let total_len = u16::try_from(payload.len()).unwrap();
+        let head = &payload[..11];
+        let tail = &payload[11..];
+
+        let mut a_data = total_len.to_le_bytes().to_vec();
+        a_data.extend_from_slice(head);
+        let mut a_buf =
+            build_frame(Type::Data, DataSubtype::SendStaSsid as u8, 0, &a_data).unwrap();
+        a_buf[1] |= FC_FRAGMENT;
+        let frame_a = parse_frame(&a_buf).unwrap();
+        let frag_a = fragment_content(&frame_a).unwrap();
+
+        let b_buf = build_frame(Type::Data, DataSubtype::SendStaSsid as u8, 1, tail).unwrap();
+        let frame_b = parse_frame(&b_buf).unwrap();
+        assert!(!frame_b.fragmented);
+
+        let mut assembled = frag_a.content.to_vec();
+        assembled.extend_from_slice(&frame_b.data);
+        assert_eq!(assembled, payload);
+        assert_eq!(assembled.len(), frag_a.total_len as usize);
     }
 
     #[test]

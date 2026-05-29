@@ -629,6 +629,12 @@ impl WriteHandles {
 /// the device only persists once a `ControlSubtype::ConnectToAp`
 /// control frame lands. Dropped at the end of `gatt_events_task` so
 /// the staged PSK never outlives the connection.
+///
+/// A single in-flight fragment chain (`reasm` + `reasm_subtype`) is
+/// tracked at a time — the official provisioning app sends one
+/// credential per chain. The buffer is reset on completion, on a
+/// subtype switch mid-chain, and (by virtue of per-connection
+/// construction) on disconnect.
 struct BluFiSession {
     /// `SendStaSsid` payload, decoded as UTF-8. Empty until the
     /// central sends one. Overwritten on each new `SendStaSsid`.
@@ -656,6 +662,28 @@ struct BluFiSession {
     /// when both `Connecting` and `Disconnected` upstream states map
     /// to `NotConnected`.
     last_reported: Option<blufi::WifiConnState>,
+    /// Accumulated content of the in-flight fragment chain. Capacity
+    /// is [`PROV_PSK_CAP`] — the larger of the two staged caps — so a
+    /// chain that claims more is rejected structurally. Empty when no
+    /// chain is in flight.
+    reasm: HVec<u8, PROV_PSK_CAP>,
+    /// Data subtype of the in-flight fragment chain, or `None` when no
+    /// chain is in flight. A frame for a different subtype resets the
+    /// buffer before accumulating.
+    reasm_subtype: Option<u8>,
+}
+
+/// Outcome of feeding one fragment into a [`BluFiSession`] chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FragmentState {
+    /// The accumulated content has reached the declared total length;
+    /// the buffer holds the complete payload, ready to stage.
+    Complete,
+    /// More fragments are expected before the chain completes.
+    NeedMore,
+    /// The chain was rejected (over-cap or buffer overflow) and the
+    /// buffer has been reset.
+    Aborted,
 }
 
 impl BluFiSession {
@@ -668,6 +696,56 @@ impl BluFiSession {
             outbound_seq: 0,
             watch_link: false,
             last_reported: None,
+            reasm: HVec::new(),
+            reasm_subtype: None,
+        }
+    }
+
+    /// Clear the in-flight fragment chain.
+    fn reset_reasm(&mut self) {
+        self.reasm.clear();
+        self.reasm_subtype = None;
+    }
+
+    /// Feed one fragment's content into the chain for `subtype`.
+    ///
+    /// `total_len` is the chain's declared full content length (from
+    /// the fragmented frame's prefix); `content` is this frame's
+    /// slice. Starting or continuing a chain for a different subtype
+    /// resets the buffer first — only one chain is tracked at a time.
+    ///
+    /// Returns [`FragmentState::Aborted`] (and resets) when the chain
+    /// would exceed [`PROV_PSK_CAP`] or the buffer overflows;
+    /// [`FragmentState::Complete`] once the accumulated length reaches
+    /// `total_len`; otherwise [`FragmentState::NeedMore`].
+    fn push_fragment(&mut self, subtype: u8, total_len: usize, content: &[u8]) -> FragmentState {
+        if self.reasm_subtype != Some(subtype) {
+            self.reset_reasm();
+            self.reasm_subtype = Some(subtype);
+        }
+        if total_len > PROV_PSK_CAP {
+            defmt::warn!(
+                "ble: blufi fragment chain too long (total={=usize} > {=usize}); resetting",
+                total_len,
+                PROV_PSK_CAP
+            );
+            self.reset_reasm();
+            return FragmentState::Aborted;
+        }
+        if self.reasm.extend_from_slice(content).is_err() {
+            defmt::warn!(
+                "ble: blufi fragment buffer overflow (have={=usize} + {=usize}B > {=usize}); resetting",
+                self.reasm.len(),
+                content.len(),
+                PROV_PSK_CAP
+            );
+            self.reset_reasm();
+            return FragmentState::Aborted;
+        }
+        if self.reasm.len() >= total_len {
+            FragmentState::Complete
+        } else {
+            FragmentState::NeedMore
         }
     }
 
@@ -705,10 +783,9 @@ enum WriteAction {
     /// Signal the camera task to persist the latest frame to
     /// `/sd/CAPTURE.565`.
     CameraCapture,
-    /// Surface a parsed `BluFi` frame in defmt. The provisioning state
-    /// machine (SSID/password accumulation, commit on
-    /// `ControlSubtype::ConnectToAp`) lands in a follow-up; this
-    /// slice proves the GATT plumbing.
+    /// Hand a parsed `BluFi` frame to [`handle_blufi_frame`] — the
+    /// provisioning state machine (SSID/password accumulation +
+    /// fragment reassembly, commit on `ControlSubtype::ConnectToAp`).
     BluFiFrame(blufi::Frame),
     /// Raw bytes from the desktop NUS RX characteristic. Fed into the
     /// per-connection [`DesktopSession`] which handles line framing
@@ -1028,9 +1105,9 @@ const fn att_error_for_blufi(err: blufi::ParseError) -> AttErrorCode {
         blufi::ParseError::Truncated | blufi::ParseError::BadDataLength => {
             AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH
         }
-        blufi::ParseError::BadCrc | blufi::ParseError::UnknownType => {
-            AttErrorCode::VALUE_NOT_ALLOWED
-        }
+        blufi::ParseError::BadCrc
+        | blufi::ParseError::UnknownType
+        | blufi::ParseError::FragmentTooShort => AttErrorCode::VALUE_NOT_ALLOWED,
     }
 }
 
@@ -1080,9 +1157,8 @@ async fn apply_write_action<P: PacketPool>(
 }
 
 /// Surface a parsed `BluFi` frame in defmt — type, subtype, sequence,
-/// frame-control flags, and data length. No state mutation: the
-/// SSID/password accumulator and the `ControlSubtype::ConnectToAp`
-/// commit path land in a follow-up.
+/// frame-control flags, and data length. No state mutation; the
+/// dispatch + accumulation happens in [`handle_blufi_frame`].
 fn log_blufi_frame(frame: &blufi::Frame) {
     let kind = match frame.frame_type {
         blufi::Type::Control => "control",
@@ -1109,56 +1185,140 @@ fn log_blufi_frame(frame: &blufi::Frame) {
 /// `GetWifiStatus` notify a reply frame on the `BluFi` notify
 /// characteristic. Unhandled subtypes fall through with a log.
 ///
-/// Fragmented frames are rejected with a warn. The `BluFi` protocol
-/// allows large payloads to be split across multiple application-
-/// layer frames via the `FC_FRAGMENT` bit, and the GATT handler
-/// owns reassembly per `stackchan_net::blufi`'s module contract.
-/// Until reassembly lands, staging only the trailing fragment of a
-/// multi-frame `SendStaSsid` / `SendStaPassword` would silently
-/// commit a truncated network name or passphrase — the auth gate
-/// would happily accept it because the bytes are still valid UTF-8.
-/// Rejecting cleanly here keeps the session state coherent.
+/// `SendStaSsid` / `SendStaPassword` Data frames are run through the
+/// fragment reassembler (see [`handle_blufi_credential`]) so a large
+/// SSID or passphrase split across `FC_FRAGMENT` frames is staged
+/// whole rather than truncated. Fragmented frames of any other
+/// subtype — and any fragmented+encrypted frame, whose content is
+/// ciphertext that can't be reassembled until the deferred AES-CCM
+/// layer lands — are dropped with a warn, matching the parser's
+/// encrypted-CRC-deferral posture.
 async fn handle_blufi_frame<P: PacketPool>(
     server: &StackchanServer<'_>,
     conn: &GattConnection<'_, '_, P>,
     session: &mut BluFiSession,
     frame: blufi::Frame,
 ) {
-    if frame.fragmented {
-        defmt::warn!(
-            "ble: blufi fragmented frame (subtype={=u8:02x} seq={=u8}); \
-             reassembly not implemented — dropping",
-            frame.subtype,
-            frame.sequence,
-        );
-        return;
-    }
     match frame.frame_type {
-        blufi::Type::Control => match frame.control_subtype() {
-            Some(blufi::ControlSubtype::SetWifiOpMode) => {
-                if let Some(&byte) = frame.data.first() {
-                    session.op_mode = Some(byte);
-                    defmt::info!("ble: blufi op_mode set ({=u8})", byte);
-                } else {
-                    defmt::warn!("ble: blufi op_mode payload empty; ignoring");
+        blufi::Type::Control => {
+            if frame.fragmented {
+                warn_drop_fragment(&frame);
+                return;
+            }
+            match frame.control_subtype() {
+                Some(blufi::ControlSubtype::SetWifiOpMode) => {
+                    if let Some(&byte) = frame.data.first() {
+                        session.op_mode = Some(byte);
+                        defmt::info!("ble: blufi op_mode set ({=u8})", byte);
+                    } else {
+                        defmt::warn!("ble: blufi op_mode payload empty; ignoring");
+                    }
+                }
+                Some(blufi::ControlSubtype::ConnectToAp) => {
+                    commit_blufi_provisioning(server, conn, session).await;
+                }
+                Some(blufi::ControlSubtype::GetVersion) => {
+                    reply_blufi_version(server, conn, session).await;
+                }
+                Some(blufi::ControlSubtype::GetWifiStatus) => {
+                    reply_blufi_wifi_status(server, conn, session).await;
+                }
+                _ => {}
+            }
+        }
+        blufi::Type::Data => match frame.data_subtype() {
+            Some(sub @ (blufi::DataSubtype::SendStaSsid | blufi::DataSubtype::SendStaPassword)) => {
+                handle_blufi_credential(session, sub, &frame);
+            }
+            _ => {
+                if frame.fragmented {
+                    warn_drop_fragment(&frame);
                 }
             }
-            Some(blufi::ControlSubtype::ConnectToAp) => {
-                commit_blufi_provisioning(server, conn, session).await;
-            }
-            Some(blufi::ControlSubtype::GetVersion) => {
-                reply_blufi_version(server, conn, session).await;
-            }
-            Some(blufi::ControlSubtype::GetWifiStatus) => {
-                reply_blufi_wifi_status(server, conn, session).await;
-            }
-            _ => {}
         },
-        blufi::Type::Data => match frame.data_subtype() {
-            Some(blufi::DataSubtype::SendStaSsid) => stage_blufi_ssid(session, &frame.data),
-            Some(blufi::DataSubtype::SendStaPassword) => stage_blufi_psk(session, &frame.data),
-            _ => {}
-        },
+    }
+}
+
+/// Drop a fragmented frame we don't reassemble, logging why.
+fn warn_drop_fragment(frame: &blufi::Frame) {
+    defmt::warn!(
+        "ble: blufi fragmented frame not reassembled (subtype={=u8:02x} seq={=u8} encrypted={=bool}); dropping",
+        frame.subtype,
+        frame.sequence,
+        frame.encrypted,
+    );
+}
+
+/// Feed one `SendStaSsid` / `SendStaPassword` frame through the
+/// reassembler and stage the credential once the chain completes.
+///
+/// A fragmented frame carries a 2-byte total-content-length prefix
+/// ([`blufi::fragment_content`]); its content is accumulated. A
+/// non-fragmented frame is the terminating fragment when a chain for
+/// the same subtype is in flight (its data is appended verbatim —
+/// no prefix), or a standalone single-fragment credential otherwise.
+/// Either way, on completion the assembled bytes go to the matching
+/// `stage_blufi_*` helper and the buffer resets.
+///
+/// Fragmented+encrypted frames are dropped: reassembling ciphertext
+/// is meaningless without the deferred AES-CCM layer, and staging it
+/// as an SSID/PSK would corrupt the credential.
+fn handle_blufi_credential(
+    session: &mut BluFiSession,
+    subtype: blufi::DataSubtype,
+    frame: &blufi::Frame,
+) {
+    if frame.fragmented {
+        if frame.encrypted {
+            warn_drop_fragment(frame);
+            return;
+        }
+        let frag = match blufi::fragment_content(frame) {
+            Ok(frag) => frag,
+            Err(e) => {
+                defmt::warn!(
+                    "ble: blufi fragment prefix malformed ({}); dropping",
+                    defmt::Debug2Format(&e)
+                );
+                return;
+            }
+        };
+        match session.push_fragment(frame.subtype, frag.total_len as usize, frag.content) {
+            FragmentState::Complete => stage_blufi_credential(session, subtype),
+            FragmentState::NeedMore | FragmentState::Aborted => {}
+        }
+        return;
+    }
+
+    if session.reasm_subtype == Some(frame.subtype) {
+        // Terminating fragment: its data carries no length prefix, so
+        // append verbatim. The total_len from the chain's opening
+        // fragment already bounds the buffer; pass it through so an
+        // overflow still aborts cleanly.
+        let total_len = session.reasm.len() + frame.data.len();
+        match session.push_fragment(frame.subtype, total_len, &frame.data) {
+            FragmentState::Complete => stage_blufi_credential(session, subtype),
+            FragmentState::NeedMore | FragmentState::Aborted => {}
+        }
+        return;
+    }
+
+    match subtype {
+        blufi::DataSubtype::SendStaSsid => stage_blufi_ssid(session, &frame.data),
+        blufi::DataSubtype::SendStaPassword => stage_blufi_psk(session, &frame.data),
+        _ => {}
+    }
+}
+
+/// Stage the just-completed reassembly buffer as the SSID or PSK,
+/// then clear the chain.
+fn stage_blufi_credential(session: &mut BluFiSession, subtype: blufi::DataSubtype) {
+    let assembled = core::mem::take(&mut session.reasm);
+    session.reasm_subtype = None;
+    match subtype {
+        blufi::DataSubtype::SendStaSsid => stage_blufi_ssid(session, &assembled),
+        blufi::DataSubtype::SendStaPassword => stage_blufi_psk(session, &assembled),
+        _ => {}
     }
 }
 
