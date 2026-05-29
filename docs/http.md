@@ -26,6 +26,7 @@ beats pulling a full HTTP framework into the firmware target.
 | GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio |
 | GET    | `/sensors`       | Live IMU / ambient / audio-RMS / body-touch sample   |
 | GET    | `/sensor-history` | Rolling 60-second window of one-per-second sensor snapshots, oldest first |
+| GET    | `/hardware/status` | Boot-time servo-power-rail health (servo-power only, not a full hardware rollup) |
 | GET    | `/camera/snapshot` | Most recent `/sd/CAPTURE.565` frame as raw QVGA RGB565 BE |
 | GET    | `/state/stream`  | Server-Sent Events stream of state changes          |
 | GET    | `/state/ws`      | WebSocket stream of state changes (RFC 6455)        |
@@ -105,6 +106,33 @@ accepts the handshake, sends the initial snapshot, then pushes
 text frames whenever the snapshot changes. Client-sent frames
 are ignored; binary frames, fragmentation, and per-frame
 masking are out of scope for this v1.
+
+## Hardware status
+
+`GET /hardware/status` reports the outcome of the boot-time
+servo-power-rail enable. The firmware drives a PY32 co-processor pin
+HIGH to gate the servo rail MOSFET; if that I²C write fails (retried a
+few times at boot), the head is left unpowered while the rest of the
+device boots normally. Reach for this route when a head won't move —
+it distinguishes "rail never came up" from "servos present but stuck".
+
+```
+$ curl http://stackchan.local/hardware/status
+{"servo_power":{"enabled":true,"attempts":1,"settled":true}}
+```
+
+| Field         | Type | Notes                                                        |
+|---------------|------|--------------------------------------------------------------|
+| `enabled`     | bool | Whether the rail-enable write ultimately succeeded.          |
+| `attempts`    | u8   | Enable attempts made (`0` before boot reaches the step).     |
+| `settled`     | bool | Whether the post-enable settle delay completed.              |
+
+`enabled:false` means the PY32 write never succeeded — `ping_servo`
+times out at boot and commanded poses produce no motion. A boot-time
+failure is also recorded to the event ring (`GET /events`, `warn`
+kind), but that ring is volatile and drains on reset, so the status
+here is the durable-until-reset read-out. Scope is servo-power only,
+not a full PMU / SD / sensor rollup.
 
 ## Manual control
 

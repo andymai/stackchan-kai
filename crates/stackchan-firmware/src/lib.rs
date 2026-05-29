@@ -46,6 +46,7 @@ pub mod reminders;
 pub mod runtime_store;
 pub mod sd_spi;
 pub mod sensor_history;
+pub mod servo_power;
 pub mod sleep;
 pub mod storage;
 pub mod toast;

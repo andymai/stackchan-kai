@@ -233,6 +233,18 @@ pub(super) fn tasks_body(s: crate::watchdog::TasksSnapshot) -> String {
     out
 }
 
+/// Serialise the `/hardware/status` body — servo-power-rail health.
+///
+/// Scoped to the boot-time servo-power gate only (not a full hardware
+/// rollup); the `servo_power` envelope leaves room to grow without a
+/// breaking shape change.
+pub(super) fn hardware_status_body(s: crate::servo_power::ServoPowerStatus) -> String {
+    format!(
+        "{{\"servo_power\":{{\"enabled\":{},\"attempts\":{},\"settled\":{}}}}}\n",
+        s.enabled, s.attempts, s.settled
+    )
+}
+
 /// Serialise the `/events` body — recent ring entries, oldest first.
 pub(super) fn events_body() -> String {
     use crate::event_log;

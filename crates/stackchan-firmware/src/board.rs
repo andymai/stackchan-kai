@@ -89,6 +89,14 @@ const SERVO_POWER_SETTLE_MS: u64 = 200;
 /// the rail — see `device_specs.md`.
 const PY32_SERVO_POWER_PIN: u8 = 0;
 
+/// Boot attempts to raise the servo-power pin before giving up. The
+/// failure mode covered is a transient I²C glitch on the cold-boot bus
+/// (same class as the AXP2101 retry); a dead rail MOSFET or absent PY32
+/// just costs `(N-1) × SERVO_POWER_SETTLE_MS` extra boot latency before
+/// the non-fatal give-up. Kept low so a genuinely-missing co-processor
+/// never stalls boot for long.
+const SERVO_POWER_MAX_ATTEMPTS: u8 = 3;
+
 /// Retry delay between failed AXP2101 init attempts. Covers transient
 /// I²C glitches during cold boot.
 const PMIC_RETRY_MS: u64 = 500;
@@ -168,8 +176,14 @@ pub async fn bringup(
         Err(e) => defmt::panic!("AW9523 init failed: {}", defmt::Debug2Format(&e)),
     }
 
-    enable_servo_power(&mut i2c).await;
-    Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
+    let servo_power = enable_servo_power(&mut i2c).await;
+    if servo_power.enabled {
+        Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
+        crate::servo_power::record(crate::servo_power::ServoPowerStatus {
+            settled: true,
+            ..servo_power
+        });
+    }
 
     // Park the I²C0 bus in a shared-bus mutex. Any post-boot consumer
     // (touch, future RTC / IMU) gets its own cheap-to-create
@@ -232,7 +246,8 @@ pub async fn bringup(
     }
 }
 
-/// Drive the PY32's servo-power pin HIGH via the `py32` crate.
+/// Drive the PY32's servo-power pin HIGH via the `py32` crate, retrying
+/// transient I²C failures up to [`SERVO_POWER_MAX_ATTEMPTS`].
 ///
 /// Uses [`py32::Py32::configure_output_pin`], which does read-modify-
 /// write on the direction / pull-up / output registers. That's a change
@@ -246,21 +261,64 @@ pub async fn bringup(
 /// lend the bus via a mutable borrow and drop the `Py32` handle at
 /// end of scope, releasing the borrow for the shared-bus wrapper.
 ///
-/// Failures are logged at `warn` and the function returns; the servo
-/// bus will still initialise but `ping_servo` will time out, which is
-/// the already-handled path for "servos missing".
-async fn enable_servo_power(i2c: &mut I2c<'static, esp_hal::Async>) {
-    let mut py = py32::Py32::new(i2c);
-    match py.configure_output_pin(PY32_SERVO_POWER_PIN, true).await {
-        Ok(()) => defmt::info!(
-            "PY32: servo power enabled (pin {=u8} HIGH)",
-            PY32_SERVO_POWER_PIN
-        ),
-        Err(e) => defmt::warn!(
-            "PY32: servo-power enable incomplete ({}) — servos may stay unpowered",
-            defmt::Debug2Format(&e)
-        ),
+/// On exhausting all attempts the failure is logged at `warn`, recorded
+/// to the event ring for LAN read-out, and the function returns
+/// `enabled: false`; the servo bus still initialises but `ping_servo`
+/// will time out, which is the already-handled "servos missing" path.
+/// The returned status is mirrored to [`crate::servo_power`] for
+/// `GET /hardware/status` regardless of outcome.
+async fn enable_servo_power(
+    i2c: &mut I2c<'static, esp_hal::Async>,
+) -> crate::servo_power::ServoPowerStatus {
+    let mut last_err = None;
+    for attempt in 1..=SERVO_POWER_MAX_ATTEMPTS {
+        let mut py = py32::Py32::new(&mut *i2c);
+        match py.configure_output_pin(PY32_SERVO_POWER_PIN, true).await {
+            Ok(()) => {
+                defmt::info!(
+                    "PY32: servo power enabled (pin {=u8} HIGH, attempt {=u8}/{=u8})",
+                    PY32_SERVO_POWER_PIN,
+                    attempt,
+                    SERVO_POWER_MAX_ATTEMPTS
+                );
+                let status = crate::servo_power::ServoPowerStatus {
+                    enabled: true,
+                    attempts: attempt,
+                    settled: false,
+                };
+                crate::servo_power::record(status);
+                return status;
+            }
+            Err(e) => {
+                defmt::warn!(
+                    "PY32: servo-power enable failed (attempt {=u8}/{=u8}): {}",
+                    attempt,
+                    SERVO_POWER_MAX_ATTEMPTS,
+                    defmt::Debug2Format(&e)
+                );
+                last_err = Some(e);
+                if attempt < SERVO_POWER_MAX_ATTEMPTS {
+                    Timer::after(Duration::from_millis(SERVO_POWER_SETTLE_MS)).await;
+                }
+            }
+        }
     }
+    defmt::warn!(
+        "PY32: servo-power enable incomplete after {=u8} attempts ({}) — servos may stay unpowered",
+        SERVO_POWER_MAX_ATTEMPTS,
+        defmt::Debug2Format(&last_err)
+    );
+    crate::event_log::record(
+        crate::event_log::Kind::Warn,
+        "servo power enable failed — head unpowered",
+    );
+    let status = crate::servo_power::ServoPowerStatus {
+        enabled: false,
+        attempts: SERVO_POWER_MAX_ATTEMPTS,
+        settled: false,
+    };
+    crate::servo_power::record(status);
+    status
 }
 
 /// Probe one `SCServo` ID and log the outcome. 10 ms is well past the
