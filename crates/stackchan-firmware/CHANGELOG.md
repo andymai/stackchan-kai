@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.112.0...stackchan-firmware-v0.113.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** VoiceVox synthesis task consuming voicevox config ([#567](https://github.com/andymai/stackchan-kai/issues/567)) ([d96a083](https://github.com/andymai/stackchan-kai/commit/d96a0831ba05cabfb23865243ccfdc03dc41488b))
+
 ## [0.112.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.111.1...stackchan-firmware-v0.112.0) (2026-05-29)
 
 
