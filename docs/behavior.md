@@ -34,6 +34,9 @@ enough to warrant its own page (e.g. audio debug, sidecar), the
 | `wake_word_enabled` | bool | `false` | **reboot** | Runs on-device wake-word detection. Loads `/sd/WAKE_WORD.tflite` at boot; missing file parks the task. |
 | `wake_word_threshold` | i8 | `100` | **reboot** | Int8 detection cut-point. Bundled-model reference ≈ 0.95 confidence lands near 100. Lower = more sensitive. |
 | `wake_word_arena_kib` | u32 | `64` | **reboot** | TFLite Micro arena size in KiB. Allocated once at boot from PSRAM. Must be `>= 1`; `0` is rejected by validation. |
+| `persona_name` | string | empty | live | Persona slug advertised to the sidecar via `X-Persona-Name`. Empty leaves the header off (sidecar default persona). ≤ 64 bytes, no control chars / path separators. |
+| `voicevox_url` | URL | empty | **reboot** | HTTP base URL (`http://ip:port`) of a self-hosted VoiceVox / API-compatible TTS engine. Empty disables the synthesis task. IPv4-literal only — no DNS. See [voice](voice). |
+| `voicevox_speaker_id` | u16 | `1` | **reboot** | VoiceVox speaker (voice) ID. `1` is Zundamon "ノーマル"; query the engine's `GET /speakers` for the catalogue. Ignored when `voicevox_url` is empty. |
 
 Reboot semantics: every field marked **live** takes effect on the
 next render frame (`PUT /settings` immediately signals the relevant

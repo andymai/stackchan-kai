@@ -17,25 +17,28 @@
 //! 2. `POST /synthesis?speaker=<id>` with the audio-query JSON as the
 //!    body → returns a WAV file (RIFF + PCM data chunk).
 //!
-//! The firmware doesn't need to understand the audio-query JSON; it
-//! just round-trips the bytes from step 1 into step 2. This module
-//! ships the URL builders for both steps and a WAV parser that finds
-//! the PCM payload inside the synthesis response.
+//! The firmware mostly round-trips the audio-query JSON from step 1
+//! into step 2, but first rewrites its `outputSamplingRate` field via
+//! [`with_output_sampling_rate`] so the engine renders at a rate the
+//! I²S path can play without an on-device resampler. This module
+//! ships the URL builders for both steps, the rate-override rewrite,
+//! a WAV parser that finds the PCM payload inside the synthesis
+//! response, and [`wav_to_samples`] to decode that payload into an
+//! owned `Vec<i16>`.
 //!
-//! ## Why host-only for now
+//! ## Why the backend stays host-only
 //!
 //! [`SpeechBackend::render`] is synchronous (`fn render(&self, ...)`),
-//! but HTTP I/O on this firmware target is async (`embassy-net`). The
-//! end-to-end path therefore needs:
-//!
-//! 1. An async firmware task that fetches the WAV into a `Vec<i16>`.
-//! 2. A `VoiceVoxBackend` whose `render` returns a [`BufferedSource`]
-//!    wrapping that `Vec`.
-//!
-//! Step 2 is in this module (host-testable, no firmware deps); step 1
-//! lives in the firmware crate and ships in a follow-up PR. Until
-//! then, [`VoiceVoxBackend::render`] returns
-//! [`crate::RenderError::BackendUnavailable`].
+//! but HTTP I/O on this firmware target is async (`embassy-net`), so
+//! `render` cannot itself perform the two synthesis round-trips. The
+//! end-to-end path instead runs in a dedicated async firmware task
+//! that fetches + decodes the WAV (reusing this module's host-tested
+//! [`with_output_sampling_rate`] / [`wav_to_samples`] helpers) and
+//! enqueues a [`BufferedSource`] directly onto the audio TX queue.
+//! That task lives in the firmware crate and ships in a follow-up PR;
+//! until then [`VoiceVoxBackend::render`] returns
+//! [`crate::RenderError::BackendUnavailable`] (the backend is a config
+//! carrier + `can_handle` gate, not the synthesis driver).
 //!
 //! [`AivisSpeech`]: https://github.com/Aivis-Project/AivisSpeech-Engine
 //! [`AudioSource`]: crate::AudioSource
@@ -129,6 +132,49 @@ fn percent_encode(input: &str) -> String {
             out.push(HEX[(byte & 0xF) as usize] as char);
         }
     }
+    out
+}
+
+/// JSON key in the `/audio_query` response that controls the
+/// synthesis output sample rate. The engine populates it with its
+/// own default (24 000 Hz); rewriting it before the `/synthesis` POST
+/// is how the firmware asks for a rate it can play without an
+/// on-device resampler.
+const OUTPUT_SAMPLING_RATE_KEY: &str = "\"outputSamplingRate\":";
+
+/// Rewrite the `outputSamplingRate` value in an `/audio_query` JSON
+/// body so `/synthesis` returns PCM at `target_rate_hz`.
+///
+/// `VoiceVox` defaults to 24 kHz, but the firmware I²S path (and the
+/// [`parse_wav`] rate gate) are wired for a single rate. Asking the
+/// engine to render at that rate up front keeps the firmware free of
+/// a resampler. The audio-query JSON always carries an
+/// `outputSamplingRate` field, so this is a targeted numeric rewrite
+/// rather than a full JSON reparse — cheap enough for the embedded
+/// path and host-testable in isolation.
+///
+/// Returns the rewritten JSON. If the key is absent (a
+/// non-`VoiceVox` engine, or a future schema change) the input is
+/// returned unchanged — the engine then falls back to its own
+/// default rate, which [`parse_wav`] rejects loudly downstream rather
+/// than silently mis-playing.
+#[must_use]
+pub fn with_output_sampling_rate(audio_query_json: &str, target_rate_hz: u32) -> String {
+    let Some(key_at) = audio_query_json.find(OUTPUT_SAMPLING_RATE_KEY) else {
+        return String::from(audio_query_json);
+    };
+    let value_start = key_at + OUTPUT_SAMPLING_RATE_KEY.len();
+    let value_len = audio_query_json[value_start..]
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    if value_len == 0 {
+        return String::from(audio_query_json);
+    }
+    let mut out = String::with_capacity(audio_query_json.len() + 8);
+    out.push_str(&audio_query_json[..value_start]);
+    let _ = core::fmt::Write::write_fmt(&mut out, format_args!("{target_rate_hz}"));
+    out.push_str(&audio_query_json[value_start + value_len..]);
     out
 }
 
@@ -260,6 +306,34 @@ pub fn parse_wav(bytes: &[u8], expected_sample_rate_hz: u32) -> Result<WavHeader
     }
 
     Err(WavError::NoDataChunk)
+}
+
+/// Decode a synthesis WAV response into an owned PCM sample buffer.
+///
+/// Composes [`parse_wav`] (RIFF/format validation + rate gate) with a
+/// little-endian `i16` decode of the located `data` sub-chunk. The
+/// firmware calls this on the buffered HTTP response body, then wraps
+/// the result in a [`BufferedSource`] for the audio TX queue.
+///
+/// A trailing odd byte in the `data` chunk (a malformed WAV whose
+/// PCM payload isn't a whole number of samples) is dropped rather
+/// than rejected — the parser already validated 16-bit mono, so a
+/// dangling byte is engine noise, not a format error worth aborting
+/// playback over.
+///
+/// # Errors
+///
+/// Propagates every [`WavError`] [`parse_wav`] can return, including
+/// [`WavError::UnsupportedSampleRate`] when the engine ignored the
+/// [`with_output_sampling_rate`] override.
+pub fn wav_to_samples(bytes: &[u8], expected_rate_hz: u32) -> Result<Vec<i16>, WavError> {
+    let header = parse_wav(bytes, expected_rate_hz)?;
+    let pcm = &bytes[header.data_offset..header.data_offset + header.data_len];
+    let mut samples = Vec::with_capacity(header.sample_count());
+    for chunk in pcm.chunks_exact(2) {
+        samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    Ok(samples)
 }
 
 /// Parsed `fmt ` sub-chunk — just the fields we care about.
@@ -497,6 +571,51 @@ mod tests {
             parse_wav(&bytes, 16_000),
             Err(WavError::UnsupportedSampleRate(24_000))
         );
+    }
+
+    #[test]
+    fn wav_to_samples_round_trips_pcm() {
+        let samples = [0_i16, 1, -1, 32_767, -32_768, 12_345];
+        let bytes = build_test_wav(16_000, &samples);
+        let decoded = wav_to_samples(&bytes, 16_000).expect("valid wav should decode");
+        assert_eq!(decoded, samples);
+    }
+
+    #[test]
+    fn wav_to_samples_surfaces_sample_rate_mismatch() {
+        let bytes = build_test_wav(24_000, &[1, 2, 3]);
+        assert_eq!(
+            wav_to_samples(&bytes, 16_000),
+            Err(WavError::UnsupportedSampleRate(24_000))
+        );
+    }
+
+    #[test]
+    fn with_output_sampling_rate_rewrites_value() {
+        let json = "{\"accent_phrases\":[],\"outputSamplingRate\":24000,\"outputStereo\":false}";
+        let out = with_output_sampling_rate(json, 16_000);
+        assert_eq!(
+            out,
+            "{\"accent_phrases\":[],\"outputSamplingRate\":16000,\"outputStereo\":false}"
+        );
+    }
+
+    #[test]
+    fn with_output_sampling_rate_rewrites_when_value_is_last_field() {
+        let json = "{\"outputSamplingRate\":24000}";
+        assert_eq!(
+            with_output_sampling_rate(json, 16_000),
+            "{\"outputSamplingRate\":16000}"
+        );
+    }
+
+    #[test]
+    fn with_output_sampling_rate_passes_through_when_key_absent() {
+        // A non-VoiceVox engine or a future schema change without the
+        // key leaves the body untouched; the rate gate in parse_wav
+        // then surfaces any mismatch downstream.
+        let json = "{\"accent_phrases\":[]}";
+        assert_eq!(with_output_sampling_rate(json, 16_000), json);
     }
 
     #[test]

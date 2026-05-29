@@ -171,6 +171,9 @@ with `audio_url: null`. The firmware sees the null, skips the fetch
 step, and the reply appears on screen with no audio. Watch the
 sidecar logs for `TTSError(stage="...")` to diagnose.
 
+For a self-hosted Japanese TTS engine the firmware drives **directly**
+(no sidecar in the path), see [VoiceVox](voice-voicevox.md).
+
 ## Enable the wake word (optional)
 
 Wake-word detection is local-only — microWakeWord v2 streaming

@@ -35,12 +35,14 @@ queue element type the firmware audio router pulls from.
   catalog entries. Renders non-verbal SFX from compile-time sine-cycle
   tables, and verbal phrases from `include_bytes!`-embedded raw PCM
   under `assets/<locale>/<phrase>.pcm`.
-- [`VoiceVoxBackend`] — wire-format + WAV-parsing scaffolding for
+- [`VoiceVoxBackend`] — wire-format + WAV-decode scaffolding for
   self-hosted [`VoiceVox`] (and API-compatible engines like
-  [`AivisSpeech`]). [`SpeechBackend::render`] is currently
-  [`RenderError::BackendUnavailable`] until the async HTTP fetcher
-  task lands on the firmware side; the URL builders and WAV parser
-  are host-testable today.
+  [`AivisSpeech`]). [`SpeechBackend::render`] stays
+  [`RenderError::BackendUnavailable`]: the two async `embassy-net`
+  round-trips run in a dedicated firmware task, not in the
+  synchronous `render`. The host-testable helpers that task drives —
+  URL builders, the audio-query rate override, the WAV parser, and
+  the WAV→`Vec<i16>` decode — are usable today.
 - [`LipSync`] + [`Viseme`] re-exports from `stackchan-core::lipsync`
   so backends and the firmware audio task share one envelope shape.
 
@@ -91,18 +93,27 @@ returns a WAV file. This module ships:
 
 - [`audio_query_path`] / [`synthesis_path`] — URL builders (paths +
   query strings). Caller wraps in a full URL.
+- [`with_output_sampling_rate`] — rewrites the `outputSamplingRate`
+  field in the step-1 audio-query JSON before it becomes the step-2
+  body, so the engine renders at the rate the firmware I²S path can
+  play (16 kHz on the CoreS3) instead of `VoiceVox`'s 24 kHz default.
+  This avoids an on-device resampler; without it `parse_wav` rejects
+  the synthesis response as a rate mismatch.
 - [`VoiceVoxConfig`] — `host` + `port` + `speaker_id` settings.
   Defaults: port `50_021`, speaker `1` (Zundamon "ノーマル").
 - [`parse_wav`] / [`WavHeader`] / [`WavError`] — RIFF-chunk WAV
   parser that locates the PCM payload inside a synthesis response.
+- [`wav_to_samples`] — composes [`parse_wav`] with a little-endian
+  `i16` decode of the located `data` chunk, yielding an owned
+  `Vec<i16>` ready to wrap in a [`BufferedSource`].
 - [`BufferedSource`] — [`AudioSource`] that wraps a `Vec<i16>` of
   decoded samples, suitable for handing back from a future async
   fetcher task.
 
 The async fetcher itself lives in the firmware crate and isn't
 shipped yet, so [`VoiceVoxBackend::render`] returns
-[`RenderError::BackendUnavailable`]. The URL builders + WAV parser
-are exercised by host tests today.
+[`RenderError::BackendUnavailable`]. Every host-side helper it will
+drive is exercised by unit tests today.
 
 ## Gotchas
 
@@ -152,6 +163,8 @@ are exercised by host tests today.
 [`VoiceVoxConfig`]: src/voicevox.rs
 [`audio_query_path`]: src/voicevox.rs
 [`synthesis_path`]: src/voicevox.rs
+[`with_output_sampling_rate`]: src/voicevox.rs
+[`wav_to_samples`]: src/voicevox.rs
 [`parse_wav`]: src/voicevox.rs
 [`WavHeader`]: src/voicevox.rs
 [`WavError`]: src/voicevox.rs

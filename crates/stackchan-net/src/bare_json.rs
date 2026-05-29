@@ -308,6 +308,13 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
     );
     out.push(',');
     push_string_field(&mut out, "persona_name", &config.behavior.persona_name);
+    out.push(',');
+    push_string_field(&mut out, "voicevox_url", &config.behavior.voicevox_url);
+    let _ = write!(
+        out,
+        ",\"voicevox_speaker_id\":{}",
+        config.behavior.voicevox_speaker_id
+    );
     out.push_str("},\"head\":{");
     let _ = write!(
         out,
@@ -895,6 +902,8 @@ impl<'a> Parser<'a> {
         let mut wake_word_threshold: Option<i8> = None;
         let mut wake_word_arena_kib: Option<u32> = None;
         let mut persona_name: Option<String> = None;
+        let mut voicevox_url: Option<String> = None;
+        let mut voicevox_speaker_id: Option<u16> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -995,6 +1004,18 @@ impl<'a> Parser<'a> {
                     }
                     persona_name = Some(self.parse_string()?);
                 }
+                "voicevox_url" => {
+                    if voicevox_url.is_some() {
+                        return Err(bare_err("duplicate behavior field", "voicevox_url"));
+                    }
+                    voicevox_url = Some(self.parse_string()?);
+                }
+                "voicevox_speaker_id" => {
+                    if voicevox_speaker_id.is_some() {
+                        return Err(bare_err("duplicate behavior field", "voicevox_speaker_id"));
+                    }
+                    voicevox_speaker_id = Some(self.parse_u16()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws();
@@ -1016,6 +1037,8 @@ impl<'a> Parser<'a> {
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
             wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
             persona_name: persona_name.unwrap_or_default(),
+            voicevox_url: voicevox_url.unwrap_or_default(),
+            voicevox_speaker_id: voicevox_speaker_id.unwrap_or(1),
         })
     }
 
@@ -1149,6 +1172,26 @@ impl<'a> Parser<'a> {
         let parsed: u32 = digits
             .parse()
             .map_err(|_| bare_err("not a u32 literal", digits))?;
+        self.input = rest;
+        Ok(parsed)
+    }
+
+    /// Parse a contiguous run of decimal digits as `u16`. Used for
+    /// `behavior.voicevox_speaker_id`. Digits past `u16::MAX` land on
+    /// `BareParse`.
+    fn parse_u16(&mut self) -> Result<u16, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected unsigned integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let parsed: u16 = digits
+            .parse()
+            .map_err(|_| bare_err("u16 literal out of range", digits))?;
         self.input = rest;
         Ok(parsed)
     }
@@ -1338,6 +1381,8 @@ mod tests {
                 wake_word_threshold: 95,
                 wake_word_arena_kib: 96,
                 persona_name: "desk-buddy".to_string(),
+                voicevox_url: "http://192.168.1.50:50021".to_string(),
+                voicevox_speaker_id: 3,
             },
             head: HeadTrim {
                 pan_trim_deg: -1.5,
@@ -1894,6 +1939,8 @@ mod tests {
                 wake_word_threshold: -32,
                 wake_word_arena_kib: 128,
                 persona_name: "desk-buddy".to_string(),
+                voicevox_url: "http://192.168.100.200:50021".to_string(),
+                voicevox_speaker_id: u16::MAX,
             },
             head: HeadTrim {
                 pan_trim_deg: 90.0,
@@ -1980,6 +2027,43 @@ mod tests {
             "mdns":{"hostname":"x"},
             "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
             "behavior":{"wake_word_threshold":200}
+        }"#;
+        let err = parse_settings_json(input).unwrap_err();
+        assert!(matches!(err, ConfigError::BareParse(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn voicevox_fields_round_trip_custom_values() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "behavior":{"voicevox_url":"http://10.0.0.5:50021","voicevox_speaker_id":8}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.behavior.voicevox_url, "http://10.0.0.5:50021");
+        assert_eq!(parsed.behavior.voicevox_speaker_id, 8);
+    }
+
+    #[test]
+    fn voicevox_fields_default_when_absent() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert!(parsed.behavior.voicevox_url.is_empty());
+        assert_eq!(parsed.behavior.voicevox_speaker_id, 1);
+    }
+
+    #[test]
+    fn voicevox_speaker_id_rejects_out_of_range() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "behavior":{"voicevox_speaker_id":70000}
         }"#;
         let err = parse_settings_json(input).unwrap_err();
         assert!(matches!(err, ConfigError::BareParse(_)), "got {err:?}");

@@ -182,6 +182,16 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
         "        persona_name",
         &config.behavior.persona_name,
     );
+    push_field(
+        &mut out,
+        "        voicevox_url",
+        &config.behavior.voicevox_url,
+    );
+    let _ = writeln!(
+        out,
+        "        voicevox_speaker_id: {},",
+        config.behavior.voicevox_speaker_id
+    );
     out.push_str("    ),\n");
 
     out.push_str("    head: (\n");
@@ -773,6 +783,8 @@ impl<'a> Parser<'a> {
         let mut wake_word_threshold: Option<i8> = None;
         let mut wake_word_arena_kib: Option<u32> = None;
         let mut persona_name: Option<String> = None;
+        let mut voicevox_url: Option<String> = None;
+        let mut voicevox_speaker_id: Option<u16> = None;
         loop {
             self.skip_ws_and_comments();
             if self.try_consume_char(')') {
@@ -873,6 +885,18 @@ impl<'a> Parser<'a> {
                     }
                     persona_name = Some(self.parse_string()?);
                 }
+                "voicevox_url" => {
+                    if voicevox_url.is_some() {
+                        return Err(bare_err("duplicate behavior field", "voicevox_url"));
+                    }
+                    voicevox_url = Some(self.parse_string()?);
+                }
+                "voicevox_speaker_id" => {
+                    if voicevox_speaker_id.is_some() {
+                        return Err(bare_err("duplicate behavior field", "voicevox_speaker_id"));
+                    }
+                    voicevox_speaker_id = Some(self.parse_u16()?);
+                }
                 other => return Err(bare_err("unknown behavior field", other)),
             }
             self.skip_ws_and_comments();
@@ -894,6 +918,8 @@ impl<'a> Parser<'a> {
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
             wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
             persona_name: persona_name.unwrap_or_default(),
+            voicevox_url: voicevox_url.unwrap_or_default(),
+            voicevox_speaker_id: voicevox_speaker_id.unwrap_or(1),
         })
     }
 
@@ -976,6 +1002,26 @@ impl<'a> Parser<'a> {
         let parsed: u32 = digits
             .parse()
             .map_err(|_| bare_err("not a u32 literal", digits))?;
+        self.input = rest;
+        Ok(parsed)
+    }
+
+    /// Parse a contiguous run of decimal digits as `u16`. Used for
+    /// `behavior.voicevox_speaker_id`. Digits past `u16::MAX` land on
+    /// `BareParse` rather than wrapping silently.
+    fn parse_u16(&mut self) -> Result<u16, ConfigError> {
+        let bytes = self.input.as_bytes();
+        let mut end = 0;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end == 0 {
+            return Err(bare_err("expected unsigned integer", ""));
+        }
+        let (digits, rest) = self.input.split_at(end);
+        let parsed: u16 = digits
+            .parse()
+            .map_err(|_| bare_err("u16 literal out of range", digits))?;
         self.input = rest;
         Ok(parsed)
     }
