@@ -55,7 +55,7 @@ use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::{
     Blocking,
     clock::CpuClock,
-    gpio::{Level, Output, OutputConfig},
+    gpio::{Flex, InputSignal, Level, Output, OutputConfig},
     rng::Rng,
     spi::{
         Mode as SpiMode,
@@ -156,7 +156,7 @@ type LcdDisplay = mipidsi::Display<
     SpiInterface<
         'static,
         RefCellDevice<'static, Spi<'static, Blocking>, Output<'static>, Delay>,
-        Output<'static>,
+        Flex<'static>,
     >,
     ILI9342CRgb565,
     NoResetPin,
@@ -1142,7 +1142,19 @@ async fn main(spawner: Spawner) -> ! {
         Err(e) => defmt::panic!("SPI2 config rejected: {}", defmt::Debug2Format(&e)),
     };
     let cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
-    let dc = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
+    // GPIO35 is dual-purpose on CoreS3: LCD DC (output) AND SD-card MISO
+    // (input) share this one physical pin. A `Flex` drives DC for the LCD
+    // while keeping its input buffer live so the SPI2 peripheral can sample
+    // the SD card; `sd_spi` toggles the output-enable per SD transaction so
+    // the card can drive the line. The FSPIQ→GPIO35 matrix route below is the
+    // other half: without it SPI2 reads an unconnected input (0x00) and SD
+    // card init spins forever in embedded-sdmmc's CMD0 loop.
+    let mut dc = Flex::new(peripherals.GPIO35);
+    dc.apply_output_config(&OutputConfig::default());
+    dc.set_output_enable(true);
+    dc.set_input_enable(true);
+    dc.set_low();
+    InputSignal::FSPIQ.connect_to(&dc);
 
     // SPI2 is shared territory on CoreS3: LCD + SD card both sit on
     // SCK=GPIO36 + MOSI=GPIO37, and SD MISO is wired to GPIO35 — the
