@@ -766,6 +766,8 @@ async fn handle_get_settings_backup(socket: &mut TcpSocket<'_>) -> Result<(), Ht
 /// - `behavior.agent_sidecar_url` / `agent_sidecar_token` /
 ///   `persona_name` (agent sidecar task args at spawn)
 /// - `behavior.follower_leader_hostname` (follower task arg at spawn)
+/// - `behavior.voicevox_url` / `voicevox_speaker_id` (`VoiceVox`
+///   synthesis task args at spawn)
 ///
 /// Future work that wants any of these to apply live needs both a
 /// signal channel from this handler AND a snapshot re-read in the
@@ -796,6 +798,8 @@ fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) ->
         || b_prev.agent_sidecar_token != b_new.agent_sidecar_token
         || b_prev.follower_leader_hostname != b_new.follower_leader_hostname
         || b_prev.persona_name != b_new.persona_name
+        || b_prev.voicevox_url != b_new.voicevox_url
+        || b_prev.voicevox_speaker_id != b_new.voicevox_speaker_id
     {
         return true;
     }

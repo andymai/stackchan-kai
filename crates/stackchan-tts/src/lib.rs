@@ -49,6 +49,7 @@ pub use source::AudioSource;
 pub use voicevox::{
     BufferedSource, DEFAULT_VOICEVOX_PORT, DEFAULT_VOICEVOX_SPEAKER_ID, VoiceVoxBackend,
     VoiceVoxConfig, WavError, WavHeader, audio_query_path, parse_wav, synthesis_path,
+    wav_to_samples, with_output_sampling_rate,
 };
 // Re-export lip-sync types from core; they live there because the
 // `Perception` layer carries them as a per-frame field.

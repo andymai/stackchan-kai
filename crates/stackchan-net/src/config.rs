@@ -502,6 +502,22 @@ pub struct BehaviorConfig {
     /// The sidecar still validates per-request — this is defence in
     /// depth at the firmware boundary.
     pub persona_name: String,
+    /// HTTP base URL of a self-hosted `VoiceVox` (or API-compatible)
+    /// TTS engine, as `"http://ip:port"`. Empty disables the
+    /// `VoiceVox` synthesis task. When set, the firmware drives the
+    /// engine's two-step `/audio_query` → `/synthesis` protocol to
+    /// turn dynamic speech text into PCM and enqueues it on the audio
+    /// TX path. Hostname-only URLs are not resolved — use a raw IPv4
+    /// literal (mirrors `agent_sidecar_url`). The wire format lives in
+    /// [`stackchan_tts::voicevox`](../../stackchan-tts/src/voicevox.rs).
+    pub voicevox_url: String,
+    /// `VoiceVox` engine speaker (voice) ID. The engine ships a
+    /// catalogue of numbered voices — `1` (Zundamon "ノーマル") is the
+    /// common default; query the engine's `GET /speakers` for the full
+    /// list. Ignored when `voicevox_url` is empty. Any `u16` is a
+    /// valid wire value; the engine rejects unknown IDs at synthesis
+    /// time, so there's no config-side range gate.
+    pub voicevox_speaker_id: u16,
 }
 
 impl Default for BehaviorConfig {
@@ -520,9 +536,17 @@ impl Default for BehaviorConfig {
             wake_word_threshold: 100,
             wake_word_arena_kib: 64,
             persona_name: String::new(),
+            voicevox_url: String::new(),
+            voicevox_speaker_id: DEFAULT_VOICEVOX_SPEAKER_ID,
         }
     }
 }
+
+/// Default `VoiceVox` speaker ID — Zundamon "ノーマル". Mirrors
+/// `stackchan_tts::DEFAULT_VOICEVOX_SPEAKER_ID`; kept as a local
+/// literal so the config schema doesn't take a dependency on the TTS
+/// crate for one constant.
+const DEFAULT_VOICEVOX_SPEAKER_ID: u16 = 1;
 
 /// Time / SNTP configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1293,6 +1317,25 @@ mod tests {
         let c = Config::default();
         assert!(c.appearance.palette.is_empty());
         assert!(c.appearance.face_geometry.is_empty());
+    }
+
+    #[test]
+    fn default_behavior_has_voicevox_disabled() {
+        let c = Config::default();
+        assert!(
+            c.behavior.voicevox_url.is_empty(),
+            "empty URL = VoiceVox task disabled"
+        );
+        assert_eq!(c.behavior.voicevox_speaker_id, DEFAULT_VOICEVOX_SPEAKER_ID);
+    }
+
+    #[test]
+    fn validate_accepts_voicevox_config() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.behavior.voicevox_url = "http://192.168.1.50:50021".to_string();
+        c.behavior.voicevox_speaker_id = 3;
+        assert!(validate(&c).is_ok());
     }
 
     #[test]
