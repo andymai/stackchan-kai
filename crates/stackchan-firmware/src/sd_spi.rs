@@ -12,12 +12,18 @@
 //! - **CS LOW (LCD)** → OE on  → GPIO35 drives DC value (output)
 //! - **CS LOW (SD)**  → OE off → GPIO35 floats; SPI MISO reads it (input)
 //!
-//! The fancier alternative — splitting the pin via `peripheral_input`
-//! / `OutputSignal::connect_to` — relies on `#[doc(hidden)]` esp-hal
-//! 1.0 surfaces (tracked in esp-rs/esp-hal#2876, currently blocked).
-//! A direct register write to `GPIO_ENABLE1_W1TS_REG` /
-//! `GPIO_ENABLE1_W1TC_REG` is what M5GFX actually does and is the
-//! pattern this module follows.
+//! This is only half the story. For the SPI2 peripheral to *read*
+//! GPIO35, its `FSPIQ` (MISO) input signal must be routed to the pin in
+//! the GPIO matrix and the pin's input buffer kept live — done once at
+//! LCD bring-up in `main.rs` via `InputSignal::FSPIQ.connect_to(&dc)` on
+//! a `Flex` GPIO35. Without that route the OE flip below floats the pin
+//! but the peripheral reads an unconnected input (`0x00`), and SD card
+//! init spins forever in `embedded-sdmmc`'s CMD0 loop. The OE flip
+//! (this module) and the FSPIQ route (`main.rs`) are both required.
+//!
+//! The OE flip itself is a direct register write to
+//! `GPIO_ENABLE1_W1TS_REG` / `GPIO_ENABLE1_W1TC_REG` — what M5GFX does
+//! and the pattern this module follows.
 
 // Direct register access for the GPIO35 OE flip. The unsafe surface is
 // two `core::ptr::write_volatile` calls in `set_dc_drive_*` below, both
