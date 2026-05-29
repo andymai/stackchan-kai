@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.1...stackchan-firmware-v0.113.2) (2026-05-29)
+
+
+### Bug Fixes
+
+* **firmware:** route SPI2 MISO to GPIO35 so the SD card mounts ([#575](https://github.com/andymai/stackchan-kai/issues/575)) ([791341e](https://github.com/andymai/stackchan-kai/commit/791341eae9f8d3102080d1506ff4d74dcdc5d110))
+
 ## [0.113.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.0...stackchan-firmware-v0.113.1) (2026-05-29)
 
 
