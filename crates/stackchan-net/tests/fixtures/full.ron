@@ -21,4 +21,8 @@
         pan_trim_deg: -3.0,
         tilt_trim_deg: 47.5,
     ),
+    appearance: (
+        palette: "dark",
+        face_geometry: "chibi",
+    ),
 )

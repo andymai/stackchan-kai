@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.109.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.108.0...stackchan-firmware-v0.109.0) (2026-05-29)
+
+
+### Features
+
+* **config:** pin default palette + face geometry in boot config ([#556](https://github.com/andymai/stackchan-kai/issues/556)) ([d0a92ed](https://github.com/andymai/stackchan-kai/commit/d0a92ed1f08ac5fa4b5910e318b5aedb7fdfced6))
+
+## [0.108.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.107.0...stackchan-firmware-v0.108.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** reassemble fragmented BluFi frames ([#554](https://github.com/andymai/stackchan-kai/issues/554)) ([cb9cbbf](https://github.com/andymai/stackchan-kai/commit/cb9cbbf40fe07e01e6ed7479511228007d337112))
+
+## [0.107.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.106.0...stackchan-firmware-v0.107.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** dynamic SD-SPI clock rate (400 kHz init -&gt; 25 MHz data) ([#552](https://github.com/andymai/stackchan-kai/issues/552)) ([fe8e252](https://github.com/andymai/stackchan-kai/commit/fe8e252c65ae6a3c6332e6ec0d752b7183ca6b00))
+
 ## [0.106.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.105.0...stackchan-firmware-v0.106.0) (2026-05-20)
 
 

@@ -112,6 +112,8 @@ RON config parse + validation. Host crate; firmware wraps with `Debug2Format` fo
 - `EmptySntpServer(usize)` — a `time.sntp_servers` entry was empty / whitespace-only. The `usize` carries the offending index. Caught at parse time so the firmware's "try in order" loop doesn't burn its full per-server timeout on an unresolvable hostname before falling back.
 - `InvalidVolumePct(u8)` — `audio.volume_pct` was outside `0..=100`. The wire format is a percentile; the firmware maps it linearly across the AW88298 dB range. The `u8` carries the offending value.
 - `InvalidHeadTrim(f32)` — `head.pan_trim_deg` or `head.tilt_trim_deg` was non-finite or outside `[-90.0, 90.0]`. The trim is a small per-unit zero-point correction (the reference unit's tilt encoder offset is ~49°); a value past that range can't be physical and would clamp to a servo rail. The `f32` carries the offending value.
+- `InvalidPalette(String)` — `appearance.palette` was non-empty but didn't parse via `Palette::from_wire_str` (`"default"` / `"dark"` / `"cute"` / `"dog"`). Empty is allowed (= not pinned). Rejected so an unknown name surfaces on load instead of silently falling back to the default.
+- `InvalidFaceGeometry(String)` — `appearance.face_geometry` was non-empty but didn't parse via `FaceGeometry::from_wire_str` (`"default"` / `"chibi"` / `"wide"` / `"sleepy"`). Same empty-allowed / reject-unknown rationale as `InvalidPalette`.
 
 ### `stackchan_tts::RenderError`
 Speech-backend rendering. Returned from `SpeechBackend::render` when a

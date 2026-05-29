@@ -307,8 +307,20 @@ $ curl http://stackchan.local/settings
  "audio":{"volume_pct":50,"muted":false},
  "tracker":{"fov_h_deg":62.0,"fov_v_deg":49.0,"target_smoothing_alpha":1.0,
             "flip_x":false,"flip_y":false},
- "head":{"pan_trim_deg":0.0,"tilt_trim_deg":49.0}}
+ "head":{"pan_trim_deg":0.0,"tilt_trim_deg":49.0},
+ "appearance":{"palette":"","face_geometry":""}}
 ```
+
+`appearance` pins a default look in the boot config: `palette`
+(`default` / `dark` / `cute` / `dog`) and `face_geometry`
+(`default` / `chibi` / `wide` / `sleepy`). Both default to an empty
+string, meaning "not pinned" — the firmware falls back to the
+neutral palette and default geometry. A non-empty value that isn't a
+known wire name is rejected on load. The appearance block is a
+**first-boot seed only**: it populates `/sd/RUNTIME.RON` when that
+file is absent, but once an operator changes the look at runtime via
+`POST /palette` / `POST /face-geometry`, `RUNTIME.RON` exists and wins
+on subsequent boots.
 
 `tracker` carries the operator-tunable subset of the firmware
 tracker config: physical lens FOV (`fov_h_deg` / `fov_v_deg`),
@@ -350,7 +362,8 @@ $ curl -X PUT http://stackchan.local/settings \
             "audio":{"volume_pct":50,"muted":false},
             "tracker":{"fov_h_deg":62.0,"fov_v_deg":49.0,"target_smoothing_alpha":1.0,
                        "flip_x":false,"flip_y":false},
-            "head":{"pan_trim_deg":0.0,"tilt_trim_deg":49.0}}'
+            "head":{"pan_trim_deg":0.0,"tilt_trim_deg":49.0},
+            "appearance":{"palette":"","face_geometry":""}}'
 {"reboot_required":true}
 ```
 

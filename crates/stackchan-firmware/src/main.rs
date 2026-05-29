@@ -1270,7 +1270,7 @@ async fn main(spawner: Spawner) -> ! {
             // SD-backed runtime store. Tolerant of a missing /
             // malformed file: any failure leaves the cache (and the
             // signal fan-out below) at variant defaults.
-            let runtime = stackchan_firmware::runtime_store::load_into_cache().await;
+            let runtime = stackchan_firmware::runtime_store::load_into_cache(&cfg.appearance).await;
             net::http::PALETTE_SIGNAL.signal(runtime.palette);
             net::http::MOOD_SIGNAL.signal(runtime.mood);
             net::http::FACE_GEOMETRY_SIGNAL.signal(runtime.face_geometry);

@@ -22,8 +22,8 @@ use core::fmt::Write as _;
 
 use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{
-    AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim, MdnsConfig,
-    TimeConfig, TrackerSettings, WifiConfig, validate_for_disk,
+    AppearanceConfig, AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim,
+    MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate_for_disk,
 };
 use crate::error::ConfigError;
 
@@ -189,6 +189,15 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     let _ = writeln!(out, "        tilt_trim_deg: {},", config.head.tilt_trim_deg);
     out.push_str("    ),\n");
 
+    out.push_str("    appearance: (\n");
+    push_field(&mut out, "        palette", &config.appearance.palette);
+    push_field(
+        &mut out,
+        "        face_geometry",
+        &config.appearance.face_geometry,
+    );
+    out.push_str("    ),\n");
+
     out.push_str(")\n");
     Ok(out)
 }
@@ -229,6 +238,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Top-level grammar: parse the schema-v1 outer tuple struct.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single linear dispatch: one match arm per schema-v1 top-level field. \
+                  Splitting per field would scatter the duplicate/missing-field bookkeeping \
+                  for no readability gain."
+    )]
     fn parse_config(&mut self) -> Result<Config, ConfigError> {
         self.skip_ws_and_comments();
         self.expect_char('(')?;
@@ -241,6 +256,7 @@ impl<'a> Parser<'a> {
         let mut esp_now: Option<EspNowConfig> = None;
         let mut behavior: Option<BehaviorConfig> = None;
         let mut head: Option<HeadTrim> = None;
+        let mut appearance: Option<AppearanceConfig> = None;
 
         loop {
             self.skip_ws_and_comments();
@@ -306,6 +322,12 @@ impl<'a> Parser<'a> {
                     }
                     head = Some(self.parse_head()?);
                 }
+                "appearance" => {
+                    if appearance.is_some() {
+                        return Err(bare_err("duplicate top-level field", "appearance"));
+                    }
+                    appearance = Some(self.parse_appearance()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws_and_comments();
@@ -329,6 +351,7 @@ impl<'a> Parser<'a> {
             esp_now: esp_now.unwrap_or_default(),
             behavior: behavior.unwrap_or_default(),
             head: head.unwrap_or_default(),
+            appearance: appearance.unwrap_or_default(),
         })
     }
 
@@ -871,6 +894,49 @@ impl<'a> Parser<'a> {
             wake_word_threshold: wake_word_threshold.unwrap_or(100),
             wake_word_arena_kib: wake_word_arena_kib.unwrap_or(64),
             persona_name: persona_name.unwrap_or_default(),
+        })
+    }
+
+    /// Parse the optional `appearance: (palette, face_geometry)`
+    /// block. Both inner fields are optional and default to the empty
+    /// "not pinned" string, mirroring [`crate::bare::Parser::parse_auth`].
+    fn parse_appearance(&mut self) -> Result<AppearanceConfig, ConfigError> {
+        self.expect_char('(')?;
+        let mut palette: Option<String> = None;
+        let mut face_geometry: Option<String> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            let value = self.parse_string()?;
+            match key {
+                "palette" => {
+                    if palette.is_some() {
+                        return Err(bare_err("duplicate appearance field", "palette"));
+                    }
+                    palette = Some(value);
+                }
+                "face_geometry" => {
+                    if face_geometry.is_some() {
+                        return Err(bare_err("duplicate appearance field", "face_geometry"));
+                    }
+                    face_geometry = Some(value);
+                }
+                other => return Err(bare_err("unknown appearance field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in appearance", ""));
+            }
+        }
+        Ok(AppearanceConfig {
+            palette: palette.unwrap_or_default(),
+            face_geometry: face_geometry.unwrap_or_default(),
         })
     }
 
@@ -1973,6 +2039,15 @@ mod tests {
     }
 
     #[test]
+    fn missing_appearance_block_defaults_to_empty() {
+        // SD cards written before the appearance block landed omit it
+        // entirely; the parser must fall back to empty wire strings.
+        let cfg = parse_ron_bare(FIXTURE).unwrap();
+        assert!(cfg.appearance.palette.is_empty());
+        assert!(cfg.appearance.face_geometry.is_empty());
+    }
+
+    #[test]
     fn parses_head_block_with_explicit_values() {
         let s = r#"
             (
@@ -2042,5 +2117,42 @@ mod tests {
             matches!(err, ConfigError::InvalidHeadTrim(_)),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn round_trips_with_appearance_block() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                appearance: ( palette: "dark", face_geometry: "wide" ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert_eq!(cfg.appearance.palette, "dark");
+        assert_eq!(cfg.appearance.face_geometry, "wide");
+        let rendered = render_ron_bare(&cfg).unwrap();
+        let reparsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(cfg, reparsed);
+        #[cfg(feature = "parse")]
+        {
+            let via_serde = crate::parse_ron(&rendered).unwrap();
+            assert_eq!(cfg, via_serde);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_appearance_field() {
+        let s = with_base(r#"appearance: ( palette: "cute", oops: "x" ),"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown appearance field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_palette_after_parse() {
+        let s = with_base(r#"appearance: ( palette: "rainbow" ),"#);
+        let err = parse_ron_bare(&s).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidPalette(_)), "got {err:?}");
     }
 }

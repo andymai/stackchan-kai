@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use crate::config::{
-    AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim, MdnsConfig,
-    TimeConfig, TrackerSettings, WifiConfig, validate,
+    AppearanceConfig, AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim,
+    MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -148,6 +148,7 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
             ..new.behavior
         },
         head: new.head,
+        appearance: new.appearance,
     }
 }
 
@@ -314,6 +315,10 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
         pan = config.head.pan_trim_deg,
         tilt = config.head.tilt_trim_deg,
     );
+    out.push_str("},\"appearance\":{");
+    push_string_field(&mut out, "palette", &config.appearance.palette);
+    out.push(',');
+    push_string_field(&mut out, "face_geometry", &config.appearance.face_geometry);
     out.push_str("}}");
     Ok(out)
 }
@@ -361,6 +366,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Top-level grammar: parse the schema-v1 outer object.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single linear dispatch: one match arm per schema-v1 top-level field. \
+                  Splitting per field would scatter the duplicate/missing-field bookkeeping \
+                  for no readability gain."
+    )]
     fn parse_config(&mut self) -> Result<Config, ConfigError> {
         self.skip_ws();
         self.expect_char('{')?;
@@ -373,6 +384,7 @@ impl<'a> Parser<'a> {
         let mut esp_now: Option<EspNowConfig> = None;
         let mut behavior: Option<BehaviorConfig> = None;
         let mut head: Option<HeadTrim> = None;
+        let mut appearance: Option<AppearanceConfig> = None;
         loop {
             self.skip_ws();
             if self.try_consume_char('}') {
@@ -437,6 +449,12 @@ impl<'a> Parser<'a> {
                     }
                     head = Some(self.parse_head()?);
                 }
+                "appearance" => {
+                    if appearance.is_some() {
+                        return Err(bare_err("duplicate top-level field", "appearance"));
+                    }
+                    appearance = Some(self.parse_appearance()?);
+                }
                 other => return Err(bare_err("unknown top-level field", other)),
             }
             self.skip_ws();
@@ -458,6 +476,7 @@ impl<'a> Parser<'a> {
             esp_now: esp_now.unwrap_or_default(),
             behavior: behavior.unwrap_or_default(),
             head: head.unwrap_or_default(),
+            appearance: appearance.unwrap_or_default(),
         })
     }
 
@@ -1000,6 +1019,49 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse the optional `"appearance"` object. Both fields default
+    /// to the empty "not pinned" string so a body that pre-dates the
+    /// block round-trips cleanly.
+    fn parse_appearance(&mut self) -> Result<AppearanceConfig, ConfigError> {
+        self.expect_char('{')?;
+        let mut palette: Option<String> = None;
+        let mut face_geometry: Option<String> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            let value = self.parse_string()?;
+            match key.as_str() {
+                "palette" => {
+                    if palette.is_some() {
+                        return Err(bare_err("duplicate appearance field", "palette"));
+                    }
+                    palette = Some(value);
+                }
+                "face_geometry" => {
+                    if face_geometry.is_some() {
+                        return Err(bare_err("duplicate appearance field", "face_geometry"));
+                    }
+                    face_geometry = Some(value);
+                }
+                other => return Err(bare_err("unknown appearance field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in appearance", ""));
+            }
+        }
+        Ok(AppearanceConfig {
+            palette: palette.unwrap_or_default(),
+            face_geometry: face_geometry.unwrap_or_default(),
+        })
+    }
+
     /// Parse `null` or a decimal `u8`. The JSON wire form for an
     /// `Option<u8>` — null = `None`, integer = `Some(n)`. Used for
     /// `esp_now.channel`.
@@ -1280,6 +1342,10 @@ mod tests {
             head: HeadTrim {
                 pan_trim_deg: -1.5,
                 tilt_trim_deg: 47.5,
+            },
+            appearance: AppearanceConfig {
+                palette: "cute".to_string(),
+                face_geometry: "chibi".to_string(),
             },
         }
     }
@@ -1832,6 +1898,10 @@ mod tests {
             head: HeadTrim {
                 pan_trim_deg: 90.0,
                 tilt_trim_deg: -90.0,
+            },
+            appearance: AppearanceConfig {
+                palette: "dog".to_string(),
+                face_geometry: "sleepy".to_string(),
             },
         };
         let rendered = render_settings_json(&config, false).unwrap();

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.12.0...stackchan-net-v0.13.0) (2026-05-29)
+
+
+### Features
+
+* **config:** pin default palette + face geometry in boot config ([#556](https://github.com/andymai/stackchan-kai/issues/556)) ([d0a92ed](https://github.com/andymai/stackchan-kai/commit/d0a92ed1f08ac5fa4b5910e318b5aedb7fdfced6))
+
+## [0.12.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.11.0...stackchan-net-v0.12.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** reassemble fragmented BluFi frames ([#554](https://github.com/andymai/stackchan-kai/issues/554)) ([cb9cbbf](https://github.com/andymai/stackchan-kai/commit/cb9cbbf40fe07e01e6ed7479511228007d337112))
+
 ## [0.11.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.10.0...stackchan-net-v0.11.0) (2026-05-20)
 
 
