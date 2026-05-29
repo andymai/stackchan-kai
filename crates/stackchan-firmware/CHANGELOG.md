@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.0...stackchan-firmware-v0.113.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **firmware:** retry servo-power enable + GET /hardware/status diagnostic ([#573](https://github.com/andymai/stackchan-kai/issues/573)) ([0aecd5d](https://github.com/andymai/stackchan-kai/commit/0aecd5d01e713d47b039980ad857f332a07c94d4))
+
 ## [0.113.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.112.0...stackchan-firmware-v0.113.0) (2026-05-29)
 
 
