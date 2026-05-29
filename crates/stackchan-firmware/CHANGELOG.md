@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.3](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.2...stackchan-firmware-v0.113.3) (2026-05-29)
+
+
+### Bug Fixes
+
+* **firmware:** load STACKCHAN.RON via long-filename lookup ([#577](https://github.com/andymai/stackchan-kai/issues/577)) ([a7e1176](https://github.com/andymai/stackchan-kai/commit/a7e1176f97c5ec699a58c763d7e5c49b4902b0f3))
+
 ## [0.113.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.1...stackchan-firmware-v0.113.2) (2026-05-29)
 
 
