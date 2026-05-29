@@ -48,7 +48,11 @@ For servo trim calibration specifically, `tools/bench-trim` parses the
 `just bench` defmt output (`just bench | tee /tmp/scfmr.log` →
 `bench-trim --input /tmp/scfmr.log`) and prints suggested
 `head.pan_trim_deg` / `head.tilt_trim_deg` for `STACKCHAN.RON` instead of
-grepping deltas by hand.
+grepping deltas by hand. For camera lens calibration, `tools/lens-calibration`
+parses `just tracker-bench` output the same way (`just tracker-bench | tee
+/tmp/scfmr.log` → `lens-calibration --input /tmp/scfmr.log`) and flags the
+`tracker.flip_x` / `tracker.flip_y` mounting flags when the head chases away
+from motion.
 
 ### Shape 3: firmware integration
 1. Identify the `Signal<…, T>` channel(s) the new feature needs.
