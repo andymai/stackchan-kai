@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.2.0...stackchan-tts-v0.3.0) (2026-05-29)
+
+
+### Features
+
+* **voice:** VoiceVox config surface + host-side WAV decode helpers ([#561](https://github.com/andymai/stackchan-kai/issues/561)) ([01ac801](https://github.com/andymai/stackchan-kai/commit/01ac8012f61549da1473f41f826fbf1c8ce1ed36))
+
 ## [0.2.0](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.1.25...stackchan-tts-v0.2.0) (2026-05-20)
 
 

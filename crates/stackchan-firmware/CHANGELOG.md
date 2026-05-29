@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.111.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.110.0...stackchan-firmware-v0.111.0) (2026-05-29)
+
+
+### Features
+
+* **voice:** VoiceVox config surface + host-side WAV decode helpers ([#561](https://github.com/andymai/stackchan-kai/issues/561)) ([01ac801](https://github.com/andymai/stackchan-kai/commit/01ac8012f61549da1473f41f826fbf1c8ce1ed36))
+
 ## [0.110.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.109.0...stackchan-firmware-v0.110.0) (2026-05-29)
 
 
