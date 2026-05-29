@@ -180,13 +180,15 @@ pub fn set_cache(state: RuntimeState) {
 /// regardless of disk state. Returns the loaded (or default) state
 /// so the caller can fan it out to `PALETTE_SIGNAL` / `MOOD_SIGNAL`
 /// before the render task starts.
-pub async fn load_into_cache() -> RuntimeState {
+pub async fn load_into_cache(appearance: &stackchan_net::config::AppearanceConfig) -> RuntimeState {
     let raw = crate::storage::with_storage(crate::storage::FirmwareStorage::read_runtime).await;
     let state = match raw {
         Some(Ok(Some(text))) => parse(&text),
         Some(Ok(None)) => {
-            defmt::info!("runtime store: no /sd/RUNTIME.RON yet — using defaults");
-            RuntimeState::default()
+            defmt::info!(
+                "runtime store: no /sd/RUNTIME.RON yet — seeding from boot config appearance"
+            );
+            seed_from_appearance(appearance)
         }
         Some(Err(e)) => {
             defmt::warn!(
@@ -197,11 +199,24 @@ pub async fn load_into_cache() -> RuntimeState {
         }
         None => {
             defmt::info!("runtime store: no SD mounted — runtime state is non-persistent");
-            RuntimeState::default()
+            seed_from_appearance(appearance)
         }
     };
     set_cache(state);
     state
+}
+
+/// Build the first-boot runtime state from the boot config's pinned
+/// appearance. Empty / unknown wire strings resolve to the variant
+/// default — the same fallback [`parse`] applies to an unknown enum
+/// value on disk. Only palette + `face_geometry` are pinnable; mood and
+/// head offsets keep their defaults until an operator sets them.
+fn seed_from_appearance(appearance: &stackchan_net::config::AppearanceConfig) -> RuntimeState {
+    RuntimeState {
+        palette: Palette::from_wire_str(&appearance.palette).unwrap_or_default(),
+        face_geometry: FaceGeometry::from_wire_str(&appearance.face_geometry).unwrap_or_default(),
+        ..RuntimeState::default()
+    }
 }
 
 /// Update the palette field and persist the cache.
@@ -284,6 +299,7 @@ async fn persist() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn default_state_round_trips() {
@@ -367,5 +383,31 @@ mod tests {
     fn parse_empty_yields_defaults() {
         let s = parse("");
         assert_eq!(s, RuntimeState::default());
+    }
+
+    #[test]
+    fn seed_resolves_boot_appearance_wire_strings() {
+        let appearance = stackchan_net::config::AppearanceConfig {
+            palette: "cute".to_string(),
+            face_geometry: "chibi".to_string(),
+        };
+        let seeded = seed_from_appearance(&appearance);
+        assert_eq!(seeded.palette, Palette::Cute);
+        assert_eq!(seeded.face_geometry, FaceGeometry::Chibi);
+        // Unpinnable axes keep their defaults.
+        assert_eq!(seeded.mood, Mood::default());
+        assert_eq!(seeded.head_offsets, RuntimeState::default().head_offsets);
+    }
+
+    #[test]
+    fn seed_falls_back_to_default_on_empty_or_unknown() {
+        let empty = seed_from_appearance(&stackchan_net::config::AppearanceConfig::default());
+        assert_eq!(empty, RuntimeState::default());
+        let unknown = seed_from_appearance(&stackchan_net::config::AppearanceConfig {
+            palette: "rainbow".to_string(),
+            face_geometry: "compact".to_string(),
+        });
+        assert_eq!(unknown.palette, Palette::default());
+        assert_eq!(unknown.face_geometry, FaceGeometry::default());
     }
 }

@@ -180,4 +180,20 @@ pub enum ConfigError {
     /// the field name so the operator can fix the right line.
     #[error("{0} contains the redaction sentinel \"***\" on disk — supply the real value")]
     RedactionSentinelOnDisk(&'static str),
+
+    /// `appearance.palette` was non-empty but didn't parse via
+    /// `stackchan_core::Palette::from_wire_str`. The boot config pins a
+    /// default look by wire name (`"default"`, `"dark"`, `"cute"`,
+    /// `"dog"`); an unknown value would silently fall back to the
+    /// variant default at boot, so reject it at load with the offending
+    /// string.
+    #[error("appearance.palette is not a known palette: {0:?}")]
+    InvalidPalette(String),
+
+    /// `appearance.face_geometry` was non-empty but didn't parse via
+    /// `stackchan_core::FaceGeometry::from_wire_str`. Same rationale as
+    /// [`Self::InvalidPalette`]: an unknown preset name would silently
+    /// fall back rather than surface the operator's typo.
+    #[error("appearance.face_geometry is not a known preset: {0:?}")]
+    InvalidFaceGeometry(String),
 }
