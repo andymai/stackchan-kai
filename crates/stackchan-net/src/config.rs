@@ -62,6 +62,14 @@ pub struct Config {
     /// the canonical modifier stack at all times).
     #[cfg_attr(feature = "parse", serde(default))]
     pub behavior: BehaviorConfig,
+    /// Per-unit head zero-point trim. Boot-time override of the
+    /// firmware's compile-time `PAN_TRIM_DEG` / `TILT_TRIM_DEG`
+    /// defaults; seeded into the `SCServo` driver at construction.
+    /// Changes via `PUT /settings` take effect on the next boot
+    /// (mirrors the tracker / audio-init pattern). Distinct from the
+    /// per-session operator offsets set via `POST /head/offsets`.
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub head: HeadTrim,
     /// Default appearance the operator can pin in the boot config:
     /// the colour palette and face-geometry preset. Seeds the runtime
     /// store only on first boot (when `/sd/RUNTIME.RON` is absent); a
@@ -241,6 +249,52 @@ impl TrackerSettings {
 }
 
 impl Default for TrackerSettings {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Per-unit head zero-point trim, in degrees.
+///
+/// These absorb the per-physical-unit servo encoder offset (a fixed
+/// property of the assembled module — the pitch encoder zero sits well
+/// below physical horizontal) and rarely change after a unit is
+/// calibrated. The firmware applies them at the driver edge inside the
+/// `SCServo` head:
+/// `commanded_pos = CENTER + direction * (pose.axis + axis_trim) * per_deg`.
+///
+/// This is deliberately a separate layer from the per-session operator
+/// offsets set via `POST /head/offsets`: those are applied in the head
+/// task on top of the modifier-commanded pose and dialed in for day-of
+/// mounting differences. The trim is the durable per-unit zero.
+///
+/// The defaults below MUST stay in sync with `PAN_TRIM_DEG` /
+/// `TILT_TRIM_DEG` in `crates/stackchan-firmware/src/head.rs` — those
+/// firmware consts are the canonical fallback the device uses on a
+/// cold boot with no SD card, so a missing `head:` block reproduces
+/// the firmware's compile-time behaviour exactly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct HeadTrim {
+    /// Pan (yaw) trim in degrees. Positive = head points rightward at
+    /// commanded NEUTRAL.
+    pub pan_trim_deg: f32,
+    /// Tilt (pitch) trim in degrees. Positive = head aims up at
+    /// NEUTRAL. ~49° on the reference unit (encoder offset + anti-droop
+    /// bias).
+    pub tilt_trim_deg: f32,
+}
+
+impl HeadTrim {
+    /// Const-evaluable default mirroring the firmware's `PAN_TRIM_DEG`
+    /// / `TILT_TRIM_DEG` compile-time consts.
+    pub const DEFAULT: Self = Self {
+        pan_trim_deg: 0.0,
+        tilt_trim_deg: 49.0,
+    };
+}
+
+impl Default for HeadTrim {
     fn default() -> Self {
         Self::DEFAULT
     }
@@ -660,6 +714,12 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
             config.tracker.target_smoothing_alpha,
         ));
     }
+    if !is_valid_head_trim(config.head.pan_trim_deg) {
+        return Err(ConfigError::InvalidHeadTrim(config.head.pan_trim_deg));
+    }
+    if !is_valid_head_trim(config.head.tilt_trim_deg) {
+        return Err(ConfigError::InvalidHeadTrim(config.head.tilt_trim_deg));
+    }
     validate_esp_now(&config.esp_now)?;
     if config.behavior.wake_word_arena_kib == 0 {
         return Err(ConfigError::InvalidWakeWordArenaKib);
@@ -919,6 +979,16 @@ fn is_valid_fov_deg(deg: f32) -> bool {
     deg.is_finite() && deg > 0.0 && deg <= 180.0
 }
 
+/// True iff `deg` is a finite value within `[-90.0, 90.0]`. A head
+/// trim is a small per-unit zero-point correction; the real tilt
+/// encoder offset on the reference unit is ~49°, so the range stays
+/// wide enough to accept it while still catching a fat-fingered value
+/// (a stray `490.0` or a `NaN`) before it reaches the servo math,
+/// where `position_for` would otherwise clamp it silently to a rail.
+fn is_valid_head_trim(deg: f32) -> bool {
+    deg.is_finite() && (-90.0..=90.0).contains(&deg)
+}
+
 /// True iff `alpha` is a finite value in `[0.05, 1.0]`. Lower than
 /// 0.05 effectively freezes the published target for tens of seconds,
 /// which is a UX bug; higher than 1.0 has no defined meaning for an
@@ -973,6 +1043,46 @@ mod tests {
         assert_eq!(c.time.sntp_servers, vec!["pool.ntp.org".to_string()]);
         assert_eq!(c.audio.volume_pct, 50);
         assert!(!c.audio.muted);
+        assert_eq!(c.head, HeadTrim::DEFAULT);
+    }
+
+    #[test]
+    fn head_trim_default_matches_compile_consts() {
+        // These literals MUST track PAN_TRIM_DEG / TILT_TRIM_DEG in
+        // crates/stackchan-firmware/src/head.rs — the firmware uses
+        // its own consts as the no-SD cold-boot fallback.
+        assert!((HeadTrim::DEFAULT.pan_trim_deg - 0.0).abs() < f32::EPSILON);
+        assert!((HeadTrim::DEFAULT.tilt_trim_deg - 49.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn validate_rejects_nan_head_trim() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.head.pan_trim_deg = f32::NAN;
+        assert!(matches!(validate(&c), Err(ConfigError::InvalidHeadTrim(_))));
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_head_trim() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.head.tilt_trim_deg = 490.0;
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidHeadTrim(490.0))
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_head_trim_at_typical_offset() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.head = HeadTrim {
+            pan_trim_deg: -3.0,
+            tilt_trim_deg: 49.0,
+        };
+        assert!(validate(&c).is_ok());
     }
 
     #[test]

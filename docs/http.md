@@ -307,6 +307,7 @@ $ curl http://stackchan.local/settings
  "audio":{"volume_pct":50,"muted":false},
  "tracker":{"fov_h_deg":62.0,"fov_v_deg":49.0,"target_smoothing_alpha":1.0,
             "flip_x":false,"flip_y":false},
+ "head":{"pan_trim_deg":0.0,"tilt_trim_deg":49.0},
  "appearance":{"palette":"","face_geometry":""}}
 ```
 
@@ -329,6 +330,17 @@ orientation flips for non-standard mountings. Algorithm tuning
 (P-gain, block thresholds, dead zones) stays compile-time. Changes
 take effect on next boot — same as `mdns.hostname` / `time.*`.
 
+`head` carries the per-unit zero-point trim seeded into the SCServo
+driver at boot: `pan_trim_deg` / `tilt_trim_deg` are added to every
+commanded pose at the driver edge to absorb the assembled module's
+servo encoder offset (the tilt encoder zero sits well below physical
+horizontal, ~49° on the reference unit). This is the durable per-unit
+calibration; it is distinct from the per-session `POST /head/offsets`
+correction, which is applied on top and persisted to `/sd/RUNTIME.RON`. Both default
+to the firmware's compile-time `PAN_TRIM_DEG` / `TILT_TRIM_DEG` when the
+`head` block is absent. Range: `[-90.0, 90.0]`. Changes take effect on
+next boot — same as `tracker.*`.
+
 `wifi.psk` and a non-empty `auth.token` are redacted to `***`.
 On `PUT /settings`, the server treats either sentinel as **"keep
 current value"** rather than overwriting with the literal
@@ -349,7 +361,9 @@ $ curl -X PUT http://stackchan.local/settings \
             "auth":{"token":"s3cret"},
             "audio":{"volume_pct":50,"muted":false},
             "tracker":{"fov_h_deg":62.0,"fov_v_deg":49.0,"target_smoothing_alpha":1.0,
-                       "flip_x":false,"flip_y":false}}'
+                       "flip_x":false,"flip_y":false},
+            "head":{"pan_trim_deg":0.0,"tilt_trim_deg":49.0},
+            "appearance":{"palette":"","face_geometry":""}}'
 {"reboot_required":true}
 ```
 

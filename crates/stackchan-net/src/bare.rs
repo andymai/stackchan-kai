@@ -22,8 +22,8 @@ use core::fmt::Write as _;
 
 use crate::bare_json::TOKEN_REDACTED;
 use crate::config::{
-    AppearanceConfig, AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, MdnsConfig,
-    TimeConfig, TrackerSettings, WifiConfig, validate_for_disk,
+    AppearanceConfig, AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim,
+    MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate_for_disk,
 };
 use crate::error::ConfigError;
 
@@ -184,6 +184,11 @@ pub fn render_ron_bare(config: &Config) -> Result<String, ConfigError> {
     );
     out.push_str("    ),\n");
 
+    out.push_str("    head: (\n");
+    let _ = writeln!(out, "        pan_trim_deg: {},", config.head.pan_trim_deg);
+    let _ = writeln!(out, "        tilt_trim_deg: {},", config.head.tilt_trim_deg);
+    out.push_str("    ),\n");
+
     out.push_str("    appearance: (\n");
     push_field(&mut out, "        palette", &config.appearance.palette);
     push_field(
@@ -233,6 +238,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Top-level grammar: parse the schema-v1 outer tuple struct.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single linear dispatch: one match arm per schema-v1 top-level field. \
+                  Splitting per field would scatter the duplicate/missing-field bookkeeping \
+                  for no readability gain."
+    )]
     fn parse_config(&mut self) -> Result<Config, ConfigError> {
         self.skip_ws_and_comments();
         self.expect_char('(')?;
@@ -244,6 +255,7 @@ impl<'a> Parser<'a> {
         let mut tracker: Option<TrackerSettings> = None;
         let mut esp_now: Option<EspNowConfig> = None;
         let mut behavior: Option<BehaviorConfig> = None;
+        let mut head: Option<HeadTrim> = None;
         let mut appearance: Option<AppearanceConfig> = None;
 
         loop {
@@ -304,6 +316,12 @@ impl<'a> Parser<'a> {
                     }
                     behavior = Some(self.parse_behavior()?);
                 }
+                "head" => {
+                    if head.is_some() {
+                        return Err(bare_err("duplicate top-level field", "head"));
+                    }
+                    head = Some(self.parse_head()?);
+                }
                 "appearance" => {
                     if appearance.is_some() {
                         return Err(bare_err("duplicate top-level field", "appearance"));
@@ -332,6 +350,7 @@ impl<'a> Parser<'a> {
             tracker: tracker.unwrap_or_default(),
             esp_now: esp_now.unwrap_or_default(),
             behavior: behavior.unwrap_or_default(),
+            head: head.unwrap_or_default(),
             appearance: appearance.unwrap_or_default(),
         })
     }
@@ -615,6 +634,50 @@ impl<'a> Parser<'a> {
             target_smoothing_alpha: alpha.unwrap_or(defaults.target_smoothing_alpha),
             flip_x: flip_x.unwrap_or(defaults.flip_x),
             flip_y: flip_y.unwrap_or(defaults.flip_y),
+        })
+    }
+
+    /// Parse the `head: (...)` block. Both fields are optional;
+    /// missing fields fall back to [`HeadTrim::DEFAULT`] so a SD card
+    /// written before this block existed reproduces the firmware's
+    /// compile-time trim behaviour exactly.
+    fn parse_head(&mut self) -> Result<HeadTrim, ConfigError> {
+        self.expect_char('(')?;
+        let mut pan_trim: Option<f32> = None;
+        let mut tilt_trim: Option<f32> = None;
+        loop {
+            self.skip_ws_and_comments();
+            if self.try_consume_char(')') {
+                break;
+            }
+            let key = self.read_ident()?;
+            self.skip_ws_and_comments();
+            self.expect_char(':')?;
+            self.skip_ws_and_comments();
+            match key {
+                "pan_trim_deg" => {
+                    if pan_trim.is_some() {
+                        return Err(bare_err("duplicate head field", "pan_trim_deg"));
+                    }
+                    pan_trim = Some(self.parse_f32()?);
+                }
+                "tilt_trim_deg" => {
+                    if tilt_trim.is_some() {
+                        return Err(bare_err("duplicate head field", "tilt_trim_deg"));
+                    }
+                    tilt_trim = Some(self.parse_f32()?);
+                }
+                other => return Err(bare_err("unknown head field", other)),
+            }
+            self.skip_ws_and_comments();
+            if !self.try_consume_char(',') && !self.peek_eq(')') {
+                return Err(bare_err("expected ',' or ')' in head", ""));
+            }
+        }
+        let defaults = HeadTrim::DEFAULT;
+        Ok(HeadTrim {
+            pan_trim_deg: pan_trim.unwrap_or(defaults.pan_trim_deg),
+            tilt_trim_deg: tilt_trim.unwrap_or(defaults.tilt_trim_deg),
         })
     }
 
@@ -1966,12 +2029,94 @@ mod tests {
     }
 
     #[test]
+    fn missing_head_block_defaults_to_compile_trim() {
+        // Forward-compat: an SD card written before the head block
+        // landed omits `head:` entirely. The parser must fall back to
+        // HeadTrim::DEFAULT so a firmware bump reproduces the old
+        // compile-time trim behaviour rather than zeroing the tilt.
+        let cfg = parse_ron_bare(FIXTURE).unwrap();
+        assert_eq!(cfg.head, HeadTrim::DEFAULT);
+    }
+
+    #[test]
     fn missing_appearance_block_defaults_to_empty() {
         // SD cards written before the appearance block landed omit it
         // entirely; the parser must fall back to empty wire strings.
         let cfg = parse_ron_bare(FIXTURE).unwrap();
         assert!(cfg.appearance.palette.is_empty());
         assert!(cfg.appearance.face_geometry.is_empty());
+    }
+
+    #[test]
+    fn parses_head_block_with_explicit_values() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                head: ( pan_trim_deg: -2.5, tilt_trim_deg: 47.0 ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        assert!((cfg.head.pan_trim_deg - (-2.5)).abs() < f32::EPSILON);
+        assert!((cfg.head.tilt_trim_deg - 47.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn round_trips_with_head_block() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                head: ( pan_trim_deg: 1.5, tilt_trim_deg: 50.0 ),
+            )
+        "#;
+        let cfg = parse_ron_bare(s).unwrap();
+        let rendered = render_ron_bare(&cfg).unwrap();
+        let reparsed = parse_ron_bare(&rendered).unwrap();
+        assert_eq!(cfg, reparsed);
+    }
+
+    #[test]
+    fn rejects_unknown_head_field() {
+        let s = with_base(r"head: ( pan_trim_deg: 0.0, oops: 1 ),");
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown head field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_head_field() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                head: ( pan_trim_deg: 0.0, pan_trim_deg: 1.0 ),
+            )
+        "#;
+        let msg = assert_bare_parse_err(s);
+        assert!(
+            msg.contains("duplicate head field") && msg.contains("pan_trim_deg"),
+            "got {msg}"
+        );
+    }
+
+    #[test]
+    fn head_trim_out_of_range_fails_validate() {
+        let s = r#"
+            (
+                wifi: ( ssid: "n", psk: "p", country: "US" ),
+                mdns: ( hostname: "h" ),
+                time: ( tz: "UTC", sntp_servers: ["pool.ntp.org"] ),
+                head: ( pan_trim_deg: 0.0, tilt_trim_deg: 491.0 ),
+            )
+        "#;
+        let err = parse_ron_bare(s).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidHeadTrim(_)),
+            "got {err:?}"
+        );
     }
 
     #[test]

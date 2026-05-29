@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use crate::config::{
-    AppearanceConfig, AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, MdnsConfig,
-    TimeConfig, TrackerSettings, WifiConfig, validate,
+    AppearanceConfig, AudioConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim,
+    MdnsConfig, TimeConfig, TrackerSettings, WifiConfig, validate,
 };
 use crate::error::ConfigError;
 
@@ -95,8 +95,8 @@ pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
 /// overwrites.
 ///
 /// Fields the wire format doesn't redact (`ssid`, `country`,
-/// `mdns.hostname`, `time.*`, `audio.*`, `tracker.*`) pass through
-/// from `new` unchanged.
+/// `mdns.hostname`, `time.*`, `audio.*`, `tracker.*`, `head.*`) pass
+/// through from `new` unchanged.
 #[must_use]
 pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
     Config {
@@ -147,6 +147,7 @@ pub fn merge_settings_with_current(new: Config, current: &Config) -> Config {
             },
             ..new.behavior
         },
+        head: new.head,
         appearance: new.appearance,
     }
 }
@@ -307,6 +308,13 @@ pub fn render_settings_json(config: &Config, redact_secrets: bool) -> Result<Str
     );
     out.push(',');
     push_string_field(&mut out, "persona_name", &config.behavior.persona_name);
+    out.push_str("},\"head\":{");
+    let _ = write!(
+        out,
+        "\"pan_trim_deg\":{pan:?},\"tilt_trim_deg\":{tilt:?}",
+        pan = config.head.pan_trim_deg,
+        tilt = config.head.tilt_trim_deg,
+    );
     out.push_str("},\"appearance\":{");
     push_string_field(&mut out, "palette", &config.appearance.palette);
     out.push(',');
@@ -358,6 +366,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Top-level grammar: parse the schema-v1 outer object.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single linear dispatch: one match arm per schema-v1 top-level field. \
+                  Splitting per field would scatter the duplicate/missing-field bookkeeping \
+                  for no readability gain."
+    )]
     fn parse_config(&mut self) -> Result<Config, ConfigError> {
         self.skip_ws();
         self.expect_char('{')?;
@@ -369,6 +383,7 @@ impl<'a> Parser<'a> {
         let mut tracker: Option<TrackerSettings> = None;
         let mut esp_now: Option<EspNowConfig> = None;
         let mut behavior: Option<BehaviorConfig> = None;
+        let mut head: Option<HeadTrim> = None;
         let mut appearance: Option<AppearanceConfig> = None;
         loop {
             self.skip_ws();
@@ -428,6 +443,12 @@ impl<'a> Parser<'a> {
                     }
                     behavior = Some(self.parse_behavior()?);
                 }
+                "head" => {
+                    if head.is_some() {
+                        return Err(bare_err("duplicate top-level field", "head"));
+                    }
+                    head = Some(self.parse_head()?);
+                }
                 "appearance" => {
                     if appearance.is_some() {
                         return Err(bare_err("duplicate top-level field", "appearance"));
@@ -454,6 +475,7 @@ impl<'a> Parser<'a> {
             tracker: tracker.unwrap_or_default(),
             esp_now: esp_now.unwrap_or_default(),
             behavior: behavior.unwrap_or_default(),
+            head: head.unwrap_or_default(),
             appearance: appearance.unwrap_or_default(),
         })
     }
@@ -735,6 +757,49 @@ impl<'a> Parser<'a> {
             target_smoothing_alpha: alpha.unwrap_or(defaults.target_smoothing_alpha),
             flip_x: flip_x.unwrap_or(defaults.flip_x),
             flip_y: flip_y.unwrap_or(defaults.flip_y),
+        })
+    }
+
+    /// Parse the `"head": { ... }` block. Both fields are optional on
+    /// the wire; missing fields fall back to [`HeadTrim::DEFAULT`].
+    /// Range validation lives in the `validate` pass after parse.
+    fn parse_head(&mut self) -> Result<HeadTrim, ConfigError> {
+        self.expect_char('{')?;
+        let mut pan_trim: Option<f32> = None;
+        let mut tilt_trim: Option<f32> = None;
+        loop {
+            self.skip_ws();
+            if self.try_consume_char('}') {
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            self.skip_ws();
+            match key.as_str() {
+                "pan_trim_deg" => {
+                    if pan_trim.is_some() {
+                        return Err(bare_err("duplicate head field", "pan_trim_deg"));
+                    }
+                    pan_trim = Some(self.parse_f32()?);
+                }
+                "tilt_trim_deg" => {
+                    if tilt_trim.is_some() {
+                        return Err(bare_err("duplicate head field", "tilt_trim_deg"));
+                    }
+                    tilt_trim = Some(self.parse_f32()?);
+                }
+                other => return Err(bare_err("unknown head field", other)),
+            }
+            self.skip_ws();
+            if !self.try_consume_char(',') && !self.peek_eq('}') {
+                return Err(bare_err("expected ',' or '}' in head", ""));
+            }
+        }
+        let defaults = HeadTrim::DEFAULT;
+        Ok(HeadTrim {
+            pan_trim_deg: pan_trim.unwrap_or(defaults.pan_trim_deg),
+            tilt_trim_deg: tilt_trim.unwrap_or(defaults.tilt_trim_deg),
         })
     }
 
@@ -1273,6 +1338,10 @@ mod tests {
                 wake_word_threshold: 95,
                 wake_word_arena_kib: 96,
                 persona_name: "desk-buddy".to_string(),
+            },
+            head: HeadTrim {
+                pan_trim_deg: -1.5,
+                tilt_trim_deg: 47.5,
             },
             appearance: AppearanceConfig {
                 palette: "cute".to_string(),
@@ -1826,6 +1895,10 @@ mod tests {
                 wake_word_arena_kib: 128,
                 persona_name: "desk-buddy".to_string(),
             },
+            head: HeadTrim {
+                pan_trim_deg: 90.0,
+                tilt_trim_deg: -90.0,
+            },
             appearance: AppearanceConfig {
                 palette: "dog".to_string(),
                 face_geometry: "sleepy".to_string(),
@@ -2150,6 +2223,58 @@ mod tests {
         let s = with_base(r#","behavior":{"soliloquy_enabled":true,"soliloquy_enabled":false}"#);
         let msg = assert_bare_parse_err(&s);
         assert!(msg.contains("duplicate behavior field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_unknown_head_field() {
+        let s = with_base(r#","head":{"pan_trim_deg":0.0,"oops":1}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("unknown head field"), "got {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_head_field() {
+        let s = with_base(r#","head":{"pan_trim_deg":0.0,"pan_trim_deg":1.0}"#);
+        let msg = assert_bare_parse_err(&s);
+        assert!(msg.contains("duplicate head field"), "got {msg}");
+    }
+
+    #[test]
+    fn missing_head_block_defaults_to_compile_trim() {
+        let input = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert_eq!(parsed.head, HeadTrim::DEFAULT);
+    }
+
+    #[test]
+    fn head_block_round_trips_through_render_then_parse() {
+        let input = r#"{
+            "wifi":{"ssid":"a","psk":"b","country":"US"},
+            "mdns":{"hostname":"x"},
+            "time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},
+            "head":{"pan_trim_deg":-2.5,"tilt_trim_deg":47.0}
+        }"#;
+        let parsed = parse_settings_json(input).unwrap();
+        assert!((parsed.head.pan_trim_deg - (-2.5)).abs() < f32::EPSILON);
+        assert!((parsed.head.tilt_trim_deg - 47.0).abs() < f32::EPSILON);
+        let rendered = render_settings_json(&parsed, false).unwrap();
+        let reparsed = parse_settings_json(&rendered).unwrap();
+        assert_eq!(parsed, reparsed);
+    }
+
+    #[test]
+    fn merge_preserves_head_block() {
+        let current = full_config();
+        let new = Config {
+            head: HeadTrim {
+                pan_trim_deg: 3.0,
+                tilt_trim_deg: 51.0,
+            },
+            ..current.clone()
+        };
+        let merged = merge_settings_with_current(new, &current);
+        assert!((merged.head.pan_trim_deg - 3.0).abs() < f32::EPSILON);
+        assert!((merged.head.tilt_trim_deg - 51.0).abs() < f32::EPSILON);
     }
 
     // ============================================================

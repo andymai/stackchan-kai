@@ -6,7 +6,7 @@
 
 #![allow(clippy::unwrap_used, clippy::panic, missing_docs)]
 
-use stackchan_net::{Config, ConfigError, parse_ron, render_ron};
+use stackchan_net::{Config, ConfigError, HeadTrim, parse_ron, render_ron};
 
 const MINIMAL_RON: &str = include_str!("fixtures/minimal.ron");
 const FULL_RON: &str = include_str!("fixtures/full.ron");
@@ -45,6 +45,13 @@ fn parses_full_fixture() {
             "time.cloudflare.com".to_string(),
             "pool.ntp.org".to_string(),
         ]
+    );
+    assert_eq!(
+        cfg.head,
+        HeadTrim {
+            pan_trim_deg: -3.0,
+            tilt_trim_deg: 47.5,
+        }
     );
 }
 

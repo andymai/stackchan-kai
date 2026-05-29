@@ -54,6 +54,7 @@ runs.
         wake_word_threshold: 100,
         wake_word_arena_kib: 64,
     ),
+    head: ( pan_trim_deg: 0.0, tilt_trim_deg: 49.0 ),
 )
 ```
 
