@@ -107,10 +107,12 @@ esp-alloc = { version = "0.9.0", features = ["defmt"] }
 # esp-hal ~1.1.0-rc.0 which would force a wider toolchain bump.
 # `unstable` is required because esp-hal itself runs with `unstable`
 # enabled here. `ble` enables the on-chip BLE controller (HCI behind
-# the `BleConnector` Transport); `coex` lets Wi-Fi STA and BLE share
-# the radio at the cost of ~10–15% Wi-Fi throughput. The bt-hci
-# version pin (^0.6) cascades into the trouble-host 0.5.x line.
-esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "ble", "coex", "esp-now", "unstable"] }
+# the `BleConnector` Transport). No `coex`: BLE and Wi-Fi are brought up
+# mutually exclusively in firmware (BLE only when no Wi-Fi SSID is set),
+# so the radio is never shared — coexistence would only cost the internal
+# RAM the Wi-Fi MAC needs to start. The bt-hci version pin (^0.6) cascades
+# into the trouble-host 0.5.x line.
+esp-radio = { version = "~0.17", features = ["defmt", "esp32s3", "wifi", "ble", "esp-now", "unstable"] }
 # BLE host stack. 0.5.1 is the trouble-host release pinned to
 # `bt-hci ^0.6` (matches esp-radio 0.17). 0.6.0 jumps to `bt-hci 0.8`
 # and pairs with esp-radio 0.18 — bump together when we move the
