@@ -62,6 +62,41 @@ pub struct Config {
     /// the canonical modifier stack at all times).
     #[cfg_attr(feature = "parse", serde(default))]
     pub behavior: BehaviorConfig,
+    /// Default appearance the operator can pin in the boot config:
+    /// the colour palette and face-geometry preset. Seeds the runtime
+    /// store only on first boot (when `/sd/RUNTIME.RON` is absent); a
+    /// later operator change via `POST /palette` / `POST /face-geometry`
+    /// persists to `RUNTIME.RON` and wins on subsequent boots.
+    #[cfg_attr(feature = "parse", serde(default))]
+    pub appearance: AppearanceConfig,
+}
+
+/// Default appearance pinned in the boot config.
+///
+/// Both fields are wire strings rather than the `stackchan-core`
+/// enums: that crate has no `serde` dependency, and the string form
+/// mirrors how `RUNTIME.RON` round-trips the same values via
+/// `Palette::wire_str` / `FaceGeometry::wire_str`. An empty string
+/// means "not pinned" — the firmware falls back to the variant
+/// default, exactly like an unknown value would.
+///
+/// Default: both empty. A missing `appearance:` block reproduces the
+/// firmware's pre-runtime-config behaviour (neutral palette + default
+/// geometry).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "parse", derive(Serialize, Deserialize))]
+pub struct AppearanceConfig {
+    /// Lowercase palette wire name (`"default"`, `"dark"`, `"cute"`,
+    /// `"dog"`). Empty = not pinned. A non-empty value that doesn't
+    /// parse via `stackchan_core::Palette::from_wire_str` is rejected
+    /// by [`validate`].
+    pub palette: String,
+    /// Lowercase face-geometry wire name (`"default"`, `"chibi"`,
+    /// `"wide"`, `"sleepy"`). Empty = not pinned. A non-empty value
+    /// that doesn't parse via
+    /// `stackchan_core::FaceGeometry::from_wire_str` is rejected by
+    /// [`validate`].
+    pub face_geometry: String,
 }
 
 /// Wi-Fi station credentials.
@@ -631,6 +666,7 @@ pub fn validate(config: &Config) -> Result<(), ConfigError> {
     }
     validate_agent_sidecar_token(&config.behavior.agent_sidecar_token)?;
     validate_persona_name(&config.behavior.persona_name)?;
+    validate_appearance(&config.appearance)?;
     Ok(())
 }
 
@@ -742,6 +778,26 @@ fn validate_persona_name(name: &str) -> Result<(), ConfigError> {
         || name.contains("..")
     {
         return Err(ConfigError::PersonaNameInvalidChars);
+    }
+    Ok(())
+}
+
+/// Reject a pinned appearance whose non-empty wire string doesn't
+/// parse back into the `stackchan-core` enum.
+///
+/// Empty short-circuits — that's the "not pinned" marker the firmware
+/// resolves to the variant default. A non-empty unknown string would
+/// otherwise silently fall back to the default at boot, hiding the
+/// operator's typo; rejecting at validation surfaces it on the
+/// `PUT /settings` write instead.
+fn validate_appearance(a: &AppearanceConfig) -> Result<(), ConfigError> {
+    if !a.palette.is_empty() && stackchan_core::Palette::from_wire_str(&a.palette).is_none() {
+        return Err(ConfigError::InvalidPalette(a.palette.clone()));
+    }
+    if !a.face_geometry.is_empty()
+        && stackchan_core::FaceGeometry::from_wire_str(&a.face_geometry).is_none()
+    {
+        return Err(ConfigError::InvalidFaceGeometry(a.face_geometry.clone()));
     }
     Ok(())
 }
@@ -1120,6 +1176,48 @@ mod tests {
         c.esp_now.channel = Some(6);
         c.esp_now.tx_rate_hz = 5;
         assert!(validate(&c).is_ok());
+    }
+
+    #[test]
+    fn default_config_has_empty_appearance() {
+        let c = Config::default();
+        assert!(c.appearance.palette.is_empty());
+        assert!(c.appearance.face_geometry.is_empty());
+    }
+
+    #[test]
+    fn validate_accepts_empty_appearance() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        assert!(validate(&c).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_known_appearance_wire_strings() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.appearance.palette = "cute".to_string();
+        c.appearance.face_geometry = "chibi".to_string();
+        assert!(validate(&c).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_palette() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.appearance.palette = "rainbow".to_string();
+        assert!(matches!(validate(&c), Err(ConfigError::InvalidPalette(_))));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_face_geometry() {
+        let mut c = Config::default();
+        c.wifi.ssid = "x".to_string();
+        c.appearance.face_geometry = "compact".to_string();
+        assert!(matches!(
+            validate(&c),
+            Err(ConfigError::InvalidFaceGeometry(_))
+        ));
     }
 
     #[test]
