@@ -24,7 +24,10 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::Delay;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::SpiBus;
-use embedded_sdmmc::{LfnBuffer, Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
+use embedded_sdmmc::{
+    BlockDevice, Directory, LfnBuffer, Mode, SdCard, ShortFileName, TimeSource, Timestamp,
+    VolumeIdx, VolumeManager,
+};
 use esp_hal::Blocking;
 use esp_hal::gpio::Output;
 use esp_hal::spi::Mode as SpiMode;
@@ -107,9 +110,12 @@ where
 /// Filename written to / read from the FAT root.
 const CONFIG_FILE: &str = "STACKCHAN.RON";
 
-/// Atomic-write staging name. Written first, then rename-copied onto
-/// `STACKCHAN.RON`; mid-write power loss leaves the old file intact.
-const STAGING_FILE: &str = "STACKCHAN.NEW";
+/// Atomic-write staging name. Written first, then copied onto the
+/// resolved `STACKCHAN.RON`; mid-write power loss leaves the old file
+/// intact. Must be a valid 8.3 short name — unlike `STACKCHAN.RON`,
+/// embedded-sdmmc has to *create* this one, and it can't create a
+/// long-named (LFN) file (`STACKCHAN.NEW` itself was unwritable).
+const STAGING_FILE: &str = "STKCFG.NEW";
 
 /// Runtime-state filename. Holds operator-tuned values that change
 /// faster than the boot config (palette, mood) and that a real NVS
@@ -130,6 +136,33 @@ const MAX_RUNTIME_BYTES: u32 = 256;
 /// well under 1 KiB; the headroom keeps SRAM bounded if the schema
 /// grows.
 const MAX_CONFIG_BYTES: u32 = 4096;
+
+/// Resolve the FAT short name of a root-dir entry whose long (LFN) name
+/// matches `long_name` case-insensitively. Needed for names like
+/// `STACKCHAN.RON` whose 9-char base isn't a valid 8.3 short name, so
+/// `open_file_in_dir` can't take the long name directly — but the file
+/// exists with a mangled short name (e.g. `STACKC~1.RON`) we can open or
+/// overwrite. Returns `None` if no entry matches. Const generics are
+/// inferred from the passed directory handle.
+fn lfn_short_name<D, T, const A: usize, const B: usize, const C: usize>(
+    dir: &Directory<'_, D, T, A, B, C>,
+    long_name: &str,
+) -> Result<Option<ShortFileName>, StorageError>
+where
+    D: BlockDevice,
+    T: TimeSource,
+{
+    let mut lfn_storage = [0u8; 64];
+    let mut lfn = LfnBuffer::new(&mut lfn_storage);
+    let mut short = None;
+    dir.iterate_dir_lfn(&mut lfn, |entry, long| {
+        if short.is_none() && long.is_some_and(|l| l.eq_ignore_ascii_case(long_name)) {
+            short = Some(entry.name.clone());
+        }
+    })
+    .map_err(|_| StorageError::Volume)?;
+    Ok(short)
+}
 
 /// Filename for persisted BLE bonds. Binary format defined in
 /// `crate::ble::bonds`.
@@ -365,21 +398,12 @@ where
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
         let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
-        // CONFIG_FILE ("STACKCHAN.RON") has a 9-char base name, which is not a
-        // valid FAT 8.3 short name — `open_file_in_dir` rejects it outright with
-        // `NameTooLong`. The card stores it with a long-filename entry and a
-        // mangled short name (e.g. `STACKC~1.RON`), so resolve the short name by
-        // matching the long name, then open by that.
-        let mut lfn_storage = [0u8; 64];
-        let mut lfn = LfnBuffer::new(&mut lfn_storage);
-        let mut short = None;
-        root.iterate_dir_lfn(&mut lfn, |entry, long| {
-            if short.is_none() && long.is_some_and(|l| l.eq_ignore_ascii_case(CONFIG_FILE)) {
-                short = Some(entry.name.clone());
-            }
-        })
-        .map_err(|_| StorageError::Volume)?;
-        let short = short.ok_or(StorageError::FileNotFound)?;
+        // CONFIG_FILE ("STACKCHAN.RON") has a 9-char base name — not a valid 8.3
+        // short name — so `open_file_in_dir` rejects it with `NameTooLong`. The
+        // card stores it with a long-filename entry + a mangled short name (e.g.
+        // `STACKC~1.RON`); match the long name to recover the short name, then
+        // open by that. See `lfn_short_name`.
+        let short = lfn_short_name(&root, CONFIG_FILE)?.ok_or(StorageError::FileNotFound)?;
         let file = root
             .open_file_in_dir(&short, Mode::ReadOnly)
             .map_err(|_| StorageError::FileNotFound)?;
@@ -411,8 +435,34 @@ where
     /// fails (should not happen with a well-formed `Config`).
     pub fn write_config(&mut self, config: &stackchan_net::Config) -> Result<(), StorageError> {
         let rendered = stackchan_net::render_ron_bare(config).map_err(|_| StorageError::Decode)?;
+        // Stage to an 8.3 name we can create, then overwrite STACKCHAN.RON in
+        // place by its resolved short name. embedded-sdmmc can't *create* a
+        // long-named file, so writeback updates an existing config — the
+        // realistic case, since the file must already be present for Wi-Fi/auth
+        // to come up. Truncate-writing contents leaves the long-name directory
+        // entry intact, so it stays readable as STACKCHAN.RON.
         self.write_file(STAGING_FILE, rendered.as_bytes())?;
-        self.copy_then_delete(STAGING_FILE, CONFIG_FILE)?;
+        let volume = self
+            .mgr
+            .open_volume(VolumeIdx(0))
+            .map_err(|_| StorageError::Volume)?;
+        let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        let short = lfn_short_name(&root, CONFIG_FILE)?.ok_or_else(|| {
+            defmt::warn!(
+                "write_config: /sd/STACKCHAN.RON absent — create it on the card first (firmware can't create a long-named file)"
+            );
+            StorageError::FileNotFound
+        })?;
+        {
+            let dst = root
+                .open_file_in_dir(&short, Mode::ReadWriteCreateOrTruncate)
+                .map_err(|_| StorageError::Write)?;
+            dst.write(rendered.as_bytes()).map_err(|_| StorageError::Write)?;
+            dst.flush().map_err(|_| StorageError::Write)?;
+        }
+        // Staging served its purpose (a crash-safe copy existed before we
+        // clobbered the live file); best-effort cleanup.
+        let _ = root.delete_file_in_dir(STAGING_FILE);
         Ok(())
     }
 
