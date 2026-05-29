@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.109.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.108.0...stackchan-firmware-v0.109.0) (2026-05-29)
+
+
+### Features
+
+* **config:** pin default palette + face geometry in boot config ([#556](https://github.com/andymai/stackchan-kai/issues/556)) ([d0a92ed](https://github.com/andymai/stackchan-kai/commit/d0a92ed1f08ac5fa4b5910e318b5aedb7fdfced6))
+
 ## [0.108.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.107.0...stackchan-firmware-v0.108.0) (2026-05-29)
 
 
