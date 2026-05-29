@@ -76,6 +76,14 @@ ci: check
 msrv:
     cargo +1.88 build --workspace --exclude stackchan-firmware --exclude esp-tflite-micro-sys
 
+# Craft + validate a STACKCHAN.RON offline before flashing. Host-only,
+# feature-gated tool over the same `stackchan-net::config` API the
+# firmware runs at boot. E.g. `just config list`,
+# `just config template --palette cute --face-geometry chibi`,
+# `just config validate /sd/STACKCHAN.RON`.
+config *args:
+    cargo run -p stackchan-sim --bin sc-config --features config-cli -- {{args}}
+
 # ----- Web dashboard ------------------------------------------------------
 
 # Build the operator dashboard bundle. Vite + Solid → `web/dist/index.html`,

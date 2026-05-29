@@ -395,6 +395,18 @@ power loss leaves the old file intact.
 The firmware does **not** tear down Wi-Fi on save — that would drop
 the operator's HTTP session if the SSID changed. Reboot to apply.
 
+### Crafting a config offline
+
+`just config` runs a host-only tool over the same
+`stackchan-net::config` API the firmware validates with at boot, so a
+file it accepts will load on device:
+
+```
+just config list                                         # accepted palette + face-geometry wire names
+just config template --palette cute --face-geometry chibi > STACKCHAN.RON
+just config validate STACKCHAN.RON                        # exits non-zero on a bad file
+```
+
 ## Status codes
 
 | Code | Where it shows up                                                  |

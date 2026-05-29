@@ -29,6 +29,13 @@ heapless = "0.8"
 # OpenGL rendering and the bundled default fonts.
 eframe = { version = "0.34", optional = true }
 
+# Optional: the `sc-config` host binary crafts + validates a
+# `STACKCHAN.RON` offline. Only pulled in when the `config-cli` feature
+# is on, with `default-features` so the `parse` feature (serde derives +
+# `parse_ron` / `render_ron`) is active. The default library build stays
+# on the dep-light `default-features = false` dev-dependency below.
+stackchan-net = { path = "../stackchan-net", optional = true }
+
 [dev-dependencies]
 # Used by `tests/ble_remote_command.rs` to round-trip raw BLE
 # characteristic payloads through the same decoder the firmware uses.
@@ -39,8 +46,16 @@ stackchan-net = { path = "../stackchan-net", default-features = false }
 default = []
 # Enable the `viz` binary (`cargo run -p stackchan-sim --bin viz --features viz`).
 viz = ["dep:eframe"]
+# Enable the `sc-config` binary
+# (`cargo run -p stackchan-sim --bin sc-config --features config-cli`).
+config-cli = ["dep:stackchan-net"]
 
 [[bin]]
 name = "viz"
 path = "src/bin/viz.rs"
 required-features = ["viz"]
+
+[[bin]]
+name = "sc-config"
+path = "src/bin/config.rs"
+required-features = ["config-cli"]
