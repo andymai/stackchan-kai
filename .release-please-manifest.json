@@ -4,7 +4,7 @@
   "crates/stackchan-audio-features": "0.2.0",
   "crates/stackchan-desktop-protocol": "0.1.0",
   "crates/stackchan-net": "0.16.0",
-  "crates/stackchan-tts": "0.3.0",
+  "crates/stackchan-tts": "0.4.0",
   "crates/axp2101": "0.8.0",
   "crates/aw9523": "0.6.0",
   "crates/aw88298": "0.4.0",
@@ -20,5 +20,5 @@
   "crates/scservo": "0.6.0",
   "crates/si12t": "0.5.0",
   "crates/tracker": "0.12.21",
-  "crates/stackchan-firmware": "0.112.0"
+  "crates/stackchan-firmware": "0.113.0"
 }
