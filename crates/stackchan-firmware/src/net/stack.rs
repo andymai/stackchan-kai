@@ -6,10 +6,16 @@ use embassy_net::{Runner, StackResources};
 use esp_radio::wifi::WifiDevice;
 use static_cell::StaticCell;
 
-/// Maximum number of concurrent sockets the firmware ever needs:
-/// one for SNTP (UDP), one or two for the HTTP server (listen +
-/// accepted), one for mDNS responder, plus a couple of slack.
-pub const STACK_SOCKETS: usize = 6;
+/// Maximum number of concurrent sockets the firmware ever needs.
+///
+/// `smoltcp` panics ("adding a socket to a full `SocketSet`") the moment
+/// demand exceeds this, so it must cover every consumer that can be live at
+/// once: `HTTP_WORKER_COUNT` HTTP listeners (each owns its own socket), plus
+/// mDNS, SNTP, the DHCP + DNS clients, and the optional outbound clients
+/// (agent sidecar, `VoiceVox`, audio debug). The old value of 6 pre-dated the
+/// 4-worker HTTP pool and overflowed as soon as Wi-Fi linked. Slots are cheap
+/// static metadata, so over-provisioning costs only a few `.bss` bytes.
+pub const STACK_SOCKETS: usize = crate::net::http::HTTP_WORKER_COUNT + 8;
 
 /// Static cell for the embassy-net resource pool. Sized at compile
 /// time to avoid heap fragmentation under SNTP/HTTP/mDNS churn.

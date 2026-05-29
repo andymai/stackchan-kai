@@ -1571,76 +1571,83 @@ async fn main(spawner: Spawner) -> ! {
         );
     }
 
-    // BLE peripheral. Shares the same `&'static esp_radio::Controller`
-    // as Wi-Fi — coex (enabled via the `coex` feature on `esp-radio`)
-    // schedules airtime between the two stacks. The BLE address +
-    // local name are derived from the chip's eFuse MAC so a single
-    // device shows up consistently across reboots, and matches the
-    // discovery handle visible on the LAN over mDNS.
-    #[allow(clippy::items_after_statements)]
-    static BLE_NAME: StaticCell<heapless::String<32>> = StaticCell::new();
-    let ble_mac = esp_hal::efuse::Efuse::mac_address();
-    // First, try the operator-supplied name from
-    // `/sd/DEVICE.NAM` (set via the Hardware Buddy `cmd:name`
-    // message). Fall back to the MAC-suffixed default. The name
-    // must start with `Claude` so the Hardware Buddy picker filters
-    // us in; the default does, and a desktop-set override is
-    // assumed to as well — we don't enforce the prefix.
-    let persisted_name = stackchan_firmware::storage::with_storage(
-        stackchan_firmware::storage::FirmwareStorage::read_device_name,
-    )
-    .await
-    .and_then(|r| match r {
-        Ok(opt) => opt,
-        Err(e) => {
-            defmt::warn!(
-                "ble: device name read failed ({}); using MAC-suffixed default",
-                defmt::Debug2Format(&e)
-            );
-            None
-        }
-    });
-    let ble_name: &'static str = {
-        use core::fmt::Write as _;
-        let mut s: heapless::String<32> = heapless::String::new();
-        if let Some(name) = persisted_name.as_deref() {
-            // Cap at heapless::String<32>'s capacity. Operator
-            // names longer than the BLE GAP 22-byte limit will be
-            // rejected by the advertise layer; here we just keep
-            // the buffer write infallible.
-            let n = name.len().min(32);
-            if let Err(e) = s.push_str(&name[..n]) {
-                defmt::panic!("ble: name copy failed: {}", defmt::Debug2Format(&e));
+    // BLE peripheral — brought up ONLY when no Wi-Fi SSID is configured.
+    // BLE (Hardware Buddy bridge) and Wi-Fi (HTTP/MCP plane) are mutually
+    // exclusive: running both needs radio coexistence, whose buffers plus
+    // BLE's own exhaust the scarce internal-SRAM heap and make the Wi-Fi MAC
+    // fail to start with `NoMem`. With an SSID present we skip BLE so the
+    // Wi-Fi stack gets that internal RAM. Address + name derive from the
+    // eFuse MAC for a stable cross-reboot identity.
+    if net_config.wifi.ssid.trim().is_empty() {
+        #[allow(clippy::items_after_statements)]
+        static BLE_NAME: StaticCell<heapless::String<32>> = StaticCell::new();
+        let ble_mac = esp_hal::efuse::Efuse::mac_address();
+        // First, try the operator-supplied name from
+        // `/sd/DEVICE.NAM` (set via the Hardware Buddy `cmd:name`
+        // message). Fall back to the MAC-suffixed default. The name
+        // must start with `Claude` so the Hardware Buddy picker filters
+        // us in; the default does, and a desktop-set override is
+        // assumed to as well — we don't enforce the prefix.
+        let persisted_name = stackchan_firmware::storage::with_storage(
+            stackchan_firmware::storage::FirmwareStorage::read_device_name,
+        )
+        .await
+        .and_then(|r| match r {
+            Ok(opt) => opt,
+            Err(e) => {
+                defmt::warn!(
+                    "ble: device name read failed ({}); using MAC-suffixed default",
+                    defmt::Debug2Format(&e)
+                );
+                None
             }
-        } else if let Err(e) = write!(
-            &mut s,
-            "Claude stk-{:02x}{:02x}{:02x}",
-            ble_mac[3], ble_mac[4], ble_mac[5]
+        });
+        let ble_name: &'static str = {
+            use core::fmt::Write as _;
+            let mut s: heapless::String<32> = heapless::String::new();
+            if let Some(name) = persisted_name.as_deref() {
+                // Cap at heapless::String<32>'s capacity. Operator
+                // names longer than the BLE GAP 22-byte limit will be
+                // rejected by the advertise layer; here we just keep
+                // the buffer write infallible.
+                let n = name.len().min(32);
+                if let Err(e) = s.push_str(&name[..n]) {
+                    defmt::panic!("ble: name copy failed: {}", defmt::Debug2Format(&e));
+                }
+            } else if let Err(e) = write!(
+                &mut s,
+                "Claude stk-{:02x}{:02x}{:02x}",
+                ble_mac[3], ble_mac[4], ble_mac[5]
+            ) {
+                defmt::panic!("ble: name format failed: {}", defmt::Debug2Format(&e));
+            }
+            BLE_NAME.init(s).as_str()
+        };
+        defmt::info!("ble: advertising as {=str}", ble_name);
+        let ble_connector = match esp_radio::ble::controller::BleConnector::new(
+            radio,
+            peripherals.BT,
+            esp_radio::ble::Config::default(),
         ) {
-            defmt::panic!("ble: name format failed: {}", defmt::Debug2Format(&e));
+            Ok(c) => c,
+            Err(e) => defmt::panic!(
+                "ble: BleConnector::new failed ({})",
+                defmt::Debug2Format(&e)
+            ),
+        };
+        let ble_controller: trouble_host::prelude::ExternalController<_, 20> =
+            trouble_host::prelude::ExternalController::new(ble_connector);
+        if let Err(e) = spawner.spawn(ble::ble_task(ble::BleTaskConfig {
+            controller: ble_controller,
+            address_bytes: ble_mac,
+            local_name: ble_name,
+        })) {
+            defmt::panic!("spawn(ble_task) failed: {}", defmt::Debug2Format(&e));
         }
-        BLE_NAME.init(s).as_str()
-    };
-    defmt::info!("ble: advertising as {=str}", ble_name);
-    let ble_connector = match esp_radio::ble::controller::BleConnector::new(
-        radio,
-        peripherals.BT,
-        esp_radio::ble::Config::default(),
-    ) {
-        Ok(c) => c,
-        Err(e) => defmt::panic!(
-            "ble: BleConnector::new failed ({})",
-            defmt::Debug2Format(&e)
-        ),
-    };
-    let ble_controller: trouble_host::prelude::ExternalController<_, 20> =
-        trouble_host::prelude::ExternalController::new(ble_connector);
-    if let Err(e) = spawner.spawn(ble::ble_task(ble::BleTaskConfig {
-        controller: ble_controller,
-        address_bytes: ble_mac,
-        local_name: ble_name,
-    })) {
-        defmt::panic!("spawn(ble_task) failed: {}", defmt::Debug2Format(&e));
+    } else {
+        defmt::info!(
+            "ble: skipped — Wi-Fi SSID configured; BLE and Wi-Fi are mutually exclusive to fit internal SRAM"
+        );
     }
 
     if let Err(e) = spawner.spawn(stackchan_firmware::desktop_permission::desktop_permission_task())

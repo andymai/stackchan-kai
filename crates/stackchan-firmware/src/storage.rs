@@ -457,7 +457,8 @@ where
             let dst = root
                 .open_file_in_dir(&short, Mode::ReadWriteCreateOrTruncate)
                 .map_err(|_| StorageError::Write)?;
-            dst.write(rendered.as_bytes()).map_err(|_| StorageError::Write)?;
+            dst.write(rendered.as_bytes())
+                .map_err(|_| StorageError::Write)?;
             dst.flush().map_err(|_| StorageError::Write)?;
         }
         // Staging served its purpose (a crash-safe copy existed before we
