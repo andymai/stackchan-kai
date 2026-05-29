@@ -16,9 +16,20 @@ This page covers running the engine and pointing the firmware at it.
 The wire format (URL builders, the audio-query rate override, and the
 WAV decoder) lives in
 [`stackchan-tts::voicevox`](../crates/stackchan-tts/src/voicevox.rs);
-the firmware synthesis task that fetches and enqueues audio ships in a
-follow-up — until then `voicevox_url` is parsed and persisted but the
-on-device fetch path is not yet wired.
+the firmware synthesis task that fetches and enqueues audio lives in
+`stackchan_firmware::voicevox`.
+
+## When it speaks
+
+A configured engine voices the **sidecar reply** on the branch where
+the sidecar shipped text but no audio of its own (`"audio_url": null`,
+or the field absent — synthesis failed or was skipped sidecar-side).
+The reply text is handed to the synthesis task, which runs the two-step
+round-trip and enqueues the spoken WAV on the audio TX queue at normal
+priority (the same rank as emotion chirps). When the sidecar *does*
+return an `audio_url`, that audio plays instead and VoiceVox stays
+quiet — the sidecar's own TTS wins. Back-to-back replies coalesce:
+only the newest pending text is synthesised.
 
 ## Run the engine
 

@@ -408,10 +408,22 @@ pub async fn agent_sidecar_task(
             Ok(Ok(reply)) => reply.audio_url.clone(),
             _ => None,
         };
+        // When the sidecar shipped no audio of its own (synthesis
+        // failed or was skipped) and a VoiceVox engine is configured,
+        // hand the reply text to the synthesis task so the avatar still
+        // speaks. Snagged before `apply_outcome` consumes the reply.
+        let voicevox_text = match (&outcome, &audio_url) {
+            (Ok(Ok(reply)), None) if crate::voicevox::is_armed() => {
+                Some(String::from(reply.text.as_str()))
+            }
+            _ => None,
+        };
         apply_outcome(outcome);
 
         if let Some(path) = audio_url {
             dispatch_sidecar_audio(stack, &endpoint, &path, &bearer_token).await;
+        } else if let Some(text) = voicevox_text {
+            crate::voicevox::SYNTH_TEXT_TRIGGER.signal(text);
         }
     }
 }

@@ -51,6 +51,7 @@ pub mod storage;
 pub mod toast;
 pub mod touch;
 pub mod tracking_trace;
+pub mod voicevox;
 pub mod wake_word;
 pub mod wallclock;
 pub mod watchdog;
