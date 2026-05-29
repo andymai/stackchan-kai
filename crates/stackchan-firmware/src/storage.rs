@@ -23,10 +23,13 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::Delay;
 use embedded_hal::digital::OutputPin;
+use embedded_hal::spi::SpiBus;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use esp_hal::Blocking;
 use esp_hal::gpio::Output;
-use esp_hal::spi::master::Spi;
+use esp_hal::spi::Mode as SpiMode;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::time::Rate;
 
 use crate::sd_spi::SdSpiDevice;
 
@@ -300,11 +303,42 @@ where
         bus: &'static RefCell<Spi<'static, Blocking>>,
         cs: CS,
     ) -> Result<Self, StorageError> {
+        // SD spec priming: ≥74 SCK pulses at ≤400 kHz with no CS
+        // asserted, before any command. embedded-sdmmc 0.9.0's
+        // `SdCard` doc comment leaves this to the caller (see
+        // `sdcard::mod::26-33`). Some cards (e.g. `SanDisk` High
+        // Endurance 32 GB) need it; without it, the card answers CMD0
+        // with `R1=0x00` ("not idle") instead of the expected `0x01`
+        // and the driver spins in its retry loop. We borrow the bus
+        // directly, drop SCK to 400 kHz, write 10 dummy bytes (80
+        // clocks > 74 required) with both LCD CS and SD CS deasserted
+        // HIGH, then restore the LCD rate before handing the bus to
+        // `SdCard::new`.
+        {
+            let mut spi = bus.borrow_mut();
+            let prime_cfg = SpiConfig::default()
+                .with_frequency(Rate::from_hz(400_000))
+                .with_mode(SpiMode::_0);
+            spi.apply_config(&prime_cfg)
+                .map_err(|_| StorageError::Spi)?;
+            <Spi<'static, Blocking> as SpiBus>::write(&mut spi, &[0xFFu8; 10])
+                .map_err(|_| StorageError::Spi)?;
+            let lcd_cfg = SpiConfig::default()
+                .with_frequency(Rate::from_mhz(40))
+                .with_mode(SpiMode::_0);
+            spi.apply_config(&lcd_cfg).map_err(|_| StorageError::Spi)?;
+        }
         let sd_device = SdSpiDevice::new(bus, cs, Delay);
         let sd_card = SdCard::new(sd_device, Delay);
         // Force card init by querying capacity. Returns once the SD
-        // has answered ACMD41 and entered the data state.
+        // has answered ACMD41 and entered the data state. The SD-side
+        // bus rate is held at 400 kHz init speed by `sd_spi` until
+        // this point — see `sd_spi::SD_INIT_HZ`.
         sd_card.num_bytes().map_err(|_| StorageError::CardInit)?;
+        // Card is in data state; bump the SD-side SCK to 25 MHz so
+        // subsequent reads/writes (config, bonds, camera capture,
+        // wake-word model) don't pay the init-speed penalty.
+        crate::sd_spi::set_data_rate();
         let mgr = VolumeManager::new(sd_card, EpochTime);
         // Probe FAT volume 0 and immediately drop the handle — we
         // re-open per call so callers don't have to thread lifetimes.

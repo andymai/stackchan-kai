@@ -31,12 +31,53 @@
 #![allow(unsafe_code)]
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::{ErrorType, Operation, SpiBus, SpiDevice};
 use esp_hal::Blocking;
-use esp_hal::spi::master::Spi;
+use esp_hal::spi::Mode as SpiMode;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::time::Rate;
+
+/// LCD's SPI2 SCK rate, set at LCD bring-up in `main.rs`. Must match
+/// the `Rate::from_mhz(40)` in `crates/stackchan-firmware/src/main.rs`
+/// — we restore the bus to this rate at the end of every SD
+/// transaction so subsequent LCD `RefCellDevice` blits see the bus at
+/// the right speed. A mismatch here doesn't fail to compile; it just
+/// silently slows the LCD on every frame.
+const LCD_SCK_HZ: u32 = 40_000_000;
+
+/// SD-card SCK rate during init (CMD0 / CMD8 / ACMD41 / CMD58
+/// negotiation). The SD spec mandates ≤ 400 kHz before the card
+/// enters data state; running faster causes the init handshake to
+/// drop bits and `embedded-sdmmc` to spin in its retry loop at
+/// `sdcard::mod::424`. Confirmed against `SanDisk` High Endurance 32 GB.
+const SD_INIT_HZ: u32 = 400_000;
+
+/// SD-card SCK rate after init succeeds. 25 MHz is "default speed"
+/// per the SD spec — every SD card is required to support it in SPI
+/// mode. `Storage::mount` flips to this via [`set_data_rate`] once
+/// `SdCard::num_bytes()` confirms the card has entered data state.
+const SD_DATA_HZ: u32 = 25_000_000;
+
+/// SD-side SCK rate applied at the start of every SD transaction.
+/// Starts at [`SD_INIT_HZ`]; bumped to [`SD_DATA_HZ`] by
+/// [`set_data_rate`] once init has succeeded. Atomic so the
+/// `Storage::mount` path can mutate it without holding a `&mut` to
+/// an `SdSpiDevice` that `embedded-sdmmc`'s `SdCard` has consumed.
+static SD_SCK_HZ: AtomicU32 = AtomicU32::new(SD_INIT_HZ);
+
+/// Bump the SD-side SCK rate from init speed to data speed.
+///
+/// Called by `Storage::mount` after the SD card has finished
+/// CMD0/CMD8/ACMD41 negotiation and `num_bytes()` has confirmed the
+/// card is in data state. Until this point, every transaction runs at
+/// [`SD_INIT_HZ`] (400 kHz) so the init protocol can converge.
+pub fn set_data_rate() {
+    SD_SCK_HZ.store(SD_DATA_HZ, Ordering::Relaxed);
+}
 
 /// `GPIO_ENABLE1_W1TS_REG` — write `1` to set output-enable bits for
 /// pins 32–48. ESP32-S3 TRM, chapter 5.
@@ -137,6 +178,18 @@ where
         // `crates/stackchan-firmware/src/main.rs` (LCD path).
         let mut bus = self.bus.borrow_mut();
 
+        // Drop the SCK to an SD-compatible rate for the duration of
+        // this transaction. The LCD runs the bus at 40 MHz, which is
+        // 100× the SD spec's init ceiling — leaving the bus that fast
+        // makes some cards (e.g. SanDisk High Endurance 32 GB) fail
+        // CMD0/ACMD41 negotiation. We restore the LCD rate at the end
+        // of the transaction so the next LCD frame doesn't see a
+        // slowed bus.
+        let sd_cfg = SpiConfig::default()
+            .with_frequency(Rate::from_hz(SD_SCK_HZ.load(Ordering::Relaxed)))
+            .with_mode(SpiMode::_0);
+        bus.apply_config(&sd_cfg).map_err(|_| SdSpiError::Spi)?;
+
         // Switch GPIO35 from "LCD DC output" to "SD MISO input" before
         // pulling CS low. Pin floats; the SPI peripheral's MISO matrix
         // signal reads the externally-driven level from the SD card.
@@ -186,6 +239,15 @@ where
         // LCD transaction reuses the bus.
         set_gpio35_oe_high();
 
-        result.and(cs_result)
+        // Restore the LCD's SCK rate before releasing the bus borrow,
+        // regardless of inner success. The LCD's `RefCellDevice` does
+        // not re-apply its config on every transaction, so leaving the
+        // bus at SD speed would silently slow every subsequent frame.
+        let lcd_cfg = SpiConfig::default()
+            .with_frequency(Rate::from_hz(LCD_SCK_HZ))
+            .with_mode(SpiMode::_0);
+        let restore = bus.apply_config(&lcd_cfg).map_err(|_| SdSpiError::Spi);
+
+        result.and(cs_result).and(restore)
     }
 }
