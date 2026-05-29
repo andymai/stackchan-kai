@@ -25,10 +25,14 @@
 //!
 //! ## Calibration
 //!
-//! `PAN_TRIM_DEG` / `TILT_TRIM_DEG` are per-unit const trims applied at
-//! the driver edge: `commanded_pos = POSITION_CENTER + direction *
-//! (pose.axis + axis_trim) * POSITION_PER_DEGREE`. Rebuild after
-//! physical trim.
+//! [`PAN_TRIM_DEG`] / [`TILT_TRIM_DEG`] are the per-unit trim defaults
+//! applied at the driver edge: `commanded_pos = POSITION_CENTER +
+//! direction * (pose.axis + axis_trim) * POSITION_PER_DEGREE`. They are
+//! the compile-time fallback; [`ScsHead`] carries the live trim as
+//! runtime fields seeded from the boot config (`head.pan_trim_deg` /
+//! `head.tilt_trim_deg` in `STACKCHAN.RON`) via [`ScsHead::set_trims`],
+//! so a unit can be re-calibrated over `PUT /settings` without a
+//! reflash. A cold boot with no SD card falls back to the consts.
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, with_timeout};
@@ -104,12 +108,14 @@ pub static HEAD_POSE_ACTUAL_SIGNAL: Signal<CriticalSectionRawMutex, Pose> = Sign
 
 /// Operator-supplied head zero-point correction.
 ///
-/// Layered on top of the compile-time [`PAN_TRIM_DEG`] /
-/// [`TILT_TRIM_DEG`]: the const trims absorb the per-unit servo
-/// encoder offset (a hardware property of the assembled module);
+/// Layered on top of the per-unit head trim ([`PAN_TRIM_DEG`] /
+/// [`TILT_TRIM_DEG`], overridable from the boot config via
+/// [`ScsHead::set_trims`]): the trim absorbs the per-unit servo
+/// encoder offset (a durable property of the assembled module);
 /// `OFFSETS` absorbs day-of mounting / cabling differences that an
-/// operator wants to dial in without reflashing. Not yet enrolled in
-/// the SD-backed `RuntimeStore` — head offsets reset on reboot.
+/// operator wants to dial in live. These offsets persist in the
+/// SD-backed `RuntimeStore` (`/sd/RUNTIME.RON`) and are restored on
+/// boot; the trim persists separately in `/sd/STACKCHAN.RON`.
 pub static OFFSETS_SIGNAL: Signal<CriticalSectionRawMutex, HeadOffsets> = Signal::new();
 
 /// Operator-supplied head zero-point correction; latched in the head
@@ -184,18 +190,92 @@ mod head_offsets_tests {
     }
 }
 
+#[cfg(test)]
+mod trim_tests {
+    use super::*;
+    use scservo::Scservo;
+
+    /// A `Write` sink that drops everything — enough to construct an
+    /// `ScsHead` so the trim-field accessors can be exercised on host.
+    struct NullWrite;
+
+    impl embedded_io_async::ErrorType for NullWrite {
+        type Error = core::convert::Infallible;
+    }
+
+    impl Write for NullWrite {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn position_for_uses_supplied_trim() {
+        let neutral = ScsHead::<NullWrite>::position_for(0.0, 0.0, PAN_DIRECTION);
+        let trimmed = ScsHead::<NullWrite>::position_for(0.0, 10.0, PAN_DIRECTION);
+        let direct = ScsHead::<NullWrite>::position_for(10.0, 0.0, PAN_DIRECTION);
+        assert_eq!(trimmed, direct);
+        assert_ne!(trimmed, neutral);
+    }
+
+    #[test]
+    fn deg_for_inverts_position_for_with_trim() {
+        let trim = 49.0;
+        let pos = ScsHead::<NullWrite>::position_for(12.0, trim, TILT_DIRECTION);
+        let back = ScsHead::<NullWrite>::deg_for(pos, trim, TILT_DIRECTION);
+        assert!((back - 12.0).abs() < 1.0, "round-trip drift: {back}");
+    }
+
+    #[test]
+    fn new_seeds_compile_default_trims() {
+        let head = ScsHead::new(Scservo::new(NullWrite));
+        assert!((head.pan_trim_deg - PAN_TRIM_DEG).abs() < f32::EPSILON);
+        assert!((head.tilt_trim_deg - TILT_TRIM_DEG).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn set_trims_overrides_defaults() {
+        let mut head = ScsHead::new(Scservo::new(NullWrite));
+        head.set_trims(2.0, 45.0);
+        assert!((head.pan_trim_deg - 2.0).abs() < f32::EPSILON);
+        assert!((head.tilt_trim_deg - 45.0).abs() < f32::EPSILON);
+    }
+}
+
 /// Feetech SCServo-backed head driver.
 pub struct ScsHead<W> {
     /// Underlying `SCServo` protocol driver on the UART bus.
     bus: Scservo<W>,
+    /// Per-unit pan trim in degrees, seeded from [`PAN_TRIM_DEG`] and
+    /// overridable from the boot config via [`Self::set_trims`].
+    pan_trim_deg: f32,
+    /// Per-unit tilt trim in degrees, seeded from [`TILT_TRIM_DEG`] and
+    /// overridable from the boot config via [`Self::set_trims`].
+    tilt_trim_deg: f32,
 }
 
 impl<W: Write> ScsHead<W> {
-    /// Wrap an [`Scservo`] bus driver. The caller is responsible for
-    /// configuring the UART baud rate (1 Mbaud for SCS defaults).
+    /// Wrap an [`Scservo`] bus driver, seeding the per-unit trims to the
+    /// compile-time [`PAN_TRIM_DEG`] / [`TILT_TRIM_DEG`] defaults. The
+    /// caller is responsible for configuring the UART baud rate
+    /// (1 Mbaud for SCS defaults). Use [`Self::set_trims`] to apply a
+    /// boot-config override once the SD config is loaded.
     #[must_use]
     pub const fn new(bus: Scservo<W>) -> Self {
-        Self { bus }
+        Self {
+            bus,
+            pan_trim_deg: PAN_TRIM_DEG,
+            tilt_trim_deg: TILT_TRIM_DEG,
+        }
+    }
+
+    /// Override the per-unit pan / tilt trims from the boot config.
+    /// Applied after construction (and after the boot-nod gesture) once
+    /// `/sd/STACKCHAN.RON` has been parsed; takes effect on the next
+    /// `set_pose` / `read_pose`.
+    pub const fn set_trims(&mut self, pan_trim_deg: f32, tilt_trim_deg: f32) {
+        self.pan_trim_deg = pan_trim_deg;
+        self.tilt_trim_deg = tilt_trim_deg;
     }
 
     /// Borrow the wrapped bus mutably. Needed by firmware `main` to
@@ -269,8 +349,8 @@ impl<U: Read + Write> ScsHead<U> {
     pub async fn read_pose(&mut self) -> Result<Pose, scservo::Error<U::Error>> {
         let pan_pos = self.bus.read_position(YAW_SERVO_ID).await?;
         let tilt_pos = self.bus.read_position(PITCH_SERVO_ID).await?;
-        let pan_deg = Self::deg_for(pan_pos, PAN_TRIM_DEG, PAN_DIRECTION);
-        let tilt_deg = Self::deg_for(tilt_pos, TILT_TRIM_DEG, TILT_DIRECTION);
+        let pan_deg = Self::deg_for(pan_pos, self.pan_trim_deg, PAN_DIRECTION);
+        let tilt_deg = Self::deg_for(tilt_pos, self.tilt_trim_deg, TILT_DIRECTION);
         Ok(Pose::new(pan_deg, tilt_deg))
     }
 }
@@ -279,8 +359,8 @@ impl<U: Read + Write> HeadDriver for ScsHead<U> {
     type Error = scservo::Error<U::Error>;
 
     async fn set_pose(&mut self, pose: Pose, _now: Instant) -> Result<(), Self::Error> {
-        let pan_pos = Self::position_for(pose.pan_deg, PAN_TRIM_DEG, PAN_DIRECTION);
-        let tilt_pos = Self::position_for(pose.tilt_deg, TILT_TRIM_DEG, TILT_DIRECTION);
+        let pan_pos = Self::position_for(pose.pan_deg, self.pan_trim_deg, PAN_DIRECTION);
+        let tilt_pos = Self::position_for(pose.tilt_deg, self.tilt_trim_deg, TILT_DIRECTION);
         self.bus
             .write_position(YAW_SERVO_ID, pan_pos, MOVE_TIME_MS, MOVE_SPEED)
             .await?;

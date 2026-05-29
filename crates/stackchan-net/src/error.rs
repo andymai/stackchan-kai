@@ -91,6 +91,14 @@ pub enum ConfigError {
     #[error("tracker.target_smoothing_alpha must be in [0.05, 1.0]; got {0}")]
     InvalidSmoothingAlpha(f32),
 
+    /// `head.pan_trim_deg` or `head.tilt_trim_deg` was non-finite or
+    /// outside `[-90.0, 90.0]`. A head trim is a small per-unit
+    /// zero-point correction; values past that range can't be physical
+    /// and would clamp to a servo rail. The carried `f32` is the
+    /// offending value.
+    #[error("head trim must be a finite value in [-90.0, 90.0]; got {0}")]
+    InvalidHeadTrim(f32),
+
     /// Hand-rolled bare parser failure (firmware-side path that
     /// avoids `serde + ron`). Carries a short reason string in lieu
     /// of `ron`'s line/col `SpannedError` — the firmware logs this

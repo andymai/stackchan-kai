@@ -1114,7 +1114,7 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let mut delay = Delay;
-    let board_io = board::bringup(
+    let mut board_io = board::bringup(
         peripherals.I2C0,
         peripherals.UART1,
         peripherals.GPIO12,
@@ -1671,6 +1671,19 @@ async fn main(spawner: Spawner) -> ! {
     )) {
         defmt::panic!("spawn render_task failed: {}", defmt::Debug2Format(&e));
     }
+    // Seed the per-unit head trim from the boot config before the head
+    // task takes ownership of the driver. The boot-nod in `bringup` ran
+    // with the compile-time defaults; from here the live trim overrides
+    // them. No SD / no config block leaves the compile-time defaults in
+    // place (offline-first).
+    board_io
+        .head
+        .set_trims(net_config.head.pan_trim_deg, net_config.head.tilt_trim_deg);
+    defmt::info!(
+        "head trim: pan={=f32}° tilt={=f32}° (boot config)",
+        net_config.head.pan_trim_deg,
+        net_config.head.tilt_trim_deg,
+    );
     if let Err(e) = spawner.spawn(head_task(board_io.head)) {
         defmt::panic!("spawn head_task failed: {}", defmt::Debug2Format(&e));
     }
