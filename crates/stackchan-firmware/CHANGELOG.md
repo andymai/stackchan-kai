@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.5](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.4...stackchan-firmware-v0.113.5) (2026-05-29)
+
+
+### Bug Fixes
+
+* **firmware:** get Wi-Fi online — BLE/Wi-Fi mutual exclusion + socket pool sizing ([#581](https://github.com/andymai/stackchan-kai/issues/581)) ([a115319](https://github.com/andymai/stackchan-kai/commit/a1153192a805d261287d504f06dd1265cfdfe74b))
+
 ## [0.113.4](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.3...stackchan-firmware-v0.113.4) (2026-05-29)
 
 
