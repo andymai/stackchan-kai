@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.112.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.111.1...stackchan-firmware-v0.112.0) (2026-05-29)
+
+
+### Features
+
+* **tools:** bench-trim calibration parser + trim suggester ([#565](https://github.com/andymai/stackchan-kai/issues/565)) ([cc07e44](https://github.com/andymai/stackchan-kai/commit/cc07e4400ed388cdde938975991e10243b7cb545))
+
 ## [0.111.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.111.0...stackchan-firmware-v0.111.1) (2026-05-29)
 
 ## [0.111.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.110.0...stackchan-firmware-v0.111.0) (2026-05-29)

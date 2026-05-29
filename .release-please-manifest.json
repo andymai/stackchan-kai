@@ -20,5 +20,5 @@
   "crates/scservo": "0.6.0",
   "crates/si12t": "0.5.0",
   "crates/tracker": "0.12.21",
-  "crates/stackchan-firmware": "0.111.1"
+  "crates/stackchan-firmware": "0.112.0"
 }
