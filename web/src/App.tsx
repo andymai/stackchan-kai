@@ -18,6 +18,7 @@ import { Events } from "./components/Events";
 import { Recovery } from "./components/Recovery";
 import { Sensors } from "./components/Sensors";
 import { Settings } from "./components/Settings";
+import { Appearance } from "./components/Appearance";
 import { Pair } from "./components/Pair";
 import { Speak } from "./components/Speak";
 import { TaskHealth } from "./components/TaskHealth";
@@ -214,6 +215,7 @@ export function App() {
               <Match when={section() === "system"}>
                 <PageHead title="System" />
                 <Settings />
+                <Appearance />
                 <Recovery />
               </Match>
             </Switch>

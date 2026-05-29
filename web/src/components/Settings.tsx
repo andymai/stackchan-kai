@@ -59,11 +59,14 @@ export function Settings() {
       }
       const fresh = (await freshRes.json()) as SettingsType;
       const audio = snapshot()?.audio ?? fresh.audio;
-      // Spread `fresh.behavior` / `fresh.esp_now` / `fresh.tracker` so
-      // fields edited elsewhere (Calibration, hand-edited STACKCHAN.RON,
-      // operator-set wake_word/chime flags, ESP-NOW peer config) survive
-      // a save through this form. Only the keys this form binds get
-      // overwritten; everything else round-trips untouched.
+      // Carry through `fresh.tracker` / `fresh.esp_now` / `fresh.head` /
+      // `fresh.appearance` and the unbound `behavior` keys so fields
+      // edited elsewhere (Calibration, the Appearance panel, POST /palette,
+      // POST /face-geometry, hand-edited STACKCHAN.RON, operator-set
+      // wake_word/chime flags, ESP-NOW peer config) survive a save through
+      // this form. The PUT parser defaults any omitted block to its zero
+      // value, so a block left out here is silently wiped — only the keys
+      // this form binds may be overwritten, everything else round-trips.
       const body: SettingsType = {
         wifi: { ssid: ssid(), psk: psk(), country: country().toUpperCase() },
         mdns: { hostname: hostname() },
@@ -83,6 +86,8 @@ export function Settings() {
           agent_sidecar_url: sidecarUrl(),
           agent_sidecar_token: sidecarToken(),
         },
+        head: fresh.head,
+        appearance: fresh.appearance,
       };
       const newToken = body.auth.token;
       const res = await authedFetch("/settings", {
