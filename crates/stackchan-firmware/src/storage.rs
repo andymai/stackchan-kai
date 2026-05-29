@@ -24,7 +24,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::Delay;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::SpiBus;
-use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
+use embedded_sdmmc::{LfnBuffer, Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use esp_hal::Blocking;
 use esp_hal::gpio::Output;
 use esp_hal::spi::Mode as SpiMode;
@@ -365,8 +365,23 @@ where
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
         let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
+        // CONFIG_FILE ("STACKCHAN.RON") has a 9-char base name, which is not a
+        // valid FAT 8.3 short name — `open_file_in_dir` rejects it outright with
+        // `NameTooLong`. The card stores it with a long-filename entry and a
+        // mangled short name (e.g. `STACKC~1.RON`), so resolve the short name by
+        // matching the long name, then open by that.
+        let mut lfn_storage = [0u8; 64];
+        let mut lfn = LfnBuffer::new(&mut lfn_storage);
+        let mut short = None;
+        root.iterate_dir_lfn(&mut lfn, |entry, long| {
+            if short.is_none() && long.is_some_and(|l| l.eq_ignore_ascii_case(CONFIG_FILE)) {
+                short = Some(entry.name.clone());
+            }
+        })
+        .map_err(|_| StorageError::Volume)?;
+        let short = short.ok_or(StorageError::FileNotFound)?;
         let file = root
-            .open_file_in_dir(CONFIG_FILE, Mode::ReadOnly)
+            .open_file_in_dir(&short, Mode::ReadOnly)
             .map_err(|_| StorageError::FileNotFound)?;
 
         let len = file.length();
