@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.108.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.107.0...stackchan-firmware-v0.108.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** reassemble fragmented BluFi frames ([#554](https://github.com/andymai/stackchan-kai/issues/554)) ([cb9cbbf](https://github.com/andymai/stackchan-kai/commit/cb9cbbf40fe07e01e6ed7479511228007d337112))
+
 ## [0.107.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.106.0...stackchan-firmware-v0.107.0) (2026-05-29)
 
 
