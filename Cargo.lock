@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.22.15"
+version = "0.23.0"
 dependencies = [
  "eframe",
  "embedded-graphics",
