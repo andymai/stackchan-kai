@@ -1478,6 +1478,18 @@ async fn main(spawner: Spawner) -> ! {
         );
     }
 
+    // VoiceVox synthesis — opt-in via `behavior.voicevox_url`. Empty
+    // URL parks the task; a configured URL turns a sidecar reply with
+    // no sidecar-synthesised audio into a two-step VoiceVox round-trip
+    // that enqueues the spoken WAV on `AUDIO_TX_QUEUE`.
+    if let Err(e) = spawner.spawn(stackchan_firmware::voicevox::voicevox_task(
+        net_stack,
+        net_config.behavior.voicevox_url.clone(),
+        net_config.behavior.voicevox_speaker_id,
+    )) {
+        defmt::panic!("spawn(voicevox_task) failed: {}", defmt::Debug2Format(&e));
+    }
+
     // On-device wake-word detector — opt-in via
     // `behavior.wake_word_enabled` *and* the presence of
     // `/sd/WAKE_WORD.tflite`. The detector subscribes to

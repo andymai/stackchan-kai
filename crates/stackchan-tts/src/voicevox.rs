@@ -32,13 +32,13 @@
 //! but HTTP I/O on this firmware target is async (`embassy-net`), so
 //! `render` cannot itself perform the two synthesis round-trips. The
 //! end-to-end path instead runs in a dedicated async firmware task
-//! that fetches + decodes the WAV (reusing this module's host-tested
-//! [`with_output_sampling_rate`] / [`wav_to_samples`] helpers) and
-//! enqueues a [`BufferedSource`] directly onto the audio TX queue.
-//! That task lives in the firmware crate and ships in a follow-up PR;
-//! until then [`VoiceVoxBackend::render`] returns
-//! [`crate::RenderError::BackendUnavailable`] (the backend is a config
-//! carrier + `can_handle` gate, not the synthesis driver).
+//! (`stackchan_firmware::voicevox`) that fetches + decodes the WAV
+//! (reusing this module's host-tested [`with_output_sampling_rate`] /
+//! [`wav_to_samples`] helpers) and enqueues a [`BufferedSource`]
+//! directly onto the audio TX queue. Because that task — not the
+//! backend — is the synthesis driver, [`VoiceVoxBackend::render`]
+//! stays [`crate::RenderError::BackendUnavailable`]: the backend is a
+//! config carrier + `can_handle` gate.
 //!
 //! [`AivisSpeech`]: https://github.com/Aivis-Project/AivisSpeech-Engine
 //! [`AudioSource`]: crate::AudioSource
@@ -419,10 +419,11 @@ impl AudioSource for BufferedSource {
 /// `VoiceVox` HTTP TTS backend.
 ///
 /// Carries the engine config (`host` / `port` / `speaker_id`) and
-/// will eventually own the firmware-side fetcher channel. Today
-/// [`Self::render`] returns [`RenderError::BackendUnavailable`] —
-/// the backend skeleton is in place, the firmware HTTP integration
-/// ships in a follow-up PR.
+/// gates routing via [`Self::can_handle`]. [`Self::render`] returns
+/// [`RenderError::BackendUnavailable`] by design: the synchronous
+/// `render` can't drive the async two-step HTTP round-trip, so the
+/// firmware task `stackchan_firmware::voicevox` owns synthesis (see the
+/// module docs).
 #[derive(Debug, Clone)]
 pub struct VoiceVoxBackend {
     /// Engine connection settings.
@@ -450,9 +451,10 @@ impl SpeechBackend for VoiceVoxBackend {
     }
 
     fn render(&self, _utterance: &Utterance) -> Result<Box<dyn AudioSource>, RenderError> {
-        // Firmware HTTP fetcher not yet wired; return a clear-cause
-        // error so the speech router falls through to BakedBackend
-        // or surfaces the failure to the caller.
+        // Synthesis is async HTTP, which this synchronous trait can't
+        // drive; the firmware `voicevox` task owns the round-trip and
+        // enqueues audio directly. Return a clear-cause error so the
+        // speech router falls through to BakedBackend.
         Err(RenderError::BackendUnavailable)
     }
 }
@@ -777,8 +779,10 @@ mod tests {
     }
 
     #[test]
-    fn voicevox_render_returns_unavailable_until_firmware_path_lands() {
-        // Skeleton-only — firmware HTTP integration ships separately.
+    fn voicevox_render_returns_unavailable_by_design() {
+        // The synchronous trait can't drive async HTTP; the firmware
+        // `voicevox` task is the synthesis driver, so render stays
+        // BackendUnavailable on purpose.
         use stackchan_core::voice::{Locale, Priority, SpeechStyle};
         let backend = VoiceVoxBackend::new(VoiceVoxConfig::default());
         let r = ContentRef::new(1).expect("non-zero");
