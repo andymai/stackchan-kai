@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.107.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.106.0...stackchan-firmware-v0.107.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** dynamic SD-SPI clock rate (400 kHz init -&gt; 25 MHz data) ([#552](https://github.com/andymai/stackchan-kai/issues/552)) ([fe8e252](https://github.com/andymai/stackchan-kai/commit/fe8e252c65ae6a3c6332e6ec0d752b7183ca6b00))
+
 ## [0.106.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.105.0...stackchan-firmware-v0.106.0) (2026-05-20)
 
 
