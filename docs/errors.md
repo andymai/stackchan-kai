@@ -111,6 +111,7 @@ RON config parse + validation. Host crate; firmware wraps with `Debug2Format` fo
 - `NoSntpServers` — `time.sntp_servers` empty. Firmware needs at least one candidate.
 - `EmptySntpServer(usize)` — a `time.sntp_servers` entry was empty / whitespace-only. The `usize` carries the offending index. Caught at parse time so the firmware's "try in order" loop doesn't burn its full per-server timeout on an unresolvable hostname before falling back.
 - `InvalidVolumePct(u8)` — `audio.volume_pct` was outside `0..=100`. The wire format is a percentile; the firmware maps it linearly across the AW88298 dB range. The `u8` carries the offending value.
+- `InvalidHeadTrim(f32)` — `head.pan_trim_deg` or `head.tilt_trim_deg` was non-finite or outside `[-90.0, 90.0]`. The trim is a small per-unit zero-point correction (the reference unit's tilt encoder offset is ~49°); a value past that range can't be physical and would clamp to a servo rail. The `f32` carries the offending value.
 
 ### `stackchan_tts::RenderError`
 Speech-backend rendering. Returned from `SpeechBackend::render` when a

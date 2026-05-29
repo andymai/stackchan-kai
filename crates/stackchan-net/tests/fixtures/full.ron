@@ -17,4 +17,8 @@
             "pool.ntp.org",
         ],
     ),
+    head: (
+        pan_trim_deg: -3.0,
+        tilt_trim_deg: 47.5,
+    ),
 )
