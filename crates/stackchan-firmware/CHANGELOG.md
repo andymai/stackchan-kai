@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.4](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.3...stackchan-firmware-v0.113.4) (2026-05-29)
+
+
+### Bug Fixes
+
+* **firmware:** make STACKCHAN.RON writeback work via short-name overwrite ([#579](https://github.com/andymai/stackchan-kai/issues/579)) ([ec7b458](https://github.com/andymai/stackchan-kai/commit/ec7b458853da2607b5bd62220a38beb51734e1b9))
+
 ## [0.113.3](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.2...stackchan-firmware-v0.113.3) (2026-05-29)
 
 
