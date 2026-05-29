@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.13.0...stackchan-net-v0.14.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** head pan/tilt trim as boot-config override ([#558](https://github.com/andymai/stackchan-kai/issues/558)) ([b5a1a23](https://github.com/andymai/stackchan-kai/commit/b5a1a23d442bed0a44a92a2484334f6437229075))
+
 ## [0.13.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.12.0...stackchan-net-v0.13.0) (2026-05-29)
 
 
