@@ -1304,6 +1304,64 @@ mod tests {
         }
     }
 
+    /// `DrawTarget` that records the coordinate of every committed pixel,
+    /// so geometry tests can assert on the shape an arc / rounded-rect
+    /// actually emitted (the production draw fns return no point array).
+    struct Capture {
+        points: alloc::vec::Vec<EgPoint>,
+    }
+
+    impl Capture {
+        fn new() -> Self {
+            Self {
+                points: alloc::vec::Vec::new(),
+            }
+        }
+
+        fn min_x(&self) -> i32 {
+            self.points.iter().map(|p| p.x).min().expect("no points")
+        }
+
+        fn max_x(&self) -> i32 {
+            self.points.iter().map(|p| p.x).max().expect("no points")
+        }
+
+        fn min_y(&self) -> i32 {
+            self.points.iter().map(|p| p.y).min().expect("no points")
+        }
+
+        fn max_y(&self) -> i32 {
+            self.points.iter().map(|p| p.y).max().expect("no points")
+        }
+
+        /// y values seen at the given x column (the arc endpoints, when
+        /// `x` is the arc's extreme column).
+        fn y_at_x(&self, x: i32) -> impl Iterator<Item = i32> + '_ {
+            self.points.iter().filter(move |p| p.x == x).map(|p| p.y)
+        }
+    }
+
+    impl OriginDimensions for Capture {
+        fn size(&self) -> Size {
+            Size::new(320, 240)
+        }
+    }
+
+    impl DrawTarget for Capture {
+        type Color = Rgb565;
+        type Error = core::convert::Infallible;
+
+        fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Self::Color>>,
+        {
+            for Pixel(point, _) in pixels {
+                self.points.push(point);
+            }
+            Ok(())
+        }
+    }
+
     fn draw_face(face: &Face) -> Sink {
         let mut sink = Sink::new();
         face.draw(&mut sink).expect("Sink is infallible");
@@ -1424,11 +1482,159 @@ mod tests {
 
     #[test]
     fn face_with_blink_phase_exercises_closed_eye_path() {
-        // Closed-eye phase routes through draw_horizontal_line
-        // instead of the open-eye rounded-rect.
+        // Closed-eye phase routes through draw_parabolic_arc (the
+        // closed-eye smile arc) instead of the open-eye rounded-rect.
         let mut face = Face::default();
         face.left_eye.phase = EyePhase::Closed;
         face.right_eye.phase = EyePhase::Closed;
         let _ = draw_face(&face);
+    }
+
+    // ============================================================
+    // Geometry assertions for the face-primitive helpers.
+    // ============================================================
+
+    #[test]
+    fn bubble_rect_centers_and_clamps() {
+        // Short text: width is text-derived and the rect is centred on
+        // the framebuffer.
+        let (top_left, size) = bubble_rect(2);
+        let total_w = 2 * BUBBLE_GLYPH_WIDTH + 2 * BUBBLE_HORIZONTAL_PADDING;
+        let width = i32::try_from(size.width).expect("bubble width fits in i32");
+        let height = i32::try_from(size.height).expect("bubble height fits in i32");
+        assert_eq!(width, total_w);
+        assert_eq!(top_left.x, (BUBBLE_FB_WIDTH - total_w) / 2);
+        assert_eq!(top_left.y, BUBBLE_ANCHOR_Y);
+        assert_eq!(height, BUBBLE_GLYPH_HEIGHT + 2 * BUBBLE_VERTICAL_PADDING);
+
+        // Runaway length: width clamps at BUBBLE_MAX_WIDTH and the rect
+        // never crosses the edge-clearance margin.
+        let (clamped_top_left, clamped_size) = bubble_rect(1_000);
+        let clamped_width = i32::try_from(clamped_size.width).expect("bubble width fits in i32");
+        assert_eq!(clamped_width, BUBBLE_MAX_WIDTH);
+        assert!(clamped_top_left.x >= BUBBLE_EDGE_CLEARANCE);
+        assert!(clamped_top_left.x + clamped_width <= BUBBLE_FB_WIDTH - BUBBLE_EDGE_CLEARANCE);
+    }
+
+    #[test]
+    fn parabolic_arc_endpoints_on_baseline() {
+        // Endpoints carry no sag (bulge_num = 0 there), so both sit on
+        // the baseline cy at cx +/- half_w regardless of sag magnitude.
+        let (cx, cy, half_w) = (160, 110, 48u16);
+        let mut target = Capture::new();
+        draw_parabolic_arc(cx, cy, half_w, 20, stroke(Rgb565::BLACK, 1), &mut target)
+            .expect("Capture is infallible");
+
+        assert_eq!(target.min_x(), cx - i32::from(half_w));
+        assert_eq!(target.max_x(), cx + i32::from(half_w));
+        for y in target.y_at_x(cx - i32::from(half_w)) {
+            assert_eq!(y, cy, "left endpoint sits on baseline");
+        }
+        for y in target.y_at_x(cx + i32::from(half_w)) {
+            assert_eq!(y, cy, "right endpoint sits on baseline");
+        }
+    }
+
+    #[test]
+    fn parabolic_arc_sag_sign_controls_bulge_direction() {
+        let (cx, cy, half_w) = (160, 110, 48u16);
+
+        // Positive sag: midpoint dips below the baseline (larger y).
+        let mut down = Capture::new();
+        draw_parabolic_arc(cx, cy, half_w, 20, stroke(Rgb565::BLACK, 1), &mut down)
+            .expect("Capture is infallible");
+        assert_eq!(down.max_y(), cy + 20, "positive sag reaches cy + sag");
+        assert_eq!(down.min_y(), cy, "no point rises above baseline");
+
+        // Negative sag: midpoint lifts above the baseline (smaller y).
+        let mut up = Capture::new();
+        draw_parabolic_arc(cx, cy, half_w, -20, stroke(Rgb565::BLACK, 1), &mut up)
+            .expect("Capture is infallible");
+        assert_eq!(up.min_y(), cy - 20, "negative sag reaches cy + sag (above)");
+        assert_eq!(up.max_y(), cy, "no point dips below baseline");
+    }
+
+    #[test]
+    fn parabolic_arc_renders_continuous_full_width_curve() {
+        // The polyline rasterizes into a continuous run of pixels, so the
+        // covered x columns span the whole arc width with no interior
+        // gaps. half_w >= ARC_SEGMENTS keeps every sample step >= 1px so
+        // the curve never collapses onto a single column.
+        let half_w = u16::try_from(ARC_SEGMENTS).expect("ARC_SEGMENTS fits in u16");
+        let (cx, cy) = (160, 110);
+        let mut target = Capture::new();
+        draw_parabolic_arc(cx, cy, half_w, 0, stroke(Rgb565::BLACK, 1), &mut target)
+            .expect("Capture is infallible");
+
+        let mut xs: alloc::vec::Vec<i32> = target.points.iter().map(|p| p.x).collect();
+        xs.sort_unstable();
+        xs.dedup();
+        assert_eq!(*xs.first().expect("arc has pixels"), cx - i32::from(half_w));
+        assert_eq!(*xs.last().expect("arc has pixels"), cx + i32::from(half_w));
+        assert_eq!(
+            xs.len(),
+            2 * usize::from(half_w) + 1,
+            "every column across the arc width is covered (continuous curve)",
+        );
+    }
+
+    #[test]
+    fn closed_eye_arc_lifts_midpoint_above_baseline() {
+        // EyePhase::Closed routes through draw_parabolic_arc with a
+        // negative sag, so the arc's midpoint sits above the eye centre.
+        let eye = Eye {
+            center: crate::face::Point::new(160, 110),
+            radius_x: 20,
+            radius_y: 20,
+            phase: EyePhase::Closed,
+            weight: 100,
+            open_weight: 100,
+        };
+        let mut target = Capture::new();
+        draw_eye(&eye, 0, SCALE_DEFAULT, Rgb565::BLACK, &mut target)
+            .expect("Capture is infallible");
+
+        // Negative sag lifts the polyline centerline midpoint to
+        // `cy + expected_sag` (above the baseline). The EYE_ARC_WIDTH
+        // stroke spreads pixels further up, so the captured apex sits at
+        // or above that centerline target.
+        let expected_sag =
+            -i32::from(scale_radius(eye.radius_y, SCALE_DEFAULT)) / CLOSED_EYE_SAG_DIVISOR;
+        assert!(expected_sag < 0, "closed-eye sag must be negative (upward)");
+        assert!(
+            target.min_y() <= eye.center.y + expected_sag,
+            "closed-eye arc apex reaches the lifted centerline",
+        );
+        // The upward smile never droops well below the eye centre: the
+        // lowest pixel stays within the stroke half-width of the centre.
+        assert!(
+            target.max_y()
+                <= eye.center.y + i32::try_from(EYE_ARC_WIDTH).expect("stroke width fits in i32"),
+            "closed-eye arc stays at the eye centre baseline",
+        );
+    }
+
+    #[test]
+    fn open_eye_corner_radius_clamps_at_low_weight() {
+        // At low weight the rounded-rect is shorter than its corner
+        // radius would imply, so the corner clamps to height/2 to keep
+        // mid-blink frames valid. Assert via the oracle expression.
+        let eye = Eye {
+            center: crate::face::Point::new(160, 110),
+            radius_x: 20,
+            radius_y: 20,
+            phase: EyePhase::Open,
+            weight: 5,
+            open_weight: 100,
+        };
+        let scaled_rx = scale_radius(eye.radius_x, SCALE_DEFAULT);
+        let scaled_vertical = scale_radius(eye.radius_y, SCALE_DEFAULT);
+        let height = scaled_height(scaled_vertical, eye.weight);
+        assert!(height > 0, "fixture must exercise the open-eye rect branch");
+
+        let unclamped = u32::from(scaled_rx / EYE_CORNER_DIVISOR);
+        let clamped = unclamped.min(u32::from(height / 2));
+        assert_eq!(clamped, u32::from(height / 2), "half-height clamp engaged");
+        assert!(clamped < unclamped, "clamp actually reduced the corner");
     }
 }
