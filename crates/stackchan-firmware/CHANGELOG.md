@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.110.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.109.0...stackchan-firmware-v0.110.0) (2026-05-29)
+
+
+### Features
+
+* **firmware:** head pan/tilt trim as boot-config override ([#558](https://github.com/andymai/stackchan-kai/issues/558)) ([b5a1a23](https://github.com/andymai/stackchan-kai/commit/b5a1a23d442bed0a44a92a2484334f6437229075))
+
 ## [0.109.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.108.0...stackchan-firmware-v0.109.0) (2026-05-29)
 
 
