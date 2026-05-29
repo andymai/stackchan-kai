@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.22.15...stackchan-sim-v0.23.0) (2026-05-29)
+
+
+### Features
+
+* **sim:** offline STACKCHAN.RON appearance CLI ([#569](https://github.com/andymai/stackchan-kai/issues/569)) ([9792aa3](https://github.com/andymai/stackchan-kai/commit/9792aa312daeb75dca97ec5b547e5ad415340c45))
+
 ## [0.22.15](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.22.14...stackchan-sim-v0.22.15) (2026-05-29)
 
 ## [0.22.14](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.22.13...stackchan-sim-v0.22.14) (2026-05-29)
