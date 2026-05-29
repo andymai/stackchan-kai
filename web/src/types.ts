@@ -65,6 +65,25 @@ export type Settings = {
   tracker: Tracker;
   esp_now: EspNow;
   behavior: Behavior;
+  head: HeadTrim;
+  appearance: Appearance;
+};
+
+// Per-unit head zero-point trim, applied at boot. Mirrors the
+// `head` block emitted by `render_settings_json` in
+// `crates/stackchan-net/src/bare_json.rs`.
+export type HeadTrim = {
+  pan_trim_deg: number;
+  tilt_trim_deg: number;
+};
+
+// Boot-pinned default appearance. Empty strings mean "not pinned" —
+// the firmware falls back to the variant default. Wire vocabularies
+// mirror `Palette::wire_str` / `FaceGeometry::wire_str` in
+// `crates/stackchan-core/src/{palette,face}.rs`.
+export type Appearance = {
+  palette: string;
+  face_geometry: string;
 };
 
 export type EspNow = {

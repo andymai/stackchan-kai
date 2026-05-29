@@ -1838,6 +1838,38 @@ mod tests {
     }
 
     #[test]
+    fn omitted_appearance_and_head_blocks_reset_to_default() {
+        // The parser defaults any omitted top-level block to its zero
+        // value and `merge_settings_with_current` takes `head` /
+        // `appearance` from `new` verbatim — neither block carries a
+        // redaction sentinel. A PUT body that drops these blocks
+        // therefore wipes a pinned boot appearance / head trim. This
+        // pins that contract so the dashboard (and any other client)
+        // is forced to round-trip both blocks; the regression this
+        // guards is a form that omits them.
+        let current = full_config();
+        let body = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let parsed = parse_settings_json(body).unwrap();
+        let merged = merge_settings_with_current(parsed, &current);
+        assert_eq!(merged.appearance, AppearanceConfig::default());
+        assert_eq!(merged.head, HeadTrim::default());
+    }
+
+    #[test]
+    fn echoed_appearance_and_head_survive_merge() {
+        // The dashboard's fix: a PUT body that carries the appearance
+        // and head blocks read from GET /settings round-trips them
+        // untouched through parse + merge, even when other fields change.
+        let current = full_config();
+        let rendered = render_settings_json(&current, true).unwrap();
+        let mut parsed = parse_settings_json(&rendered).unwrap();
+        parsed.wifi.ssid = "different".to_string();
+        let merged = merge_settings_with_current(parsed, &current);
+        assert_eq!(merged.appearance, current.appearance);
+        assert_eq!(merged.head, current.head);
+    }
+
+    #[test]
     fn render_uses_psk_redacted_constant() {
         // Pin: the sentinel string emitted by render is the same
         // string parse rejects.

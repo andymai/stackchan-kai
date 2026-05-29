@@ -376,6 +376,15 @@ the rest of the body back from `GET /settings` unchanged — the
 `***` sentinels for `wifi.psk` and `auth.token` will be merged
 against the persisted values rather than clobbering them.
 
+Unlike the redacted secrets, the `appearance` and `head` blocks have
+no preserve-on-echo sentinel: an omitted block parses to its default
+(empty appearance / compile-time head trim) and overwrites the
+persisted value. Callers **must** round-trip both blocks from
+`GET /settings` or they reset the operator's pinned boot appearance
+and per-unit head trim. The dashboard handles this for you — the
+System page's Boot appearance panel edits `appearance`, and the
+Settings form carries `appearance` + `head` through every save.
+
 Full-replace. The server validates the body via
 `stackchan_net::validate` (rejects empty SSID, invalid country code,
 invalid hostname, empty SNTP list) and then writes back atomically:
