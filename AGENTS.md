@@ -44,6 +44,12 @@ translate that into face / motor.
 4. Add or update a `crates/stackchan-firmware/examples/<chip>_bench.rs` that exercises the new path on hardware.
 5. `just <chip>-bench` to verify on device.
 
+For servo trim calibration specifically, `tools/bench-trim` parses the
+`just bench` defmt output (`just bench | tee /tmp/scfmr.log` →
+`bench-trim --input /tmp/scfmr.log`) and prints suggested
+`head.pan_trim_deg` / `head.tilt_trim_deg` for `STACKCHAN.RON` instead of
+grepping deltas by hand.
+
 ### Shape 3: firmware integration
 1. Identify the `Signal<…, T>` channel(s) the new feature needs.
 2. Producer goes in a per-peripheral task (`src/<chip>.rs`); consumer reads in `render_task`.

@@ -22,7 +22,10 @@
 //!
 //! `delta = actual - cmd`. The expected value is 0 after proper trim
 //! calibration; systematic offsets suggest a trim value; changes in
-//! sign across the range suggest flipping `*_DIRECTION`.
+//! sign across the range suggest flipping `*_DIRECTION`. The host tool
+//! `tools/bench-trim` parses this output and prints the suggested
+//! `head.pan_trim_deg` / `head.tilt_trim_deg` for `STACKCHAN.RON`
+//! (`just bench | tee /tmp/scfmr.log` → `bench-trim --input /tmp/scfmr.log`).
 
 #![no_std]
 #![no_main]
