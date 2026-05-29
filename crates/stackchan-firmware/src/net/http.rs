@@ -23,6 +23,9 @@
 //!   per entry, plus an `age_secs` for each.
 //! - `GET /tasks` — watchdog channel health: per-task heartbeat
 //!   delta in the last window + a `stale` flag.
+//! - `GET /hardware/status` — boot-time servo-power-rail health:
+//!   whether the PY32 enable succeeded, attempt count, settle flag.
+//!   Field-debugging aid for a head that won't move.
 //! - `GET /events` — recent operator-visible events (lifecycle,
 //!   control actions, warnings) from a bounded RAM ring.
 //! - `POST /emotion` — JSON `{"emotion": "...", "hold_ms": ...}`.
@@ -147,8 +150,9 @@ use stackchan_net::http_parse::{
 };
 
 use super::respond::{
-    HttpError, events_body, health_body, sensor_history_body, sensors_body, state_body, tasks_body,
-    write_dashboard, write_json, write_no_content, write_status_for_error, write_text,
+    HttpError, events_body, hardware_status_body, health_body, sensor_history_body, sensors_body,
+    state_body, tasks_body, write_dashboard, write_json, write_no_content, write_status_for_error,
+    write_text,
 };
 use super::snapshot::{self, AvatarSnapshot};
 use super::wifi::{LINK_READY, WIFI_RECONFIG, WifiCreds};
@@ -468,6 +472,14 @@ async fn serve_one(socket: &mut TcpSocket<'_>) -> Result<(), HttpError> {
                 socket,
                 200,
                 &tasks_body(crate::watchdog::read_tasks_snapshot()),
+            )
+            .await
+        }
+        ("GET", "/hardware/status") => {
+            write_json(
+                socket,
+                200,
+                &hardware_status_body(crate::servo_power::read_status()),
             )
             .await
         }
