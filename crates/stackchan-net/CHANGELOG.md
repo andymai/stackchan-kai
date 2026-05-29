@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.15.0...stackchan-net-v0.16.0) (2026-05-29)
+
+
+### Features
+
+* **web:** surface boot appearance + stop wiping appearance/head on save ([#563](https://github.com/andymai/stackchan-kai/issues/563)) ([7585c4f](https://github.com/andymai/stackchan-kai/commit/7585c4f29786b0283d2dbcbfaedfc3b0f689931a))
+
 ## [0.15.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.14.0...stackchan-net-v0.15.0) (2026-05-29)
 
 
