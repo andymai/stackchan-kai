@@ -37,10 +37,10 @@
 //! LCD. Bonds are persisted to the SD card via [`bonds`] so a
 //! re-paired peer skips the passkey dance.
 //!
-//! Coexistence: BLE rides the same radio as Wi-Fi via esp-radio's
-//! `coex` feature. Expect a single-digit-percent Wi-Fi throughput
-//! cost — invisible for the dashboard / SSE / settings round-trips
-//! the firmware does today.
+//! Mutually exclusive with Wi-Fi: BLE is brought up only when no Wi-Fi
+//! SSID is configured (see `main.rs`). The two never share the radio, so
+//! esp-radio's `coex` feature is left off — enabling it would only reserve
+//! internal RAM the Wi-Fi MAC needs to start.
 //!
 //! Sync-version note: trouble-host 0.5.x pulls
 //! `embassy-sync = 0.6` while the rest of the firmware uses 0.7.
