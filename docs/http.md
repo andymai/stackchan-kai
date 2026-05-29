@@ -324,7 +324,7 @@ commanded pose at the driver edge to absorb the assembled module's
 servo encoder offset (the tilt encoder zero sits well below physical
 horizontal, ~49° on the reference unit). This is the durable per-unit
 calibration; it is distinct from the per-session `POST /head/offsets`
-correction, which is applied on top and resets on reboot. Both default
+correction, which is applied on top and persisted to `/sd/RUNTIME.RON`. Both default
 to the firmware's compile-time `PAN_TRIM_DEG` / `TILT_TRIM_DEG` when the
 `head` block is absent. Range: `[-90.0, 90.0]`. Changes take effect on
 next boot — same as `tracker.*`.
