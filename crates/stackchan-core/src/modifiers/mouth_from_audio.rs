@@ -198,7 +198,12 @@ impl Modifier for MouthFromAudio {
         )]
         let dt_ms_f32 = dt_ms as f32;
         let alpha = one_minus_exp_approx(dt_ms_f32 / tau_ms);
-        self.current += (target - self.current) * alpha;
+        #[allow(
+            clippy::suboptimal_flops,
+            reason = "no_std Xtensa lacks f32::mul_add; libm::fmaf is heavier than the savings"
+        )]
+        let next = self.current + (target - self.current) * alpha;
+        self.current = next;
         entity.face.mouth.mouth_open = clamp_unit(self.current);
     }
 }
