@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.16.1](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.0...stackchan-net-v0.16.1) (2026-06-13)
+
 ## [0.16.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.15.0...stackchan-net-v0.16.0) (2026-05-29)
 
 
