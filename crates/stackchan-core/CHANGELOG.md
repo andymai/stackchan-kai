@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.1](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.37.0...stackchan-core-v0.37.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **core:** allow suboptimal_flops on mouth-audio smoothing lerp ([#587](https://github.com/andymai/stackchan-kai/issues/587)) ([7dcb661](https://github.com/andymai/stackchan-kai/commit/7dcb6613e6b109a2663ce68a88a8ffda72c01a24))
+
 ## [0.37.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.36.0...stackchan-core-v0.37.0) (2026-05-18)
 
 
