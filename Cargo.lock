@@ -1936,9 +1936,9 @@ dependencies = [
 
 [[package]]
 name = "esp-hal-ota"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79c3b3f18d6dd148df3152ef16df4825e37622cf4fcd2d2c04b21b70c312d46c"
+checksum = "68cb148de5d6729d497392dd1aad3b2b7c9fe8ff64330a19b35ae8acb0f0de54"
 dependencies = [
  "defmt 1.1.0",
  "embedded-storage",
