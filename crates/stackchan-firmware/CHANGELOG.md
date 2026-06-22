@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.7](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.6...stackchan-firmware-v0.113.7) (2026-06-22)
+
+
+### Bug Fixes
+
+* **firmware:** revert trouble-host 0.7 bump (bt-hci version split breaks BLE) ([#594](https://github.com/andymai/stackchan-kai/issues/594)) ([5c25baf](https://github.com/andymai/stackchan-kai/commit/5c25baf7d96adea7a2f4bb7b0d24ebe34aa3ffcc))
+
 ## [0.113.6](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.5...stackchan-firmware-v0.113.6) (2026-06-13)
 
 ## [0.113.5](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.4...stackchan-firmware-v0.113.5) (2026-05-29)
