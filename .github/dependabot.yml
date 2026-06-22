@@ -9,6 +9,14 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # trouble-host >=0.7 moves to bt-hci 0.9, but esp-radio ~0.17 still
+      # ships a BleConnector built against bt-hci 0.6. The two Transport
+      # impls don't unify, so the firmware BLE bridge fails to compile until
+      # esp-radio (and esp-hal ~1.1) catch up. Pin to the 0.5.x line.
+      - dependency-name: "trouble-host"
+        update-types:
+          ["version-update:semver-minor", "version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
