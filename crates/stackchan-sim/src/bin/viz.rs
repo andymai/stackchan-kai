@@ -191,7 +191,7 @@ impl eframe::App for VizApp {
     /// Paint phase. Paint UI only; do not mutate visualizer state here.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Side panel: live controls.
-        egui::Panel::right("controls").show_inside(ui, |ui| {
+        egui::Panel::right("controls").show(ui, |ui| {
             ui.heading("controls");
             ui.label(format!("effective fps: {:.1}", self.effective_fps));
             ui.label(format!("now: {} ms", self.clock.now().as_millis()));
@@ -247,7 +247,7 @@ impl eframe::App for VizApp {
         });
 
         // Central panel: the framebuffer image, scaled 2× for legibility.
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if let Some(tex) = &self.texture {
                 let display_size = egui::Vec2::new((FB_WIDTH * 2) as f32, (FB_HEIGHT * 2) as f32);
                 ui.image((tex.id(), display_size));
