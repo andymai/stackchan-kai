@@ -801,9 +801,12 @@ const MOUTH_OPEN_MAX_HEIGHT_PX: f32 = 40.0;
 /// Draw the mouth. Decision tree:
 ///
 /// 1. `curve != 0`: stroked parabolic arc. `curve > 0` (Happy) smiles,
-///    `curve < 0` (Sad) frowns. `Mouth::weight` and `mouth_open` are
-///    ignored — arcs stay as the v0.1.0 smile/frown look. (Follow-up
-///    can composite an audio-driven open ellipse behind the arc.)
+///    `curve < 0` (Sad) frowns. `Mouth::weight` is ignored — the
+///    emotion's static open-mouth stays an ellipse-mode look — but a
+///    non-zero `mouth_open` composites the audio-driven open ellipse
+///    behind the arc so lip-sync stays visible while an emotion holds
+///    the mouth curved (the sidecar reply path holds Happy exactly
+///    while the avatar is speaking).
 /// 2. Else: filled ellipse whose height is the maximum of the
 ///    weight-derived height (emotion's static open-mouth — Surprised
 ///    uses this) and the `mouth_open`-derived audio height. When both
@@ -819,6 +822,17 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     if curve != 0 {
+        let audio_height = audio_open_height(mouth.mouth_open);
+        if audio_height > 0 {
+            draw_open_ellipse(
+                mouth.center.x,
+                mouth.center.y,
+                mouth.radius_x,
+                audio_height,
+                mouth_color,
+                target,
+            )?;
+        }
         // Smile/frown sag goes the opposite way from eyes: `curve > 0`
         // (smile) dips the middle below the corners.
         let sag = i32::from(curve) * i32::from(mouth.radius_y) / 100;
@@ -845,14 +859,39 @@ where
         );
     }
 
-    let width = mouth.radius_x.saturating_mul(2);
-    let half_w = i32::from(mouth.radius_x);
+    draw_open_ellipse(
+        mouth.center.x,
+        mouth.center.y,
+        mouth.radius_x,
+        height,
+        mouth_color,
+        target,
+    )
+}
+
+/// Filled open-mouth ellipse `height` px tall, centered on
+/// `(center_x, center_y)`, spanning the mouth's full width. Shared by
+/// the ellipse-mode mouth and the audio overlay composited behind a
+/// curved arc.
+fn draw_open_ellipse<D>(
+    center_x: i32,
+    center_y: i32,
+    radius_x: u16,
+    height: u16,
+    color: Rgb565,
+    target: &mut D,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let width = radius_x.saturating_mul(2);
+    let half_w = i32::from(radius_x);
     let half_h = i32::from(height / 2);
-    let top_left = EgPoint::new(mouth.center.x - half_w, mouth.center.y - half_h);
+    let top_left = EgPoint::new(center_x - half_w, center_y - half_h);
     let size = Size::new(u32::from(width), u32::from(height));
 
     Ellipse::new(top_left, size)
-        .into_styled(fill(mouth_color))
+        .into_styled(fill(color))
         .draw(target)
 }
 
@@ -1576,6 +1615,59 @@ mod tests {
             2 * usize::from(half_w) + 1,
             "every column across the arc width is covered (continuous curve)",
         );
+    }
+
+    #[test]
+    fn curved_mouth_composites_audio_ellipse_behind_arc() {
+        // A speaking (mouth_open > 0) curved mouth draws the audio
+        // ellipse under the arc, so the vertical extent and pixel
+        // count both grow past the arc-only baseline.
+        let mut mouth = Face::default().mouth;
+        mouth.mouth_open = 0.0;
+        let mut arc_only = Capture::new();
+        draw_mouth(&mouth, 50, Rgb565::BLACK, &mut arc_only).expect("Capture is infallible");
+
+        mouth.mouth_open = 1.0;
+        let mut speaking = Capture::new();
+        draw_mouth(&mouth, 50, Rgb565::BLACK, &mut speaking).expect("Capture is infallible");
+
+        let arc_span = arc_only.max_y() - arc_only.min_y();
+        let speaking_span = speaking.max_y() - speaking.min_y();
+        assert!(
+            speaking_span > arc_span,
+            "audio ellipse extends the curved mouth vertically \
+             (arc {arc_span} px vs speaking {speaking_span} px)",
+        );
+        assert!(
+            speaking.points.len() > arc_only.points.len(),
+            "filled ellipse adds pixels beyond the stroked arc",
+        );
+    }
+
+    #[test]
+    fn curved_mouth_silent_is_pure_arc() {
+        // mouth_open = 0 must leave the curved mouth pixel-identical
+        // to a bare parabolic arc — the resting smile/frown look is
+        // unchanged by the audio-overlay feature.
+        let mut mouth = Face::default().mouth;
+        mouth.mouth_open = 0.0;
+        let curve: i8 = -40;
+        let mut via_mouth = Capture::new();
+        draw_mouth(&mouth, curve, Rgb565::BLACK, &mut via_mouth).expect("Capture is infallible");
+
+        let sag = i32::from(curve) * i32::from(mouth.radius_y) / 100;
+        let mut bare_arc = Capture::new();
+        draw_parabolic_arc(
+            mouth.center.x,
+            mouth.center.y,
+            mouth.radius_x,
+            sag,
+            stroke(Rgb565::BLACK, LINE_WIDTH),
+            &mut bare_arc,
+        )
+        .expect("Capture is infallible");
+
+        assert_eq!(via_mouth.points, bare_arc.points);
     }
 
     #[test]
