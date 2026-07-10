@@ -19,11 +19,14 @@ type FlagState = Record<FlagField, boolean>;
 
 export function BehaviorFlags() {
   const [flags, setFlags] = createSignal<FlagState | null>(null);
+  const [loadFailed, setLoadFailed] = createSignal(false);
 
   const load = async () => {
+    setLoadFailed(false);
     try {
       const res = await fetch("/settings");
       if (!res.ok) {
+        setLoadFailed(true);
         if (res.status === 503) {
           showToast("behavior flags unavailable (no SD card)", true);
         } else {
@@ -39,6 +42,7 @@ export function BehaviorFlags() {
         toast_overlay_enabled: c.behavior.toast_overlay_enabled,
       });
     } catch (e) {
+      setLoadFailed(true);
       showToast(e instanceof Error ? e.message : String(e), true);
     }
   };
@@ -76,12 +80,14 @@ export function BehaviorFlags() {
       <Show
         when={flags()}
         fallback={
-          <small>
-            Flags unavailable — GET /settings failed (no SD card?).{" "}
-            <button type="button" onClick={() => void load()}>
-              Retry
-            </button>
-          </small>
+          <Show when={loadFailed()} fallback={<small>Loading…</small>}>
+            <small>
+              Flags unavailable — GET /settings failed (no SD card?).{" "}
+              <button type="button" onClick={() => void load()}>
+                Retry
+              </button>
+            </small>
+          </Show>
         }
       >
         {(f) => (
