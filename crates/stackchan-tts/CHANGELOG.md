@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.4.3](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.4.2...stackchan-tts-v0.4.3) (2026-07-10)
+
 ## [0.4.2](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.4.1...stackchan-tts-v0.4.2) (2026-07-10)
 
 ## [0.4.1](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.4.0...stackchan-tts-v0.4.1) (2026-06-13)

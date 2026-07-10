@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.37.2...stackchan-core-v0.38.0) (2026-07-10)
+
+
+### Features
+
+* **core:** composite audio-driven mouth-open behind curved mouths ([#608](https://github.com/andymai/stackchan-kai/issues/608)) ([e04e5b1](https://github.com/andymai/stackchan-kai/commit/e04e5b12c928c84708f747b343265fa301507698))
+
 ## [0.37.2](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.37.1...stackchan-core-v0.37.2) (2026-07-10)
 
 
