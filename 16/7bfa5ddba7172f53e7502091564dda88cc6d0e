@@ -1,0 +1,21 @@
+crates/stackchan-firmware/src/net/http.rs
+  s_2a685347f9dba1::t_ac3ce4a1e8e25e 106-108
+crates/stackchan-net/src/bare_json.rs
+  s_2a685347f9dba1::t_8852f3a154b59d 67-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "167bfa5ddba7172f53e7502091564dda88cc6d0e",
+  "prompts": {},
+  "sessions": {
+    "s_2a685347f9dba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6178e7c-040f-4fe7-b61d-2ea3ba09441c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
