@@ -372,7 +372,7 @@ mod tests {
         // Sweep a few timestamps; pan magnitude is always 1.
         for ms in [0u64, 1, 2, 3, 100, 12_345, 999_999] {
             let (pan, _) = random_signs(Instant::from_millis(ms));
-            assert!(pan.abs() == 1.0);
+            assert_eq!(pan.abs(), 1.0);
         }
     }
 
