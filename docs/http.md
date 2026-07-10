@@ -404,16 +404,18 @@ the rest of the body back from `GET /settings` unchanged — the
 `***` sentinels for `wifi.psk` and `auth.token` will be merged
 against the persisted values rather than clobbering them.
 
-Unlike the redacted secrets, the `appearance` and `head` blocks have
-no preserve-on-echo sentinel: an omitted block parses to its default
-(empty appearance / compile-time head trim) and overwrites the
-persisted value. Callers **must** round-trip both blocks from
-`GET /settings` or they reset the operator's pinned boot appearance
-and per-unit head trim. The dashboard handles this for you — the
-System page's Boot appearance panel edits `appearance`, and the
-Settings form carries `appearance` + `head` through every save.
+Block-level merge: the required `wifi` / `mdns` / `time` blocks must
+always be present, but any optional block (`auth`, `audio`,
+`tracker`, `esp_now`, `behavior`, `head`, `appearance`) omitted from
+the body keeps its currently-persisted value — a trimmed curl body
+that only carries the required blocks can't wipe tracker
+calibration, ESP-NOW keys, or per-unit head trim. A block that *is*
+present replaces the persisted one wholesale, so partial edits
+within a block still need the other fields of that block echoed back
+from `GET /settings`. The dashboard does this for every block it
+binds fields from.
 
-Full-replace. The server validates the body via
+The server validates the merged config via
 `stackchan_net::validate` (rejects empty SSID, invalid country code,
 invalid hostname, empty SNTP list) and then writes back atomically:
 the new config goes to `/sd/STACKCHAN.NEW`, gets copied onto

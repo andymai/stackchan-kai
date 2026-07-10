@@ -69,8 +69,31 @@ pub const ESP_NOW_KEY_REDACTED: &str = "***";
 /// the shared [`validate`] gate so out-of-range values surface the
 /// same `Invalid*` variants as [`crate::parse_ron`].
 pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
+    parse_settings_json_with_current(input, &Config::default())
+}
+
+/// Like [`parse_settings_json`], but optional blocks absent from the
+/// body keep their values from `current` instead of resetting to
+/// struct defaults.
+///
+/// This is the `PUT /settings` entry point: a hand-trimmed body that
+/// omits `tracker` or `esp_now` must not silently erase dialled-in
+/// calibration or pairing keys on a 200 response. Blocks present in
+/// the body still replace wholesale; [`merge_settings_with_current`]
+/// remains the separate, field-level sentinel pass for redacted
+/// secrets.
+///
+/// # Errors
+///
+/// Same surface as [`parse_settings_json`]; [`validate`] runs on the
+/// merged result so a body that only validates together with the
+/// preserved blocks still gets the full gate.
+pub fn parse_settings_json_with_current(
+    input: &str,
+    current: &Config,
+) -> Result<Config, ConfigError> {
     let mut p = Parser::new(input);
-    let config = p.parse_config()?;
+    let config = p.parse_config(current)?;
     p.skip_ws();
     if !p.input.is_empty() {
         return Err(bare_err("trailing data after object", ""));
@@ -379,7 +402,7 @@ impl<'a> Parser<'a> {
                   Splitting per field would scatter the duplicate/missing-field bookkeeping \
                   for no readability gain."
     )]
-    fn parse_config(&mut self) -> Result<Config, ConfigError> {
+    fn parse_config(&mut self, current: &Config) -> Result<Config, ConfigError> {
         self.skip_ws();
         self.expect_char('{')?;
         let mut wifi: Option<WifiConfig> = None;
@@ -473,17 +496,19 @@ impl<'a> Parser<'a> {
             wifi: wifi.ok_or_else(|| bare_err("missing field 'wifi'", ""))?,
             mdns: mdns.ok_or_else(|| bare_err("missing field 'mdns'", ""))?,
             time: time.ok_or_else(|| bare_err("missing field 'time'", ""))?,
-            // `auth`, `audio`, `tracker` are optional for migration:
-            // bodies emitted before each block landed don't have them,
-            // and the defaults match the firmware's prior hard-coded
-            // behaviour.
-            auth: auth.unwrap_or_default(),
-            audio: audio.unwrap_or_default(),
-            tracker: tracker.unwrap_or_default(),
-            esp_now: esp_now.unwrap_or_default(),
-            behavior: behavior.unwrap_or_default(),
-            head: head.unwrap_or_default(),
-            appearance: appearance.unwrap_or_default(),
+            // The remaining blocks are optional for migration (bodies
+            // emitted before each block landed don't have them) and
+            // fall back to `current`: struct defaults via
+            // `parse_settings_json`, the live snapshot via
+            // `parse_settings_json_with_current` so an omitted block
+            // never wipes persisted state.
+            auth: auth.unwrap_or_else(|| current.auth.clone()),
+            audio: audio.unwrap_or(current.audio),
+            tracker: tracker.unwrap_or(current.tracker),
+            esp_now: esp_now.unwrap_or_else(|| current.esp_now.clone()),
+            behavior: behavior.unwrap_or_else(|| current.behavior.clone()),
+            head: head.unwrap_or(current.head),
+            appearance: appearance.unwrap_or_else(|| current.appearance.clone()),
         })
     }
 
@@ -1530,6 +1555,50 @@ mod tests {
         let input = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
         let parsed = parse_settings_json(input).unwrap();
         assert_eq!(parsed.auth.token, "");
+    }
+
+    #[test]
+    fn omitted_blocks_keep_current_values() {
+        // A trimmed PUT body carrying only the required blocks must
+        // not reset dialled-in state: tracker calibration, ESP-NOW
+        // keys, head trim, behavior, appearance, audio, and the auth
+        // token all survive from `current`.
+        let current = full_config();
+        let input = r#"{"wifi":{"ssid":"newnet","psk":"newkey","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let parsed = parse_settings_json_with_current(input, &current).unwrap();
+        assert_eq!(parsed.wifi.ssid, "newnet");
+        assert_eq!(parsed.auth, current.auth);
+        assert_eq!(parsed.audio, current.audio);
+        assert_eq!(parsed.tracker, current.tracker);
+        assert_eq!(parsed.esp_now, current.esp_now);
+        assert_eq!(parsed.behavior, current.behavior);
+        assert_eq!(parsed.head, current.head);
+        assert_eq!(parsed.appearance, current.appearance);
+    }
+
+    #[test]
+    fn present_block_replaces_current_wholesale() {
+        // A block that IS in the body replaces the current one field
+        // for field — omission is the only preserve mechanism at this
+        // layer (secret sentinels merge downstream).
+        let current = full_config();
+        let input = r#"{"wifi":{"ssid":"a","psk":"b","country":"US"},"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]},"head":{"pan_trim_deg":2.0,"tilt_trim_deg":0.0}}"#;
+        let parsed = parse_settings_json_with_current(input, &current).unwrap();
+        assert!((parsed.head.pan_trim_deg - 2.0).abs() < f32::EPSILON);
+        assert!((parsed.head.tilt_trim_deg - 0.0).abs() < f32::EPSILON);
+        assert_eq!(parsed.tracker, current.tracker);
+    }
+
+    #[test]
+    fn required_blocks_never_fall_back_to_current() {
+        // Only the optional blocks fill from `current` — omitting
+        // `wifi` is still a hard parse error even with a
+        // fully-populated fallback config.
+        let current = full_config();
+        let input =
+            r#"{"mdns":{"hostname":"x"},"time":{"tz":"UTC","sntp_servers":["pool.ntp.org"]}}"#;
+        let err = parse_settings_json_with_current(input, &current).unwrap_err();
+        assert!(matches!(err, ConfigError::BareParse(_)));
     }
 
     #[test]

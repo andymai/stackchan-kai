@@ -818,11 +818,14 @@ fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) ->
     false
 }
 
-/// `PUT /settings` — full replace, atomic SD writeback. Returns
-/// `{"reboot_required": <bool>}` where `<bool>` reflects whether any
-/// changed field can only take effect on the next boot (mDNS
-/// hostname, SNTP, tracker tuning) — Wi-Fi creds and audio still
-/// apply immediately via the existing signal paths.
+/// `PUT /settings` — block-level merge, atomic SD writeback. Blocks
+/// present in the body replace wholesale; optional blocks omitted
+/// from the body keep their currently-persisted values (a trimmed
+/// curl body must not wipe tracker calibration or ESP-NOW keys).
+/// Returns `{"reboot_required": <bool>}` where `<bool>` reflects
+/// whether any changed field can only take effect on the next boot
+/// (mDNS hostname, SNTP, tracker tuning) — Wi-Fi creds and audio
+/// still apply immediately via the existing signal paths.
 ///
 /// On a change to `wifi.ssid` or `wifi.psk` (compared against the
 /// current `CONFIG_SNAPSHOT`), signals [`WIFI_RECONFIG`] so the
@@ -830,31 +833,31 @@ fn requires_reboot(prev: &stackchan_net::Config, new: &stackchan_net::Config) ->
 /// Operators changing the AP from the dashboard now see a brief
 /// link blip rather than needing to power-cycle the device.
 async fn handle_put_settings(socket: &mut TcpSocket<'_>, body: &str) -> Result<(), HttpError> {
-    let parsed_config = match stackchan_net::parse_settings_json(body) {
-        Ok(c) => c,
-        Err(e) => {
-            defmt::warn!(
-                "http: PUT /settings parse failed ({})",
-                defmt::Debug2Format(&e)
-            );
-            let body = format!("invalid request body: {e:?}\n");
-            return write_text(socket, 400, &body).await;
-        }
-    };
-    // Substitute the `***` redaction sentinel for the persisted PSK
-    // and token so a dashboard form that submits unchanged secrets
-    // doesn't clobber them. With no current snapshot (the brief
-    // pre-storage-mount window), preserving against the default
-    // empty values is a no-op — the parsed body wins.
-    //
     // Track whether the snapshot was actually populated so the
     // reboot-required diff doesn't compare against a synthesized
     // default (which would falsely flag every first-boot PUT as
     // requiring reboot just because the new value differs from the
-    // struct default).
+    // struct default). With no current snapshot (the brief
+    // pre-storage-mount window), both the omitted-block fill and the
+    // sentinel merge run against defaults — the parsed body wins.
     let prior_snapshot = crate::storage::CONFIG_SNAPSHOT.lock().await.clone();
     let had_prior_snapshot = prior_snapshot.is_some();
     let snapshot_for_merge = prior_snapshot.unwrap_or_default();
+    let parsed_config =
+        match stackchan_net::parse_settings_json_with_current(body, &snapshot_for_merge) {
+            Ok(c) => c,
+            Err(e) => {
+                defmt::warn!(
+                    "http: PUT /settings parse failed ({})",
+                    defmt::Debug2Format(&e)
+                );
+                let body = format!("invalid request body: {e:?}\n");
+                return write_text(socket, 400, &body).await;
+            }
+        };
+    // Substitute the `***` redaction sentinel for the persisted PSK
+    // and token so a dashboard form that submits unchanged secrets
+    // doesn't clobber them.
     let new_config = stackchan_net::merge_settings_with_current(parsed_config, &snapshot_for_merge);
     let write_result =
         crate::storage::with_storage(|storage| storage.write_config(&new_config)).await;
