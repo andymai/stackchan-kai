@@ -1,10 +1,10 @@
 {
-  "crates/stackchan-core": "0.37.2",
-  "crates/stackchan-sim": "0.23.3",
+  "crates/stackchan-core": "0.38.0",
+  "crates/stackchan-sim": "0.23.4",
   "crates/stackchan-audio-features": "0.2.0",
   "crates/stackchan-desktop-protocol": "0.1.0",
-  "crates/stackchan-net": "0.16.3",
-  "crates/stackchan-tts": "0.4.2",
+  "crates/stackchan-net": "0.16.4",
+  "crates/stackchan-tts": "0.4.3",
   "crates/axp2101": "0.8.0",
   "crates/aw9523": "0.6.0",
   "crates/aw88298": "0.4.0",
@@ -19,6 +19,6 @@
   "crates/py32": "0.2.0",
   "crates/scservo": "0.6.0",
   "crates/si12t": "0.5.0",
-  "crates/tracker": "0.12.23",
-  "crates/stackchan-firmware": "0.113.9"
+  "crates/tracker": "0.12.24",
+  "crates/stackchan-firmware": "0.113.10"
 }
