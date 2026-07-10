@@ -1,0 +1,48 @@
+web/src/types.ts
+  s_2a685347f9dba1::t_fcbcaf2cc883a2 21-27,39
+web/src/components/Listen.tsx
+  s_2a685347f9dba1::t_8ba5f491c785e8 1,3,10-11,29-36,39-40
+crates/stackchan-firmware/src/net/respond.rs
+  s_2a685347f9dba1::t_a012390d66cc53 110-113
+  s_2a685347f9dba1::t_c18c43535f7d11 277-278
+  s_2a685347f9dba1::t_a421f4c46e5528 126
+  s_2a685347f9dba1::t_1c9325c85c694b 125,276
+docs/sidecar.md
+  s_2a685347f9dba1::t_dd5b726c409e13 121
+  s_2a685347f9dba1::t_c16be5e7d12ce1 144-147
+crates/stackchan-firmware/src/agent_sidecar.rs
+  s_2a685347f9dba1::t_41c6ba2b296e3c 574,582,588-598
+  s_2a685347f9dba1::t_135c12e534993a 532-538,551-557
+  s_2a685347f9dba1::t_86c59027a481f4 27-30
+  s_2a685347f9dba1::t_5a8929765d31ff 368
+  s_2a685347f9dba1::t_fae191e1687acc 599-600
+crates/stackchan-firmware/src/net/snapshot.rs
+  s_2a685347f9dba1::t_07a72997fdbdeb 129-131
+  s_2a685347f9dba1::t_694b1f2fb2f941 179
+  s_2a685347f9dba1::t_d1dafec9400961 162
+  s_2a685347f9dba1::t_fdc79baa16bb63 207
+  s_2a685347f9dba1::t_b503dbeb4d5989 39-88
+  s_2a685347f9dba1::t_496701e221451f 265-275
+docs/http.md
+  s_2a685347f9dba1::t_157fab863951f7 26
+  s_2a685347f9dba1::t_1bdadb491b582c 67-68,71-74
+  s_2a685347f9dba1::t_e7242a3ddeae6b 75
+web/src/styles.css
+  s_2a685347f9dba1::t_52a8b948078b70 904-934
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c165ae908644e730d32082beaba2c53e7361a880",
+  "prompts": {},
+  "sessions": {
+    "s_2a685347f9dba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6178e7c-040f-4fe7-b61d-2ea3ba09441c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
