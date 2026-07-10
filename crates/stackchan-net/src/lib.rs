@@ -64,7 +64,10 @@ pub mod mdns_pose;
 pub mod ota;
 
 pub use bare::{parse_ron_bare, render_ron_bare};
-pub use bare_json::{merge_settings_with_current, parse_settings_json, render_settings_json};
+pub use bare_json::{
+    merge_settings_with_current, parse_settings_json, parse_settings_json_with_current,
+    render_settings_json,
+};
 pub use config::{
     AppearanceConfig, AuthConfig, BehaviorConfig, Config, EspNowConfig, HeadTrim, MdnsConfig,
     TimeConfig, WifiConfig, parse_mac, tz_offset_minutes, validate,

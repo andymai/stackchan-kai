@@ -64,9 +64,10 @@ export function Settings() {
       // edited elsewhere (Calibration, the Appearance panel, POST /palette,
       // POST /face-geometry, hand-edited STACKCHAN.RON, operator-set
       // wake_word/chime flags, ESP-NOW peer config) survive a save through
-      // this form. The PUT parser defaults any omitted block to its zero
-      // value, so a block left out here is silently wiped — only the keys
-      // this form binds may be overwritten, everything else round-trips.
+      // this form. The PUT handler preserves fully-omitted blocks, but a
+      // block this form sends is replaced wholesale — so any block with
+      // even one bound key must be merged against `fresh` here to keep
+      // its unbound keys round-tripping.
       const body: SettingsType = {
         wifi: { ssid: ssid(), psk: psk(), country: country().toUpperCase() },
         mdns: { hostname: hostname() },
