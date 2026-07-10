@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.113.8](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.7...stackchan-firmware-v0.113.8) (2026-07-10)
+
 ## [0.113.7](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.6...stackchan-firmware-v0.113.7) (2026-06-22)
 
 
