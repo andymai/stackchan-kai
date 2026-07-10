@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.4.3...stackchan-tts-v0.5.0) (2026-07-10)
+
+
+### Features
+
+* **tts:** bake real English phrase audio (Piper en_US-amy-medium) ([#609](https://github.com/andymai/stackchan-kai/issues/609)) ([6a5fa56](https://github.com/andymai/stackchan-kai/commit/6a5fa56dad5bb73761788dc81307251f31825733))
+
 ## [0.4.3](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.4.2...stackchan-tts-v0.4.3) (2026-07-10)
 
 ## [0.4.2](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.4.1...stackchan-tts-v0.4.2) (2026-07-10)

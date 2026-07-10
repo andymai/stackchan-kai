@@ -4893,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.113.10"
+version = "0.113.11"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4971,7 +4971,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-tts"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "stackchan-core",
 ]
