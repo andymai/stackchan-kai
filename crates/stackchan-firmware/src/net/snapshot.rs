@@ -53,6 +53,14 @@ pub struct ReplySnapshot {
     /// `true` when the sidecar returned a reply; `false` on any
     /// failure path (link down, POST failed, timeout).
     pub ok: bool,
+    /// Monotonic per-boot exchange counter, starting at 1. Freshness
+    /// marker: a repeated byte-identical outcome ("Yes." twice, two
+    /// `timed out`s, or two long replies sharing a truncated
+    /// [`REPLY_MAX`] prefix) would otherwise compare equal, suppress
+    /// the SSE publish, and leave the dashboard with no sign the
+    /// second exchange completed. Participates in derived equality so
+    /// every round-trip pushes.
+    pub seq: u32,
     /// Valid byte length of `buf`. Always `<= REPLY_MAX` and always
     /// on a UTF-8 char boundary.
     len: usize,
@@ -65,7 +73,7 @@ impl ReplySnapshot {
     /// Build from a reply (or failure-reason) string, truncating at
     /// the last char boundary that fits [`REPLY_MAX`].
     #[must_use]
-    pub fn new(ok: bool, text: &str) -> Self {
+    pub fn new(ok: bool, seq: u32, text: &str) -> Self {
         let mut buf = [0_u8; REPLY_MAX];
         let mut len = 0;
         for ch in text.chars() {
@@ -76,7 +84,7 @@ impl ReplySnapshot {
             ch.encode_utf8(&mut buf[len..]);
             len += ch_len;
         }
-        Self { ok, len, buf }
+        Self { ok, seq, len, buf }
     }
 
     /// The stored text.
@@ -262,13 +270,18 @@ pub fn update_audio(audio: AudioConfig) {
     });
 }
 
-/// Replace the last-reply field. Called by the agent-sidecar task
-/// after each listen round-trip resolves (reply or failure) so
-/// `GET /state` and the SSE stream surface the outcome.
+/// Replace the last-reply field.
+///
+/// Called by the agent-sidecar task after each listen round-trip
+/// resolves (reply or failure) so `GET /state` and the SSE stream
+/// surface the outcome. The `seq` counter derives from the previous
+/// entry under the same critical section, so concurrent callers
+/// can't mint duplicate values.
 pub fn update_last_reply(ok: bool, text: &str) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
-        s.last_reply = Some(ReplySnapshot::new(ok, text));
+        let seq = s.last_reply.map_or(1, |prev| prev.seq.wrapping_add(1));
+        s.last_reply = Some(ReplySnapshot::new(ok, seq, text));
         cell.set(s);
     });
 }

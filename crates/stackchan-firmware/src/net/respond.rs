@@ -109,7 +109,14 @@ pub(super) fn state_body(s: AvatarSnapshot) -> String {
         .map_or_else(|| String::from("null"), |d| format!("\"{}\"", d.wire_str()));
     let last_reply = s.last_reply.map_or_else(
         || String::from("null"),
-        |r| format!("{{\"ok\":{},\"text\":\"{}\"}}", r.ok, json_escape(r.text())),
+        |r| {
+            format!(
+                "{{\"ok\":{},\"seq\":{},\"text\":\"{}\"}}",
+                r.ok,
+                r.seq,
+                json_escape(r.text())
+            )
+        },
     );
     format!(
         "{{\

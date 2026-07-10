@@ -19,9 +19,12 @@ export type AudioState = {
 };
 
 // Outcome of the most recent agent-sidecar listen round-trip.
-// `ok: false` carries the failure reason in `text`.
+// `ok: false` carries the failure reason in `text`. `seq` is a
+// per-boot monotonic exchange counter — the freshness marker that
+// makes a repeated identical reply distinguishable from silence.
 export type LastReply = {
   ok: boolean;
+  seq: number;
   text: string;
 };
 

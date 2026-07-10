@@ -65,13 +65,16 @@ $ curl http://stackchan.local/state
  "battery":{"percent":78,"voltage_mv":3920},
  "wifi":{"connected":true,"ip":"192.168.1.42"},
  "audio":{"volume_pct":50,"muted":false},
- "last_reply":{"ok":true,"text":"Sure! Let me check."}}
+ "last_reply":{"ok":true,"seq":3,"text":"Sure! Let me check."}}
 ```
 
 `last_reply` is the outcome of the most recent agent-sidecar
 listen round-trip (`null` before the first one): `ok` is `false`
 on a failure, with the reason in `text`. Text is capped at 128
-bytes, truncated at a char boundary.
+bytes, truncated at a char boundary. `seq` is a per-boot monotonic
+exchange counter — it increments on every round-trip, so a repeated
+byte-identical outcome still registers as a snapshot change (and an
+SSE push) instead of being deduplicated away.
 
 `GET /state/stream` opens a Server-Sent Events stream. The server
 emits an initial event on connect, then one event per change. Idle

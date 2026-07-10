@@ -29,7 +29,9 @@ export function Listen() {
       <Show when={reply()}>
         {(r) => (
           <div class={r().ok ? "listen-reply" : "listen-reply listen-reply-bad"}>
-            <span class="listen-reply-label">{r().ok ? "reply" : "failed"}</span>
+            <span class="listen-reply-label">
+              {r().ok ? "reply" : "failed"} #{r().seq}
+            </span>
             <span class="listen-reply-text">{r().text}</span>
           </div>
         )}
