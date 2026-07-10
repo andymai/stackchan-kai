@@ -901,6 +901,37 @@ small {
   word-break: break-word;
 }
 
+/* ─── Listen reply ────────────────────────────────────────────── */
+
+.listen-reply {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.listen-reply-label {
+  flex: none;
+  font: 600 var(--text-xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--ok);
+}
+
+.listen-reply-bad .listen-reply-label {
+  color: var(--bad);
+}
+
+.listen-reply-text {
+  font: var(--text-sm) / var(--leading-base) var(--font-mono);
+  color: var(--fg);
+  word-break: break-word;
+}
+
 /* ─── Toast (stack) ─────────────────────────────────────────────── */
 
 .toast-stack {

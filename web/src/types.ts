@@ -18,6 +18,16 @@ export type AudioState = {
   muted: boolean;
 };
 
+// Outcome of the most recent agent-sidecar listen round-trip.
+// `ok: false` carries the failure reason in `text`. `seq` is a
+// per-boot monotonic exchange counter — the freshness marker that
+// makes a repeated identical reply distinguishable from silence.
+export type LastReply = {
+  ok: boolean;
+  seq: number;
+  text: string;
+};
+
 export type AvatarSnapshot = {
   emotion: string;
   mood: string;
@@ -29,6 +39,7 @@ export type AvatarSnapshot = {
   wifi: WifiSnapshot;
   audio: AudioState;
   camera_mode: boolean;
+  last_reply: LastReply | null;
 };
 
 export type Tracker = {

@@ -118,7 +118,7 @@ returns:
 
 | Field     | Required | Notes                                                                                |
 |-----------|----------|--------------------------------------------------------------------------------------|
-| `text`    | yes      | Assistant reply. Surfaced on the firmware toast band (truncated to 32 chars).        |
+| `text`    | yes      | Assistant reply. Surfaced on the firmware toast band (truncated to 32 chars), recorded in the event log (`GET /events`, 64 bytes), and mirrored into the `last_reply` field of `GET /state` / the SSE stream (128 bytes). |
 | `emotion` | no       | One of `neutral` / `happy` / `sleepy` / `surprised` / `sad` / `angry`. Fires a 2.5 s `SetEmotion` hold. Unknown values are ignored. |
 
 Response status must be `2xx`. Anything else (4xx, 5xx) is treated
@@ -141,8 +141,10 @@ are unavoidable, wrap or pre-substitute them on the sidecar side.
 
 ## Failure surface
 
-Every error path surfaces a toast so the operator sees the
-failure without an attached monitor:
+Every error path surfaces a toast, a warn-kind event-log entry
+with the same text, and a `last_reply` snapshot update with
+`"ok": false`, so the operator sees the failure without an
+attached monitor:
 
 | Toast text             | Cause                                                       |
 |------------------------|-------------------------------------------------------------|

@@ -24,7 +24,10 @@
 //!    of the network round-trip.
 //! 4. The sidecar's JSON reply
 //!    (`{"text":"...","emotion":"..."}`, OpenAI-Chat-Completions
-//!    -shaped projection) surfaces on the firmware toast band, and
+//!    -shaped projection) surfaces on the firmware toast band, in
+//!    the [`crate::event_log`] ring (`GET /events`), and as the
+//!    `last_reply` field of the avatar snapshot (`GET /state` +
+//!    SSE), and
 //!    any `emotion` tag fires a [`RemoteCommand::SetEmotion`] so
 //!    the avatar mirrors the agent's mood. The `SetEmotion` handler in
 //!    [`stackchan_core::modifiers::RemoteCommandModifier`] clears
@@ -362,7 +365,7 @@ pub async fn agent_sidecar_task(
         // and emit a misleading "sidecar unreachable" toast.
         if !matches!(link.get().await, WifiLinkState::Connected) {
             defmt::warn!("agent-sidecar: link not Connected after capture; skipping POST");
-            toast_warn("sidecar: link down");
+            surface_failure("sidecar: link down", "link down");
             signal_failure_emotion();
             continue;
         }
@@ -526,10 +529,13 @@ async fn capture_window(
 }
 
 /// Apply the [`post_pcm`] result: surface a toast in every branch,
-/// fire [`RemoteCommand::SetEmotion`] with the tagged emotion on a
-/// successful reply, and fall back to either [`ExitThinking`] (success
-/// with no emotion tag) or a brief Sad face (POST failed, timeout) so
-/// the avatar's visible state always matches what just happened.
+/// record the outcome into the event log + avatar snapshot (the
+/// toast overlay is opt-in and defaults off, so those are the
+/// always-on surfaces), fire [`RemoteCommand::SetEmotion`] with the
+/// tagged emotion on a successful reply, and fall back to either
+/// [`ExitThinking`] (success with no emotion tag) or a brief Sad
+/// face (POST failed, timeout) so the avatar's visible state always
+/// matches what just happened.
 ///
 /// [`ExitThinking`]: stackchan_core::input::RemoteCommand::ExitThinking
 fn apply_outcome(outcome: Result<Result<SidecarReply, PostError>, embassy_time::TimeoutError>) {
@@ -542,6 +548,13 @@ fn apply_outcome(outcome: Result<Result<SidecarReply, PostError>, embassy_time::
                 reply.audio_url.as_deref().unwrap_or("<none>"),
             );
             toast_info(reply.text.as_str());
+            // `record` truncates at the event log's message cap on a
+            // char boundary; the snapshot keeps a longer prefix.
+            crate::event_log::record(
+                crate::event_log::Kind::Control,
+                &alloc::format!("reply: {}", reply.text.as_str()),
+            );
+            crate::net::snapshot::update_last_reply(true, reply.text.as_str());
             if let Some(e) = reply.emotion {
                 enqueue_remote_command(RemoteCommand::SetEmotion {
                     emotion: e,
@@ -558,7 +571,7 @@ fn apply_outcome(outcome: Result<Result<SidecarReply, PostError>, embassy_time::
         }
         Ok(Err(e)) => {
             defmt::warn!("agent-sidecar: POST failed ({:?})", e);
-            toast_warn("sidecar: post failed");
+            surface_failure("sidecar: post failed", "post failed");
             signal_failure_emotion();
         }
         Err(_) => {
@@ -566,10 +579,23 @@ fn apply_outcome(outcome: Result<Result<SidecarReply, PostError>, embassy_time::
                 "agent-sidecar: POST timed out after {=u64}ms",
                 REQUEST_TIMEOUT_MS
             );
-            toast_warn("sidecar: timed out");
+            surface_failure("sidecar: timed out", "timed out");
             signal_failure_emotion();
         }
     }
+}
+
+/// Surface one sidecar failure on every operator channel: warn toast
+/// (opt-in overlay), event-log ring (`GET /events`), and the
+/// `last_reply` snapshot field (`GET /state` + SSE) with `ok: false`.
+///
+/// `toast_msg` carries the `sidecar:` prefix for the toast band and
+/// event log; `reason` is the bare failure tag the dashboard's
+/// Listen panel renders next to its own "failed" label.
+fn surface_failure(toast_msg: &str, reason: &str) {
+    toast_warn(toast_msg);
+    crate::event_log::record(crate::event_log::Kind::Warn, toast_msg);
+    crate::net::snapshot::update_last_reply(false, reason);
 }
 
 /// Brief face-level reaction to a sidecar failure path. Fires a

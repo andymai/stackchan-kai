@@ -36,6 +36,64 @@ pub struct WifiSnapshot {
     pub ip: Option<Ipv4Addr>,
 }
 
+/// Byte cap for the last sidecar reply text mirrored into the
+/// snapshot. Longer replies truncate at a char boundary — the
+/// dashboard shows a one-liner, and the full text still lands in
+/// the defmt log.
+pub const REPLY_MAX: usize = 128;
+
+/// Outcome of the most recent agent-sidecar exchange — published by
+/// [`crate::agent_sidecar`] after each listen→reply round-trip.
+///
+/// Fixed `[u8; N]` + length instead of `heapless::String` so
+/// [`AvatarSnapshot`] stays `Copy` (it lives in a `Cell` and rides
+/// the SSE pubsub by value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplySnapshot {
+    /// `true` when the sidecar returned a reply; `false` on any
+    /// failure path (link down, POST failed, timeout).
+    pub ok: bool,
+    /// Monotonic per-boot exchange counter, starting at 1. Freshness
+    /// marker: a repeated byte-identical outcome ("Yes." twice, two
+    /// `timed out`s, or two long replies sharing a truncated
+    /// [`REPLY_MAX`] prefix) would otherwise compare equal, suppress
+    /// the SSE publish, and leave the dashboard with no sign the
+    /// second exchange completed. Participates in derived equality so
+    /// every round-trip pushes.
+    pub seq: u32,
+    /// Valid byte length of `buf`. Always `<= REPLY_MAX` and always
+    /// on a UTF-8 char boundary.
+    len: usize,
+    /// UTF-8 text bytes. `buf[len..]` stays zeroed so the derived
+    /// equality over the whole array matches text equality.
+    buf: [u8; REPLY_MAX],
+}
+
+impl ReplySnapshot {
+    /// Build from a reply (or failure-reason) string, truncating at
+    /// the last char boundary that fits [`REPLY_MAX`].
+    #[must_use]
+    pub fn new(ok: bool, seq: u32, text: &str) -> Self {
+        let mut buf = [0_u8; REPLY_MAX];
+        let mut len = 0;
+        for ch in text.chars() {
+            let ch_len = ch.len_utf8();
+            if len + ch_len > REPLY_MAX {
+                break;
+            }
+            ch.encode_utf8(&mut buf[len..]);
+            len += ch_len;
+        }
+        Self { ok, seq, len, buf }
+    }
+
+    /// The stored text.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+
 /// Composite avatar state surfaced via `GET /state`.
 ///
 /// Only `PartialEq` (not `Eq`) because `head_pose` carries `f32`s.
@@ -76,6 +134,9 @@ pub struct AvatarSnapshot {
     /// `entity.face.geometry`; HTTP `POST /face-geometry` and MCP
     /// `set_face_geometry` update this through `FACE_GEOMETRY_SIGNAL`.
     pub face_geometry: FaceGeometry,
+    /// Outcome of the most recent agent-sidecar exchange, or `None`
+    /// before the first listen→reply round-trip resolves.
+    pub last_reply: Option<ReplySnapshot>,
 }
 
 impl AvatarSnapshot {
@@ -106,6 +167,7 @@ impl AvatarSnapshot {
             && self.decorator == other.decorator
             && self.mood == other.mood
             && self.face_geometry == other.face_geometry
+            && self.last_reply == other.last_reply
     }
 }
 
@@ -122,6 +184,7 @@ impl Default for AvatarSnapshot {
             decorator: None,
             mood: Mood::Neutral,
             face_geometry: FaceGeometry::Default,
+            last_reply: None,
         }
     }
 }
@@ -149,6 +212,7 @@ pub static AVATAR_SNAPSHOT: Mutex<CriticalSectionRawMutex, core::cell::Cell<Avat
         decorator: None,
         mood: Mood::Neutral,
         face_geometry: FaceGeometry::Default,
+        last_reply: None,
     }));
 
 /// Replace the avatar/head fields. Called per render tick.
@@ -202,6 +266,22 @@ pub fn update_audio(audio: AudioConfig) {
     AVATAR_SNAPSHOT.lock(|cell| {
         let mut s = cell.get();
         s.audio = audio;
+        cell.set(s);
+    });
+}
+
+/// Replace the last-reply field.
+///
+/// Called by the agent-sidecar task after each listen round-trip
+/// resolves (reply or failure) so `GET /state` and the SSE stream
+/// surface the outcome. The `seq` counter derives from the previous
+/// entry under the same critical section, so concurrent callers
+/// can't mint duplicate values.
+pub fn update_last_reply(ok: bool, text: &str) {
+    AVATAR_SNAPSHOT.lock(|cell| {
+        let mut s = cell.get();
+        let seq = s.last_reply.map_or(1, |prev| prev.seq.wrapping_add(1));
+        s.last_reply = Some(ReplySnapshot::new(ok, seq, text));
         cell.set(s);
     });
 }
