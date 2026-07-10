@@ -107,6 +107,10 @@ pub(super) fn state_body(s: AvatarSnapshot) -> String {
     let decorator = s
         .decorator
         .map_or_else(|| String::from("null"), |d| format!("\"{}\"", d.wire_str()));
+    let last_reply = s.last_reply.map_or_else(
+        || String::from("null"),
+        |r| format!("{{\"ok\":{},\"text\":\"{}\"}}", r.ok, json_escape(r.text())),
+    );
     format!(
         "{{\
 \"emotion\":\"{emotion}\",\
@@ -118,7 +122,8 @@ pub(super) fn state_body(s: AvatarSnapshot) -> String {
 \"battery\":{{\"percent\":{pct},\"voltage_mv\":{mv}}},\
 \"wifi\":{{\"connected\":{connected},\"ip\":{ip}}},\
 \"audio\":{{\"volume_pct\":{volume_pct},\"muted\":{muted}}},\
-\"camera_mode\":{camera_mode}\
+\"camera_mode\":{camera_mode},\
+\"last_reply\":{last_reply}\
 }}\n",
         emotion = s.emotion.wire_str(),
         mood = s.mood.wire_str(),
@@ -268,8 +273,9 @@ pub(super) fn events_body() -> String {
 }
 
 /// Minimal JSON string escaper — backslash, quote, and control bytes
-/// get the `\\uNNNN` form. Event messages are firmware-controlled (no
-/// user input lands here unredacted) so this stays simple.
+/// get the `\\uNNNN` form. Quote/backslash/control coverage is the
+/// full set JSON string safety needs, so remote-sourced text (the
+/// sidecar reply in `last_reply`) is safe through here too.
 pub(super) fn json_escape(s: &str) -> String {
     use core::fmt::Write as _;
     let mut out = String::with_capacity(s.len());

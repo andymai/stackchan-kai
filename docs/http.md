@@ -23,7 +23,7 @@ beats pulling a full HTTP framework into the firmware target.
 |--------|------------------|-----------------------------------------------------|
 | GET    | `/`              | Operator dashboard (HTML + JS, embedded in firmware) |
 | GET    | `/health`        | Uptime, firmware version, free heap                  |
-| GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio |
+| GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio, last sidecar reply |
 | GET    | `/sensors`       | Live IMU / ambient / audio-RMS / body-touch sample   |
 | GET    | `/sensor-history` | Rolling 60-second window of one-per-second sensor snapshots, oldest first |
 | GET    | `/hardware/status` | Boot-time servo-power-rail health (servo-power only, not a full hardware rollup) |
@@ -64,8 +64,14 @@ $ curl http://stackchan.local/state
  "head_actual":{"pan_deg":0.10,"tilt_deg":-0.20},
  "battery":{"percent":78,"voltage_mv":3920},
  "wifi":{"connected":true,"ip":"192.168.1.42"},
- "audio":{"volume_pct":50,"muted":false}}
+ "audio":{"volume_pct":50,"muted":false},
+ "last_reply":{"ok":true,"text":"Sure! Let me check."}}
 ```
+
+`last_reply` is the outcome of the most recent agent-sidecar
+listen round-trip (`null` before the first one): `ok` is `false`
+on a failure, with the reason in `text`. Text is capped at 128
+bytes, truncated at a char boundary.
 
 `GET /state/stream` opens a Server-Sent Events stream. The server
 emits an initial event on connect, then one event per change. Idle
