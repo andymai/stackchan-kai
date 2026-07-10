@@ -1,0 +1,41 @@
+crates/stackchan-core/src/modifiers/head_from_body_gesture.rs
+  s_2a685347f9dba1::t_619d9a2f212f5e 375
+crates/stackchan-net/src/esp_now.rs
+  s_2a685347f9dba1::t_08ad62f6eb3b69 460
+docs/http.md
+  s_2a685347f9dba1::t_8ba4c571191eaa 407-418
+crates/stackchan-net/src/bare_json.rs
+  s_2a685347f9dba1::t_b08a38c08458ed 506-507,510
+  s_2a685347f9dba1::t_646df055bfdf78 499-505,508-509,511
+  s_2a685347f9dba1::t_53fe8c50e308a9 72-94,96
+  s_2a685347f9dba1::t_baf1bf6b8307c7 1560-1584,1586,1589-1592,1597,1600,1602
+  s_2a685347f9dba1::t_c2c4690304a4c0 1587-1588
+  s_2a685347f9dba1::t_41e5209d58e33a 1585
+  s_2a685347f9dba1::t_51a06904991d9c 405
+  s_2a685347f9dba1::t_87458c4b4fa7a9 1598-1599
+  s_2a685347f9dba1::t_253e55c484c291 1601
+  s_2a685347f9dba1::t_a4b6acacf21986 1593-1596
+  s_2a685347f9dba1::t_3e10a8feff4903 1603
+crates/stackchan-firmware/src/net/http.rs
+  s_2a685347f9dba1::t_88a5908e8e7afd 821-828,840-842,846-860
+web/src/components/Settings.tsx
+  s_2a685347f9dba1::t_f4f74036441849 67-70
+crates/stackchan-net/src/lib.rs
+  s_2a685347f9dba1::t_e1012f82608708 67-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "26bddb74f5901a408865a6cb4a2a065fdd27faa9",
+  "prompts": {},
+  "sessions": {
+    "s_2a685347f9dba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6178e7c-040f-4fe7-b61d-2ea3ba09441c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
