@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.1...stackchan-net-v0.16.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* clear clippy 1.97 lints blocking host CI ([#603](https://github.com/andymai/stackchan-kai/issues/603)) ([912eb67](https://github.com/andymai/stackchan-kai/commit/912eb675ca386135041d3e6076066c6d2a1473af))
+
 ## [0.16.1](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.0...stackchan-net-v0.16.1) (2026-06-13)
 
 ## [0.16.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.15.0...stackchan-net-v0.16.0) (2026-05-29)
