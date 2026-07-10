@@ -1,0 +1,22 @@
+crates/stackchan-core/src/draw.rs
+  s_2a685347f9dba1::t_e4d0b6bdbe6690 1620-1672
+  s_2a685347f9dba1::t_5929efac5dc3a3 804-809,825-826,835,870-871,876,879-888,894
+  s_2a685347f9dba1::t_3337128010160d 862-869,872-875,877-878,890
+  s_2a685347f9dba1::t_0e09b13125dc59 827-834
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "24a8b3514313fe567c9817f7e0d564d4bffa8438",
+  "prompts": {},
+  "sessions": {
+    "s_2a685347f9dba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6178e7c-040f-4fe7-b61d-2ea3ba09441c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
