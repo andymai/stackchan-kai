@@ -10,6 +10,9 @@ import { Emotion } from "./components/Emotion";
 import { Listen } from "./components/Listen";
 import { Mood } from "./components/Mood";
 import { FaceGeometry } from "./components/FaceGeometry";
+import { Palette } from "./components/Palette";
+import { BehaviorFlags } from "./components/BehaviorFlags";
+import { Gestures } from "./components/Gestures";
 import { LookAt } from "./components/LookAt";
 import { Audio } from "./components/Audio";
 import { Camera } from "./components/Camera";
@@ -189,10 +192,13 @@ export function App() {
                 <Emotion />
                 <Mood />
                 <FaceGeometry />
+                <Palette />
+                <BehaviorFlags />
               </Match>
               <Match when={section() === "motion"}>
                 <PageHead title="Motion" />
                 <LookAt />
+                <Gestures />
                 <Calibration />
               </Match>
               <Match when={section() === "voice"}>

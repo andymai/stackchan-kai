@@ -99,8 +99,9 @@ export function Appearance() {
         <small>
           These are BOOT defaults: they seed the runtime store only on first
           boot (when <code>RUNTIME.RON</code> is absent). A later live change via
-          the Behavior page (POST /palette / POST /face-geometry) persists to
-          the runtime store and wins on subsequent boots. Leave a field as
+          the Behavior page's Palette and Face cards (POST /palette /
+          POST /face-geometry) persists to the runtime store and wins on
+          subsequent boots. Leave a field as
           <code>(not pinned)</code> to fall back to the firmware default.
         </small>
       </form>
