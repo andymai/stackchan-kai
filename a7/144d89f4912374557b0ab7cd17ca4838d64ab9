@@ -1,0 +1,21 @@
+web/src/components/BehaviorFlags.tsx
+  s_2a685347f9dba1::t_4dc7c375766cb6 22,25,29
+  s_2a685347f9dba1::t_2aaea93da273da 45
+  s_2a685347f9dba1::t_e11ee8c6f8dccd 83-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "a7144d89f4912374557b0ab7cd17ca4838d64ab9",
+  "prompts": {},
+  "sessions": {
+    "s_2a685347f9dba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6178e7c-040f-4fe7-b61d-2ea3ba09441c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
