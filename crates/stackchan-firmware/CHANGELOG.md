@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.114.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.11...stackchan-firmware-v0.114.0) (2026-07-10)
+
+
+### Features
+
+* **firmware:** surface agent-sidecar replies in event log, SSE snapshot, and dashboard ([#611](https://github.com/andymai/stackchan-kai/issues/611)) ([68f5a3a](https://github.com/andymai/stackchan-kai/commit/68f5a3a3db43fadb2aeff776701980a3ee3581ab))
+
 ## [0.113.11](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.10...stackchan-firmware-v0.113.11) (2026-07-10)
 
 ## [0.113.10](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.9...stackchan-firmware-v0.113.10) (2026-07-10)
