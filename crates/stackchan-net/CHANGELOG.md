@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.3](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.2...stackchan-net-v0.16.3) (2026-07-10)
+
+
+### Bug Fixes
+
+* **net:** stop PUT /settings wiping omitted optional config blocks ([#605](https://github.com/andymai/stackchan-kai/issues/605)) ([944aa1c](https://github.com/andymai/stackchan-kai/commit/944aa1c849e9837f8748444785e7193dd08f58fb))
+
 ## [0.16.2](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.1...stackchan-net-v0.16.2) (2026-07-10)
 
 

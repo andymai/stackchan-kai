@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.113.9](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.8...stackchan-firmware-v0.113.9) (2026-07-10)
+
+
+### Bug Fixes
+
+* **net:** stop PUT /settings wiping omitted optional config blocks ([#605](https://github.com/andymai/stackchan-kai/issues/605)) ([944aa1c](https://github.com/andymai/stackchan-kai/commit/944aa1c849e9837f8748444785e7193dd08f58fb))
+
 ## [0.113.8](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.7...stackchan-firmware-v0.113.8) (2026-07-10)
 
 ## [0.113.7](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.6...stackchan-firmware-v0.113.7) (2026-06-22)

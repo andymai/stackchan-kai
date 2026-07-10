@@ -4893,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.113.8"
+version = "0.113.9"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4948,7 +4948,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-net"
-version = "0.16.2"
+version = "0.16.3"
 dependencies = [
  "ed25519-compact",
  "heapless 0.8.0",
@@ -4960,7 +4960,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.23.2"
+version = "0.23.3"
 dependencies = [
  "eframe",
  "embedded-graphics",
