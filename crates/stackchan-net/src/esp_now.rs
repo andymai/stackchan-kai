@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn decode_rejects_too_short() {
-        let buf = [b'S', b'T', b'K'];
+        let buf = *b"STK";
         assert_eq!(decode(&buf), Err(DecodeError::TooShort));
     }
 
