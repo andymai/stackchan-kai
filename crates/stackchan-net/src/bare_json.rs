@@ -64,10 +64,12 @@ pub const ESP_NOW_KEY_REDACTED: &str = "***";
 /// # Errors
 ///
 /// Returns [`ConfigError::BareParse`] on any structural mismatch
-/// (missing field, unknown key, bad string escape, runaway literal,
-/// or `wifi.psk` set to the [`PSK_REDACTED`] sentinel), then runs
-/// the shared [`validate`] gate so out-of-range values surface the
-/// same `Invalid*` variants as [`crate::parse_ron`].
+/// (missing field, unknown key, bad string escape, runaway
+/// literal), then runs the shared [`validate`] gate so out-of-range
+/// values surface the same `Invalid*` variants as
+/// [`crate::parse_ron`]. A [`PSK_REDACTED`] sentinel is *not* an
+/// error — it parses through for [`merge_settings_with_current`] to
+/// substitute downstream.
 pub fn parse_settings_json(input: &str) -> Result<Config, ConfigError> {
     parse_settings_json_with_current(input, &Config::default())
 }

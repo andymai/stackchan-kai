@@ -103,7 +103,9 @@
 //! - `GET /settings/backup` — same payload UNREDACTED. The single
 //!   auth-gated GET (every other GET stays open) — returning real
 //!   secrets is what makes the backup usable for restore via PUT.
-//! - `PUT /settings` — full-replace [`stackchan_net::Config`] body.
+//! - `PUT /settings` — [`stackchan_net::Config`] body; omitted
+//!   optional blocks keep their persisted values, present blocks
+//!   replace wholesale.
 //!   Validates, writes back atomically to `/sd/STACKCHAN.RON`, and
 //!   responds `{"reboot_required": <bool>}`. Wi-Fi creds reconnect
 //!   immediately via [`super::wifi::WIFI_RECONFIG`] and audio
