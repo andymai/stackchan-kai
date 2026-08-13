@@ -98,7 +98,7 @@ esp-storage = { version = "0.8", features = ["esp-hal", "esp32s3"] }
 # OTA partition-table parser + slot writer. Handles the bootloader's
 # `otadata` pointer dance so the firmware doesn't have to roll a
 # partition-table parser of its own.
-esp-hal-ota = { version = "0.5", features = ["esp32s3", "defmt"] }
+esp-hal-ota = { version = "0.6", features = ["esp32s3", "defmt"] }
 esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp-radio", "esp32s3"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
