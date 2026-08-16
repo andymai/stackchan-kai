@@ -4922,6 +4922,7 @@ dependencies = [
  "esp-hal-ota",
  "esp-println",
  "esp-radio",
+ "esp-rom-sys",
  "esp-rtos",
  "esp-storage",
  "esp-tflite-micro-sys",
