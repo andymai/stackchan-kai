@@ -57,7 +57,7 @@ esp-tflite-micro-sys = { path = "../esp-tflite-micro-sys" }
 # in `sd_spi.rs` provides the SD-side adapter (with GPIO35 OE flip).
 # Sync (blocking); SD I/O happens at boot + during `PUT /settings`,
 # never during steady-state render.
-embedded-sdmmc = { version = "0.9", default-features = false, features = ["defmt-log"] }
+embedded-sdmmc = { version = "0.10", default-features = false, features = ["defmt-log"] }
 # `heapless::Vec` for the per-frame multi-target candidate list
 # translated from `tracker::Outcome.candidates` into the engine's
 # `TrackingObservation`. Matches the cap (`MAX_CANDIDATES`).
