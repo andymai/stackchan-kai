@@ -197,7 +197,7 @@ pub fn perform_update(image_bytes: &[u8]) -> Result<(), OtaPerformError> {
         payload.len()
     );
 
-    let crc = esp_hal_ota::crc32::calc_crc32(payload, 0);
+    let crc = esp_rom_sys::rom::crc::crc32_le(0, payload);
     // Take + consumed-flag check + consumed-flag set all happen in
     // one critical section. Folding them avoids a TOCTOU window
     // between the take and a subsequent read of `FLASH_CONSUMED`

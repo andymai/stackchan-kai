@@ -1936,12 +1936,13 @@ dependencies = [
 
 [[package]]
 name = "esp-hal-ota"
-version = "0.5.7"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1b4ced6d9984fd29c88b586286634f44fa0d96b4ee5f4d68facdfb643336533"
+checksum = "9b1d1fc0161045a73fee9e0d787c80feb6c3941c351e8f542b0d0c80d57c6e7a"
 dependencies = [
  "defmt 1.1.1",
  "embedded-storage",
+ "esp-rom-sys",
  "esp32s3 0.35.2",
 ]
 
@@ -4892,6 +4893,7 @@ dependencies = [
  "esp-hal-ota",
  "esp-println",
  "esp-radio",
+ "esp-rom-sys",
  "esp-rtos",
  "esp-storage",
  "esp-tflite-micro-sys",
