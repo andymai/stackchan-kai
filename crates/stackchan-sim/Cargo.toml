@@ -27,7 +27,7 @@ heapless = "0.8"
 # default features enabled — they include the Linux window-system
 # backends (wayland + x11) winit needs to compile, plus `glow` for
 # OpenGL rendering and the bundled default fonts.
-eframe = { version = "0.35", optional = true }
+eframe = { version = "0.36", optional = true }
 
 # Optional: the `sc-config` host binary crafts + validates a
 # `STACKCHAN.RON` offline. Only pulled in when the `config-cli` feature
