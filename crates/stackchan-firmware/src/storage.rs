@@ -18,6 +18,7 @@
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use core::ops::ControlFlow;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
@@ -157,8 +158,9 @@ where
     let mut short = None;
     dir.iterate_dir_lfn(&mut lfn, |entry, long| {
         if short.is_none() && long.is_some_and(|l| l.eq_ignore_ascii_case(long_name)) {
-            short = Some(entry.name.clone());
+            short = Some(entry.name);
         }
+        ControlFlow::Continue(())
     })
     .map_err(|_| StorageError::Volume)?;
     Ok(short)
@@ -405,7 +407,7 @@ where
         // open by that. See `lfn_short_name`.
         let short = lfn_short_name(&root, CONFIG_FILE)?.ok_or(StorageError::FileNotFound)?;
         let file = root
-            .open_file_in_dir(&short, Mode::ReadOnly)
+            .open_file_in_dir(short, Mode::ReadOnly)
             .map_err(|_| StorageError::FileNotFound)?;
 
         let len = file.length();
@@ -455,7 +457,7 @@ where
         })?;
         {
             let dst = root
-                .open_file_in_dir(&short, Mode::ReadWriteCreateOrTruncate)
+                .open_file_in_dir(short, Mode::ReadWriteCreateOrTruncate)
                 .map_err(|_| StorageError::Write)?;
             dst.write(rendered.as_bytes())
                 .map_err(|_| StorageError::Write)?;
@@ -463,7 +465,7 @@ where
         }
         // Staging served its purpose (a crash-safe copy existed before we
         // clobbered the live file); best-effort cleanup.
-        let _ = root.delete_file_in_dir(STAGING_FILE);
+        let _ = root.delete_entry_in_dir(STAGING_FILE);
         Ok(())
     }
 
@@ -748,7 +750,7 @@ where
             .open_volume(VolumeIdx(0))
             .map_err(|_| StorageError::Volume)?;
         let root = volume.open_root_dir().map_err(|_| StorageError::Volume)?;
-        match root.delete_file_in_dir(CRASH_FILE) {
+        match root.delete_entry_in_dir(CRASH_FILE) {
             Ok(()) | Err(embedded_sdmmc::Error::NotFound) => Ok(()),
             Err(_) => Err(StorageError::Write),
         }
@@ -825,7 +827,7 @@ where
             // FileNotFound is the expected case for any file the
             // operator never wrote — keep going. Anything else is a
             // real I/O failure that the caller needs to see.
-            if let Err(e) = root.delete_file_in_dir(name)
+            if let Err(e) = root.delete_entry_in_dir(name)
                 && !matches!(e, embedded_sdmmc::Error::NotFound)
             {
                 defmt::warn!(
@@ -972,7 +974,7 @@ where
 
         // Best-effort delete; if the staging file is missing we still
         // succeeded at the atomic-copy goal.
-        let _ = root.delete_file_in_dir(from);
+        let _ = root.delete_entry_in_dir(from);
 
         // Defeat the unused-variable hint without an explicit drop —
         // `staged` is a `Vec` we explicitly want to release at end of
