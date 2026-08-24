@@ -434,6 +434,10 @@ const fn low_byte(value: u16) -> u8 {
     clippy::unwrap_used,
     reason = "test-only: panic! / unwrap on unexpected variants surfaces failures cleanly"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
     use core::cell::RefCell;

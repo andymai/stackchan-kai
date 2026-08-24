@@ -243,6 +243,10 @@ fn decode_touch(buf: [u8; TOUCH_READ_LEN]) -> TouchReport {
     clippy::panic,
     reason = "test scaffolding: mock panics if the driver issues an unexpected op shape"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
 

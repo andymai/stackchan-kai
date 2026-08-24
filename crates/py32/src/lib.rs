@@ -305,6 +305,10 @@ const fn pin_regs(pin: u8) -> PinRegs {
     clippy::future_not_send,
     reason = "test mocks hold RefCell for event recording; single-threaded block_on runs them"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
     use core::cell::RefCell;

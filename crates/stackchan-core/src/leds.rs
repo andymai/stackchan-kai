@@ -247,9 +247,7 @@ pub fn render_leds(entity: &Entity, now: Instant, out: &mut LedFrame) {
             scale_channel(b_raw, brightness),
         )
     };
-    for slot in &mut out.0 {
-        *slot = pixel;
-    }
+    out.0.fill(pixel);
 }
 
 #[cfg(test)]

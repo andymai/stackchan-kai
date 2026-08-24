@@ -260,6 +260,10 @@ fn lux_from_channels(ch0: u16, ch1: u16) -> f32 {
     reason = "test expectations mirror the production formula's bare-* + bare-+ shape; \
               switching to mul_add here would obscure the formula-equivalence check"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
 

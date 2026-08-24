@@ -533,6 +533,10 @@ fn compensate_z(trim: &Trim, raw: i16, rhall: u16) -> i32 {
     clippy::future_not_send,
     reason = "test mocks use RefCell; single-threaded block_on runs them"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
     use core::cell::RefCell;

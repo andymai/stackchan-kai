@@ -192,6 +192,10 @@ impl RecordingHead {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "RecordingHead records synchronously; the impl Future rewrite obscures the test double"
+)]
 impl HeadDriver for RecordingHead {
     type Error = core::convert::Infallible;
 

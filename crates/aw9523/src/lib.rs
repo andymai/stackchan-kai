@@ -148,6 +148,10 @@ async fn write_reg<B: I2c>(bus: &mut B, reg: u8, value: u8) -> Result<(), Error<
     clippy::assertions_on_constants,
     reason = "runtime asserts keep the invariant in the test output; const blocks would move failures to compile time and silently pass the test binary"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
     use core::cell::RefCell;
