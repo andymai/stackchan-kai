@@ -252,7 +252,7 @@ pub fn format_datetime(dt: DateTime, out: &mut [u8; 19]) -> &str {
 
 /// Write a two-digit decimal (0..=99) into a 2-byte slot as ASCII.
 /// Values > 99 saturate to "99".
-fn write_two_digits(slot: &mut [u8], value: u8) {
+const fn write_two_digits(slot: &mut [u8], value: u8) {
     let v = if value > 99 { 99 } else { value };
     slot[0] = b'0' + (v / 10);
     slot[1] = b'0' + (v % 10);
@@ -295,6 +295,10 @@ const fn encode_datetime(dt: DateTime) -> [u8; 7] {
 #[allow(
     clippy::panic,
     reason = "test scaffolding: mock panics if the driver issues an unexpected op shape"
+)]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
 )]
 mod tests {
     use super::*;

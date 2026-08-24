@@ -342,6 +342,10 @@ impl<B: I2c> Aw88298<B> {
     clippy::panic,
     reason = "tests panic via assert! / assertion-by-match on unexpected variants"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
     use core::cell::RefCell;

@@ -588,6 +588,10 @@ impl<U: Read + Write> Scservo<U> {
     reason = "MockUart's Infallible error type makes unwrap()/expect() on \
               writes sound — and clearer than matches! for test readability"
 )]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
+)]
 mod tests {
     use super::*;
     use core::cell::RefCell;

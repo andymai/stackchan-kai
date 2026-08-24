@@ -326,7 +326,7 @@ impl<B: I2c> Bmi270<B> {
             let w = BLOB_CHUNK_WORDS as u16;
             w
         };
-        for chunk in config_blob::CONFIG_FILE.chunks_exact(BLOB_CHUNK_BYTES) {
+        for chunk in config_blob::CONFIG_FILE.as_chunks::<BLOB_CHUNK_BYTES>().0 {
             #[allow(
                 clippy::cast_possible_truncation,
                 reason = "masked by 0x0F before cast; value always fits in u8"
@@ -414,7 +414,7 @@ impl<B: I2c> Bmi270<B> {
         let mut buf = [0u8; BLOB_CHUNK_BYTES + 1];
         buf[0] = reg;
         let Some(dst) = buf.get_mut(1..=data.len()) else {
-            // Callers always pass `chunks_exact(BLOB_CHUNK_BYTES)`, so
+            // Callers always pass `as_chunks::<BLOB_CHUNK_BYTES>()`, so
             // `data.len() <= BLOB_CHUNK_BYTES`. This branch exists so
             // a future caller that passes a larger slice fails with a
             // clean `I2c`-shaped error rather than a panic.
@@ -468,6 +468,10 @@ fn decode_measurement(buf: [u8; DATA_LEN]) -> Measurement {
 #[allow(
     clippy::future_not_send,
     reason = "test mocks hold RefCell for event recording; single-threaded block_on runs them"
+)]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mocks implement async-fn bus traits synchronously; the impl Future rewrite obscures the test double"
 )]
 mod tests {
     use super::*;

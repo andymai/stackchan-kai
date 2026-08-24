@@ -746,8 +746,8 @@ fn roi_around_centroid(
         return None;
     }
     let (nx, ny) = (centroid.0.clamp(-1.0, 1.0), centroid.1.clamp(-1.0, 1.0));
-    let cx = (nx + 1.0) * 0.5 * f32::from(frame_w);
-    let cy = (ny + 1.0) * 0.5 * f32::from(frame_h);
+    let cx = f32::midpoint(nx, 1.0) * f32::from(frame_w);
+    let cy = f32::midpoint(ny, 1.0) * f32::from(frame_h);
     let half = f32::from(dim) * 0.5;
     let x0 = (cx - half).clamp(0.0, f32::from(frame_w - dim));
     let y0 = (cy - half).clamp(0.0, f32::from(frame_h - dim));
@@ -1428,9 +1428,8 @@ mod tests {
         // ROI extraction → integral image → scan path with the
         // FRONTAL_FACE cascade and a heap-allocated scratch.
         let mut frame = alloc::vec![0u8; 64 * 64 * 2].into_boxed_slice();
-        for chunk in frame.chunks_exact_mut(2) {
-            chunk[0] = 0x84; // mid-grey RGB565 high byte
-            chunk[1] = 0x10;
+        for chunk in frame.as_chunks_mut::<2>().0 {
+            *chunk = [0x84, 0x10]; // mid-grey RGB565
         }
         let mut scratch = alloc::boxed::Box::new(CascadeScratch::new());
         let result =
