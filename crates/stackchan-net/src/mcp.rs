@@ -274,7 +274,7 @@ pub fn parse_request(body: &str) -> Result<ParsedRequest<'_>, ParseError> {
 }
 
 /// Skip ASCII whitespace from position `start`.
-fn skip_ws(bytes: &[u8], start: usize) -> usize {
+const fn skip_ws(bytes: &[u8], start: usize) -> usize {
     let mut p = start;
     while p < bytes.len() && matches!(bytes[p], b' ' | b'\t' | b'\n' | b'\r') {
         p += 1;

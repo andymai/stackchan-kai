@@ -1301,7 +1301,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Skip ASCII whitespace.
-    fn skip_ws(&mut self) {
+    const fn skip_ws(&mut self) {
         let bytes = self.input.as_bytes();
         let mut i = 0;
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {

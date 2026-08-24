@@ -1086,7 +1086,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// Advance past any ASCII whitespace at the current position.
-    pub(crate) fn skip_ws(&mut self) {
+    pub(crate) const fn skip_ws(&mut self) {
         while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
             self.pos += 1;
         }
