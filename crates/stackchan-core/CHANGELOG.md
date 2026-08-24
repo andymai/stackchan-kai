@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.1](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.38.0...stackchan-core-v0.38.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **core:** use slice fill for LED ring frame ([#629](https://github.com/andymai/stackchan-kai/issues/629)) ([abbac3f](https://github.com/andymai/stackchan-kai/commit/abbac3f0987b9d580bb599544187a4500a7c2436))
+
 ## [0.38.0](https://github.com/andymai/stackchan-kai/compare/stackchan-core-v0.37.2...stackchan-core-v0.38.0) (2026-07-10)
 
 
