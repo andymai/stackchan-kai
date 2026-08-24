@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.5](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.4...stackchan-sim-v0.23.5) (2026-08-24)
+
+
+### Bug Fixes
+
+* **core:** use slice fill for LED ring frame ([#629](https://github.com/andymai/stackchan-kai/issues/629)) ([abbac3f](https://github.com/andymai/stackchan-kai/commit/abbac3f0987b9d580bb599544187a4500a7c2436))
+
 ## [0.23.4](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.3...stackchan-sim-v0.23.4) (2026-07-10)
 
 ## [0.23.3](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.2...stackchan-sim-v0.23.3) (2026-07-10)

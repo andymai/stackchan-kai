@@ -440,21 +440,21 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aw88298"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "aw9523"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "axp2101"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -598,21 +598,21 @@ dependencies = [
 
 [[package]]
 name = "bm8563"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "bmi270"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "embedded-hal-async",
 ]
 
 [[package]]
 name = "bmm150"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -1864,7 +1864,7 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
 name = "es7210"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "ft6336u"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "gc0308"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -3291,7 +3291,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "ltr553"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -4206,7 +4206,7 @@ checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
 name = "py32"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -4563,7 +4563,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scservo"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "embedded-io-async 0.7.0",
 ]
@@ -4680,7 +4680,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "si12t"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "embedded-hal-async",
 ]
@@ -4894,7 +4894,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-core"
-version = "0.38.0"
+version = "0.38.1"
 dependencies = [
  "embedded-graphics",
  "heapless 0.8.0",
@@ -4903,14 +4903,14 @@ dependencies = [
 
 [[package]]
 name = "stackchan-desktop-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "stackchan-firmware"
-version = "0.114.0"
+version = "0.114.1"
 dependencies = [
  "aw88298",
  "aw9523",
@@ -4966,7 +4966,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-net"
-version = "0.16.4"
+version = "0.16.5"
 dependencies = [
  "ed25519-compact",
  "heapless 0.8.0",
@@ -4978,7 +4978,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-sim"
-version = "0.23.4"
+version = "0.23.5"
 dependencies = [
  "eframe",
  "embedded-graphics",
@@ -4989,7 +4989,7 @@ dependencies = [
 
 [[package]]
 name = "stackchan-tts"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "stackchan-core",
 ]
@@ -5280,7 +5280,7 @@ dependencies = [
 
 [[package]]
 name = "tracker"
-version = "0.12.24"
+version = "0.12.25"
 dependencies = [
  "heapless 0.8.0",
  "libm",
