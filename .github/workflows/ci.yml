@@ -134,7 +134,7 @@ jobs:
           # just published — espup reports `version_not_found` on
           # versions that exist. Pin a known-good toolchain so PR
           # merges aren't held by upstream pagination weather.
-          version: 1.94.0.0
+          version: 1.95.0.0
           default: true
           buildtargets: esp32s3
           ldproxy: false
