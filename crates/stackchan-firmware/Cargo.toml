@@ -158,7 +158,7 @@ defmt = "1.1.0"
 # peripheral. `espflash flash --monitor --log-format defmt` decodes on
 # the host side. No RTT probe, no host-level udev rules — just the
 # same /dev/ttyACM1 serial path already used with dialout-group access.
-esp-println = { version = "0.17.0", default-features = false, features = [
+esp-println = { version = "0.18.0", default-features = false, features = [
     "esp32s3",
     "defmt-espflash",
     "jtag-serial",

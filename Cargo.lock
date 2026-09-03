@@ -2008,12 +2008,6 @@ checksum = "9a93e39c8ad8d390d248dc7b9f4b59a873f313bf535218b8e2351356972399e3"
 
 [[package]]
 name = "esp-metadata-generated"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42c2ee95b945a4780796e4359e72c033aed3b45073880e8029458f538532db8a"
-
-[[package]]
-name = "esp-metadata-generated"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7237b66a6b13163199b9e094ea96958565a5b04d35f518ee5834dc61c044011d"
@@ -2036,14 +2030,14 @@ dependencies = [
 
 [[package]]
 name = "esp-println"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42dee1e9ac7c3539bf6464db1707b0edd7557168f98278cf3c84fe70e63c6ce6"
+checksum = "ebf772a41bc642b57399632aa06ab55391de35b2b8fcbb1b270d282fbd0fe5ff"
 dependencies = [
  "defmt 1.1.1",
  "document-features",
- "esp-metadata-generated 0.4.0",
- "esp-sync 0.2.1",
+ "esp-metadata-generated 0.5.0",
+ "esp-sync 0.3.0",
  "log",
  "portable-atomic",
 ]
@@ -2170,16 +2164,15 @@ dependencies = [
 
 [[package]]
 name = "esp-sync"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4736bfbbb9e3f6353344e14fc61b6d18d3b877c3286914cf8c0a037be0ed224"
+checksum = "064fd57eed12b5cbb669b3935e1f647fd6945b89938116d61153fb45fd703422"
 dependencies = [
- "cfg-if",
  "document-features",
  "embassy-sync 0.6.2",
  "embassy-sync 0.7.2",
  "embassy-sync 0.8.0",
- "esp-metadata-generated 0.4.0",
+ "esp-metadata-generated 0.5.0",
  "riscv",
  "xtensa-lx",
 ]
