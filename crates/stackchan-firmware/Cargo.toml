@@ -105,7 +105,7 @@ esp-hal-ota = { version = "0.6", features = ["esp32s3", "defmt"] }
 esp-rom-sys = { version = "0.1.4", features = ["esp32s3"] }
 esp-rtos = { version = "0.2.0", features = ["defmt", "embassy", "esp-alloc", "esp-radio", "esp32s3"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
-esp-alloc = { version = "0.9.0", features = ["defmt"] }
+esp-alloc = { version = "0.11.0", features = ["defmt"] }
 # Wi-Fi + BLE radio driver. `esp-radio` replaces `esp-wifi` on the
 # esp-hal 1.0 release line. Pinned to 0.17.x because 0.18 requires
 # esp-hal ~1.1.0-rc.0 which would force a wider toolchain bump.
