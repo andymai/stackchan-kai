@@ -88,6 +88,8 @@ must_use_candidate = "deny"
 missing_errors_doc = "warn"
 # Panic paths are already denied; documenting them is redundant.
 missing_panics_doc = "allow"
+# Its fix needs a typed empty array (`[] as [Event; 0]`) for anything that isn't a string.
+assert_is_empty = "allow"
 # Embedded code frequently casts between integer widths for register I/O;
 # the firmware crate disables these via its own manifest. Core + sim inherit
 # deny-style behaviour (no lints).
