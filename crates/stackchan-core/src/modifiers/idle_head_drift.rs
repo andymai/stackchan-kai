@@ -162,7 +162,12 @@ impl IdleHeadDrift {
         )]
         let unit = raw as f32 / ((1u32 << 24) - 1) as f32;
         // [0, 1] → [-1, +1]
-        (unit * 2.0 - 1.0) * max
+        #[allow(
+            clippy::suboptimal_flops,
+            reason = "f32::mul_add needs libm on no_std; stay consistent with workspace"
+        )]
+        let signed = unit * 2.0 - 1.0;
+        signed * max
     }
 
     /// Pick a uniform `u64` in `[lo, hi]` from the next PRNG draw.

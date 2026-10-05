@@ -343,7 +343,7 @@ fn sample_channels(keyframes: &[Keyframe], elapsed_ms: u32) -> ChannelSample {
             sample.decorator = Some(d);
         }
         if let Some(triple) = kf.rgb() {
-            sample.led = Some([triple.0, triple.1, triple.2]);
+            sample.led = Some(triple.into());
         }
     }
     sample.pose = Pose::new(motion_pan.unwrap_or(0.0), motion_tilt.unwrap_or(0.0));
