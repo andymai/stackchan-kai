@@ -1,0 +1,23 @@
+crates/stackchan-core/src/modifiers/dance_player.rs
+  s_1d5e36a6570c0d::t_0f29de67cde815 346
+crates/stackchan-core/src/modifiers/idle_head_drift.rs
+  s_1d5e36a6570c0d::t_643275107b26a0 165-170
+Cargo.toml
+  s_1d5e36a6570c0d::t_514d3476dd14c6 91-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbb3963203c92a125e9e3b3940474dd8a7b27667",
+  "prompts": {},
+  "sessions": {
+    "s_1d5e36a6570c0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15dead13-7148-4edb-9a37-9f8afd3fca6a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
