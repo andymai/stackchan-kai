@@ -138,6 +138,16 @@ pub fn consume_latch() -> Option<CrashSnapshot> {
     }
 }
 
+/// True when [`CRASH_LATCH`] holds a valid snapshot. Leaves it in
+/// place, so the OTA rollback check can read it and a rollback reset
+/// still hands the panic to the recovered image's [`consume_latch`].
+#[must_use]
+pub fn latch_pending() -> bool {
+    // SAFETY: called from `main` before any task spawn, like
+    // `consume_latch`; a shared read of the buffer.
+    unsafe { decode(&*core::ptr::addr_of!(CRASH_LATCH)).is_some() }
+}
+
 /// Render a [`CrashSnapshot`] into a human-readable, line-delimited
 /// log entry suitable for writing to `/sd/CRASH.LOG`. Schema is
 /// stable: `key=value` pairs, one per line, blank trailer.

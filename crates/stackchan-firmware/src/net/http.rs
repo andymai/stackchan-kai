@@ -2266,18 +2266,11 @@ async fn handle_post_firmware_update(
             defmt::warn!("http: OTA failed: {}", e);
             let (status, msg) = match &e {
                 crate::ota::OtaPerformError::Disabled => (503, "ota disabled in this build\n"),
-                // Both flash-state errors are 503 (service
-                // unavailable) — `FlashUnavailable` is a build-time
-                // miswiring, `FlashConsumedThisBoot` is a runtime
-                // exhaustion; both are operationally "OTA can't
+                // A build-time miswiring, but operationally "OTA can't
                 // serve this request" rather than "server bug".
                 crate::ota::OtaPerformError::FlashUnavailable => {
                     (503, "flash peripheral unavailable\n")
                 }
-                crate::ota::OtaPerformError::FlashConsumedThisBoot => (
-                    503,
-                    "flash consumed by a prior failed ota; reboot to retry\n",
-                ),
                 // Signature mismatch is the most operator-actionable
                 // error path — surface it as 403 specifically.
                 crate::ota::OtaPerformError::Image(stackchan_net::ota::OtaImageError::Verify(

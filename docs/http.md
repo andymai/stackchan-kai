@@ -469,7 +469,7 @@ at that slot, answers `200`, and reboots about 200 ms later.
 | 409  | Another update is already in flight |
 | 413  | Body larger than the 4 MiB payload cap plus framing |
 | 500  | Flash write failed |
-| 503  | Built without `STACKCHAN_OTA_PUBLIC_KEY`, or an earlier failed update this boot already claimed the flash (reboot to retry) |
+| 503  | Built without `STACKCHAN_OTA_PUBLIC_KEY` |
 
 Signing happens on the host with `sc-ota`, wrapped by just recipes:
 

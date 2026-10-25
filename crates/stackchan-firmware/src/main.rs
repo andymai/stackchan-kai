@@ -1108,9 +1108,19 @@ async fn main(spawner: Spawner) -> ! {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
-    // Drain the crash latch before anything else can panic, so the
-    // OTA trial check below only sees a crash from the previous boot.
-    // The SD branch further down writes the snapshot to CRASH.LOG.
+    // Runs before LCD, SD, or radio bring-up so a crashing update
+    // rolls back before it can crash again. Peeks the crash latch
+    // rather than draining it: a rollback reset leaves the panic for
+    // the recovered image to save.
+    let mut flash = peripherals.FLASH;
+    let boot_image = stackchan_firmware::ota::check_boot_image(
+        flash.reborrow(),
+        stackchan_firmware::crash::latch_pending(),
+    );
+
+    // Drain the crash latch now, before anything else can panic, so
+    // the next boot's OTA check only sees a crash from this boot. The
+    // SD branch further down writes the snapshot to CRASH.LOG.
     let crash = stackchan_firmware::crash::consume_latch();
     if let Some(snap) = &crash {
         defmt::warn!(
@@ -1119,11 +1129,6 @@ async fn main(spawner: Spawner) -> ! {
             snap.line,
         );
     }
-
-    // Runs before LCD, SD, or radio bring-up so a crashing update
-    // rolls back before it can crash again.
-    let mut flash = peripherals.FLASH;
-    let boot_image = stackchan_firmware::ota::check_boot_image(flash.reborrow(), crash.is_some());
 
     // Park the FLASH peripheral for the OTA path so a later
     // `POST /firmware/update` can claim it without re-acquiring

@@ -5062,6 +5062,7 @@ dependencies = [
  "ltr553",
  "micromath",
  "mipidsi",
+ "portable-atomic",
  "py32",
  "scservo",
  "sha1_smol",

@@ -99,6 +99,11 @@ esp-storage = { version = "0.8", features = ["esp-hal", "esp32s3"] }
 # `otadata` pointer dance so the firmware doesn't have to roll a
 # partition-table parser of its own.
 esp-hal-ota = { version = "0.6", features = ["esp32s3", "defmt"] }
+# `ota.rs` keeps its trial-boot mark in persistent RTC RAM, and
+# `#[esp_hal::ram(persistent)]` accepts portable-atomic's atomics (not
+# core's), which lets the mark be a safe static. Already in the graph
+# through esp-hal.
+portable-atomic = { version = "1.13", default-features = false }
 # The target CRC handed to `ota_begin` must match the one `esp-hal-ota`
 # accumulates across chunks byte-for-byte, and it accumulates with this
 # crate's `crc32_le` without re-exporting it.
