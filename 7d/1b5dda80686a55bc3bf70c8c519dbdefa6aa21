@@ -1,0 +1,22 @@
+crates/stackchan-sim/src/bin/ota.rs
+  s_9dce2612c07cc6::t_f7e55568f2402c 110-114
+  s_9dce2612c07cc6::t_af1be219ca0b6b 128-145
+  s_9dce2612c07cc6::t_fed96a95e70840 260-280
+  s_9dce2612c07cc6::t_6c13e83971c8e6 259
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d1b5dda80686a55bc3bf70c8c519dbdefa6aa21",
+  "prompts": {},
+  "sessions": {
+    "s_9dce2612c07cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4934dd8b-3ec9-476f-96a0-f2f46e272b24",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
