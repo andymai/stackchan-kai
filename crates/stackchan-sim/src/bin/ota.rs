@@ -107,6 +107,11 @@ fn keygen(path: &str) -> Result<(), String> {
 }
 
 fn sign(key_path: &str, app_path: &str, out_path: &str) -> Result<(), String> {
+    if same_file(key_path, out_path) {
+        return Err(format!(
+            "output {out_path} is the signing key; refusing to overwrite it"
+        ));
+    }
     let keypair = read_keypair(key_path)?;
     let payload = std::fs::read(app_path).map_err(|e| format!("reading {app_path}: {e}"))?;
     let image = seal(&payload, &keypair).map_err(|e| format!("{app_path}: {e}"))?;
@@ -118,6 +123,24 @@ fn sign(key_path: &str, app_path: &str, out_path: &str) -> Result<(), String> {
         image.len()
     );
     Ok(())
+}
+
+/// True when both paths exist and name the same file, through
+/// symlinks or hard links.
+fn same_file(a: &str, b: &str) -> bool {
+    let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta_a.dev() == meta_b.dev() && meta_a.ino() == meta_b.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (meta_a, meta_b);
+        std::fs::canonicalize(a).ok() == std::fs::canonicalize(b).ok()
+    }
 }
 
 fn read_keypair(path: &str) -> Result<KeyPair, String> {
@@ -231,6 +254,28 @@ mod tests {
         assert_eq!(decode_hex32(&encode_hex(&bytes)).unwrap(), bytes);
         assert!(decode_hex32("abcd").is_err());
         assert!(decode_hex32(&"zz".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn sign_refuses_to_write_over_the_key() {
+        let dir = std::env::temp_dir().join(format!("sc-ota-sign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = dir.join("ota.key");
+        let link = dir.join("link.key");
+        let app = dir.join("app.bin");
+        let key_str = key.to_str().unwrap();
+        keygen(key_str).unwrap();
+        std::fs::hard_link(&key, &link).unwrap();
+        std::fs::write(&app, app_image(64)).unwrap();
+        let before = std::fs::read_to_string(&key).unwrap();
+        for out in [&key, &link] {
+            assert!(sign(key_str, app.to_str().unwrap(), out.to_str().unwrap()).is_err());
+        }
+        assert_eq!(std::fs::read_to_string(&key).unwrap(), before);
+        let out = dir.join("fw.scfw");
+        sign(key_str, app.to_str().unwrap(), out.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
