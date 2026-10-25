@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.6...stackchan-net-v0.17.0) (2026-10-25)
+
+
+### Features
+
+* **sim:** sc-ota signer and just recipes for POST /firmware/update ([#660](https://github.com/andymai/stackchan-kai/issues/660)) ([5475e62](https://github.com/andymai/stackchan-kai/commit/5475e62503ad0e9c20eb81727c0ce88dbc3d5bfd))
+
 ## [0.16.6](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.5...stackchan-net-v0.16.6) (2026-10-25)
 
 

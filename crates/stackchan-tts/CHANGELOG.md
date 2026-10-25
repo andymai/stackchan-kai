@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.5.1...stackchan-tts-v0.5.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **tts:** normalize baked phrases to -12 dBFS peak ([#657](https://github.com/andymai/stackchan-kai/issues/657)) ([2780905](https://github.com/andymai/stackchan-kai/commit/2780905b737dee46c7df3e77cb76f3c484ed57a3))
+
 ## [0.5.1](https://github.com/andymai/stackchan-kai/compare/stackchan-tts-v0.5.0...stackchan-tts-v0.5.1) (2026-08-24)
 
 
