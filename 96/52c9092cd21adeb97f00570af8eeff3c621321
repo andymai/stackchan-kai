@@ -1,0 +1,27 @@
+crates/stackchan-net/src/ota.rs
+  s_9dce2612c07cc6::t_1e6774ea37c73e 70-74
+crates/stackchan-firmware/partitions.csv
+  s_9dce2612c07cc6::t_13507b9b6c6df9 1-12
+crates/stackchan-firmware/README.md
+  s_9dce2612c07cc6::t_232775530c4702 238-245,248
+  s_9dce2612c07cc6::t_a640b3ebb06e8f 246-247
+justfile
+  s_9dce2612c07cc6::t_ba490b3d36cfe7 17-21
+  s_9dce2612c07cc6::t_402d4bbc5b4e90 163,182,189,208,216,223,232,241,250,260,269,275,282,289,296,304,313,321,329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9652c9092cd21adeb97f00570af8eeff3c621321",
+  "prompts": {},
+  "sessions": {
+    "s_9dce2612c07cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4934dd8b-3ec9-476f-96a0-f2f46e272b24",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
