@@ -89,6 +89,13 @@ msrv:
 config *args:
     cargo run -p stackchan-sim --bin sc-config --features config-cli -- {{args}}
 
+# Host-only, feature-gated tool over the `stackchan-net::ota` envelope
+# the firmware verifies. E.g. `just ota keygen <key>`,
+# `just ota pubkey <key>`. See `ota-image`.
+# Sign firmware for `POST /firmware/update` (keygen / pubkey / sign).
+ota *args:
+    cargo run -p stackchan-sim --bin sc-ota --features ota-cli -- {{args}}
+
 # ----- Web dashboard ------------------------------------------------------
 
 # Build the operator dashboard bundle. Vite + Solid → `web/dist/index.html`,
@@ -196,6 +203,41 @@ fmr-trace: build-firmware-trace
 # CLAUDE.md "Flashing from an agent / non-TTY shell".
 fmr-agent:
     @bash scripts/fmr-agent.sh
+
+# ----- OTA ----------------------------------------------------------------
+#
+# A device only accepts images signed by the key whose public half was
+# in STACKCHAN_OTA_PUBLIC_KEY when its running firmware was built. One-
+# time setup: `just ota keygen <key>`, then export the printed value
+# before every firmware build (including the `just fmr` that first puts
+# OTA-capable firmware on the device).
+
+# Signed image written by `ota-image`, uploaded by `ota-push`.
+ota_image := "target/ota/stackchan-firmware.scfw"
+
+# Refuses to run when STACKCHAN_OTA_PUBLIC_KEY doesn't match KEY: the
+# new image would boot but reject every later update.
+# Build the release firmware and sign it with KEY into `ota_image`.
+ota-image KEY: (_ota-key-check KEY) build-firmware
+    mkdir -p target/ota
+    espflash save-image --chip esp32s3 --flash-size 16mb --partition-table crates/stackchan-firmware/partitions.csv {{firmware_elf}} target/ota/stackchan-firmware.bin
+    cargo run -q -p stackchan-sim --bin sc-ota --features ota-cli -- sign {{KEY}} target/ota/stackchan-firmware.bin {{ota_image}}
+
+# The route always needs a bearer token: set STACKCHAN_TOKEN to
+# `auth.token` from the device's STACKCHAN.RON.
+# Upload `ota_image` to HOST, which flashes its idle slot and reboots.
+ota-push HOST:
+    @: "${STACKCHAN_TOKEN:?set STACKCHAN_TOKEN to auth.token from STACKCHAN.RON}"
+    curl --fail-with-body -X POST -H "Authorization: Bearer $STACKCHAN_TOKEN" --data-binary @{{ota_image}} http://{{HOST}}/firmware/update
+
+_ota-key-check KEY:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    want=$(cargo run -q -p stackchan-sim --bin sc-ota --features ota-cli -- pubkey {{KEY}})
+    if [ "${STACKCHAN_OTA_PUBLIC_KEY:-}" != "$want" ]; then
+        echo "error: export STACKCHAN_OTA_PUBLIC_KEY=$want (the public half of {{KEY}}) and rebuild" >&2
+        exit 1
+    fi
 
 # Path prefix for release bench example ELFs.
 example_elf_dir := "target/xtensa-esp32s3-none-elf/release/examples"

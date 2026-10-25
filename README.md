@@ -127,7 +127,8 @@ same.
   (`set_emotion`, `look_at`, `speak`, `create_reminder`, …)
 - `POST /firmware/update` — ed25519-signed SCFW image; flashes the
   inactive OTA slot and soft-resets. Compiled out unless
-  `STACKCHAN_OTA_PUBLIC_KEY` is set at build time.
+  `STACKCHAN_OTA_PUBLIC_KEY` is set at build time; `just ota-image`
+  builds and signs an image, `just ota-push` uploads it.
 
 Full reference: [docs/http.md](./docs/http.md).
 

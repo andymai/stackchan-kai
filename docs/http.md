@@ -52,9 +52,12 @@ beats pulling a full HTTP framework into the firmware target.
 | POST   | `/toast`         | Push a short toast band (warn / error); 3-second TTL |
 | GET    | `/settings`      | Persisted config (PSK + token redacted)             |
 | PUT    | `/settings`      | Replace persisted config; atomic SD writeback        |
+| POST   | `/firmware/update` | Signed OTA image; flashes the idle slot and reboots |
 
 Write routes (`PUT`, all `POST`) require `Authorization: Bearer <token>`
 when `auth.token` is configured. Reads are always unauthenticated.
+`POST /firmware/update` is stricter: it needs a token even when
+`auth.token` is empty, and answers `401` until one is configured.
 
 ## Live state
 
@@ -446,6 +449,43 @@ just config template --palette cute --face-geometry chibi > STACKCHAN.RON
 just config validate STACKCHAN.RON                        # exits non-zero on a bad file
 ```
 
+## Firmware update
+
+### `POST /firmware/update`
+
+The body is a signed SCFW image (layout in
+[`stackchan-net::ota`](../crates/stackchan-net/src/ota.rs)) with at
+most 4 MiB of payload. The device checks the Ed25519 signature against
+the public key baked in at build time (`STACKCHAN_OTA_PUBLIC_KEY`),
+writes the payload to the OTA slot it isn't running, points `otadata`
+at that slot, answers `200`, and reboots about 200 ms later.
+
+| Code | Meaning |
+|------|---------|
+| 200  | Image verified and flashed; the device reboots into it |
+| 400  | Truncated body or bad SCFW framing |
+| 401  | Missing or wrong bearer token, or no `auth.token` configured |
+| 403  | Signature doesn't match the device's public key |
+| 409  | Another update is already in flight |
+| 413  | Body larger than the 4 MiB payload cap plus framing |
+| 500  | Flash write failed |
+| 503  | Built without `STACKCHAN_OTA_PUBLIC_KEY`, or an earlier failed update this boot already claimed the flash (reboot to retry) |
+
+Signing happens on the host with `sc-ota`, wrapped by just recipes:
+
+```
+mkdir -p ~/.config/stackchan
+just ota keygen ~/.config/stackchan/ota.key               # once; keep the key private
+export STACKCHAN_OTA_PUBLIC_KEY=$(just ota pubkey ~/.config/stackchan/ota.key)
+just fmr                                                  # first OTA-capable firmware goes on over USB
+just ota-image ~/.config/stackchan/ota.key                # release build -> target/ota/stackchan-firmware.scfw
+STACKCHAN_TOKEN=s3cret just ota-push stackchan.local
+```
+
+A device only accepts images signed by the key its running firmware
+was built with, so keep `STACKCHAN_OTA_PUBLIC_KEY` exported for every
+build. `just ota-image` refuses to run when it doesn't match the key.
+
 ## Status codes
 
 | Code | Where it shows up                                                  |
@@ -454,12 +494,14 @@ just config validate STACKCHAN.RON                        # exits non-zero on a 
 | 204  | POST `/emotion` / `/look-at` / `/reset` / `/volume` / `/mute` on success |
 | 400  | Malformed JSON, missing required fields, unknown field, invalid emotion / phrase / locale, `volume.level > 100`, validation failure on PUT `/settings` |
 | 401  | Write route called without a valid bearer token (when auth is enabled) |
+| 403  | POST `/firmware/update` signature mismatch                          |
 | 404  | Path not in the matcher                                             |
 | 405  | Method not allowed                                                  |
-| 413  | Request body exceeds `MAX_BODY_BYTES` (1024)                        |
+| 409  | POST `/firmware/update` while another update is in flight           |
+| 413  | Request body exceeds `MAX_BODY_BYTES` (1024), or the OTA cap on POST `/firmware/update` |
 | 431  | Headers exceed `REQUEST_BUF_BYTES` before `\r\n\r\n` is reached     |
-| 500  | SD write failed during PUT `/settings`                              |
-| 503  | PUT `/settings` with no SD; GET `/settings` before the config snapshot is loaded; no free SSE subscriber slot |
+| 500  | SD write failed during PUT `/settings`; flash write failed during POST `/firmware/update` |
+| 503  | PUT `/settings` with no SD; GET `/settings` before the config snapshot is loaded; no free SSE subscriber slot; POST `/firmware/update` on a build without OTA |
 
 Error responses have `Content-Type: text/plain` with a single-line
 reason — operators triage from `defmt` boot logs, the HTTP body is
