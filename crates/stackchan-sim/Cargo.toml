@@ -1,6 +1,6 @@
 [package]
 name = "stackchan-sim"
-version = "0.23.6"
+version = "0.24.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -36,14 +36,6 @@ eframe = { version = "0.37", optional = true }
 # on the dep-light `default-features = false` dev-dependency below.
 stackchan-net = { path = "../stackchan-net", optional = true }
 
-# Optional: the `sc-ota` host binary signs firmware images for
-# `POST /firmware/update` with the same Ed25519 crate the firmware
-# verifies with. `getrandom` seeds `keygen` from the OS RNG; it's the
-# 0.3 line already in the lock, where ed25519-compact's own `random`
-# feature would pull a second getrandom major.
-ed25519-compact = { version = "2", default-features = false, optional = true }
-getrandom = { version = "0.3", optional = true }
-
 [dev-dependencies]
 # Used by `tests/ble_remote_command.rs` to round-trip raw BLE
 # characteristic payloads through the same decoder the firmware uses.
@@ -57,9 +49,6 @@ viz = ["dep:eframe"]
 # Enable the `sc-config` binary
 # (`cargo run -p stackchan-sim --bin sc-config --features config-cli`).
 config-cli = ["dep:stackchan-net"]
-# Enable the `sc-ota` binary
-# (`cargo run -p stackchan-sim --bin sc-ota --features ota-cli`).
-ota-cli = ["dep:stackchan-net", "dep:ed25519-compact", "dep:getrandom"]
 
 [[bin]]
 name = "viz"
@@ -70,8 +59,3 @@ required-features = ["viz"]
 name = "sc-config"
 path = "src/bin/config.rs"
 required-features = ["config-cli"]
-
-[[bin]]
-name = "sc-ota"
-path = "src/bin/ota.rs"
-required-features = ["ota-cli"]

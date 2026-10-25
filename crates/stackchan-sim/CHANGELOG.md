@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.6...stackchan-sim-v0.24.0) (2026-10-25)
+
+
+### Features
+
+* **sim:** sc-ota signer and just recipes for POST /firmware/update ([#660](https://github.com/andymai/stackchan-kai/issues/660)) ([5475e62](https://github.com/andymai/stackchan-kai/commit/5475e62503ad0e9c20eb81727c0ce88dbc3d5bfd))
+
 ## [0.23.6](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.5...stackchan-sim-v0.23.6) (2026-10-25)
 
 ## [0.23.5](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.4...stackchan-sim-v0.23.5) (2026-08-24)

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.115.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.114.2...stackchan-firmware-v0.115.0) (2026-10-25)
+
+
+### Features
+
+* **sim:** sc-ota signer and just recipes for POST /firmware/update ([#660](https://github.com/andymai/stackchan-kai/issues/660)) ([5475e62](https://github.com/andymai/stackchan-kai/commit/5475e62503ad0e9c20eb81727c0ce88dbc3d5bfd))
+
+
+### Bug Fixes
+
+* **tts:** normalize baked phrases to -12 dBFS peak ([#657](https://github.com/andymai/stackchan-kai/issues/657)) ([2780905](https://github.com/andymai/stackchan-kai/commit/2780905b737dee46c7df3e77cb76f3c484ed57a3))
+
 ## [0.114.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.114.1...stackchan-firmware-v0.114.2) (2026-10-25)
 
 
