@@ -15,7 +15,14 @@ all-features = false
 version = 2
 yanked = "warn"
 unmaintained = "workspace"
-ignore = []
+ignore = [
+    # crypto-bigint 0.5.5 <- elliptic-curve 0.13 <- p256 0.13 <- trouble-host,
+    # behind its `security` feature (LE Secure Connections pairing). Every
+    # trouble-host release through 0.8.0 requires p256 ^0.13.2 and
+    # crypto-bigint has no 0.5.x fix.
+    # TODO: drop this entry once trouble-host depends on p256 >= 0.14.
+    { id = "RUSTSEC-2026-0387", reason = "no fixed crypto-bigint reachable: trouble-host pins p256 ^0.13.2" },
+]
 
 [licenses]
 version = 2
