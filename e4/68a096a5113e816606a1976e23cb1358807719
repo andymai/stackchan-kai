@@ -1,0 +1,48 @@
+crates/stackchan-sim/Cargo.toml
+  s_9dce2612c07cc6::t_48c1657bfe5db0 60-61
+  s_9dce2612c07cc6::t_107610949ccc6d 39,46
+  s_9dce2612c07cc6::t_1188837bb51237 62
+  s_9dce2612c07cc6::t_9350c4af63de6a 73-77
+  s_9dce2612c07cc6::t_c6395354aa626c 40-45
+crates/stackchan-firmware/README.md
+  s_9dce2612c07cc6::t_0c112230c391dd 123
+README.md
+  s_9dce2612c07cc6::t_7f4d4fd825ccbd 130-131
+docs/http.md
+  s_9dce2612c07cc6::t_f49aeb6efa8b75 452-488
+  s_9dce2612c07cc6::t_e578be51fc0f84 55,59-60
+  s_9dce2612c07cc6::t_e59d591085673b 497,500-501,503-504
+crates/stackchan-net/src/ota.rs
+  s_9dce2612c07cc6::t_3f3d961ea8e10e 3-8
+  s_9dce2612c07cc6::t_08448b91f299b4 78-81
+  s_9dce2612c07cc6::t_004f89ac9c53b3 45-48
+justfile
+  s_9dce2612c07cc6::t_b9d54b0347943a 96-98
+  s_9dce2612c07cc6::t_7775b9bed3e232 226-228
+  s_9dce2612c07cc6::t_1c4c9d46be4c2e 207-217,221-225,229-241
+  s_9dce2612c07cc6::t_12d6b73f08b029 92-95
+  s_9dce2612c07cc6::t_d3f413689f2fb7 218-220
+crates/stackchan-sim/src/bin/ota.rs
+  s_9dce2612c07cc6::t_ef6f7839894acd 102-104
+  s_9dce2612c07cc6::t_67794242c1fca1 90-92
+  s_9dce2612c07cc6::t_a5f9e6e492930b 162-163
+  s_9dce2612c07cc6::t_afaf574ab0acf8 1-89,93-101,105-161,164-248
+Cargo.lock
+  s_9dce2612c07cc6::t_c7a7dc678c46e3 5095,5098
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e468a096a5113e816606a1976e23cb1358807719",
+  "prompts": {},
+  "sessions": {
+    "s_9dce2612c07cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4934dd8b-3ec9-476f-96a0-f2f46e272b24",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
