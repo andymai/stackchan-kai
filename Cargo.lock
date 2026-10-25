@@ -5092,8 +5092,10 @@ dependencies = [
 name = "stackchan-sim"
 version = "0.23.5"
 dependencies = [
+ "ed25519-compact",
  "eframe",
  "embedded-graphics",
+ "getrandom",
  "heapless 0.8.0",
  "stackchan-core",
  "stackchan-net",

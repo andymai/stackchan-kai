@@ -1,10 +1,11 @@
 //! Over-the-air firmware-update image format.
 //!
-//! Defines the byte layout the firmware will accept on a future
-//! `POST /firmware/update` route, plus a host-testable parser that
-//! splits an image into its header, payload, and signature trailer.
-//! The actual Ed25519 verification + partition swap ship in a
-//! follow-up that brings in the crypto dep and `esp-hal-ota`.
+//! Defines the byte layout `POST /firmware/update` accepts, a parser
+//! that splits an image into its header, payload, and signature
+//! trailer, and the Ed25519 check against the key baked into the
+//! firmware. Images are signed on the host by `sc-ota` in
+//! `stackchan-sim`; the partition write rides on `esp-hal-ota` in the
+//! firmware.
 //!
 //! ## Layout
 //!
@@ -41,12 +42,10 @@
 //!
 //! ## Test strategy
 //!
-//! [`parse_image`] is fully host-testable; signature verification
-//! lands as a follow-up that plugs in an Ed25519 verifier (likely
-//! `ed25519-compact` or `ed25519-dalek` with `default-features =
-//! false`). The parsing tests pin every length / magic / version
-//! corner case so the future verifier can layer on top without
-//! re-validating the framing.
+//! [`parse_image`] and [`parse_and_verify`] are fully host-testable.
+//! The parsing tests pin every length / magic / version corner case;
+//! the verify tests cover a matching key, a wrong key, a tampered
+//! payload, a tampered signature, and an all-zero public key.
 
 /// Magic prefix that identifies an `SCFW` (Stack-chan firmware) OTA
 /// image. Catches accidentally-uploaded non-OTA blobs before any
@@ -76,10 +75,10 @@ pub const MAX_OTA_PAYLOAD_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Errors returned by [`parse_image`].
 ///
-/// Each variant maps onto a distinct HTTP error response in the
-/// future firmware route — `BadMagic` and `BadVersion` are
-/// `400 Bad Request`, `TooLarge` is `413 Payload Too Large`,
-/// `LengthMismatch` is `400`, and `TooShort` is `400`.
+/// `POST /firmware/update` answers every variant with
+/// `400 Bad Request`. An oversized body never reaches the parser: the
+/// route compares `Content-Length` against the cap first and returns
+/// `413 Payload Too Large`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OtaError {

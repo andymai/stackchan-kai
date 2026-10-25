@@ -120,7 +120,7 @@ firmware runs these services on the LAN:
   (WebSocket), control plane on `/emotion`, `/look-at`, `/reset`,
   `/speak`, `/settings`, `/dance`, `/motion`, `/face-geometry`,
   `/listen`, `/toast`, `/mcp`, `/health`, `/events`, `/crash`,
-  `/ota`. Write routes (`PUT`, `POST`) are gated on `auth.token`
+  `/firmware/update`. Write routes (`PUT`, `POST`) are gated on `auth.token`
   from the boot config — empty token (default) leaves the LAN open;
   non-empty token requires `Authorization: Bearer <token>`. Full
   route table, body shapes, error codes in
