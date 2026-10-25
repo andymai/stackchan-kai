@@ -1,0 +1,72 @@
+crates/stackchan-firmware/README.md
+  s_9dce2612c07cc6::t_a640b3ebb06e8f 246-247
+  s_9dce2612c07cc6::t_232775530c4702 238-245,248
+  s_9dce2612c07cc6::t_0c112230c391dd 123
+crates/stackchan-net/src/ota.rs
+  s_9dce2612c07cc6::t_1e6774ea37c73e 69-71
+  s_9dce2612c07cc6::t_3643573d7ff8cf 72-73
+  s_9dce2612c07cc6::t_3f3d961ea8e10e 3-8
+  s_9dce2612c07cc6::t_08448b91f299b4 78-81
+  s_9dce2612c07cc6::t_004f89ac9c53b3 45-48
+crates/stackchan-firmware/partitions.csv
+  s_9dce2612c07cc6::t_13507b9b6c6df9 1-12
+justfile
+  s_9dce2612c07cc6::t_ba490b3d36cfe7 17-21
+  s_9dce2612c07cc6::t_402d4bbc5b4e90 170,189,196,250,258,265,274,283,292,302,311,317,324,331,338,346,355,363,371
+  s_9dce2612c07cc6::t_b9d54b0347943a 96-98
+  s_9dce2612c07cc6::t_7775b9bed3e232 226-228
+  s_9dce2612c07cc6::t_1c4c9d46be4c2e 207-217,221-225,229-241
+  s_9dce2612c07cc6::t_12d6b73f08b029 92-95
+  s_9dce2612c07cc6::t_d3f413689f2fb7 218-220
+crates/stackchan-sim/Cargo.toml
+  s_9dce2612c07cc6::t_48c1657bfe5db0 60-61
+  s_9dce2612c07cc6::t_107610949ccc6d 39,46
+  s_9dce2612c07cc6::t_1188837bb51237 62
+  s_9dce2612c07cc6::t_9350c4af63de6a 73-77
+  s_9dce2612c07cc6::t_c6395354aa626c 40-45
+README.md
+  s_9dce2612c07cc6::t_7f4d4fd825ccbd 130-131
+docs/http.md
+  s_9dce2612c07cc6::t_f49aeb6efa8b75 452-484,493-496
+  s_9dce2612c07cc6::t_e578be51fc0f84 55,59-60
+  s_9dce2612c07cc6::t_e59d591085673b 505,508-509,511-512
+  s_9dce2612c07cc6::t_63e6e1f707fcfb 25,485-491
+  s_9dce2612c07cc6::t_d7887642c30665 492
+crates/stackchan-sim/src/bin/ota.rs
+  s_9dce2612c07cc6::t_ef6f7839894acd 102-104
+  s_9dce2612c07cc6::t_67794242c1fca1 90-92
+  s_9dce2612c07cc6::t_a5f9e6e492930b 185-186
+  s_9dce2612c07cc6::t_afaf574ab0acf8 1-89,93-101,105-109,115-127,146-184,187-258,281-293
+Cargo.lock
+  s_9dce2612c07cc6::t_c7a7dc678c46e3 5095,5098
+crates/stackchan-firmware/src/ota.rs
+  s_9dce2612c07cc6::t_692b9ea65dd49d 386-387
+  s_9dce2612c07cc6::t_dd9bb6fcba6d9d 40-41,43-52,58,63
+  s_9dce2612c07cc6::t_c47866ff267f6d 53-55
+  s_9dce2612c07cc6::t_817c803370b2ce 150-295
+crates/stackchan-net/src/mcp.rs
+  s_9dce2612c07cc6::t_57827ef706b5e0 661
+crates/stackchan-firmware/src/main.rs
+  s_9dce2612c07cc6::t_e1b88090bf0964 1275-1281
+  s_9dce2612c07cc6::t_374a4f10185efb 1111-1127,1133
+  s_9dce2612c07cc6::t_379ab60abc965e 1768-1775
+  s_9dce2612c07cc6::t_7dc035b6ae5d02 1089-1095
+crates/stackchan-firmware/src/net/respond.rs
+  s_9dce2612c07cc6::t_c6d9526cd39bd0 76-77,79-80,82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3616d52df7171794c6c9d3568ea69fefad82cd22",
+  "prompts": {},
+  "sessions": {
+    "s_9dce2612c07cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4934dd8b-3ec9-476f-96a0-f2f46e272b24",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
