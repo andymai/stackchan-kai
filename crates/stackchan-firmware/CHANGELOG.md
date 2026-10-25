@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.116.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.115.0...stackchan-firmware-v0.116.0) (2026-10-25)
+
+
+### Features
+
+* **firmware:** roll back an OTA update that panics during its trial ([#662](https://github.com/andymai/stackchan-kai/issues/662)) ([6d901f3](https://github.com/andymai/stackchan-kai/commit/6d901f30012b3ea60eac6e15df05d351aea6f7b2))
+
 ## [0.115.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.114.2...stackchan-firmware-v0.115.0) (2026-10-25)
 
 
