@@ -1,16 +1,20 @@
 //! Audio bench: brings up the full audio stack (I²S0 + AW88298 + ES7210)
-//! exactly as `main.rs` does, then walks the non-verbal-SFX phrase
-//! catalog through the speech dispatch path so every chirp can be
-//! ear-tested in isolation.
+//! exactly as `main.rs` does, then walks the baked phrase catalog
+//! (spoken phrases, then non-verbal chirps) through the speech dispatch
+//! path so every clip can be ear-tested in isolation.
 //!
 //! Use this bench when iterating on:
 //! - chirp distinguishability (wake vs pickup vs startle vs low-battery)
-//! - any new non-verbal `PhraseId` variant
+//! - spoken-phrase level against the chirps after a `just bake-tts`
+//! - any new `PhraseId` variant
 //! - voice-route bring-up after audio-stack changes
 //!
 //! Expected log after bring-up (one playlist run):
 //!
 //! ```text
+//! audio-bench: dispatching Greeting
+//! audio-bench: dispatching AcknowledgeName
+//! audio-bench: dispatching BatteryLow
 //! audio-bench: dispatching WakeChirp
 //! audio-bench: dispatching PickupChirp
 //! audio-bench: dispatching StartleChirp
@@ -36,6 +40,7 @@ use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{clock::CpuClock, timer::timg::TimerGroup};
 use stackchan_core::voice::{PhraseId, Utterance};
 use stackchan_firmware::{audio, board};
+use stackchan_tts::{BakedBackend, SpeechBackend};
 
 use esp_println as _;
 
@@ -64,8 +69,9 @@ const HEAP_SIZE: usize = 64 * 1024;
 /// margin so the queue is being read by the time we start producing.
 const POST_BRINGUP_DELAY_MS: u64 = 500;
 
-/// Gap between clips in the playlist. Long enough that adjacent clips
-/// are unmistakably distinct to the ear (no run-together).
+/// Silence between the end of one clip and the start of the next.
+/// Long enough that adjacent clips are unmistakably distinct to the
+/// ear (no run-together).
 const INTER_CLIP_GAP_MS: u64 = 800;
 
 /// Pause at the end of a full playlist run before looping.
@@ -127,6 +133,9 @@ async fn main(spawner: Spawner) -> ! {
 
     loop {
         for (label, phrase) in [
+            ("Greeting", PhraseId::Greeting),
+            ("AcknowledgeName", PhraseId::AcknowledgeName),
+            ("BatteryLow", PhraseId::BatteryLow),
             ("WakeChirp", PhraseId::WakeChirp),
             ("PickupChirp", PhraseId::PickupChirp),
             ("StartleChirp", PhraseId::StartleChirp),
@@ -152,5 +161,18 @@ async fn play_phrase(label: &str, phrase: PhraseId) {
     if let Err(e) = audio::try_dispatch_utterance(&Utterance::phrase(phrase)) {
         defmt::warn!("audio-bench: {=str} dropped ({:?})", label, e);
     }
-    Timer::after(Duration::from_millis(INTER_CLIP_GAP_MS)).await;
+    Timer::after(Duration::from_millis(clip_ms(phrase) + INTER_CLIP_GAP_MS)).await;
+}
+
+/// Playback length of `phrase`, so the next dispatch waits for this
+/// clip to finish instead of queueing behind it.
+fn clip_ms(phrase: PhraseId) -> u64 {
+    BakedBackend::new()
+        .render(&Utterance::phrase(phrase))
+        .ok()
+        .and_then(|source| source.len_hint())
+        .and_then(|samples| u64::try_from(samples).ok())
+        .map_or(0, |samples| {
+            samples * 1000 / u64::from(audio::SAMPLE_RATE_HZ)
+        })
 }

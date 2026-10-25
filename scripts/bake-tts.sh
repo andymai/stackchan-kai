@@ -88,11 +88,16 @@ bake_one() {
 
     # Piper: text on stdin, raw 22050 Hz / 16-bit / mono on stdout.
     # sox: resample to 16 kHz, same bit-depth/channels, raw out.
+    # `gain -n -12` normalizes to -12 dBFS: Piper masters near full
+    # scale, which overdrives the CoreS3's 1 W speaker through the
+    # AW88298 boost into audible clipping. -12 dBFS matches the
+    # firmware's chirp tables (amplitude 8192 in stackchan-tts).
     printf '%s' "$text" | piper \
         --model "$model_path" \
         --output_raw \
       | sox -t raw -r 22050 -e signed -b 16 -c 1 - \
-            -t raw -r 16000 -e signed -b 16 -c 1 "$out_path"
+            -t raw -r 16000 -e signed -b 16 -c 1 "$out_path" \
+            gain -n -12
 
     local size
     size=$(stat -c %s "$out_path" 2>/dev/null || stat -f %z "$out_path")

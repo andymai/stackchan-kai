@@ -476,6 +476,30 @@ mod tests {
     }
 
     #[test]
+    fn en_verbal_phrases_peak_at_chirp_level() {
+        // `scripts/bake-tts.sh` peak-normalizes to -12 dBFS, the chirp
+        // tables' amplitude; the resample that follows the gain step
+        // moves peaks by a fraction of a dB. ±0.5 dB catches a
+        // full-scale re-bake (which clips the amp) and a silent one.
+        const PEAK_MIN: i32 = 7_771; // -12.5 dBFS
+        const PEAK_MAX: i32 = 8_718; // -11.5 dBFS
+        let b = BakedBackend::new();
+        for phrase in [
+            PhraseId::Greeting,
+            PhraseId::AcknowledgeName,
+            PhraseId::BatteryLow,
+        ] {
+            let utterance = Utterance::phrase(phrase).with_locale(Locale::En);
+            let pcm = drain(b.render(&utterance).expect("en phrase is baked"));
+            let peak = pcm.iter().map(|&s| i32::from(s).abs()).max().unwrap_or(0);
+            assert!(
+                (PEAK_MIN..=PEAK_MAX).contains(&peak),
+                "{phrase:?}: peak {peak} is outside -12 dBFS ±0.5 dB; re-run `just bake-tts`",
+            );
+        }
+    }
+
+    #[test]
     fn every_known_phrase_id_has_a_render_arm() {
         // Explicit list of every `PhraseId` variant. The
         // `#[non_exhaustive]` attribute on the enum prevents
