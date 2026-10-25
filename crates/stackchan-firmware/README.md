@@ -235,6 +235,17 @@ a non-TTY shell (any agent-spawned bash), launch inside a tmux
 session — see [CLAUDE.md](../../CLAUDE.md#flashing-from-an-agent--non-tty-shell)
 for the recipe.
 
+### Flash layout
+
+[`partitions.csv`](partitions.csv) splits the 16 MB flash into two
+OTA app slots (`ota_0`, `ota_1`) plus `otadata`, which records the
+slot the bootloader runs. `POST /firmware/update` writes the slot
+that isn't running and flips `otadata`. Every flash recipe in the
+justfile passes the table with `--erase-parts otadata`, so a USB
+flash writes `ota_0` and always boots it. `cargo run` goes through
+the probe-rs runner in `.cargo/config.toml`, which isn't given this
+table; use the just recipes when you want OTA to work.
+
 ### Cargo features
 
 - **`tracking-trace`** — emits structured `defmt` events from the

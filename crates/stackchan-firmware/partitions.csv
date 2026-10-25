@@ -1,0 +1,12 @@
+# CoreS3 flash layout (16 MB). Two OTA app slots so `POST /firmware/update`
+# has an inactive slot to write; `otadata` holds the boot-slot selector.
+# Every `espflash flash` recipe in the justfile passes this table with
+# `--erase-parts otadata`, so a USB flash always boots the image it wrote
+# to ota_0 rather than whichever slot the last OTA selected.
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x4000,
+otadata,  data, ota,     0xd000,   0x2000,
+phy_init, data, phy,     0xf000,   0x1000,
+ota_0,    app,  ota_0,   0x10000,  0x7f0000,
+ota_1,    app,  ota_1,   0x800000, 0x7f0000,

@@ -67,12 +67,11 @@ pub const OTA_HEADER_LEN: usize = 12;
 
 /// Hard cap on the OTA payload size.
 ///
-/// Sized for the realistic upper bound of a Stack-chan firmware
-/// binary on CoreS3 (8 MB flash; the inactive OTA partition gets
-/// ~1.6 MB after factory + bonds + RON + captures). The cap is
-/// conservative against a malicious `length` field claiming a multi-
-/// gigabyte payload that would otherwise OOM the receive buffer
-/// before the signature check could run.
+/// The firmware holds the whole image in PSRAM until the signature
+/// verifies, so this cap, not the OTA slot size in the firmware's
+/// `partitions.csv`, bounds an update. It also stops a malicious
+/// `length` field claiming a multi-gigabyte payload from exhausting
+/// memory before the signature check can run.
 pub const MAX_OTA_PAYLOAD_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Errors returned by [`parse_image`].
