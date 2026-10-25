@@ -73,9 +73,13 @@ pub(super) async fn write_no_content(socket: &mut TcpSocket<'_>) -> Result<(), H
 pub(super) fn health_body() -> String {
     let uptime_ms = embassy_time::Instant::now().as_millis();
     let version = env!("CARGO_PKG_VERSION");
+    let ota_slot =
+        crate::ota::running_slot().map_or_else(|| String::from("null"), |slot| format!("{slot}"));
     format!(
-        "{{\"uptime_ms\":{uptime_ms},\"version\":\"{version}\",\"free_heap_bytes\":{free}}}\n",
+        "{{\"uptime_ms\":{uptime_ms},\"version\":\"{version}\",\"free_heap_bytes\":{free},\
+         \"ota_slot\":{ota_slot},\"ota_image\":\"{image}\"}}\n",
         free = esp_alloc::HEAP.free(),
+        image = crate::ota::boot_image().wire_str(),
     )
 }
 

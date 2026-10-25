@@ -37,15 +37,31 @@
 //!    `ota_begin`; mirrors what the IDF bootloader uses).
 //! 5. Stream the verified payload through `ota_write_chunk` into the
 //!    inactive slot.
-//! 6. `ota_flush` flips the `otadata` pointer.
+//! 6. `ota_flush` flips the `otadata` pointer and marks the new slot
+//!    `NEW`, which the next boot treats as a trial.
 //! 7. Soft-reset; the bootloader picks up the new slot on next boot.
+//!
+//! ## Trial boot and rollback
+//!
+//! espflash's bundled ESP-IDF bootloader is built without app-rollback
+//! support, so the firmware runs the trial itself. [`check_boot_image`]
+//! runs first thing in `main`: a slot still in trial whose previous
+//! boot was a trial of the same slot and panicked (the crash latch)
+//! is marked `INVALID` and the chip resets, and every ESP-IDF
+//! bootloader skips an invalid `otadata` entry and boots the other
+//! slot. A trial boot that survives
+//! [`TRIAL_WINDOW_SECS`] is marked valid by [`confirm_after_trial`].
+//! A hang without a panic isn't caught: `esp_hal::init` disables the
+//! hardware watchdogs and the firmware doesn't re-arm them, so nothing
+//! resets the chip.
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use esp_hal::peripherals::FLASH;
-use esp_hal_ota::Ota;
+use esp_hal_ota::{Ota, OtaImgState};
 use esp_storage::FlashStorage;
 use stackchan_net::ota::{OTA_PUBLIC_KEY_LEN, OtaImageError, parse_and_verify};
 
@@ -106,21 +122,12 @@ const fn hex_nibble(c: u8) -> u8 {
 }
 
 /// Slot for the boot-acquired `FLASH` peripheral. Populated once
-/// from `main` via [`install_flash_peripheral`]; consumed by
-/// [`perform_update`] on the first attempt. Once moved into a
-/// `FlashStorage`, the underlying `Flash<'_>` can't be recovered
-/// (esp-storage owns it), so a failed flash leaves the slot empty
-/// for the rest of this boot — see [`FLASH_CONSUMED`].
+/// from `main` via [`install_flash_peripheral`]. Every user goes
+/// through [`with_parked_flash`], which hands a reborrow to a
+/// short-lived `FlashStorage` and parks the peripheral again, so a
+/// failed update can't strand it and block trial confirmation.
 static FLASH_SLOT: Mutex<CriticalSectionRawMutex, RefCell<Option<FLASH<'static>>>> =
     Mutex::new(RefCell::new(None));
-
-/// Sticky flag — set on the first `perform_update` that takes the
-/// FLASH peripheral. Distinguishes "OTA never installed" (programming
-/// error) from "FLASH was claimed by a prior attempt and is now
-/// inside a `FlashStorage` we can't extract from" (operator needs
-/// to power-cycle to retry). The HTTP route maps each case to a
-/// different status code so the operator gets an actionable error.
-static FLASH_CONSUMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// Park the FLASH peripheral so the OTA path can claim it later.
 /// Called once from boot; calling twice is a programming error and
@@ -132,6 +139,176 @@ pub fn install_flash_peripheral(flash: FLASH<'static>) {
     defmt::info!("ota: flash peripheral parked for OTA writer");
 }
 
+/// How long an OTA'd image has to run without panicking before it's
+/// marked valid. A panic inside the window rolls it back on the next
+/// boot.
+pub const TRIAL_WINDOW_SECS: u64 = 60;
+
+/// What [`check_boot_image`] found in the running slot.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+pub enum BootImage {
+    /// Validated by an earlier trial, or written over USB.
+    Confirmed,
+    /// An OTA'd image still inside its [`TRIAL_WINDOW_SECS`].
+    Trial,
+    /// The OTA state couldn't be read (no OTA partitions, flash error).
+    Unknown,
+}
+
+impl BootImage {
+    /// Wire name for `GET /health`'s `ota_image` field.
+    #[must_use]
+    pub const fn wire_str(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::Trial => "trial",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Current [`BootImage`], as its `repr(u8)` discriminant.
+static BOOT_IMAGE: AtomicU8 = AtomicU8::new(BootImage::Unknown as u8);
+
+/// Index of the running OTA app slot (`0` = `ota_0`), or [`NO_SLOT`].
+static RUNNING_SLOT: AtomicU8 = AtomicU8::new(NO_SLOT);
+
+/// [`RUNNING_SLOT`] sentinel for "not known".
+const NO_SLOT: u8 = u8::MAX;
+
+/// State of the running image, for `GET /health`.
+#[must_use]
+pub fn boot_image() -> BootImage {
+    match BOOT_IMAGE.load(Ordering::Relaxed) {
+        0 => BootImage::Confirmed,
+        1 => BootImage::Trial,
+        _ => BootImage::Unknown,
+    }
+}
+
+/// OTA app slot the firmware is running from (`0` = `ota_0`), if known.
+#[must_use]
+pub fn running_slot() -> Option<u8> {
+    match RUNNING_SLOT.load(Ordering::Relaxed) {
+        NO_SLOT => None,
+        slot => Some(slot),
+    }
+}
+
+/// Set to [`TRIAL_MARK_BASE`] plus the slot index while a trial boot of
+/// that slot runs. RTC fast RAM survives the `software_reset` a panic
+/// triggers but not a power cycle, so on the next boot it tells a
+/// crash of this trial apart from one in whatever image ran before it
+/// (the old image can still panic between `ota_flush` and its reset).
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static TRIAL_MARK: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(0);
+
+/// High bits of a [`TRIAL_MARK`] value (`"TRL\0"`), so stale RTC RAM
+/// after a cold boot is vanishingly unlikely to read as a mark.
+const TRIAL_MARK_BASE: u32 = 0x5452_4C00;
+
+/// Read the running slot's OTA state and roll back a crashed update.
+///
+/// Call before anything that could panic a bad image, with
+/// `crashed_last_boot` set when the crash latch holds a panic from the
+/// previous boot. Rolls back only when the slot is still in trial
+/// (`NEW` from our own flush, or `PENDING_VERIFY` from a bootloader
+/// with rollback support), the previous boot was a trial of this same
+/// slot ([`TRIAL_MARK`]), and that boot panicked. The slot is then
+/// marked `INVALID` and the chip resets into the other slot, leaving
+/// the crash latch for the recovered image to save. Never returns in
+/// that case.
+pub fn check_boot_image(flash: FLASH<'_>, crashed_last_boot: bool) -> BootImage {
+    let mut ota = match Ota::new(FlashStorage::new(flash)) {
+        Ok(ota) => ota,
+        Err(e) => {
+            defmt::warn!(
+                "ota: no OTA partition layout ({}); boot-image check skipped",
+                defmt::Debug2Format(&e)
+            );
+            return BootImage::Unknown;
+        }
+    };
+    let slot = ota
+        .get_currently_booted_partition()
+        .and_then(|p| u8::try_from(p).ok());
+    if let Some(slot) = slot {
+        RUNNING_SLOT.store(slot, Ordering::Relaxed);
+    }
+    let mark = slot.map(|s| TRIAL_MARK_BASE | u32::from(s));
+    let image = match ota.get_ota_image_state() {
+        Ok(OtaImgState::EspOtaImgNew | OtaImgState::EspOtaImgPendingVerify) => {
+            let trial_of_this_slot = mark.is_some_and(|m| TRIAL_MARK.load(Ordering::Relaxed) == m);
+            if crashed_last_boot && trial_of_this_slot {
+                defmt::error!("ota: update panicked during its trial; rolling back");
+                TRIAL_MARK.store(0, Ordering::Relaxed);
+                match ota.ota_mark_app_invalid_rollback() {
+                    Ok(()) => esp_hal::system::software_reset(),
+                    Err(e) => defmt::error!(
+                        "ota: rollback failed ({}); staying on this image",
+                        defmt::Debug2Format(&e)
+                    ),
+                }
+            }
+            TRIAL_MARK.store(mark.unwrap_or(0), Ordering::Relaxed);
+            BootImage::Trial
+        }
+        Ok(_) => {
+            TRIAL_MARK.store(0, Ordering::Relaxed);
+            BootImage::Confirmed
+        }
+        Err(e) => {
+            defmt::warn!(
+                "ota: running slot not found in otadata ({})",
+                defmt::Debug2Format(&e)
+            );
+            BootImage::Unknown
+        }
+    };
+    BOOT_IMAGE.store(image as u8, Ordering::Relaxed);
+    defmt::info!(
+        "ota: running slot {} ({})",
+        running_slot(),
+        image.wire_str()
+    );
+    image
+}
+
+/// Mark the running slot valid once it has run for
+/// [`TRIAL_WINDOW_SECS`]. Spawn only for a [`BootImage::Trial`] boot.
+pub async fn confirm_after_trial() {
+    embassy_time::Timer::after_secs(TRIAL_WINDOW_SECS).await;
+    let marked = with_parked_flash(|flash| {
+        Ota::new(FlashStorage::new(flash)).and_then(|mut ota| ota.ota_mark_app_valid())
+    });
+    match marked {
+        Some(Ok(())) => {
+            TRIAL_MARK.store(0, Ordering::Relaxed);
+            BOOT_IMAGE.store(BootImage::Confirmed as u8, Ordering::Relaxed);
+            defmt::info!("ota: trial passed; running slot marked valid");
+        }
+        Some(Err(e)) => defmt::warn!(
+            "ota: marking the running slot valid failed ({})",
+            defmt::Debug2Format(&e)
+        ),
+        None => defmt::warn!("ota: flash peripheral never parked; slot left in trial"),
+    }
+}
+
+/// Run `f` on a reborrow of the parked FLASH peripheral, then park it
+/// again. `None` only when [`install_flash_peripheral`] never ran: the
+/// executor is cooperative and `f` is synchronous, so no other user
+/// can hold the peripheral at the same time.
+fn with_parked_flash<R>(f: impl FnOnce(FLASH<'_>) -> R) -> Option<R> {
+    let mut flash = FLASH_SLOT.lock(|cell| cell.borrow_mut().take())?;
+    let result = f(flash.reborrow());
+    FLASH_SLOT.lock(|cell| {
+        cell.borrow_mut().replace(flash);
+    });
+    Some(result)
+}
+
 /// Outcome of [`perform_update`].
 #[derive(Debug, defmt::Format)]
 pub enum OtaPerformError {
@@ -140,13 +317,6 @@ pub enum OtaPerformError {
     /// FLASH peripheral was never parked at boot — OTA is unreachable.
     /// Programming error: `install_flash_peripheral` not called.
     FlashUnavailable,
-    /// FLASH was consumed by a prior `perform_update` call this boot
-    /// (the prior call entered the flash-write path and `esp-storage`
-    /// took ownership of the peripheral). A reboot is required to
-    /// retry. Operationally distinct from `FlashUnavailable` so the
-    /// HTTP layer can surface a "reboot to retry" hint instead of
-    /// "OTA disabled".
-    FlashConsumedThisBoot,
     /// SCFW framing or ed25519 verification failed.
     Image(#[defmt(Debug2Format)] OtaImageError),
     /// `esp-hal-ota` rejected the partition setup or chunk write.
@@ -198,31 +368,22 @@ pub fn perform_update(image_bytes: &[u8]) -> Result<(), OtaPerformError> {
     );
 
     let crc = esp_rom_sys::rom::crc::crc32_le(0, payload);
-    // Take + consumed-flag check + consumed-flag set all happen in
-    // one critical section. Folding them avoids a TOCTOU window
-    // between the take and a subsequent read of `FLASH_CONSUMED`
-    // that's harmless on a single-core cooperative scheduler today
-    // but easy to break later (a second core, an interrupt that
-    // calls into OTA, etc.).
-    let flash_periph = FLASH_SLOT.lock(|cell| match cell.borrow_mut().take() {
-        Some(periph) => {
-            FLASH_CONSUMED.store(true, core::sync::atomic::Ordering::Release);
-            Ok(periph)
-        }
-        None if FLASH_CONSUMED.load(core::sync::atomic::Ordering::Acquire) => {
-            Err(OtaPerformError::FlashConsumedThisBoot)
-        }
-        None => Err(OtaPerformError::FlashUnavailable),
-    })?;
-    let flash = FlashStorage::new(flash_periph);
-    let mut ota = Ota::new(flash)?;
+    with_parked_flash(|flash| write_inactive_slot(flash, payload, crc))
+        .unwrap_or(Err(OtaPerformError::FlashUnavailable))
+}
+
+/// Stream `payload` into the inactive OTA slot and arm it for a trial
+/// boot. Split out of [`perform_update`] so every `?` returns through
+/// [`with_parked_flash`], which re-parks the peripheral on failure.
+fn write_inactive_slot(flash: FLASH<'_>, payload: &[u8], crc: u32) -> Result<(), OtaPerformError> {
+    let mut ota = Ota::new(FlashStorage::new(flash))?;
     let payload_len: u32 = u32::try_from(payload.len())
         .map_err(|_| OtaPerformError::Flash(esp_hal_ota::OtaError::OtaPartitionTooSmall))?;
     ota.ota_begin(payload_len, crc)?;
     for chunk in payload.chunks(FLASH_CHUNK_BYTES) {
         ota.ota_write_chunk(chunk)?;
     }
-    ota.ota_flush(true, false)?;
-    defmt::info!("ota: flush done; new slot armed for next boot");
+    ota.ota_flush(true, true)?;
+    defmt::info!("ota: flush done; new slot armed for a trial boot");
     Ok(())
 }
