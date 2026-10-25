@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.114.2](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.114.1...stackchan-firmware-v0.114.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **firmware:** flash a two-slot OTA partition table ([#658](https://github.com/andymai/stackchan-kai/issues/658)) ([bdb8b13](https://github.com/andymai/stackchan-kai/commit/bdb8b1322650c0a8c20ef856b59f821c748f2b00))
+
 ## [0.114.1](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.114.0...stackchan-firmware-v0.114.1) (2026-08-24)
 
 ## [0.114.0](https://github.com/andymai/stackchan-kai/compare/stackchan-firmware-v0.113.11...stackchan-firmware-v0.114.0) (2026-07-10)

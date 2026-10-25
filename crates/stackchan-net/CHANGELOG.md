@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.6](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.5...stackchan-net-v0.16.6) (2026-10-25)
+
+
+### Bug Fixes
+
+* **firmware:** flash a two-slot OTA partition table ([#658](https://github.com/andymai/stackchan-kai/issues/658)) ([bdb8b13](https://github.com/andymai/stackchan-kai/commit/bdb8b1322650c0a8c20ef856b59f821c748f2b00))
+
 ## [0.16.5](https://github.com/andymai/stackchan-kai/compare/stackchan-net-v0.16.4...stackchan-net-v0.16.5) (2026-08-24)
 
 
