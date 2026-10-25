@@ -1086,6 +1086,13 @@ async fn watchdog_task() -> ! {
     watchdog::run_watchdog_loop().await
 }
 
+/// Marks a freshly OTA'd slot valid once it survives its trial window.
+/// See `ota::confirm_after_trial`.
+#[embassy_executor::task]
+async fn ota_trial_task() {
+    stackchan_firmware::ota::confirm_after_trial().await;
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
@@ -1101,12 +1108,29 @@ async fn main(spawner: Spawner) -> ! {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
+    // Drain the crash latch before anything else can panic, so the
+    // OTA trial check below only sees a crash from the previous boot.
+    // The SD branch further down writes the snapshot to CRASH.LOG.
+    let crash = stackchan_firmware::crash::consume_latch();
+    if let Some(snap) = &crash {
+        defmt::warn!(
+            "crash recovery: previous boot panicked at {=str}:{=u32}",
+            snap.file_str(),
+            snap.line,
+        );
+    }
+
+    // Runs before LCD, SD, or radio bring-up so a crashing update
+    // rolls back before it can crash again.
+    let mut flash = peripherals.FLASH;
+    let boot_image = stackchan_firmware::ota::check_boot_image(flash.reborrow(), crash.is_some());
+
     // Park the FLASH peripheral for the OTA path so a later
     // `POST /firmware/update` can claim it without re-acquiring
     // peripherals from main. No-op cost when OTA isn't enabled at
     // build time: the static slot still gets populated, but
     // `perform_update` returns `Disabled` before reading it.
-    stackchan_firmware::ota::install_flash_peripheral(peripherals.FLASH);
+    stackchan_firmware::ota::install_flash_peripheral(flash);
 
     defmt::info!(
         "stackchan-firmware v{} — CoreS3 boot",
@@ -1248,20 +1272,13 @@ async fn main(spawner: Spawner) -> ! {
             // first request — and so the SSE stream stays consistent
             // with what the amp actually applies at boot.
             net::snapshot::update_audio(cfg.audio);
-            // If the previous boot panicked, the crash latch in RTC
-            // fast RAM still holds the message + location. Drain it
-            // now (clears the magic atomically) and write the
-            // rendered log to /sd/CRASH.LOG so `GET /crash` can
-            // surface it to the operator. A failed SD write is
-            // logged but not fatal — defmt still has the panic line
-            // for anyone watching the console.
-            if let Some(snap) = stackchan_firmware::crash::consume_latch() {
-                defmt::warn!(
-                    "crash recovery: previous boot panicked at {=str}:{=u32} — saving to SD",
-                    snap.file_str(),
-                    snap.line,
-                );
-                let log = stackchan_firmware::crash::render_log_entry(&snap, "panic");
+            // If the previous boot panicked, write the snapshot drained
+            // from the crash latch at boot to /sd/CRASH.LOG so
+            // `GET /crash` can surface it to the operator. A failed SD
+            // write is logged but not fatal — defmt still has the
+            // panic line for anyone watching the console.
+            if let Some(snap) = &crash {
+                let log = stackchan_firmware::crash::render_log_entry(snap, "panic");
                 // Match the SD-write outcome so a failure logs the
                 // panic body to defmt; without this the message
                 // disappears across the reboot if SD write fails.
@@ -1747,6 +1764,14 @@ async fn main(spawner: Spawner) -> ! {
     }
     if let Err(e) = spawner.spawn(watchdog_task()) {
         defmt::panic!("spawn watchdog_task failed: {}", defmt::Debug2Format(&e));
+    }
+    if boot_image == stackchan_firmware::ota::BootImage::Trial
+        && let Err(e) = spawner.spawn(ota_trial_task())
+    {
+        defmt::warn!(
+            "spawn ota_trial_task failed: {}; slot stays in trial",
+            defmt::Debug2Format(&e)
+        );
     }
 
     // Audio subsystem. The task owns I²S0 + DMA + audio pins and

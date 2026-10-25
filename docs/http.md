@@ -22,7 +22,7 @@ beats pulling a full HTTP framework into the firmware target.
 | Method | Path             | Description                                         |
 |--------|------------------|-----------------------------------------------------|
 | GET    | `/`              | Operator dashboard (HTML + JS, embedded in firmware) |
-| GET    | `/health`        | Uptime, firmware version, free heap                  |
+| GET    | `/health`        | Uptime, firmware version, free heap, running OTA slot (`ota_slot`) and whether it's still on trial (`ota_image`) |
 | GET    | `/state`         | Snapshot JSON: emotion, head pose, battery, Wi-Fi, audio, last sidecar reply |
 | GET    | `/sensors`       | Live IMU / ambient / audio-RMS / body-touch sample   |
 | GET    | `/sensor-history` | Rolling 60-second window of one-per-second sensor snapshots, oldest first |
@@ -481,6 +481,14 @@ just fmr                                                  # first OTA-capable fi
 just ota-image ~/.config/stackchan/ota.key                # release build -> target/ota/stackchan-firmware.scfw
 STACKCHAN_TOKEN=s3cret just ota-push stackchan.local
 ```
+
+After the reboot the new image runs as a trial. If it panics within
+60 seconds, the next boot marks its slot invalid and resets, and the
+bootloader falls back to the previous slot. Once the window passes
+without a panic, the slot is marked valid. `GET /health` reports the
+running slot as `ota_slot` (`0` or `1`) and the trial state as
+`ota_image` (`trial`, `confirmed`, or `unknown`). A hang that never
+panics isn't rolled back; reflash over USB.
 
 A device only accepts images signed by the key its running firmware
 was built with, so keep `STACKCHAN_OTA_PUBLIC_KEY` exported for every
