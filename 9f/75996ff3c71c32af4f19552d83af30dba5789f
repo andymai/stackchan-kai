@@ -1,0 +1,36 @@
+crates/stackchan-firmware/src/ota.rs
+  s_9dce2612c07cc6::t_7f7b44828b9a64 125-128
+  s_9dce2612c07cc6::t_101fee460f6651 287,295,300-302
+  s_9dce2612c07cc6::t_1c2124fe3fa6d4 371-379
+  s_9dce2612c07cc6::t_f563326a5b049c 199-210,214-221
+  s_9dce2612c07cc6::t_d3ca9c6891ed36 49-52
+  s_9dce2612c07cc6::t_8aec6690bca792 233,235-236,239,242-243,245,254,257-260
+crates/stackchan-firmware/src/net/http.rs
+  s_9dce2612c07cc6::t_852d116a72cee3 2269
+crates/stackchan-firmware/src/crash.rs
+  s_9dce2612c07cc6::t_de7eb7bac49217 141-150
+crates/stackchan-firmware/src/main.rs
+  s_9dce2612c07cc6::t_cd31af1b79d544 1111-1123
+crates/stackchan-firmware/Cargo.toml
+  s_9dce2612c07cc6::t_59a59c1af847ca 102-106
+docs/http.md
+  s_9dce2612c07cc6::t_d3ca9c6891ed36 472
+Cargo.lock
+  s_9dce2612c07cc6::t_5838f5b324b72f 5065
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f75996ff3c71c32af4f19552d83af30dba5789f",
+  "prompts": {},
+  "sessions": {
+    "s_9dce2612c07cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4934dd8b-3ec9-476f-96a0-f2f46e272b24",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
