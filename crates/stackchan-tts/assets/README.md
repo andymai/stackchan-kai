@@ -34,6 +34,8 @@ just bake-tts en greeting           # one specific phrase
 
 Generated `.pcm` files are committed to the repo so fresh checkouts and CI builds don't depend on a TTS binary. Update the manifest, run the recipe, commit both together.
 
+The script peak-normalizes every phrase to -12 dBFS, the same peak as the chirp tables in `src/baked.rs`. Piper's raw output peaks near full scale, which drives the AW88298 into audible clipping on the CoreS3 speaker. Speech has a much higher crest factor than a sine, so phrases play quieter than chirps at the same volume setting.
+
 ## Stub PCM
 
 Initial commits ship silent-PCM stubs (zeros) so `include_bytes!` succeeds and the firmware build is end-to-end runnable; a locale's phrases play as silence until someone runs `just bake-tts` and commits the result. The `en` phrases are baked (Piper `en_US-amy-medium`). The `ja` phrases are still stubs: no official Piper voice exists for Japanese — the `ja_JP-test-medium` mapping in `scripts/bake-tts.sh` has no downloadable model, and the project's Japanese speech path is VOICEVOX (see `docs/voice-voicevox.md`).

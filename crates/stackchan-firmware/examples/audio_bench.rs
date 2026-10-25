@@ -1,16 +1,20 @@
 //! Audio bench: brings up the full audio stack (I²S0 + AW88298 + ES7210)
-//! exactly as `main.rs` does, then walks the non-verbal-SFX phrase
-//! catalog through the speech dispatch path so every chirp can be
-//! ear-tested in isolation.
+//! exactly as `main.rs` does, then walks the baked phrase catalog
+//! (spoken phrases, then non-verbal chirps) through the speech dispatch
+//! path so every clip can be ear-tested in isolation.
 //!
 //! Use this bench when iterating on:
 //! - chirp distinguishability (wake vs pickup vs startle vs low-battery)
-//! - any new non-verbal `PhraseId` variant
+//! - spoken-phrase level against the chirps after a `just bake-tts`
+//! - any new `PhraseId` variant
 //! - voice-route bring-up after audio-stack changes
 //!
 //! Expected log after bring-up (one playlist run):
 //!
 //! ```text
+//! audio-bench: dispatching Greeting
+//! audio-bench: dispatching AcknowledgeName
+//! audio-bench: dispatching BatteryLow
 //! audio-bench: dispatching WakeChirp
 //! audio-bench: dispatching PickupChirp
 //! audio-bench: dispatching StartleChirp
@@ -127,6 +131,9 @@ async fn main(spawner: Spawner) -> ! {
 
     loop {
         for (label, phrase) in [
+            ("Greeting", PhraseId::Greeting),
+            ("AcknowledgeName", PhraseId::AcknowledgeName),
+            ("BatteryLow", PhraseId::BatteryLow),
             ("WakeChirp", PhraseId::WakeChirp),
             ("PickupChirp", PhraseId::PickupChirp),
             ("StartleChirp", PhraseId::StartleChirp),
