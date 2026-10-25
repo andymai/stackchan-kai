@@ -1,0 +1,25 @@
+crates/stackchan-tts/assets/README.md
+  s_9dce2612c07cc6::t_32cd31801a051e 38
+  s_9dce2612c07cc6::t_48dc78f0bcbb68 37
+crates/stackchan-firmware/examples/audio_bench.rs
+  s_9dce2612c07cc6::t_44026e3d3ce14b 2-4,8-9,15-17
+  s_9dce2612c07cc6::t_f2aa509f4c1471 134-136
+scripts/bake-tts.sh
+  s_9dce2612c07cc6::t_f2aa509f4c1471 91-94,99-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f10a9b1635a181ecb09a7db18d9d180c61807496",
+  "prompts": {},
+  "sessions": {
+    "s_9dce2612c07cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4934dd8b-3ec9-476f-96a0-f2f46e272b24",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
