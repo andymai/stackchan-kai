@@ -1,0 +1,22 @@
+crates/esp-tflite-micro-sys/build.rs
+  s_5a82da45ced147::t_f44811b63ed0d8 433-434
+  s_5a82da45ced147::t_64b7ee040a68bd 435-437
+  s_5a82da45ced147::t_b034d8aaf14716 438-440
+  s_5a82da45ced147::t_802a57d15eef75 449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b92cb9dc28765ef66e8838060175c5bb4c172956",
+  "prompts": {},
+  "sessions": {
+    "s_5a82da45ced147": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5a9fab01-056b-4ad2-8570-01423f7609e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
