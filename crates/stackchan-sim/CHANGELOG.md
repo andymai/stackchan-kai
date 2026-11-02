@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.2](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.24.1...stackchan-sim-v0.24.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* restore the sc-ota bin gate and keep bindgen off host include dirs ([#668](https://github.com/andymai/stackchan-kai/issues/668)) ([28221b6](https://github.com/andymai/stackchan-kai/commit/28221b6712f7d02f19fa30ccec22eb8fb5fd6307))
+
 ## [0.24.1](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.24.0...stackchan-sim-v0.24.1) (2026-10-25)
 
 ## [0.24.0](https://github.com/andymai/stackchan-kai/compare/stackchan-sim-v0.23.6...stackchan-sim-v0.24.0) (2026-10-25)

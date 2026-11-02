@@ -1,6 +1,6 @@
 {
   "crates/stackchan-core": "0.38.1",
-  "crates/stackchan-sim": "0.24.1",
+  "crates/stackchan-sim": "0.24.2",
   "crates/stackchan-audio-features": "0.2.0",
   "crates/stackchan-desktop-protocol": "0.1.1",
   "crates/stackchan-net": "0.18.0",
