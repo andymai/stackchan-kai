@@ -1,0 +1,23 @@
+crates/stackchan-sim/Cargo.toml
+  s_5a82da45ced147::t_2eb63f80d2c800 73-77
+  s_5a82da45ced147::t_970cfcf5a5746b 39-46
+  s_5a82da45ced147::t_458731c5e47b20 60-62
+Cargo.lock
+  s_5a82da45ced147::t_c9078a4cb700e9 5096,5099
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ec514c03412aadfb2a6f04f768abf979f817c6b",
+  "prompts": {},
+  "sessions": {
+    "s_5a82da45ced147": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5a9fab01-056b-4ad2-8570-01423f7609e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andy Aragon <hi@andymai.com>"
+    }
+  }
+}
