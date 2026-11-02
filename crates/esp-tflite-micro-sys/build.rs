@@ -430,9 +430,14 @@ fn add_tflm_op_kernels(b: &mut cc::Build, tflm: &Path) {
 
 /// Run bindgen over the C-ABI shim header so Rust callers can use
 /// `extern "C"` declarations without writing them by hand. The header
-/// is pure C and uses only `<stddef.h>` + `<stdint.h>`, so libclang
-/// can parse it against the host system's headers regardless of cross-
-/// compilation target.
+/// is pure C and uses only `<stddef.h>` + `<stdint.h>`, which libclang's
+/// own include search handles for the xtensa target.
+///
+/// Include-path detection stays off: bindgen would otherwise copy the
+/// search dirs of whatever `clang` is on `PATH` as `-isystem`, and
+/// clang 20+ knows the xtensa triple. On a host like Ubuntu 26.04 that
+/// adds `/usr/include`, and the host libc's `<stdint.h>` fails to parse
+/// (`bits/libc-header-start.h` not found).
 fn generate_bindings(manifest: &Path) {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
     let header = manifest.join("src/shim.h");
@@ -441,6 +446,7 @@ fn generate_bindings(manifest: &Path) {
 
     let bindings = bindgen::Builder::default()
         .header(header.to_string_lossy())
+        .detect_include_paths(false)
         // `core::ffi` instead of `std::ffi` for `no_std`.
         .use_core()
         .ctypes_prefix("core::ffi")
