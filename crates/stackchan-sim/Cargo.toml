@@ -42,7 +42,7 @@ stackchan-net = { path = "../stackchan-net", optional = true }
 # 0.3 line already in the lock, where ed25519-compact's own `random`
 # feature would pull a second getrandom major.
 ed25519-compact = { version = "2", default-features = false, optional = true }
-getrandom = { version = "0.3", optional = true }
+getrandom = { version = "0.4", optional = true }
 
 [dev-dependencies]
 # Used by `tests/ble_remote_command.rs` to round-trip raw BLE
