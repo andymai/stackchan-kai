@@ -31,7 +31,7 @@ M5Stack ships Stack-chan with the `xiaozhi` firmware stack, an LLM agent pipelin
 
 ## The engine
 
-`stackchan-core` models the avatar as data. The data is an [`Entity`] (face, motor, perception, voice, mind, events, input, tick). A [`Director`] sorts `Modifier`s by phase and ticks them each frame.
+`stackchan-core` models the avatar as data. The data is an [`Entity`] (face, motor, perception, voice, mind, events, input, tick, LED override). A [`Director`] sorts `Modifier`s by phase and ticks them each frame.
 
 ```rust
 use stackchan_core::{Director, Entity, Instant};
@@ -131,7 +131,7 @@ This project deliberately does not:
 - **Support hardware other than the CoreS3 Stack-chan kit.** The driver set follows specific datasheets (BMI270, BMM150, FT6336U, Feetech SCServo, …). The project tests it on one physical unit. A port to other M5Stack boards or ESP32 variants is out of scope.
 - **Provide a stable public API.** All crates are Experimental per [STABILITY.md](./STABILITY.md), and minor releases break things. You can use the `stackchan-core` library, but its contract can change.
 - **Replace general-purpose ESP-IDF or M5Unified firmware.** The project covers only the desk-toy features (face, motion, sensors, LAN control). Other features (arbitrary GPIO scripting, third-party display drivers) belong in a different project.
-- **Accept unsolicited contributions.** The project has a single maintainer, and responses are best-effort. Bug reports and discussion are welcome, and the PR policy is in `AGENTS.md`.
+- **Accept unsolicited contributions.** The project has a single maintainer, and responses are best-effort. Bug reports and discussion are welcome.
 
 ## Known limitations
 
