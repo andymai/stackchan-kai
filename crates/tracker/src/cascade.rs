@@ -503,8 +503,7 @@ const fn scale_dim(base: u8, scale_q16: u32) -> u16 {
 fn feature_value(feat: &Feature, ii: &IntegralView<'_>, wx: u16, wy: u16, scale_q16: u32) -> i64 {
     let mut acc: i64 = 0;
     let count = (feat.rect_count as usize).min(MAX_RECTS_PER_FEATURE);
-    for slot in 0..count {
-        let r = &feat.rects[slot];
+    for r in feat.rects.iter().take(count) {
         let rx = wx + scale_dim(r.x, scale_q16);
         let ry = wy + scale_dim(r.y, scale_q16);
         let rw = scale_dim(r.w, scale_q16);
